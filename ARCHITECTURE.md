@@ -633,7 +633,44 @@ pytest              # auto-discovers tests/ via pytest.ini
 
 **Mock pattern:** use `unittest.mock.patch` to intercept network calls (`urllib.request.urlopen`) or config loading. Pass `GLib=None` to `improve_prompt` to call the callback synchronally in tests.
 
-### 8.6 Anti-Patterns
+### 8.6 Handler Pattern — MANDATORY for All New Code
+
+**All new UI logic must follow the handler pattern. No exceptions.**
+
+The `ui/handlers/` directory contains self-contained logic modules extracted from `window.py`. This is not a suggestion — it is the architectural law. Every piece of new behavior must live in a handler, not in `window.py`.
+
+**What goes in a handler:**
+- Any logic that responds to user actions (clicks, input, gestures)
+- Any logic that processes gateway events, STT results, or external callbacks
+- Any logic that coordinates between models, gateway, and UI views
+- Any logic involving state transitions (connecting, recording, sending)
+
+**What stays in `window.py`:**
+- Creating handler instances and passing them references to shared objects
+- Wiring callbacks between handlers (e.g., MediaHandler's STT result → ChatHandler's send)
+- Top-level GTK signal connections that delegate immediately to a handler method
+
+**Handler rules:**
+1. **One handler per subsystem.** Chat logic → `ChatHandler`. Gateway lifecycle → `GatewayHandler`. Media I/O → `MediaHandler`. New subsystem → new handler file.
+2. **Handlers never import other handlers.** If ChatHandler needs something from GatewayHandler, `window.py` wires it via a callback or sync function.
+3. **Handlers receive dependencies via constructor or setters.** They do not reach out to find them.
+4. **All GTK calls from background threads go through `GLib.idle_add()`.** Every handler docstring must note this.
+5. **Handlers own their state.** If a handler needs persistent state, it holds it internally. It does not store state on `window.py`.
+6. **Tests go in `tests/test_<handler_name>.py`.** Every handler must have tests. See Section 8.5.
+
+**Adding a new handler — checklist:**
+1. Create `ui/handlers/<subsystem>_handler.py`
+2. Define the class with constructor accepting needed callbacks/references
+3. Add a docstring explaining responsibilities and thread safety
+4. Implement logic, dispatching GTK calls via `GLib.idle_add()` where needed
+5. Create `tests/test_<subsystem>_handler.py` with full test coverage
+6. Wire the handler in `window.py` (`_build()` method)
+7. Update this ARCHITECTURE.md (Section 3, Section 11, this section)
+
+**Why this matters:**
+`window.py` was once a 2,300-line monolith. The handler pattern exists to prevent that from happening again. Every line of logic added directly to `window.py` is technical debt. Extract it into a handler instead.
+
+### 8.7 Anti-Patterns
 
 | Anti-pattern | Correct approach |
 |-------------|-----------------|
@@ -643,6 +680,9 @@ pytest              # auto-discovers tests/ via pytest.ini
 | Large monolithic files | Split at natural boundaries |
 | Writing code without wiring it | Every piece of code must be called somewhere |
 | Skipping verification | Compile + test every checkpoint |
+| Adding logic directly to `window.py` | Extract into a handler in `ui/handlers/` |
+| A handler importing another handler | Use callbacks wired through `window.py` |
+| New UI behavior without a handler file | Create one first, then implement |
 
 ---
 
