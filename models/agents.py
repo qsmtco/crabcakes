@@ -39,6 +39,10 @@ class AgentManager:
         """Return list of session keys for an agent name."""
         return self._agent_sessions.get(agent_name, [])
 
+    def get_color(self, agent_name: str) -> str | None:
+        """Return the assigned hex color for an agent name, or None if not registered."""
+        return self._agent_colors.get(agent_name)
+
     def clear(self) -> None:
         """Clear all session tracking. Preserves colors so agents keep them on reconnect."""
         self._agent_names.clear()

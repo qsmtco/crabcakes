@@ -47,6 +47,8 @@ class MainContent(Gtk.Box):
         self._tab_sessions = {}  # page_index -> session_key
         # Track chat boxes per page_index so we can append to them
         self._tab_chat_boxes = {}  # page_index -> chat_box widget
+        # Bulk-close guard: skip reindex until all removals are done
+        self._bulk_closing = False
 
         self._control_bar = ChatControlBar()
 
@@ -54,10 +56,19 @@ class MainContent(Gtk.Box):
         self._feed_bar = Gtk.Box()
         self._feed_bar.set_size_request(-1, 28)
         self._feed_bar.add_css_class("project-feed-bar")
-        # Semi-transparent dark background
+        # Agent card + global styles
         provider = Gtk.CssProvider()
         provider.load_from_data(
-            b".project-feed-bar { background: rgba(30,30,40,0.75); border-radius: 4px; }"
+            b"""
+            .project-feed-bar { background: rgba(30,30,40,0.75); border-radius: 4px; }
+            .agent-row { background: rgba(255,255,255,0.04); border-radius: 6px; margin: 2px 4px; }
+            .agent-row:hover { background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.4); }
+            .agent-name-label { color: #e8e8ec; font-size: 14px; }
+            .agent-chat-btn { background: rgba(99,102,241,0.2); color: #a5b4fc; border-radius: 4px; padding: 2px 8px; font-size: 12px; }
+            .agent-chat-btn:hover { background: rgba(99,102,241,0.4); color: #c7d2fe; }
+            .agent-add-btn { background: rgba(16,185,129,0.2); color: #6ee7b7; border-radius: 4px; padding: 2px 6px; font-size: 12px; }
+            .agent-add-btn:hover { background: rgba(16,185,129,0.4); color: #a7f3d0; }
+            """
         )
         self._feed_bar.get_style_context().add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
@@ -190,57 +201,132 @@ class MainContent(Gtk.Box):
         # Append the new tab FIRST to get page_idx, then wire handlers
         page_idx = self._chat_notebook.append_page(chat_scroll, tab_label_box)
 
-        close_btn.connect("clicked", self._on_tab_close_clicked, page_idx)
+        # Store session_key on the tab label box so close handlers can look up
+        # the CURRENT page index dynamically (avoids stale captured page_idx bug
+        # when tabs are closed out of order and reindexing shifts pages).
+        tab_label_box.set_data("session_key", session_key)
+        chat_scroll.set_data("session_key", session_key)
+
+        close_btn.connect("clicked", self._on_tab_close_clicked)
 
         # Middle-click on the label also closes the tab
         click_ctrl = Gtk.GestureClick()
         click_ctrl.set_button(Gdk.BUTTON_MIDDLE)
-        click_ctrl.connect("pressed", self._on_tab_middle_click, page_idx)
+        click_ctrl.connect("pressed", self._on_tab_middle_click)
         tab_label_box.add_controller(click_ctrl)
 
         # Right-click on the label shows session switch menu
         right_ctrl = Gtk.GestureClick()
         right_ctrl.set_button(Gdk.BUTTON_SECONDARY)
-        right_ctrl.connect("pressed", self._on_tab_right_click, page_idx, session_key)
+        right_ctrl.connect("pressed", self._on_tab_right_click, session_key)
         tab_label_box.add_controller(right_ctrl)
         self._tab_sessions[page_idx] = session_key
         self._tab_chat_boxes[page_idx] = chat_box
         self._chat_notebook.set_current_page(page_idx)
         return page_idx
 
+    def _find_page_by_session(self, session_key):
+        """Return the current page index for a session_key by scanning notebook pages.
+
+        This is the canonical way to find a tab — iterates current GTK state rather
+        than trusting stale captured page_idx values in signal closures.
+        """
+        n_pages = self._chat_notebook.get_n_pages()
+        for idx in range(n_pages):
+            widget = self._chat_notebook.get_nth_page(idx)
+            if widget and widget.get_data("session_key") == session_key:
+                return idx
+        return None
+
     def _close_tab(self, page_idx):
         """Remove a tab by page index and clean up tracking dicts."""
         self._chat_notebook.remove_page(page_idx)
         self._tab_sessions.pop(page_idx, None)
         self._tab_chat_boxes.pop(page_idx, None)
-        # Re-index: GTK removes pages, so remaining pages shift down
-        # Rebuild _tab_sessions and _tab_chat_boxes to match new page indices
-        self._reindex_tabs()
+        if not self._bulk_closing:
+            self._reindex_tabs()
 
     def _reindex_tabs(self):
-        """Rebuild _tab_sessions and _tab_chat_boxes to reflect current notebook page order."""
+        """
+        Rebuild _tab_sessions and _tab_chat_boxes to reflect current notebook page order.
+
+        Correct algorithm: iterate current GTK pages (which are the authoritative order),
+        look up each page's widget, then find the matching session_key by scanning
+        the saved snapshot. This avoids index-stale issues when multiple tabs are removed.
+        """
+        # Snapshot current state before rebuilding
+        saved_sessions = dict(self._tab_sessions)
+        saved_chat_boxes = dict(self._tab_chat_boxes)
+
+        # Build widget -> old_page_idx map from snapshot
+        widget_to_idx = {}
+        for old_idx, sk in saved_sessions.items():
+            if old_idx in self._tab_chat_boxes:
+                widget_to_idx[self._tab_chat_boxes[old_idx]] = old_idx
+
         new_sessions = {}
         new_chat_boxes = {}
-        for idx in range(self._chat_notebook.get_n_pages()):
-            sk = self._tab_sessions.pop(idx, None)
-            cb = self._tab_chat_boxes.pop(idx, None)
-            if sk is not None:
-                new_sessions[idx] = sk
-            if cb is not None:
-                new_chat_boxes[idx] = cb
+        n_pages = self._chat_notebook.get_n_pages()
+        for new_idx in range(n_pages):
+            page_widget = self._chat_notebook.get_nth_page(new_idx)
+            old_idx = widget_to_idx.get(page_widget)
+            if old_idx is not None:
+                new_sessions[new_idx] = saved_sessions[old_idx]
+                new_chat_boxes[new_idx] = saved_chat_boxes[old_idx]
+
         self._tab_sessions = new_sessions
         self._tab_chat_boxes = new_chat_boxes
 
-    def _on_tab_close_clicked(self, _btn, page_idx):
-        """× button clicked on a tab — close it."""
-        self._close_tab(page_idx)
+    def close_tabs(self, page_indices):
+        """
+        Close multiple tabs in one call, reindexing only once at the end.
 
-    def _on_tab_middle_click(self, ctrl, n_press, x, y, page_idx):
-        """Middle-click on tab label — close it."""
-        if n_press == 1:
+        Tabs are closed highest-index-first so that lower indices remain stable
+        for the duration of the loop.
+
+        Args:
+            page_indices: iterable of int page indices to close
+        """
+        if not page_indices:
+            return
+        self._bulk_closing = True
+        try:
+            for idx in sorted(page_indices, reverse=True):
+                self._chat_notebook.remove_page(idx)
+                self._tab_sessions.pop(idx, None)
+                self._tab_chat_boxes.pop(idx, None)
+        finally:
+            self._bulk_closing = False
+        self._reindex_tabs()
+
+    def _on_tab_close_clicked(self, _btn):
+        """× button clicked on a tab — close it.
+
+        Looks up the current page by session_key stored on the tab widget,
+        avoiding stale page_idx from the signal connection captured at tab creation.
+        """
+        tab_label_box = _btn.get_parent()
+        session_key = tab_label_box.get_data("session_key") if tab_label_box else None
+        if session_key is None:
+            return
+        # Find current page index for this session_key
+        page_idx = self._find_page_by_session(session_key)
+        if page_idx is not None:
             self._close_tab(page_idx)
 
-    def _on_tab_right_click(self, ctrl, n_press, x, y, page_idx, session_key):
+    def _on_tab_middle_click(self, ctrl, n_press, x, y):
+        """Middle-click on tab label — close it."""
+        if n_press != 1:
+            return
+        tab_label_box = ctrl.get_widget()
+        session_key = tab_label_box.get_data("session_key") if tab_label_box else None
+        if session_key is None:
+            return
+        page_idx = self._find_page_by_session(session_key)
+        if page_idx is not None:
+            self._close_tab(page_idx)
+
+    def _on_tab_right_click(self, ctrl, n_press, x, y, session_key):
         """Right-click on tab label — show session switch menu."""
         if n_press != 1:
             return
@@ -250,21 +336,15 @@ class MainContent(Gtk.Box):
         if not agent_name:
             return
         sessions = self._agent_mgr.get_sessions(agent_name)
-        tab_widget = self._get_tab_widget(page_idx)
+        tab_widget = ctrl.get_widget()
+        page_idx = self._find_page_by_session(session_key)
+        if page_idx is None:
+            return
         show_session_menu(
             tab_widget,
             agent_name,
             sessions,
             lambda sk: self._switch_tab_session(page_idx, sk),
-        )
-
-    def _get_tab_widget(self, page_idx):
-        """Return the tab label widget for a given page index.
-
-        Used by show_session_menu() to anchor the popover at the tab label.
-        The popover is positioned relative to this widget."""
-        return self._chat_notebook.get_tab_label(
-            self._chat_notebook.get_nth_page(page_idx)
         )
 
     def _switch_tab_session(self, page_idx, new_session_key):

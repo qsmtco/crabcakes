@@ -8,6 +8,7 @@ from gi.repository import Gtk
 
 from utils.prompts import load_prompts
 from utils.projects import load_members, save_members
+from utils.icons import render_agent_icon
 from ui.views.file_tree import FileTree
 
 
@@ -30,6 +31,7 @@ class LeftPanel(Gtk.Box):
         self._agent_names = {}
         self._on_agent_selected = None
         self._agents_list_box = None
+        self._agent_list_handler = None  # set via set_agent_list_handler()
 
         # Project state — set via set_on_project_opened() when a project tab opens
         self._active_project_name = None
@@ -71,6 +73,13 @@ class LeftPanel(Gtk.Box):
         self.append(PAP_notebook)
 
     # ── Agents tab ──────────────────────────────────────────────────────────
+
+    def set_agent_list_handler(self, handler):
+        """Set the AgentListHandler for avatar card rendering."""
+        self._agent_list_handler = handler
+        # If agent names are already populated, refresh now that handler has agent_mgr
+        if self._agent_names:
+            self._refresh_agents_list()
 
     def set_agents(self, agent_names, on_agent_selected):
         """
@@ -131,20 +140,26 @@ class LeftPanel(Gtk.Box):
         self._agents_list_box = Gtk.ListBox()
         self._agents_list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
 
-        # Build rows — group by unique agent name, prefer "main" session
-        agents = {}  # name -> primary session_key
-        for session_key, name in self._agent_names.items():
-            if name not in agents:
-                agents[name] = session_key
-            if ":main" in session_key:
-                agents[name] = session_key
-
         # Load project members if a project is active
         project_members = []
         if self._active_project_name:
             project_members = load_members(self._active_project_name)
 
-        if not agents:
+        # Use handler only if it has a populated agent_mgr, otherwise fall back to _agent_names
+        # This matters on first connect: set_agents() fires before set_agent_mgr()
+        if self._agent_list_handler and self._agent_list_handler.has_agent_mgr():
+            sorted_agents = self._agent_list_handler.get_sorted_agents(project_members)
+        else:
+            # Fallback: group by name, prefer :main (old behavior)
+            agents = {}
+            for session_key, name in self._agent_names.items():
+                if name not in agents:
+                    agents[name] = session_key
+                if ":main" in session_key:
+                    agents[name] = session_key
+            sorted_agents = [(sk, name, sk in project_members) for name, sk in agents.items()]
+
+        if not sorted_agents:
             placeholder = Gtk.Label()
             placeholder.set_markup(
                 '<span foreground="#6b6b7a" font_desc="Sans 11">'
@@ -154,8 +169,7 @@ class LeftPanel(Gtk.Box):
             placeholder.show()
             self._agents_list_box.append(placeholder)
         else:
-            for name, session_key in agents.items():
-                in_project = session_key in project_members
+            for session_key, name, in_project in sorted_agents:
                 row = self._build_agent_row(session_key, name, in_project)
                 self._agents_list_box.append(row)
 
@@ -167,43 +181,94 @@ class LeftPanel(Gtk.Box):
         self._agents_list_box.show()
 
     def _build_agent_row(self, session_key, name, in_project=False):
-        """Build a single clickable agent row with optional +/− toggle button."""
+        """
+        Build a single agent avatar card row.
+
+        Layout: [avatar] [name label] [+/−] [Chat]
+        Avatar uses render_agent_icon via the agent_list_handler (if set).
+        """
         row = Gtk.ListBoxRow()
         row._session_key = session_key
         row._agent_name = name
 
-        # Horizontal layout: label + toggle button
-        row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-
-        label = Gtk.Label(label=name, xalign=0, hexpand=True)
-        label.set_margin_top(8)
-        label.set_margin_bottom(8)
-        label.set_margin_start(8)
-
-        # Toggle button: + (add) or − (remove)
-        btn = Gtk.Button()
-        btn.set_size_request(28, 28)
-        btn.add_css_class("flat")
-        btn._agent_session_key = session_key
-        btn._agent_name = name
-        btn.connect("clicked", self._on_agent_toggle_clicked)
-
-        if self._active_project_name:
-            if in_project:
-                btn.set_label("−")
-            else:
-                btn.set_label("+")
-            btn.set_visible(True)
+        # Get initials and color from handler (or compute defaults)
+        if self._agent_list_handler:
+            initials = self._agent_list_handler.compute_initials(name)
+            color = self._agent_list_handler.get_agent_color(name)
         else:
-            btn.set_visible(False)
+            parts = name.split()
+            initials = (parts[0][0] + parts[1][0]).upper() if len(parts) >= 2 else name[:2].upper()
+            color = "#6366f1"  # fallback indigo
 
-        label.show()
-        btn.show()
-        row_box.append(label)
-        row_box.append(btn)
+        row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        row_box.set_halign(Gtk.Align.FILL)
+        row_box.set_margin_start(4)
+        row_box.set_margin_end(4)
+        row_box.set_margin_top(4)
+        row_box.set_margin_bottom(4)
+        row_box.add_css_class("agent-row")
+
+        # Avatar picture (44×44)
+        avatar_picture = Gtk.Picture()
+        avatar_picture.set_size_request(44, 44)
+        avatar_picture.set_halign(Gtk.Align.CENTER)
+        avatar_picture.set_valign(Gtk.Align.CENTER)
+        avatar_picture.set_paintable(render_agent_icon(color, initials))
+
+        # Name label
+        name_lbl = Gtk.Label(label=name)
+        name_lbl.set_halign(Gtk.Align.START)
+        name_lbl.set_hexpand(True)
+        name_lbl.set_margin_start(8)
+        name_lbl.add_css_class("agent-name-label")
+
+        # Buttons box: +/− toggle (if project active) + Chat
+        buttons_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        buttons_box.set_halign(Gtk.Align.END)
+
+        # Toggle button: + (add) or − (remove) — only in project context
+        toggle_btn = Gtk.Button()
+        toggle_btn.set_size_request(28, 28)
+        toggle_btn.add_css_class("flat")
+        toggle_btn._agent_session_key = session_key
+        toggle_btn._agent_name = name
+        toggle_btn.connect("clicked", self._on_agent_toggle_clicked)
+        if self._active_project_name:
+            toggle_btn.set_label("−" if in_project else "+")
+            toggle_btn.set_visible(True)
+        else:
+            toggle_btn.set_visible(False)
+
+        # Chat button
+        chat_btn = Gtk.Button(label="Chat")
+        chat_btn.set_has_frame(False)
+        chat_btn.add_css_class("agent-chat-btn")
+        chat_btn._agent_session_key = session_key
+        chat_btn._agent_name = name
+        chat_btn.connect("clicked", self._on_agent_chat_clicked)
+
+        avatar_picture.show()
+        name_lbl.show()
+        toggle_btn.show()
+        chat_btn.show()
+
+        buttons_box.append(toggle_btn)
+        buttons_box.append(chat_btn)
+        row_box.append(avatar_picture)
+        row_box.append(name_lbl)
+        row_box.append(buttons_box)
         row.set_child(row_box)
         row.show()
         return row
+
+    def _on_agent_chat_clicked(self, button):
+        """Handle Chat button click — delegate to handler, then open chat tab."""
+        session_key = button._agent_session_key
+        name = button._agent_name
+        if self._agent_list_handler:
+            self._agent_list_handler.on_chat_clicked(session_key, name)
+        if self._on_agent_selected:
+            self._on_agent_selected(session_key, name)
 
     def _on_agent_row_activated(self, list_box, row):
         """Called when an agent row is clicked — open/create chat tab."""

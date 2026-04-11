@@ -91,6 +91,15 @@ class MainWindow(Gtk.ApplicationWindow):
         )
         self._left_panel = left_panel
 
+        # Agent card handler — agent_mgr set in _sync_gateway_to_chat_handler after connect
+        from ui.handlers.agent_list_handler import AgentListHandler
+        self._agent_list_handler = AgentListHandler(
+            agent_mgr=None,
+            on_agent_chat=lambda sk, n: self._on_agent_selected(sk, n),
+            on_agent_toggle=None,  # left_panel._on_agent_toggle_clicked handles membership directly
+        )
+        self._left_panel.set_agent_list_handler(self._agent_list_handler)
+
         # Gateway handler — owns GatewayClient + AgentManager (Phase 2)
         # Note: connect button is wired via Toolbar(on_connect_clicked=...) — not here
         self._gateway_handler = GatewayHandler(
@@ -119,7 +128,7 @@ class MainWindow(Gtk.ApplicationWindow):
             GLib_module=GLib,
         )
         # Voice input: after transcript captured, send it automatically
-        self._media_handler.set_on_send_callback(self._chat_handler.on_send)
+        self._media_handler.set_on_send_callback(lambda _text: self._chat_handler.on_send())
 
         # Wire STT + improve buttons
         self._main_content.set_on_stt_click(self._media_handler.on_stt_click)
@@ -221,6 +230,8 @@ class MainWindow(Gtk.ApplicationWindow):
         """Called by GatewayHandler after connect succeeds — sync live GatewayClient to ChatHandler."""
         self._chat_handler._gw = gw
         self._main_content.set_agent_manager(self._gateway_handler.agent_mgr)
+        # Wire AgentListHandler to the live AgentManager
+        self._agent_list_handler.set_agent_mgr(self._gateway_handler.agent_mgr)
 
     # ── Agent selection callback ────────────────────────────────────────────
 

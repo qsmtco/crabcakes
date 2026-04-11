@@ -62,7 +62,7 @@ crabcakes/
 │
 ├── models/                    # Data models — no UI dependencies
 │   ├── __init__.py           # Exports: AgentManager, next_agent_color, reset_color_indices
-│   ├── agents.py              # AgentManager — session_key → name, colors, sessions
+│   ├── agents.py              # 49 lines — AgentManager (get_color added 2026-04-11)
 │   └── colors.py              # Color palettes + round-robin assignment
 │
 ├── ui/                        # All UI components
@@ -224,7 +224,7 @@ self._agent_to_project = {}        # {agent_session_key: project_name} — rever
 
 **Prompts tab:** Lists `.md` files from `prompts/` directory. Double-click calls `on_prompt_selected(content)`.
 
-**Agents tab:** Initially empty placeholder. After `set_agents()` is called, builds a clickable list of agents. Single-click calls `on_agent_selected(session_key, name)`. When a project is open, each row shows a `+`/`−` toggle button — `+` adds the agent to the project, `−` removes them.
+**Agents tab:** Initially empty placeholder. After `set_agents()` is called, builds avatar cards (colored circle + initials + name + Chat/+ button). Uses `AgentListHandler` for initials/color computation. Single-click calls `on_agent_selected(session_key, name)`. When a project is open, each row shows a `+`/`−` toggle button — `+` adds the agent to the project, `−` removes them.
 
 **Projects tab:** `FileTree` widget — `Gtk.TreeView` with `Gtk.TreeStore`, lazy-loading subdirectories, back button.
 
@@ -232,6 +232,7 @@ self._agent_to_project = {}        # {agent_session_key: project_name} — rever
 ```python
 panel = LeftPanel(on_prompt_selected=cb, on_project_selected=cb)
 panel.set_agents(agent_names_dict, on_agent_selected_callback)
+panel.set_agent_list_handler(handler)         # wires AgentListHandler for avatar cards
 panel.set_on_project_opened(cb)               # fires when project tab opens
 panel.refresh_agents_with_project(name)      # rebuilds agents list with +/− buttons
 panel.set_on_project_members_changed(cb)      # fires when membership changes
@@ -268,6 +269,7 @@ content.append_message_to_tab(session_key, role, text)  # append to specific tab
 content.append_message_to_current_tab(role, text)       # append to current tab
 content.set_feed_bar_text(text)  # update the project feed bar
 content.set_agent_manager(agent_mgr)  # set AgentManager for session switch lookup
+content.close_tabs(page_indices)       # close multiple tabs, reindex once
 content.set_on_stt_click(cb)     # STT button clicked
 content.set_on_improve_click(cb) # Improve button clicked
 content.replace_input_text(text) # replace input with improved text
@@ -289,14 +291,31 @@ content.update_stt_state(state) # "idle" | "recording" — button label/style
 | `load_members(project_name)` | `projects.py` | Returns `[{session_key}, ...]` from `~/.config/crabcakes/projects/<name>/members.json` |
 | `save_members(project_name, members)` | `projects.py` | Writes members list to `members.json`, creates dir if needed |
 | `improve_prompt(text, callback, GLib)` | `improve.py` | Sends text to MiniMax API, calls `callback(improved, error)` with GLib dispatch |
-| `STTEngine` class | `stt.py` | Push-to-talk STT via whisper.cpp — arecord → PCM buffer → whisper-cli → partial transcript callback |
+| `STTEngine` class | `stt.py` | Push-to-talk STT via faster-whisper — arecord → PCM buffer → faster-whisper (base model) → stop_async callback |
 | `show_session_menu(parent, agent_name, sessions, on_select)` | `session_menu.py` | GTK popover menu listing sessions; clicking fires `on_select(session_key)` |
 
-### 3.10 `ui/handlers/chat_handler.py` — Chat Handler (Phase 1)
+### 3.10 `ui/handlers/agent_list_handler.py` — Agent List Handler (Agent Cards)
+
+**Responsibility:** Agent card rendering data — initials, colors, sorting. Does NOT build widgets (view does).
+
+**Owns:** AgentManager reference (set after connect), color assignment per agent name, sorting/grouping logic.
+
+**Public API:**
+```python
+def set_agent_mgr(agent_mgr): pass
+def has_agent_mgr() -> bool: pass          # True if AgentManager is populated
+def compute_initials(name: str) -> str: pass
+def get_agent_color(name: str) -> str: pass
+def get_sorted_agents(project_members=None) -> list[(sk, name, in_project)]: pass
+def on_chat_clicked(session_key: str, name: str): pass
+def on_toggle_clicked(session_key: str, name: str, in_project: bool): pass
+```
+
+### 3.11 `ui/handlers/chat_handler.py` — Chat Handler (Phase 1)
 
 **Responsibility:** All chat logic — sending, project fan-out, incoming message routing, tab switching. Extracted from `window.py` in Phase 1.
 
-### 3.11 `ui/handlers/gateway_handler.py` — Gateway Handler (Phase 2)
+### 3.12 `ui/handlers/gateway_handler.py` — Gateway Handler (Phase 2)
 
 **Responsibility:** All gateway lifecycle — connecting, disconnecting, agent discovery, error handling, and thread-safe state dispatch to GTK. Extracted from `window.py` in Phase 2.
 
@@ -329,7 +348,7 @@ def dispatch(fn: Callable, *args, **kwargs) -> None:
     """Thread-safe dispatch to main thread via GLib.idle_add(fn, *args, **kwargs)."""
 ```
 
-### 3.12 `ui/handlers/media_handler.py` — Media Handler (Phase 4)
+### 3.13 `ui/handlers/media_handler.py` — Media Handler (Phase 4)
 
 **Responsibility:** All media I/O — STT (whisper.cpp push-to-talk) and prompt improvement. Extracted from `window.py` in Phase 4.
 
@@ -621,9 +640,13 @@ pytest              # auto-discovers tests/ via pytest.ini
 ```
 
 **Test coverage:**
+- `tests/test_architecture.py` — AST guard: handler isolation, models/gateway layer separation, public API existence
+- `tests/test_architecture.py` — AST guard: handler isolation, models/gateway layer separation, public API existence
+- `tests/test_agent_list_handler.py` — AgentListHandler: initials, colors, sorting, callbacks
 - `tests/test_agents.py` — AgentManager: edge cases, unknown inputs, clear/reregister
 - `tests/test_projects.py` — file I/O: missing files, empty dirs, JSON corruption, round-trip
 - `tests/test_improve.py` — API calls: missing key, HTTP errors, malformed responses
+- `tests/test_icons.py` — icons.py: import smoke test
 
 **Writing new tests:** aim to break the code, not confirm it works. Test:
 - Unknown/missing inputs → what does the code do?
@@ -692,13 +715,12 @@ The `ui/handlers/` directory contains self-contained logic modules extracted fro
 |---------|---------|---------|
 | `CRABCAKES_GATEWAY_URL` | `ws://localhost:18789` | OpenClaw gateway WebSocket URL |
 | `CRABCAKES_PROJECTS_DIR` | `~/projects` | Directory containing project folders for the Projects tab |
-| `WHISPER_CLI` | `~/whisper.cpp/build/bin/whisper-cli` | Path to whisper.cpp CLI binary |
-| `WHISPER_MODEL` | `~/whisper.cpp/models/ggml-large-v3-turbo.bin` | Path to GGML whisper model |
+| `STT_MODEL_SIZE` | `base` | faster-whisper model size — "tiny", "base", "small", etc. |
 
 **External binaries required for STT:**
 - `arecord` — ALSA audio capture (part of alsa-utils)
-- `whisper-cli` — whisper.cpp binary (built from source, see `~/whisper.cpp/`)
-- `whisper.cpp` model — `ggml-large-v3-turbo.bin` (~1.6GB) or other GGML-format model
+- `faster-whisper` Python package (already installed; downloads base model on first use)
+- Model: `Systran/faster-whisper-base` (~142MB, HuggingFace cache)
 
 ---
 
@@ -753,32 +775,34 @@ crabcakes/
 │
 ├── models/
 │   ├── __init__.py            # 12 lines — exports AgentManager, next_agent_color, reset_color_indices
-│   ├── agents.py              # 81 lines — AgentManager
+│   ├── agents.py              # 49 lines — AgentManager (get_color added 2026-04-11)
 │   └── colors.py              # 32 lines — agent color palette only
 │
 ├── ui/
 │   ├── __init__.py            # 1 line
 │   ├── toolbar.py             # 83 lines — Toolbar widget
-│   ├── window.py              # ~230 lines — MainWindow + handler wiring
+│   ├── window.py              # 240 lines — MainWindow + handler wiring + AgentListHandler
 │   ├── handlers/
 │   │   ├── __init__.py
+│   │   ├── agent_list_handler.py  # 107 lines — agent card data (initials, colors, sorting)
 │   │   ├── chat_handler.py  # ~100 lines — send, fan-out, routing (Phase 1)
-│   │   ├── gateway_handler.py # ~90 lines — connect, agents, lifecycle (Phase 2)
+│   │   ├── gateway_handler.py # ~100 lines — connect, agents, lifecycle (Phase 2)
 │   │   └── media_handler.py   # ~80 lines — STT + improve (Phase 4)
 │   └── views/
 │       ├── __init__.py        # 1 line
 │       ├── chat_control_bar.py # 34 lines — ChatControlBar (stub: update() not wired)
 │       ├── feedbar.py          # 48 lines — FeedBar (stub: update() not wired)
-│       ├── file_tree.py        # 234 lines — FileTree (TreeView directory browser)
-│       ├── left_panel.py       # 254 lines — LeftPanel (PAP notebook)
-│       └── main_content.py    # 374 lines — MainContent (tabs + input + STT/Improve/feed bar + tab close + session switch menu)
+│       ├── file_tree.py        # 252 lines — FileTree (TreeView directory browser, idle-based picker mode)
+│       ├── left_panel.py       # 324 lines — LeftPanel (agent cards, set_agent_list_handler)
+│       └── main_content.py    # 428 lines — MainContent (tabs + input + STT/Improve/feed bar + tab close + session switch menu + bulk close)
 │
 └── utils/
     ├── __init__.py            # 1 line
     ├── prompts.py             # 35 lines — load_prompts()
     └── projects.py            # 91 lines — load_projects, load/save_members
     ├── improve.py            # 133 lines — improve_prompt (MiniMax API)
-    └── stt.py                 # 219 lines — STTEngine (whisper.cpp push-to-talk)
+    └── stt.py                 # 182 lines — STTEngine (faster-whisper push-to-talk, stop_async pattern)
+    └── icons.py              # 77 lines — SVG avatar/folder icon rendering (Gdk.Texture)
 ```
 
 **Dead files removed (2026-04-10 audit):**

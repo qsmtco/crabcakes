@@ -1,15 +1,15 @@
 # ui/handlers/media_handler.py
 # MediaHandler — STT (push-to-talk) + prompt improvement.
 #
-# Thread safety: STTEngine callbacks fire from its background thread.
-# All GTK operations are dispatched via GLib.idle_add() inside _on_stt_partial().
+# Thread safety: stop_async() calls on_result from a background thread.
+# GTK dispatch is handled inside stt.stop_async() via GLib.idle_add.
 # improve_prompt() dispatches its callback via GLib.idle_add when GLib is provided.
 
 from typing import Callable
 
 
 class MediaHandler:
-    """Handles STT (whisper.cpp push-to-talk) and prompt improvement."""
+    """Handles STT (faster-whisper push-to-talk) and prompt improvement."""
 
     def __init__(
         self,
@@ -26,19 +26,15 @@ class MediaHandler:
         self._stt_class = stt_engine_class or STTEngine
         self._sync_callback: Callable = None  # called after voice send, with text
 
-        self._stt_engine = self._stt_class(on_partial=self._on_stt_partial)
+        self._stt_engine = self._stt_class(on_result=self._on_result)
 
-    # ── STT — Public API ────────────────────────────────────────────────────
+    # ── STT — Public API ───────────────────────────────────────────────────
 
     def on_stt_click(self, _btn=None):
-        """Toggle STT recording on Prompt button click."""
+        """Toggle STT recording — start or stop_async."""
         if self._stt_engine.is_recording:
-            text = self._stt_engine.stop()
             self._mc.update_stt_state("idle")
-            if text:
-                self._mc.append_stt_text(text)
-                if self._sync_callback:
-                    self._sync_callback(text)
+            self._stt_engine.stop_async(on_done=self._on_result)
         else:
             self._mc.update_stt_state("recording")
             self._stt_engine.start()
@@ -49,15 +45,22 @@ class MediaHandler:
 
     # ── STT — Internal ─────────────────────────────────────────────────────
 
-    def _on_stt_partial(self, text):
+    def _on_result(self, text):
         """
-        Append a partial transcript to the input buffer.
-        Fires from STT background thread — dispatch to GTK main thread.
+        Handle transcription result — append to input and trigger send.
+        Fires from background thread (dispatched via GLib.idle_add by stt_engine).
         """
+        if not text:
+            return
         if self._GLib is not None:
-            self._GLib.idle_add(self._mc.append_stt_text, text)
+            self._GLib.idle_add(self._append_and_send, text)
         else:
-            self._mc.append_stt_text(text)
+            self._append_and_send(text)
+
+    def _append_and_send(self, text):
+        self._mc.append_stt_text(text)
+        if self._sync_callback:
+            self._sync_callback(text)
 
     # ── Improve — Public API ────────────────────────────────────────────────
 
@@ -76,10 +79,7 @@ class MediaHandler:
     # ── Improve — Internal ─────────────────────────────────────────────────
 
     def _on_improve_result(self, improved_text, error):
-        """
-        Handle improve API result — replace input with improved text.
-        improve_prompt() already dispatched via GLib.idle_add when GLib was provided.
-        """
+        """Handle improve API result — replace input with improved text."""
         self._mc._improved_button.set_sensitive(True)
         if error:
             import logging

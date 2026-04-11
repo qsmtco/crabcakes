@@ -11,9 +11,7 @@
 
 import gi
 gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk
-
-import time
+from gi.repository import Gtk, GLib
 
 from utils.projects import load_projects, scan_directory
 
@@ -32,14 +30,11 @@ class FileTree(Gtk.Box):
         # Project state
         self._project_name = None
         self._project_path = None
-        # Double-click tracking for picker mode
-        self._pending_project_row = None
-        self._last_click_time = 0
-
-        # Project state
-        self._project_name = None
-        self._project_path = None
         self._project_history = []  # stack of paths for back navigation
+        # Picker mode: pending idle source for expand-on-single-click.
+        # Cancel it with a second click → load project instead.
+        self._pending_expand_id = None
+        self._pending_expand_path = None
 
         # The notebook page container (set by LeftPanel)
         self._page = None
@@ -106,7 +101,7 @@ class FileTree(Gtk.Box):
 
     def load_project(self, name, path):
         """Load a project root and show its directory tree."""
-        self._pending_project_row = None
+        self._cancel_pending_expand()
         self._project_name = name
         if self._on_project_opened:
             self._on_project_opened(name, path)
@@ -116,7 +111,7 @@ class FileTree(Gtk.Box):
 
     def navigate_back(self):
         """Return to the project picker."""
-        self._pending_project_row = None
+        self._cancel_pending_expand()
         self._project_name = None
         self._project_path = None
         self._project_history.clear()
@@ -134,7 +129,7 @@ class FileTree(Gtk.Box):
 
     def _show_project_picker(self):
         """Show the list of projects."""
-        self._pending_project_row = None
+        self._cancel_pending_expand()
         self._store.clear()
         self._back_btn.set_visible(False)
         self._folder_icon.set_visible(False)
@@ -156,6 +151,7 @@ class FileTree(Gtk.Box):
 
     def _show_tree(self, name, path):
         """Show the directory tree for a project."""
+        self._cancel_pending_expand()
         self._store.clear()
         self._back_btn.set_visible(True)
         self._folder_icon.set_visible(True)
@@ -173,7 +169,15 @@ class FileTree(Gtk.Box):
                 self._store.append(parent, ["…", "", True, False])
 
     def _on_row_activated(self, tree, path, column):
-        """Single-click expands dirs in tree mode; double-click required to load a project."""
+        """
+        In tree mode: single-click expands/collapses directories.
+        In picker mode: first click schedules expand; second click cancels
+        expand and loads the project instead.
+
+        Uses a GLib idle source so GTK delivers any second click before the
+        expand fires. If a second click lands on the same row within the idle
+        window, it cancels the scheduled expand and loads directly.
+        """
         model = tree.get_model()
         it = model.get_iter(path)
         if it is None:
@@ -187,17 +191,18 @@ class FileTree(Gtk.Box):
 
         if is_dir:
             if is_top_level and self._project_path is None:
-                # Picker mode — require double-click to load project
-                now = time.time()
-                if (self._pending_project_row == full_path
-                        and now - self._last_click_time < 0.5):
-                    # Double-click — load project
-                    self._pending_project_row = None
+                # Picker mode — second click loads, first click schedules expand
+                if self._pending_expand_path == full_path:
+                    # Same row clicked again → load project, cancel expand
+                    self._cancel_pending_expand()
                     self.load_project(display_name, full_path)
                 else:
-                    # First click — arm pending
-                    self._pending_project_row = full_path
-                    self._last_click_time = now
+                    # New row or first click → schedule expand
+                    self._cancel_pending_expand()
+                    self._pending_expand_path = full_path
+                    self._pending_expand_id = GLib.idle_add(
+                        self._expand_project_row, tree, path, display_name
+                    )
             elif tree.row_expanded(path):
                 tree.collapse_row(path)
             else:
@@ -205,6 +210,19 @@ class FileTree(Gtk.Box):
         else:
             if self._on_file_selected:
                 self._on_file_selected(full_path)
+
+    def _cancel_pending_expand(self):
+        """Cancel any scheduled single-click expand in picker mode."""
+        if self._pending_expand_id is not None:
+            GLib.source_remove(self._pending_expand_id)
+            self._pending_expand_id = None
+            self._pending_expand_path = None
+
+    def _expand_project_row(self, tree, path, display_name):
+        """Idle callback: expand the picker row (single-click behaviour)."""
+        self._pending_expand_id = None
+        self._pending_expand_path = None
+        tree.expand_row(path, open_all=False)
 
     def _on_row_expanded(self, tree, it, path):
         """Lazy load children on first expand."""

@@ -95,17 +95,12 @@ class FakeMainContent:
 
 
 class FakeSTTEngine:
-    """Fake STTEngine — controllable recording state + final transcript.
+    """Fake STTEngine — matches new STTEngine stop_async API."""
 
-    Matches real STTEngine public API.
-    """
-
-    def __init__(self, on_partial=None):
-        self._on_partial = on_partial
+    def __init__(self, on_result=None):
+        self._on_result = on_result
         self._is_recording = False
-        self._start_count = 0
-        self._stop_count = 0
-        self._transcript_text = ""  # set by test to simulate final transcript
+        self._transcript_text = ""
 
     @property
     def is_recording(self):
@@ -113,11 +108,15 @@ class FakeSTTEngine:
 
     def start(self):
         self._is_recording = True
-        self._start_count += 1
+
+    def stop_async(self, on_done=None):
+        self._is_recording = False
+        callback = on_done or self._on_result
+        if callback:
+            callback(self._transcript_text)
 
     def stop(self):
         self._is_recording = False
-        self._stop_count += 1
         return self._transcript_text
 
 
@@ -163,16 +162,18 @@ class TestSTTStartStop:
     """STT starts recording when not already recording, stops when recording."""
 
     def test_click_stops_recording(self):
-        """Clicking while recording stops it, appends transcript, calls sync callback."""
+        """Clicking while recording stops it, appends transcript via callback."""
         mc = FakeMainContent()
-        handler = make_handler(main_content=mc)
+        GLib = FakeGLib()
+        handler = make_handler(main_content=mc, GLib_module=GLib)
         handler._stt_engine._transcript_text = "hello world"
 
         handler.on_stt_click()  # start
-        handler.on_stt_click()  # stop
+        handler.on_stt_click()  # stop_async → callback → idle_add
 
         assert not handler._stt_engine.is_recording
         assert mc._stt_state == "idle"
+        GLib.dispatch_all()  # flush idle callbacks
         assert mc._append_calls == ["hello world"]
 
     def test_click_starts_recording(self):
@@ -188,69 +189,75 @@ class TestSTTStartStop:
     def test_stop_with_empty_transcript_no_append(self):
         """Empty transcript is not appended."""
         mc = FakeMainContent()
-        handler = make_handler(main_content=mc)
+        GLib = FakeGLib()
+        handler = make_handler(main_content=mc, GLib_module=GLib)
         handler._stt_engine._transcript_text = ""
         handler._stt_engine.start()
 
         handler.on_stt_click()
+        GLib.dispatch_all()
 
         assert mc._append_calls == []
 
 
 class TestSTTPartialTranscript:
-    """Partial transcripts from STT are dispatched to main thread via GLib."""
+    """_on_result dispatches transcript to GTK main thread via GLib.idle_add."""
 
-    def test_partial_callback_dispatched_to_main_thread(self):
-        """_on_stt_partial queues append_stt_text via GLib.idle_add."""
+    def test_result_callback_dispatched_via_glib(self):
+        """_on_result queues append_stt_text via GLib.idle_add."""
         mc = FakeMainContent()
         GLib = FakeGLib()
         handler = make_handler(main_content=mc, GLib_module=GLib)
 
-        handler._on_stt_partial(" partial transcript ")
+        handler._on_result("spoken words")
 
         assert mc._append_calls == []
         assert len(GLib._pending) == 1
 
         GLib.dispatch_all()
 
-        assert mc._append_calls == [" partial transcript "]
+        assert mc._append_calls == ["spoken words"]
 
-    def test_partial_callback_direct_without_glib(self):
-        """Without GLib, _on_stt_partial calls append_stt_text synchronously."""
+    def test_result_callback_direct_without_glib(self):
+        """Without GLib, _on_result calls append_stt_text synchronously."""
         mc = FakeMainContent()
         handler = make_handler(main_content=mc, GLib_module=None)
 
-        handler._on_stt_partial("direct call")
+        handler._on_result("direct call")
 
         assert mc._append_calls == ["direct call"]
 
 
 class TestSTTVoiceSend:
-    """Voice send: after stopping with transcript, calls sync callback."""
+    """Voice send: after stopping with transcript, calls sync callback via callback chain."""
 
     def test_stop_with_transcript_calls_sync_callback(self):
         """When STT stops with non-empty transcript, calls _sync_callback with text."""
         mc = FakeMainContent()
+        GLib = FakeGLib()
         sync = MagicMock()
-        handler = make_handler(main_content=mc)
+        handler = make_handler(main_content=mc, GLib_module=GLib)
         handler._sync_callback = sync
         handler._stt_engine._transcript_text = "spoken words"
         handler._stt_engine.start()
 
-        handler.on_stt_click()  # stop
+        handler.on_stt_click()  # stop_async → callback → idle_add → _append_and_send → sync_callback
 
+        GLib.dispatch_all()  # flush idle callbacks
         sync.assert_called_once_with("spoken words")
 
     def test_stop_with_empty_transcript_no_callback(self):
         """Empty transcript does not trigger sync callback."""
         mc = FakeMainContent()
+        GLib = FakeGLib()
         sync = MagicMock()
-        handler = make_handler(main_content=mc)
+        handler = make_handler(main_content=mc, GLib_module=GLib)
         handler._sync_callback = sync
         handler._stt_engine._transcript_text = ""
         handler._stt_engine.start()
 
         handler.on_stt_click()
+        GLib.dispatch_all()
 
         sync.assert_not_called()
 
