@@ -1,0 +1,775 @@
+# Crabcakes — Architecture Document
+
+**Purpose:** This document is the authoritative reference for the Crabcakes codebase. It defines the structure, patterns, and principles that all contributors — human or agent — must follow. Before writing any code, read this document. When in doubt, consult this document.
+
+**Last updated:** 2026-04-10 (Phase 1 + 2 + 4 complete: 95 tests) — Phase 3 pending
+**Project root:** `/home/q/projects/crabcakes`
+
+---
+
+## 0. Keeping This Document Current
+
+**This document is the law — and like the law, it must be kept current.**
+
+When you change code, you **must** update this document in the same commit. If you don't, it becomes a lie, and future contributors will trust it and make wrong decisions.
+
+**What to update after any code change:**
+
+| If you... | Then update... |
+|-----------|--------------|
+| Add/remove/rename a module | Section 2 (directory structure) and Section 11 (file inventory) |
+| Change a class's public API or responsibilities | Section 3 (module responsibilities) |
+| Add/remove a public function or method | Section 3 (public API blocks) |
+| Change the gateway protocol handling | Section 10 (protocol reference) |
+| Change how events flow through the app | Section 4 (data flow) |
+| Change a pattern or convention | Sections 5–7 |
+| Change environment variables | Section 9 |
+
+**Rule:** If the diff of your code change doesn't have a corresponding update to this file, the change is **incomplete**.
+
+**Exception:** Minor refactors where nothing documented externally changes (e.g., renaming internal variables, extracting private methods, inlining simple helper functions) do not require ARCHITECTURE.md updates.
+
+---
+
+## 1. Project Overview
+
+Crabcakes is a GTK4 desktop application that connects to an OpenClaw gateway via WebSocket, enabling multi-agent chat management. It provides:
+
+- A split-panel UI: left sidebar (Prompts/Agents/Projects notebook) + right main content (chat tabs + input)
+- Prompt library: load `.md` files from the `prompts/` directory
+- Agent discovery: connect to gateway, discover agents, open chat tabs per agent
+- Project browser: browse directories from `CRABCAKES_PROJECTS_DIR` via TreeView
+- **Project group chat**: open a project → fan-out message to all project members → responses routed back to the project tab
+- **Membership toggles**: +/− buttons in the Agents tab add/remove agents from the active project
+
+**Technology stack:**
+- Python 3, GTK4 (via PyGObject)
+- WebSocket client (Python `websockets` library)
+- Ed25519 device authentication (via `cryptography`)
+- Threaded async I/O with GLib main thread dispatch
+
+---
+
+## 2. Directory Structure
+
+```
+crabcakes/
+├── main.py                    # Entry point — creates CrabcakesApp, runs Gtk.main()
+│
+├── gateway/                   # WebSocket client — self-contained, no UI dependencies
+│   ├── __init__.py           # Exports: GatewayClient only
+│   └── client.py              # GatewayClient — threaded WebSocket + v3 device auth
+│
+├── models/                    # Data models — no UI dependencies
+│   ├── __init__.py           # Exports: AgentManager, next_agent_color, reset_color_indices
+│   ├── agents.py              # AgentManager — session_key → name, colors, sessions
+│   └── colors.py              # Color palettes + round-robin assignment
+│
+├── ui/                        # All UI components
+│   ├── __init__.py
+│   ├── toolbar.py             # Toolbar widget — connect button + status label
+│   ├── window.py              # MainWindow — assembles all components, wires callbacks
+│   ├── handlers/              # Handler modules (extracted from window.py)
+│   │   ├── __init__.py
+│   │   ├── chat_handler.py    # ChatHandler — send, fan-out, routing (Phase 1)
+│   │   ├── gateway_handler.py # GatewayHandler — connect, agents, lifecycle (Phase 2)
+│   │   └── media_handler.py   # MediaHandler — STT + improve (Phase 4)
+│   └── views/                 # View widgets
+│       ├── __init__.py
+│       ├── chat_control_bar.py # ChatControlBar — planned stub (update() not wired)
+│       ├── feedbar.py          # FeedBar — planned stub (update() not wired)
+│       ├── session_menu.py     # 52 lines — show_session_menu(parent, agent_name, sessions, on_select)
+│       ├── file_tree.py        # FileTree — Gtk.TreeView directory browser
+│       ├── left_panel.py       # LeftPanel — PAP notebook (Prompts/Agents/Projects)
+│       └── main_content.py    # MainContent — chat notebook + input + button bar
+│
+└── utils/                     # File I/O utilities
+    ├── __init__.py
+    ├── prompts.py             # load_prompts() — reads .md from prompts/
+    └── projects.py             # load_projects(), scan_directory(), load_members(), save_members()
+```
+
+**Dead files removed (2026-04-10 audit):**
+- `gateway/dispatch.py` — EventDispatcher never instantiated
+- `gateway/protocol.py` — all constants/functions dead; window uses string literals
+- `gateway/session.py` — SessionManager never instantiated
+- `models/app_state.py` — AppState placeholder never used
+- `models/chat_buffer.py` — ChatBuffer never instantiated; app uses Gtk.Box directly
+- `utils/helpers.py` — empty placeholder
+
+**Top-level packages and their rules:**
+
+| Package | Responsibility | Dependencies |
+|---------|---------------|--------------|
+| `gateway/` | Network I/O, auth, event dispatch | `cryptography`, `websockets`, `gi.repository.GLib` |
+| `models/` | Data structures, state management | None (pure Python) |
+| `ui/` | GTK widgets, layout, user interaction | GTK4 only |
+| `utils/` | File I/O for prompts, projects, membership | None |
+
+**Critical rule:** `gateway/` and `models/` must NEVER import from `ui/`. They are the foundation that the UI depends on — not the other way around.
+
+---
+
+## 3. Module Responsibilities
+
+### 3.1 `main.py` — Application Entry Point
+
+**Responsibility:** Bootstrap the GTK application.
+
+```python
+class CrabcakesApp(Gtk.Application):
+    def on_activate(self, app):
+        win = MainWindow(application=app)
+        win.present()
+```
+
+**Rules:**
+- Must be thin. Only creates the application and the main window.
+- All business logic lives in other modules.
+- Never contains widget definitions.
+
+### 3.2 `gateway/` — Network Layer
+
+**Responsibility:** Handle all WebSocket communication with the OpenClaw gateway.
+
+The `gateway/` package is the **only** place that knows about:
+- WebSocket URLs (`ws://localhost:18789`)
+- Device identity files (`~/.openclaw/identity/`)
+- v3 device-auth handshake
+
+**Key classes:**
+
+| Class | File | Responsibility |
+|-------|------|---------------|
+| `GatewayClient` | `client.py` | Threaded WebSocket with reconnect, auth, message sending |
+
+**Public API:**
+```python
+from gateway import GatewayClient
+
+client = GatewayClient(
+    url="ws://localhost:18789",
+    on_connect=callback_fn,        # called when connected
+    on_error=error_fn,            # called on connection error
+    on_event=event_fn,            # called on gateway event (event_name, payload)
+)
+client.start()              # begins connecting in background thread
+client.stop()               # disconnects
+client.is_connected()       # True if connected
+client.get_snapshot()       # returns hello-ok snapshot dict
+client.send_message(session_key, text, on_sent=cb)
+```
+
+**Note:** `rpc()` method was removed (2026-04-10 audit) — it was never called.
+
+### 3.3 `models/` — Data Layer
+
+**Responsibility:** Hold all application state and data structures. No UI code.
+
+**Key classes:**
+
+| Class | File | Responsibility |
+|-------|------|---------------|
+| `AgentManager` | `agents.py` | Tracks session_key → name, colors, sessions |
+
+**Color system (`colors.py`):**
+- `AGENT_COLORS` — round-robin palette for agents
+- `next_agent_color()` — returns next color, advances counter
+- `reset_color_indices()` — resets counters on reconnect
+
+**Rules:**
+- Models know nothing about GTK widgets.
+- Models do not emit signals or have callbacks — they're plain data containers.
+- UI code reads from models and responds to changes via callbacks.
+
+### 3.4 `ui/toolbar.py` — Top Bar
+
+**Responsibility:** App-level actions bar (Connect button + status).
+
+**Public API:**
+```python
+toolbar = Toolbar(on_connect_clicked=callback_fn)
+toolbar.update_connection_state("disconnected" | "connecting" | "connected")
+```
+
+**Internal state:** Owns the Connect button and status label widgets. Updates them based on calls to `update_connection_state()`.
+
+### 3.5 `ui/window.py` — Main Window
+
+**Responsibility:** Assemble all UI components and wire all callbacks. The **single place** where all modules are connected.
+
+**Project group chat state:**
+```python
+self._active_project_name = None   # set when a project tab is opened
+self._agent_to_project = {}        # {agent_session_key: project_name} — reverse lookup for routing
+```
+
+**Phase 4 (MediaHandler) wiring:** `_media_handler` created and wired in `_build()`:
+- `on_stt_click` → `_media_handler.on_stt_click`
+- `on_improve_click` → `_media_handler.on_improve_click`
+- STT transcript append → `_chat_handler.on_send()` via sync callback
+
+**Rules:**
+- Window creates all sub-components and passes callbacks to each.
+- Window holds references to gateway client and agent manager.
+- Window creates and wires handler instances (ChatHandler, etc.) — see `ui/handlers/`.
+- Window defines callback handlers not yet extracted (`_on_ws_connect`, `_on_agent_selected`, `_on_project_opened`, `_on_stt_*`, `_on_improve_*`, etc.).
+- Window does NOT define GTK widgets directly — it composes sub-views.
+
+**Phase 1 (ChatHandler) extracted:** `_on_send`, `_on_send_clicked`, `_switch_to_session_tab`, and chat.final routing are now in `ui/handlers/chat_handler.py`.
+
+### 3.6 `ui/views/left_panel.py` — Left Sidebar
+
+**Responsibility:** Three-tab notebook: Prompts, Agents, Projects.
+
+**Prompts tab:** Lists `.md` files from `prompts/` directory. Double-click calls `on_prompt_selected(content)`.
+
+**Agents tab:** Initially empty placeholder. After `set_agents()` is called, builds a clickable list of agents. Single-click calls `on_agent_selected(session_key, name)`. When a project is open, each row shows a `+`/`−` toggle button — `+` adds the agent to the project, `−` removes them.
+
+**Projects tab:** `FileTree` widget — `Gtk.TreeView` with `Gtk.TreeStore`, lazy-loading subdirectories, back button.
+
+**Public API:**
+```python
+panel = LeftPanel(on_prompt_selected=cb, on_project_selected=cb)
+panel.set_agents(agent_names_dict, on_agent_selected_callback)
+panel.set_on_project_opened(cb)               # fires when project tab opens
+panel.refresh_agents_with_project(name)      # rebuilds agents list with +/− buttons
+panel.set_on_project_members_changed(cb)      # fires when membership changes
+```
+
+### 3.7 `ui/views/file_tree.py` — FileTree Widget
+
+**Responsibility:** Expandable directory browser with lazy-loading. Used by the Projects tab.
+
+**Features:**
+- `Gtk.TreeView` + `Gtk.TreeStore`
+- Single-click expand/collapse on directory rows
+- Double-click on a project directory calls `on_project_opened(name, path)`
+- Subdirectory children are placeholder rows until first expand, then populated via `scan_directory()`
+
+**Public API:**
+```python
+tree = FileTree(on_file_selected=cb)  # single-click file selection
+tree.set_on_project_opened(cb)        # double-click on directory fires callback
+```
+
+### 3.8 `ui/views/main_content.py` — Main Content Area
+
+**Responsibility:** Right panel — chat notebook + user input.
+
+**Public API:**
+```python
+content = MainContent()
+content.user_input              # property → Gtk.TextView
+content.send_button             # property → Gtk.Button
+content.notebook                # property → Gtk.Notebook (chat tabs)
+content.create_chat_tab(session_key, agent_name)   # creates/returns to existing tab
+content.append_message_to_tab(session_key, role, text)  # append to specific tab by key
+content.append_message_to_current_tab(role, text)       # append to current tab
+content.set_feed_bar_text(text)  # update the project feed bar
+content.set_agent_manager(agent_mgr)  # set AgentManager for session switch lookup
+content.set_on_stt_click(cb)     # STT button clicked
+content.set_on_improve_click(cb) # Improve button clicked
+content.replace_input_text(text) # replace input with improved text
+content.append_stt_text(text)    # append STT partial transcript
+content.update_stt_state(state) # "idle" | "recording" — button label/style
+```
+
+**Tab close:** Each tab has an × button (top-right of tab label) and responds to middle-click. Both call `_close_tab(page_idx)` which removes the page and re-indexes tracking dicts.
+
+### 3.9 `utils/` — Utilities
+
+**Responsibility:** File I/O helpers for prompts, projects, and project membership.
+
+| Function | File | Responsibility |
+|----------|------|---------------|
+| `load_prompts()` | `prompts.py` | Returns `[(name, content), ...]` from `prompts/` |
+| `load_projects()` | `projects.py` | Returns `[(name, full_path), ...]` from `CRABCAKES_PROJECTS_DIR` |
+| `scan_directory(path)` | `projects.py` | Returns `[(name, full_path, is_dir), ...]` for one level, filtered (skips `__pycache__`, `.git`, etc.) |
+| `load_members(project_name)` | `projects.py` | Returns `[{session_key}, ...]` from `~/.config/crabcakes/projects/<name>/members.json` |
+| `save_members(project_name, members)` | `projects.py` | Writes members list to `members.json`, creates dir if needed |
+| `improve_prompt(text, callback, GLib)` | `improve.py` | Sends text to MiniMax API, calls `callback(improved, error)` with GLib dispatch |
+| `STTEngine` class | `stt.py` | Push-to-talk STT via whisper.cpp — arecord → PCM buffer → whisper-cli → partial transcript callback |
+| `show_session_menu(parent, agent_name, sessions, on_select)` | `session_menu.py` | GTK popover menu listing sessions; clicking fires `on_select(session_key)` |
+
+### 3.10 `ui/handlers/chat_handler.py` — Chat Handler (Phase 1)
+
+**Responsibility:** All chat logic — sending, project fan-out, incoming message routing, tab switching. Extracted from `window.py` in Phase 1.
+
+### 3.11 `ui/handlers/gateway_handler.py` — Gateway Handler (Phase 2)
+
+**Responsibility:** All gateway lifecycle — connecting, disconnecting, agent discovery, error handling, and thread-safe state dispatch to GTK. Extracted from `window.py` in Phase 2.
+
+**Owns:**
+- `GatewayClient` instance (`_gw`)
+- `AgentManager` instance (`_agent_mgr`)
+- Sync callback (`_sync_callback`) — window uses this to sync `_gw` reference into `ChatHandler`
+
+**Key invariant:** All GTK calls go through `GLib.idle_add()`. Gateway callbacks fire from the gateway's background thread; GTK is not thread-safe.
+
+**Public API:**
+```python
+def connect() -> None:
+    """Create GatewayClient, start it, set connection state to 'connecting'."""
+
+def disconnect() -> None:
+    """Stop GatewayClient, set connection state to 'disconnected', clear AgentManager."""
+
+def is_connected() -> bool:
+    """True if GatewayClient is running and connected."""
+
+@property
+def agent_mgr() -> AgentManager | None:
+    """Returns AgentManager if connected, else None."""
+
+def set_sync_callback(cb: Callable) -> None:
+    """Window calls this to receive the live GatewayClient reference after connect succeeds."""
+
+def dispatch(fn: Callable, *args, **kwargs) -> None:
+    """Thread-safe dispatch to main thread via GLib.idle_add(fn, *args, **kwargs)."""
+```
+
+### 3.12 `ui/handlers/media_handler.py` — Media Handler (Phase 4)
+
+**Responsibility:** All media I/O — STT (whisper.cpp push-to-talk) and prompt improvement. Extracted from `window.py` in Phase 4.
+
+**Owns:**
+- `STTEngine` instance (`_stt_engine`) — owns its own background capture thread
+- Sync callback (`_sync_callback`) — window sets this to trigger `ChatHandler.on_send()` after voice input
+
+**Thread safety:** `_on_stt_partial` fires from the STT background thread. GTK calls go through `GLib.idle_add()`.
+
+**Public API:**
+```python
+def on_stt_click(_btn=None):
+    """Toggle STT recording — start or stop. On stop, appends transcript and calls sync callback."""
+
+def on_improve_click(_btn=None):
+    """Send current input text to MiniMax improve API. Disables button, calls _on_improve_result on response."""
+
+def set_on_send_callback(cb: Callable):
+    """Window sets this so voice input automatically triggers ChatHandler.on_send()."""
+```
+**Rules:**
+- Handler does NOT import other handlers -- window wires them together
+- STTEngine runs its own background thread; handler dispatches all GTK calls via `GLib.idle_add()`
+- improve_prompt() callback is already GLib-dispatched when `GLib_module` is provided
+
+## 4. Data Flow
+
+### 4.1 Gateway Connection Flow
+
+```
+User clicks Connect
+  → window._on_connect_clicked()
+    → window._connect_gateway()
+      → creates AgentManager()
+      → creates GatewayClient(on_connect=window._on_ws_connect, ...)
+      → client.start()
+
+Connected
+  → window._on_ws_connect()
+    → toolbar.update_connection_state("connected")
+    → snapshot = gw.get_snapshot()
+    → for each agent: agent_mgr.register(session_key, name)
+    → left_panel.set_agents(names_ref, _on_agent_selected)
+
+User clicks Disconnect
+  → window._on_disconnect_gateway()
+    → gw.stop()
+    → toolbar.update_connection_state("disconnected")
+```
+
+### 4.2 Agent Selection Flow
+
+```
+User clicks agent row
+  → left_panel._on_agent_row_activated()
+    → _on_agent_selected(session_key, agent_name)
+      → main_content.create_chat_tab(session_key, agent_name)
+```
+
+### 4.3 Project Group Chat — Open Project
+
+```
+User double-clicks project directory
+  → FileTree._on_row_activated()
+    → FileTree.on_project_opened(name, path) callback
+      → window._on_project_opened(name, path)
+        → _active_project_name = name
+        → main_content.create_chat_tab(f"project:{name}", f"Project: {name}")
+        → left_panel.refresh_agents_with_project(name)  # shows +/− buttons
+        → for member_key in load_members(name): _agent_to_project[member_key] = name
+```
+
+### 4.4 Project Group Chat — Fan-Out Send
+
+```
+User types message in project tab and clicks Send
+  → ChatHandler.on_send()
+    → session_key = main_content.get_current_session_key()
+    → if session_key.startswith("project:"):
+        project_name = session_key.split(":", 1)[1]
+        members = load_members(project_name)
+        for member_key in members: gw.send_message(member_key, text)
+      else:
+        gw.send_message(session_key, text)
+    → append_message_to_current_tab("You", text)
+```
+
+### 4.5 Project Group Chat — Response Routing
+
+```
+Gateway sends chat.final event
+  → window._on_ws_event(event="chat", payload)
+    → ChatHandler.on_chat_event(event, payload)
+      → session_key = payload.get("sessionKey")
+      → if session_key in _agent_to_project:
+          project_name = _agent_to_project[session_key]
+          switch_to_tab(f"project:{project_name}")
+          append_message_to_current_tab("Agent", final_text)
+        else:
+          switch_to_tab(session_key)
+          append_message_to_current_tab("Agent", final_text)
+```
+
+### 4.6 Project Membership — Toggle Agent
+
+```
+User clicks +/− button on agent row
+  → left_panel._on_agent_toggle_clicked(button)
+    → members = load_members(active_project_name)
+    → if session_key in members: members.remove(session_key)
+      else: members.append(session_key)
+    → save_members(active_project_name, members)
+    → _on_project_members_changed(active_project_name, members)
+      → window._on_project_members_changed(name, members)
+        → rebuild _agent_to_project for this project
+```
+
+---
+
+## 5. Callback Pattern
+
+**Primary pattern for all component communication.** A callback is a function reference passed to a component at construction time or via a setter. The component calls it when something happens. The component does NOT know what happens after.
+
+**Rules:**
+- Callbacks are always passed, never hardcoded.
+- A component never imports another component's module for the purpose of calling it.
+- Callbacks use the component's internal state only — no access to widgets outside the component.
+
+**Setter pattern** (for data available after construction):
+```python
+panel.set_agents(agent_names, on_agent_selected)
+panel.set_on_project_opened(cb)
+panel.refresh_agents_with_project(name)
+```
+
+**Constructor pattern** (for data available at construction):
+```python
+toolbar = Toolbar(on_connect_clicked=self._on_connect_clicked)
+file_tree = FileTree(on_file_selected=self._on_project_selected)
+```
+
+---
+
+## 6. Naming Conventions
+
+### 6.1 Variables and Functions
+
+| Pattern | Example | Usage |
+|---------|---------|-------|
+| `snake_case` | `user_input`, `on_prompt_selected` | Variables, functions, methods |
+| `_camelCase` | `_on_connect_clicked` | Private methods (single underscore prefix) |
+| `ALL_CAPS` | `GATEWAY_URL`, `PROJECTS_DIR` | Module-level constants |
+| `_ALL_CAPS` | `_IDENTITY_CACHE` | Module-level private constants |
+
+### 6.2 Classes
+
+| Pattern | Example | Usage |
+|---------|---------|-------|
+| `PascalCase` | `GatewayClient`, `LeftPanel` | Class names |
+| `_PascalCase` | `_build_agents_list` | Private class methods |
+
+### 6.3 GTK Widgets
+
+| Pattern | Example | Usage |
+|---------|---------|-------|
+| `_widget_name` | `_user_input`, `_send_btn` | Instance-level widget references (via properties) |
+| Local vars | `scroll`, `list_box`, `row` | Local variables in methods |
+
+### 6.4 Files
+
+| Pattern | Example | Usage |
+|---------|---------|-------|
+| `snake_case.py` | `left_panel.py`, `file_tree.py` | All Python files |
+
+---
+
+## 7. GTK4 Specific Patterns
+
+### 7.1 Import Pattern
+
+Every file that uses GTK must call `gi.require_version()` **before** importing Gtk:
+
+```python
+import gi
+gi.require_version('Gtk', '4.0')
+from gi.repository import Gtk
+```
+
+### 7.2 Widget Construction
+
+```python
+# Correct — pass kwargs to __init__
+label = Gtk.Label(label="Hello", xalign=0)
+
+# Correct — use setter methods
+label.set_margin_top(8)
+label.set_margin_start(8)
+```
+
+### 7.3 ListBox Row Activation
+
+GTK4 `Gtk.ListBox` fires `row_activated` on **single click** by default. To require **double-click**:
+
+```python
+list_box.set_activate_on_single_click(False)
+```
+
+### 7.4 TreeView / TreeStore
+
+`Gtk.TreeView` + `Gtk.TreeStore` is used for the Projects directory browser (`FileTree`). Pattern:
+
+```python
+# Column setup
+renderer = Gtk.CellRendererText()
+column = Gtk.TreeViewColumn(title, renderer, text=column_index)
+tree_view.append_column(column)
+
+# Store structure: (name, full_path, is_dir, is_expanded)
+# Use None as parent to append top-level rows
+self._store.append(None, ['item_name', '/path', True, True])
+# Use iter as parent for children
+self._store.append(parent_iter, ['subitem', '/path/sub', True, True])
+```
+
+### 7.5 Paned (Resizable Split)
+
+```python
+paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+paned.set_start_child(top_widget)
+paned.set_end_child(bottom_widget)
+paned.set_resize_start_child(True)
+paned.set_resize_end_child(True)
+paned.set_shrink_start_child(False)
+paned.set_shrink_end_child(False)
+paned.set_position(400)
+```
+
+### 7.6 Thread Safety
+
+**All GTK operations must happen on the main thread.** Gateway client runs in a background thread. To safely call GTK from the gateway thread:
+
+```python
+from gi.repository import GLib
+GLib.idle_add(callback_function, *args)
+```
+
+`GLib.idle_add()` schedules the callback to run on the next GTK idle cycle.
+
+---
+
+## 8. Rules for Adding New Code
+
+### 8.1 Before Writing Any Code
+
+1. **Identify ownership:** Which module owns this data or behavior?
+2. **Find existing patterns:** Has something similar been done? Copy the pattern.
+3. **Determine the right module:** Does it belong in `models/`, `utils/`, `ui/views/`, or a new module?
+4. **Trace the wiring:** Where will this be called from? Verify the call path exists.
+
+### 8.2 Adding a New UI Component
+
+1. Create a new file in `ui/views/`
+2. Component accepts callbacks at construction or via setters
+3. Component **never** imports other UI components directly
+4. Component exposes widget references via properties when needed
+5. Update `ui/window.py` to create and wire the component
+
+### 8.3 Adding a New Model
+
+1. Create a new file in `models/`
+2. Export it from `models/__init__.py`
+3. Model is a plain Python class — no GTK imports
+4. Document the class in this document
+
+### 8.4 Adding a Utility
+
+1. Add to an existing utility file in `utils/` if related, or create a new file
+2. Keep utilities **stateless** when possible
+3. If a utility needs to be stateful, it probably belongs in `models/`
+
+### 8.5 Testing
+
+Tests live in `tests/` — one file per module being tested.
+
+**Run tests:**
+```bash
+cd /home/q/projects/crabcakes
+pytest              # auto-discovers tests/ via pytest.ini
+```
+
+**Test coverage:**
+- `tests/test_agents.py` — AgentManager: edge cases, unknown inputs, clear/reregister
+- `tests/test_projects.py` — file I/O: missing files, empty dirs, JSON corruption, round-trip
+- `tests/test_improve.py` — API calls: missing key, HTTP errors, malformed responses
+
+**Writing new tests:** aim to break the code, not confirm it works. Test:
+- Unknown/missing inputs → what does the code do?
+- Empty collections → does it return [] or crash?
+- Corrupt data → does it fail gracefully?
+- Type errors → does a dict arrive where a string was expected?
+
+**Mock pattern:** use `unittest.mock.patch` to intercept network calls (`urllib.request.urlopen`) or config loading. Pass `GLib=None` to `improve_prompt` to call the callback synchronally in tests.
+
+### 8.6 Anti-Patterns
+
+| Anti-pattern | Correct approach |
+|-------------|-----------------|
+| Creating new globals instead of using models | Put state in `models/` |
+| Parsing strings to extract data | Use the API that owns the data |
+| Importing UI modules in gateway code | Keep layers separate |
+| Large monolithic files | Split at natural boundaries |
+| Writing code without wiring it | Every piece of code must be called somewhere |
+| Skipping verification | Compile + test every checkpoint |
+
+---
+
+## 9. Environment Variables
+
+| Variable | Default | Purpose |
+|---------|---------|---------|
+| `CRABCAKES_GATEWAY_URL` | `ws://localhost:18789` | OpenClaw gateway WebSocket URL |
+| `CRABCAKES_PROJECTS_DIR` | `~/projects` | Directory containing project folders for the Projects tab |
+| `WHISPER_CLI` | `~/whisper.cpp/build/bin/whisper-cli` | Path to whisper.cpp CLI binary |
+| `WHISPER_MODEL` | `~/whisper.cpp/models/ggml-large-v3-turbo.bin` | Path to GGML whisper model |
+
+**External binaries required for STT:**
+- `arecord` — ALSA audio capture (part of alsa-utils)
+- `whisper-cli` — whisper.cpp binary (built from source, see `~/whisper.cpp/`)
+- `whisper.cpp` model — `ggml-large-v3-turbo.bin` (~1.6GB) or other GGML-format model
+
+---
+
+## 10. Gateway Protocol Reference
+
+**Events arrive as `(event_name, payload_dict)` tuples via `on_event` callback in `GatewayClient`.**
+
+`window._on_ws_event` handles:
+
+| event | payload state | Meaning |
+|-------|---------------|---------|
+| `"chat"` | `"final"` | Complete agent response — `payload["sessionKey"]`, `payload["message"]["content"]` |
+
+**Other event types** arrive at `on_event` but are not yet handled (streaming, tool calls, approvals).
+
+**Snapshot structure (`get_snapshot()`):**
+```python
+{
+  "health": {
+    "agents": [
+      {
+        "agentId": "qat",
+        "name": "Qat",
+        "sessions": {
+          "recent": [
+            {"key": "agent:qat:main", "lastActive": 1234567890}
+          ]
+        }
+      }
+    ]
+  }
+}
+```
+
+**Project membership storage:**
+- Path: `~/.config/crabcakes/projects/<project-name>/members.json`
+- Format: `["agent:qat:main", "agent:qtr:telegram:direct:7478874934", ...]`
+- Each entry is a session key string
+
+---
+
+## 11. File Inventory
+
+```
+crabcakes/
+├── main.py                     # 42 lines — bootstrap only
+├── ARCHITECTURE.md             # This document
+│
+├── gateway/
+│   ├── __init__.py            # 6 lines — exports GatewayClient only
+│   └── client.py              # 402 lines — GatewayClient (rpc() removed 2026-04-10)
+│
+├── models/
+│   ├── __init__.py            # 12 lines — exports AgentManager, next_agent_color, reset_color_indices
+│   ├── agents.py              # 81 lines — AgentManager
+│   └── colors.py              # 32 lines — agent color palette only
+│
+├── ui/
+│   ├── __init__.py            # 1 line
+│   ├── toolbar.py             # 83 lines — Toolbar widget
+│   ├── window.py              # ~230 lines — MainWindow + handler wiring
+│   ├── handlers/
+│   │   ├── __init__.py
+│   │   ├── chat_handler.py  # ~100 lines — send, fan-out, routing (Phase 1)
+│   │   ├── gateway_handler.py # ~90 lines — connect, agents, lifecycle (Phase 2)
+│   │   └── media_handler.py   # ~80 lines — STT + improve (Phase 4)
+│   └── views/
+│       ├── __init__.py        # 1 line
+│       ├── chat_control_bar.py # 34 lines — ChatControlBar (stub: update() not wired)
+│       ├── feedbar.py          # 48 lines — FeedBar (stub: update() not wired)
+│       ├── file_tree.py        # 234 lines — FileTree (TreeView directory browser)
+│       ├── left_panel.py       # 254 lines — LeftPanel (PAP notebook)
+│       └── main_content.py    # 374 lines — MainContent (tabs + input + STT/Improve/feed bar + tab close + session switch menu)
+│
+└── utils/
+    ├── __init__.py            # 1 line
+    ├── prompts.py             # 35 lines — load_prompts()
+    └── projects.py            # 91 lines — load_projects, load/save_members
+    ├── improve.py            # 133 lines — improve_prompt (MiniMax API)
+    └── stt.py                 # 219 lines — STTEngine (whisper.cpp push-to-talk)
+```
+
+**Dead files removed (2026-04-10 audit):**
+
+| File | Reason |
+|------|--------|
+| `gateway/dispatch.py` | EventDispatcher never instantiated |
+| `gateway/protocol.py` | All constants/functions dead; window uses string literals |
+| `gateway/session.py` | SessionManager never instantiated |
+| `models/app_state.py` | AppState placeholder never used |
+| `models/chat_buffer.py` | ChatBuffer never instantiated |
+| `utils/helpers.py` | Empty placeholder |
+
+---
+
+## 12. Principles to Preserve
+
+1. **Gateway is foundational.** It must remain independent of UI. Never import `ui/` from `gateway/`.
+
+2. **Models are pure data.** They contain no GTK code. They are the single source of truth.
+
+3. **UI is composed, not inherited.** Components are assembled in `window.py`. Each component is responsible for its own layout.
+
+4. **Callbacks are the communication mechanism.** Components communicate through callbacks, not direct method calls on sibling components.
+
+5. **Checkpoints over shortcuts.** Every significant piece of work should be verified (compiled, wired, tested) before moving on.
+
+6. **Structure before features.** New features must fit the existing structure. If they don't, the structure must be updated — not circumvented.
+
+7. **Comments for humans.** Every non-obvious decision, every non-standard pattern, every important constant — documented.
+
+---
+
+*This document is the law. Violations require discussion with the team before the code is merged.*

@@ -1,0 +1,388 @@
+# ui/views/main_content.py
+# Main content area — right side of the split view
+# Contains: notebook (chat tabs), chat control bar, user input + buttons
+# Resizable paned divider between top (notebook+bar) and bottom (input+buttons)
+
+import gi
+# Require GTK 4.0 — must be called before importing Gtk
+gi.require_version('Gtk', '4.0')
+from gi.repository import Gtk, Gdk
+
+from ui.views.chat_control_bar import ChatControlBar
+from ui.views.session_menu import show_session_menu
+
+class MainContent(Gtk.Box):
+    """
+    Main content area widget.
+    Vertical split:
+      - Top: Gtk.Notebook with chat tabs (one per agent)
+      - Bottom: User input box + button bar (scrollable, resizable)
+    """
+
+    @property
+    def user_input(self):
+        """Expose the user_input TextView for external access."""
+        return self._user_input
+
+    @property
+    def send_button(self):
+        """Expose the send button for external signal wiring."""
+        return self._send_button
+
+    @property
+    def notebook(self):
+        """Expose the chat notebook for external tab management."""
+        return self._chat_notebook
+
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+
+        # --- TOP: Notebook + control bar (stacked, shrink together) ---
+        top_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+
+        self._chat_notebook = Gtk.Notebook()
+        self._chat_notebook.set_show_tabs(True)
+        self._chat_notebook.set_scrollable(True)
+        # Track which session_key each tab belongs to
+        self._tab_sessions = {}  # page_index -> session_key
+        # Track chat boxes per page_index so we can append to them
+        self._tab_chat_boxes = {}  # page_index -> chat_box widget
+
+        self._control_bar = ChatControlBar()
+
+        # Project feed bar — shared live feed strip, semi-transparent placeholder
+        self._feed_bar = Gtk.Box()
+        self._feed_bar.set_size_request(-1, 28)
+        self._feed_bar.add_css_class("project-feed-bar")
+        # Semi-transparent dark background
+        provider = Gtk.CssProvider()
+        provider.load_from_data(
+            b".project-feed-bar { background: rgba(30,30,40,0.75); border-radius: 4px; }"
+        )
+        self._feed_bar.get_style_context().add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        # Top box minimum height — prevents it collapsing when notebook is empty
+        top_box.set_size_request(-1, 120)
+
+        top_box.append(self._chat_notebook)
+        top_box.append(self._feed_bar)
+        top_box.append(self._control_bar)
+
+        # --- BOTTOM: User input area + button bar ---
+        bottom_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+
+        # Scrollable text view for typing prompts/commands
+        input_scroll = Gtk.ScrolledWindow()
+        input_scroll.set_vexpand(True)
+        input_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+
+        self._user_input = Gtk.TextView()
+        self._user_input.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        self._user_input.set_editable(True)
+        self._user_input.set_cursor_visible(True)
+        self._user_input.set_hexpand(True)
+        self._user_input.set_vexpand(True)
+        input_scroll.set_child(self._user_input)
+
+        # Button bar — right-justified buttons below the input
+        button_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        button_bar.set_halign(Gtk.Align.END)
+        button_bar.set_valign(Gtk.Align.CENTER)
+        button_bar.set_size_request(-1, 36)
+
+        self._prompt_button = Gtk.Button(label="Prompt")
+        self._prompt_button.add_css_class("flat")
+        self._improved_button = Gtk.Button(label="Improved")
+        self._improved_button.add_css_class("flat")
+        self._send_button = Gtk.Button(label="Send")
+        self._send_button.add_css_class("suggested-action")
+
+        button_bar.set_spacing(6)
+        button_bar.append(self._prompt_button)
+        button_bar.append(self._improved_button)
+        button_bar.append(self._send_button)
+
+        # STT state
+        self._on_stt_start_stop = None
+        self._on_stt_partial = None
+        self._stt_state = "idle"  # "idle" | "recording"
+
+        # Improve state
+        self._on_improve_click = None
+
+        # Agent manager reference — set via set_agent_manager()
+        self._agent_mgr = None
+
+        self._prompt_button.connect("clicked", self._on_prompt_clicked)
+        self._improved_button.connect("clicked", self._on_improve_clicked)
+
+        bottom_box.append(input_scroll)
+        bottom_box.append(button_bar)
+
+        # --- VERTICAL PANED SPLIT ---
+        paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+        paned.set_start_child(top_box)
+        paned.set_end_child(bottom_box)
+        paned.set_resize_start_child(True)
+        paned.set_resize_end_child(True)
+        paned.set_shrink_start_child(False)
+        paned.set_shrink_end_child(False)
+        paned.set_position(400)
+
+        self.append(paned)
+
+    # ── Project Feed Bar ───────────────────────────────────────────────────
+
+    def set_feed_bar_text(self, text):
+        """Update the project feed bar with a status message."""
+        for child in list(self._feed_bar):  # copy list to avoid modify-while-iterate
+            self._feed_bar.remove(child)
+        if text:
+            label = Gtk.Label(label=text)
+            label.set_xalign(0)
+            label.set_margin_start(8)
+            label.set_margin_end(8)
+            self._feed_bar.append(label)
+
+    # ── Tab management ──────────────────────────────────────────────────────
+
+    def create_chat_tab(self, session_key, agent_name):
+        """
+        Create a new chat tab for an agent.
+        Returns the page index of the new tab, or existing tab index if already exists.
+        """
+        # Check if tab already exists for this session_key
+        for page_idx, sk in self._tab_sessions.items():
+            if sk == session_key:
+                self._chat_notebook.set_current_page(page_idx)
+                return page_idx
+
+        # Scrollable container for the chat content
+        chat_scroll = Gtk.ScrolledWindow()
+        chat_scroll.set_vexpand(True)
+        chat_scroll.set_hexpand(True)
+        chat_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+
+        # Vertical box for chat messages
+        chat_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        chat_box.set_halign(Gtk.Align.FILL)
+        chat_box.set_valign(Gtk.Align.END)
+        chat_scroll.set_child(chat_box)
+
+        # Tab label = agent name + close button
+        tab_label_box = Gtk.Box(spacing=4)
+        tab_label_box.set_valign(Gtk.Align.CENTER)
+
+        tab_label = Gtk.Label(label=agent_name)
+        tab_label.set_valign(Gtk.Align.CENTER)
+        tab_label.set_hexpand(True)  # ensure label gets space over button
+
+        close_btn = Gtk.Button(label="×")
+        close_btn.set_valign(Gtk.Align.CENTER)
+        close_btn.set_has_frame(False)
+        close_btn.set_focus_on_click(False)
+        close_btn.set_size_request(20, -1)
+        close_btn.set_hexpand(False)
+
+        tab_label_box.append(tab_label)
+        tab_label_box.append(close_btn)
+
+        # Append the new tab FIRST to get page_idx, then wire handlers
+        page_idx = self._chat_notebook.append_page(chat_scroll, tab_label_box)
+
+        close_btn.connect("clicked", self._on_tab_close_clicked, page_idx)
+
+        # Middle-click on the label also closes the tab
+        click_ctrl = Gtk.GestureClick()
+        click_ctrl.set_button(Gdk.BUTTON_MIDDLE)
+        click_ctrl.connect("pressed", self._on_tab_middle_click, page_idx)
+        tab_label_box.add_controller(click_ctrl)
+
+        # Right-click on the label shows session switch menu
+        right_ctrl = Gtk.GestureClick()
+        right_ctrl.set_button(Gdk.BUTTON_SECONDARY)
+        right_ctrl.connect("pressed", self._on_tab_right_click, page_idx, session_key)
+        tab_label_box.add_controller(right_ctrl)
+        self._tab_sessions[page_idx] = session_key
+        self._tab_chat_boxes[page_idx] = chat_box
+        self._chat_notebook.set_current_page(page_idx)
+        return page_idx
+
+    def _close_tab(self, page_idx):
+        """Remove a tab by page index and clean up tracking dicts."""
+        self._chat_notebook.remove_page(page_idx)
+        self._tab_sessions.pop(page_idx, None)
+        self._tab_chat_boxes.pop(page_idx, None)
+        # Re-index: GTK removes pages, so remaining pages shift down
+        # Rebuild _tab_sessions and _tab_chat_boxes to match new page indices
+        self._reindex_tabs()
+
+    def _reindex_tabs(self):
+        """Rebuild _tab_sessions and _tab_chat_boxes to reflect current notebook page order."""
+        new_sessions = {}
+        new_chat_boxes = {}
+        for idx in range(self._chat_notebook.get_n_pages()):
+            sk = self._tab_sessions.pop(idx, None)
+            cb = self._tab_chat_boxes.pop(idx, None)
+            if sk is not None:
+                new_sessions[idx] = sk
+            if cb is not None:
+                new_chat_boxes[idx] = cb
+        self._tab_sessions = new_sessions
+        self._tab_chat_boxes = new_chat_boxes
+
+    def _on_tab_close_clicked(self, _btn, page_idx):
+        """× button clicked on a tab — close it."""
+        self._close_tab(page_idx)
+
+    def _on_tab_middle_click(self, ctrl, n_press, x, y, page_idx):
+        """Middle-click on tab label — close it."""
+        if n_press == 1:
+            self._close_tab(page_idx)
+
+    def _on_tab_right_click(self, ctrl, n_press, x, y, page_idx, session_key):
+        """Right-click on tab label — show session switch menu."""
+        if n_press != 1:
+            return
+        if self._agent_mgr is None:
+            return
+        agent_name = self._agent_mgr.get_name(session_key)
+        if not agent_name:
+            return
+        sessions = self._agent_mgr.get_sessions(agent_name)
+        tab_widget = self._get_tab_widget(page_idx)
+        show_session_menu(
+            tab_widget,
+            agent_name,
+            sessions,
+            lambda sk: self._switch_tab_session(page_idx, sk),
+        )
+
+    def _get_tab_widget(self, page_idx):
+        """Return the tab label widget for a given page index.
+
+        Used by show_session_menu() to anchor the popover at the tab label.
+        The popover is positioned relative to this widget."""
+        return self._chat_notebook.get_tab_label(
+            self._chat_notebook.get_nth_page(page_idx)
+        )
+
+    def _switch_tab_session(self, page_idx, new_session_key):
+        """Switch an existing tab to a new session key.
+
+        Note: this only updates _tab_sessions — it does NOT create a new tab,
+        switch to it, or change the visible label. The tab keeps showing its
+        original agent_name. The session_key used for routing incoming messages
+        is what changes. Designed for switching between sessions of the same agent."""
+        self._tab_sessions[page_idx] = new_session_key
+
+    def get_current_session_key(self):
+        """Return the session_key for the currently active tab, or None."""
+        current = self._chat_notebook.get_current_page()
+        return self._tab_sessions.get(current)
+
+    def get_chat_box(self, page_index=None):
+        """Return the chat box widget for a given page index (default: current page)."""
+        if page_index is None:
+            page_index = self._chat_notebook.get_current_page()
+        return self._tab_chat_boxes.get(page_index)
+
+    def append_message_to_tab(self, session_key, role, text):
+        """
+        Append a message bubble to the tab matching session_key.
+        If no matching tab exists, does nothing.
+        """
+        for page_idx, sk in self._tab_sessions.items():
+            if sk == session_key:
+                chat_box = self._tab_chat_boxes.get(page_idx)
+                if chat_box is not None:
+                    label = Gtk.Label()
+                    label.set_markup(f"<b>{role}:</b> {text}")
+                    label.set_xalign(0)
+                    label.set_margin_top(4)
+                    label.set_margin_bottom(4)
+                    label.set_margin_start(8)
+                    label.set_margin_end(8)
+                    chat_box.append(label)
+                return
+
+    def append_message_to_current_tab(self, role, text):
+        """Append a message bubble to the current tab's chat box."""
+        chat_box = self.get_chat_box()
+        if chat_box is None:
+            return
+        label = Gtk.Label()
+        label.set_markup(f"<b>{role}:</b> {text}")
+        label.set_xalign(0)
+        label.set_margin_top(4)
+        label.set_margin_bottom(4)
+        label.set_margin_start(8)
+        label.set_margin_end(8)
+        chat_box.append(label)
+
+    # ── STT (Speech-to-Text) ───────────────────────────────────────────────
+    # State machine: idle → click → recording → click → idle.
+    # update_stt_state() drives the button label/style.
+    # append_stt_text() appends partial transcripts as they arrive.
+
+    def set_on_stt_click(self, cb):
+        """Set callback for when the Prompt (STT) button is clicked."""
+        self._on_stt_start_stop = cb
+
+    def set_on_stt_partial(self, cb):
+        """Set callback for partial STT results — append to input buffer."""
+        self._on_stt_partial = cb
+
+    def update_stt_state(self, state):
+        """
+        Update the Prompt button appearance to reflect STT state.
+        state: "idle" | "recording"
+        """
+        self._stt_state = state
+        if state == "recording":
+            self._prompt_button.set_label("■ Stop")
+            self._prompt_button.add_css_class("destructive-action")
+        else:
+            self._prompt_button.set_label("Prompt")
+            self._prompt_button.remove_css_class("destructive-action")
+
+    def append_stt_text(self, text):
+        """
+        Append STT partial transcript text to the user input buffer.
+        Preserves any existing text and appends with a space separator.
+        """
+        buf = self.user_input.get_buffer()
+        existing = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
+        if existing and not existing.endswith(" "):
+            text = " " + text
+        buf.set_text(existing + text)
+        # Move cursor to end
+        end_iter = buf.get_end_iter()
+        buf.place_cursor(end_iter)
+        self.user_input.grab_focus()
+
+    def set_agent_manager(self, agent_mgr):
+        """Set the AgentManager for session lookup (used by session switch menu)."""
+        self._agent_mgr = agent_mgr
+
+    def _on_prompt_clicked(self, *args):
+        """Forward button click to the registered STT callback."""
+        if self._on_stt_start_stop:
+            self._on_stt_start_stop()
+
+    def set_on_improve_click(self, cb):
+        """Set callback for when the Improve button is clicked."""
+        self._on_improve_click = cb
+
+    def _on_improve_clicked(self, *args):
+        """Forward button click to the registered improve callback."""
+        if self._on_improve_click:
+            self._on_improve_click()
+
+    def replace_input_text(self, text):
+        """Replace the entire input buffer with improved text."""
+        buf = self.user_input.get_buffer()
+        buf.set_text(text)
+        end_iter = buf.get_end_iter()
+        buf.place_cursor(end_iter)
+        self.user_input.grab_focus()
