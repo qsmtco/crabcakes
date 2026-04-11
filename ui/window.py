@@ -140,14 +140,10 @@ class MainWindow(Gtk.ApplicationWindow):
             agent_to_project=self._agent_to_project,  # shared with ChatHandler — the ONE true dict
             GLib_module=GLib,
         )
-        # Wire project opened / members-changed callbacks (for cross-handler sync)
-        self._project_handler.set_on_project_opened(self._on_project_opened)
-        self._project_handler.set_on_members_changed(self._on_project_members_changed)
-
-        # Wire left_panel to forward project events to the handler
-        left_panel.set_on_project_opened(self._project_handler.open_project)
-        left_panel._file_tree.set_on_project_opened(self._project_handler.open_project)
-        left_panel.set_on_project_members_changed(self._project_handler.toggle_agent)
+        # Wire left_panel project events → ProjectHandler
+        self._left_panel.set_on_project_opened(self._project_handler.open_project)
+        self._left_panel._file_tree.set_on_project_opened(self._project_handler.open_project)
+        self._left_panel.set_on_project_members_changed(self._project_handler.toggle_agent)
 
         # Wire STT + improve buttons
         self._main_content.set_on_stt_click(self._media_handler.on_stt_click)
@@ -196,16 +192,6 @@ class MainWindow(Gtk.ApplicationWindow):
         """Load prompt content into the user input TextView."""
         buffer = self._main_content.user_input.get_buffer()
         buffer.set_text(content)
-
-    # ── Project callbacks (delegated to ProjectHandler) ──────────────────
-
-    def _on_project_opened(self, name, path):
-        """Cross-handler notification — ProjectHandler calls this after open_project completes."""
-        pass  # Currently no additional window-level side-effects needed
-
-    def _on_project_members_changed(self, project_name, members):
-        """Cross-handler notification — ProjectHandler calls this after toggle_agent completes."""
-        pass  # Currently no additional window-level side-effects needed
 
     # ── Gateway toggle ──────────────────────────────────────────────────────
 

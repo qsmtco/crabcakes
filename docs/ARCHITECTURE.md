@@ -449,6 +449,42 @@ User clicks Disconnect
     → toolbar.update_connection_state("disconnected")
 ```
 
+### 3.17 `ui/handlers/project_handler.py` — Project Handler (Phase 3)
+
+**Responsibility:** Project tab lifecycle and agent-to-project membership routing. Extracted from `window.py` in Phase 3.
+
+**Owns:**
+- `_active_project_name` — currently open project name (or None)
+- `_agent_to_project` — shared dict mapping `session_key → project_name`; same instance that `ChatHandler` holds (injected by window at construction)
+
+**Does NOT own:** MainContent, LeftPanel, ChatHandler — received as dependencies.
+
+**Thread safety:** All GTK operations dispatched via `GLib.idle_add()`. Entry points (`open_project`, `toggle_agent`) are called from the GTK main thread, so no background thread concerns.
+
+**Public API:**
+```python
+def open_project(name: str, path: str):
+    """Create a project tab and populate agent-to-project routing lookup."""
+
+def toggle_agent(session_key: str):
+    """Add or remove an agent from the active project membership."""
+
+def is_project_session(session_key: str) -> bool:
+    """True if session_key belongs to any known project. Used by ChatHandler."""
+
+def get_project_for_agent(session_key: str) -> str | None:
+    """Return project name for agent's session_key. Used by ChatHandler for response routing."""
+
+def get_project_members(project_name: str) -> list[str]:
+    """Return member session keys for a project. Used by ChatHandler for fan-out."""
+
+def get_active_project_name() -> str | None:
+    """Return currently active project name, or None."""
+
+def set_on_project_opened(cb: Callable): pass
+def set_on_members_changed(cb: Callable): pass
+```
+
 ### 4.2 Agent Selection Flow
 
 ```
@@ -907,7 +943,7 @@ crabcakes/
 │   ├── __init__.py            # 1 line
 │   ├── toolbar.py             # 83 lines — Toolbar widget
 │   ├── styles.py              # 169 lines — APP_CSS constant + apply_styles() (single CSS source of truth)
-│   ├── window.py              # 248 lines — MainWindow + handler wiring
+│   ├── window.py              # 224 lines — MainWindow + handler wiring
 │   ├── handlers/
 │   │   ├── __init__.py        # 0 lines — package marker
 │   │   ├── prompts_handler.py  # 187 lines — favorites, search, last-used, on_prompt_activated
