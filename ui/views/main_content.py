@@ -56,21 +56,7 @@ class MainContent(Gtk.Box):
         self._feed_bar = Gtk.Box()
         self._feed_bar.set_size_request(-1, 28)
         self._feed_bar.add_css_class("project-feed-bar")
-        # Agent card + global styles
-        provider = Gtk.CssProvider()
-        provider.load_from_data(
-            b"""
-            .project-feed-bar { background: rgba(30,30,40,0.75); border-radius: 4px; }
-            .agent-row { background: rgba(255,255,255,0.04); border-radius: 6px; margin: 2px 4px; }
-            .agent-row:hover { background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.4); }
-            .agent-name-label { color: #e8e8ec; font-size: 14px; }
-            .agent-chat-btn { background: rgba(99,102,241,0.2); color: #a5b4fc; border-radius: 4px; padding: 2px 8px; font-size: 12px; }
-            .agent-chat-btn:hover { background: rgba(99,102,241,0.4); color: #c7d2fe; }
-            .agent-add-btn { background: rgba(16,185,129,0.2); color: #6ee7b7; border-radius: 4px; padding: 2px 6px; font-size: 12px; }
-            .agent-add-btn:hover { background: rgba(16,185,129,0.4); color: #a7f3d0; }
-            """
-        )
-        self._feed_bar.get_style_context().add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        # CSS for feed bar, buttons, and input is in ui/styles.py (applied globally at startup)
 
         # Top box minimum height — prevents it collapsing when notebook is empty
         top_box.set_size_request(-1, 120)
@@ -93,6 +79,11 @@ class MainContent(Gtk.Box):
         self._user_input.set_cursor_visible(True)
         self._user_input.set_hexpand(True)
         self._user_input.set_vexpand(True)
+        self._user_input.set_left_margin(8)
+        self._user_input.set_right_margin(8)
+        self._user_input.set_top_margin(6)
+        self._user_input.set_bottom_margin(6)
+        self._user_input.add_css_class("input-bubble")
         input_scroll.set_child(self._user_input)
 
         # Button bar — right-justified buttons below the input
@@ -103,14 +94,14 @@ class MainContent(Gtk.Box):
 
         self._prompt_button = Gtk.Button(label="Prompt")
         self._prompt_button.add_css_class("flat")
-        self._improved_button = Gtk.Button(label="Improved")
-        self._improved_button.add_css_class("flat")
-        self._send_button = Gtk.Button(label="Send")
+        self._improve_button = Gtk.Button(label="Improve ✦")
+        self._improve_button.add_css_class("btn-improve")
+        self._send_button = Gtk.Button(label="Send  ↵")
         self._send_button.add_css_class("suggested-action")
 
         button_bar.set_spacing(6)
         button_bar.append(self._prompt_button)
-        button_bar.append(self._improved_button)
+        button_bar.append(self._improve_button)
         button_bar.append(self._send_button)
 
         # STT state
@@ -125,7 +116,7 @@ class MainContent(Gtk.Box):
         self._agent_mgr = None
 
         self._prompt_button.connect("clicked", self._on_prompt_clicked)
-        self._improved_button.connect("clicked", self._on_improve_clicked)
+        self._improve_button.connect("clicked", self._on_improve_clicked)
 
         bottom_box.append(input_scroll)
         bottom_box.append(button_bar)
@@ -204,8 +195,8 @@ class MainContent(Gtk.Box):
         # Store session_key on the tab label box so close handlers can look up
         # the CURRENT page index dynamically (avoids stale captured page_idx bug
         # when tabs are closed out of order and reindexing shifts pages).
-        tab_label_box.set_data("session_key", session_key)
-        chat_scroll.set_data("session_key", session_key)
+        tab_label_box._session_key = session_key
+        chat_scroll._session_key = session_key
 
         close_btn.connect("clicked", self._on_tab_close_clicked)
 
@@ -234,7 +225,7 @@ class MainContent(Gtk.Box):
         n_pages = self._chat_notebook.get_n_pages()
         for idx in range(n_pages):
             widget = self._chat_notebook.get_nth_page(idx)
-            if widget and widget.get_data("session_key") == session_key:
+            if widget and getattr(widget, "_session_key", None) == session_key:
                 return idx
         return None
 
@@ -306,7 +297,7 @@ class MainContent(Gtk.Box):
         avoiding stale page_idx from the signal connection captured at tab creation.
         """
         tab_label_box = _btn.get_parent()
-        session_key = tab_label_box.get_data("session_key") if tab_label_box else None
+        session_key = getattr(tab_label_box, "_session_key", None) if tab_label_box else None
         if session_key is None:
             return
         # Find current page index for this session_key
@@ -319,7 +310,7 @@ class MainContent(Gtk.Box):
         if n_press != 1:
             return
         tab_label_box = ctrl.get_widget()
-        session_key = tab_label_box.get_data("session_key") if tab_label_box else None
+        session_key = getattr(tab_label_box, "_session_key", None) if tab_label_box else None
         if session_key is None:
             return
         page_idx = self._find_page_by_session(session_key)

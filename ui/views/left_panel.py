@@ -72,6 +72,8 @@ class LeftPanel(Gtk.Box):
 
         self.append(PAP_notebook)
 
+        # CSS for agent rows is in ui/styles.py (applied globally at startup)
+
     # ── Agents tab ──────────────────────────────────────────────────────────
 
     def set_agent_list_handler(self, handler):
@@ -222,53 +224,34 @@ class LeftPanel(Gtk.Box):
         name_lbl.set_margin_start(8)
         name_lbl.add_css_class("agent-name-label")
 
-        # Buttons box: +/− toggle (if project active) + Chat
+        # Buttons box: +/− toggle (if project active)
         buttons_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         buttons_box.set_halign(Gtk.Align.END)
 
-        # Toggle button: + (add) or − (remove) — only in project context
+        # Toggle button: + (add) or − (remove) — only visible in project context
         toggle_btn = Gtk.Button()
         toggle_btn.set_size_request(28, 28)
-        toggle_btn.add_css_class("flat")
         toggle_btn._agent_session_key = session_key
         toggle_btn._agent_name = name
         toggle_btn.connect("clicked", self._on_agent_toggle_clicked)
         if self._active_project_name:
+            toggle_btn.add_css_class("agent-add-btn" if not in_project else "agent-remove-btn")
             toggle_btn.set_label("−" if in_project else "+")
             toggle_btn.set_visible(True)
         else:
             toggle_btn.set_visible(False)
 
-        # Chat button
-        chat_btn = Gtk.Button(label="Chat")
-        chat_btn.set_has_frame(False)
-        chat_btn.add_css_class("agent-chat-btn")
-        chat_btn._agent_session_key = session_key
-        chat_btn._agent_name = name
-        chat_btn.connect("clicked", self._on_agent_chat_clicked)
-
         avatar_picture.show()
         name_lbl.show()
         toggle_btn.show()
-        chat_btn.show()
 
         buttons_box.append(toggle_btn)
-        buttons_box.append(chat_btn)
         row_box.append(avatar_picture)
         row_box.append(name_lbl)
         row_box.append(buttons_box)
         row.set_child(row_box)
         row.show()
         return row
-
-    def _on_agent_chat_clicked(self, button):
-        """Handle Chat button click — delegate to handler, then open chat tab."""
-        session_key = button._agent_session_key
-        name = button._agent_name
-        if self._agent_list_handler:
-            self._agent_list_handler.on_chat_clicked(session_key, name)
-        if self._on_agent_selected:
-            self._on_agent_selected(session_key, name)
 
     def _on_agent_row_activated(self, list_box, row):
         """Called when an agent row is clicked — open/create chat tab."""

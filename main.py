@@ -10,6 +10,7 @@ from gi.repository import Gtk
 
 # Import the main window (assembles all UI components)
 from ui.window import MainWindow
+from ui.styles import apply_styles
 
 class CrabcakesApp(Gtk.Application):
     """
@@ -32,6 +33,7 @@ class CrabcakesApp(Gtk.Application):
         Called when the application is activated.
         Creates the main window and displays it.
         """
+        apply_styles()  # Register global CSS before any widgets are created
         win = MainWindow(application=app)  # Pass app as the application instance
         win.present()  # Show the window (GTK4 uses present() instead of show_all())
 

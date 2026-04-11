@@ -2,8 +2,8 @@
 
 **Purpose:** This document is the authoritative reference for the Crabcakes codebase. It defines the structure, patterns, and principles that all contributors — human or agent — must follow. Before writing any code, read this document. When in doubt, consult this document.
 
-**Last updated:** 2026-04-10 (Phase 1 + 2 + 4 complete: 95 tests) — Phase 3 pending
 **Project root:** `/home/q/projects/crabcakes`
+**Project status:** See `docs/PROJECT_STATUS.md` for current progress, completed phases, and planned work.
 
 ---
 
@@ -20,10 +20,11 @@ When you change code, you **must** update this document in the same commit. If y
 | Add/remove/rename a module | Section 2 (directory structure) and Section 11 (file inventory) |
 | Change a class's public API or responsibilities | Section 3 (module responsibilities) |
 | Add/remove a public function or method | Section 3 (public API blocks) |
-| Change the gateway protocol handling | Section 10 (protocol reference) |
+| Change environment variables | Section 10 |
+| Change gateway protocol handling | Section 11 (protocol reference) |
 | Change how events flow through the app | Section 4 (data flow) |
 | Change a pattern or convention | Sections 5–7 |
-| Change environment variables | Section 9 |
+| Change environment variables | Section 10 |
 
 **Rule:** If the diff of your code change doesn't have a corresponding update to this file, the change is **incomplete**.
 
@@ -62,12 +63,13 @@ crabcakes/
 │
 ├── models/                    # Data models — no UI dependencies
 │   ├── __init__.py           # Exports: AgentManager, next_agent_color, reset_color_indices
-│   ├── agents.py              # 49 lines — AgentManager (get_color added 2026-04-11)
+│   ├── agents.py              # AgentManager — session_key → name, colors, sessions
 │   └── colors.py              # Color palettes + round-robin assignment
 │
 ├── ui/                        # All UI components
 │   ├── __init__.py
 │   ├── toolbar.py             # Toolbar widget — connect button + status label
+│   ├── styles.py              # All CSS — single source of truth (APP_CSS + apply_styles)
 │   ├── window.py              # MainWindow — assembles all components, wires callbacks
 │   ├── handlers/              # Handler modules (extracted from window.py)
 │   │   ├── __init__.py
@@ -88,14 +90,6 @@ crabcakes/
     ├── prompts.py             # load_prompts() — reads .md from prompts/
     └── projects.py             # load_projects(), scan_directory(), load_members(), save_members()
 ```
-
-**Dead files removed (2026-04-10 audit):**
-- `gateway/dispatch.py` — EventDispatcher never instantiated
-- `gateway/protocol.py` — all constants/functions dead; window uses string literals
-- `gateway/session.py` — SessionManager never instantiated
-- `models/app_state.py` — AppState placeholder never used
-- `models/chat_buffer.py` — ChatBuffer never instantiated; app uses Gtk.Box directly
-- `utils/helpers.py` — empty placeholder
 
 **Top-level packages and their rules:**
 
@@ -160,7 +154,7 @@ client.get_snapshot()       # returns hello-ok snapshot dict
 client.send_message(session_key, text, on_sent=cb)
 ```
 
-**Note:** `rpc()` method was removed (2026-04-10 audit) — it was never called.
+
 
 ### 3.3 `models/` — Data Layer
 
@@ -194,7 +188,25 @@ toolbar.update_connection_state("disconnected" | "connecting" | "connected")
 
 **Internal state:** Owns the Connect button and status label widgets. Updates them based on calls to `update_connection_state()`.
 
-### 3.5 `ui/window.py` — Main Window
+### 3.5 `ui/styles.py` — Global CSS
+
+**Responsibility:** Single source of truth for all application CSS.
+
+**Owns:** `APP_CSS` constant (all CSS rules) and `apply_styles()` function (registers CSS provider globally).
+
+**Public API:**
+```python
+from ui.styles import APP_CSS, apply_styles
+
+apply_styles()  # Call once at startup, before any windows are created
+```
+
+**Rules:**
+- No other file may call `Gtk.CssProvider().load_from_data()` or define CSS inline.
+- Views use `widget.add_css_class("name")` only — they never define what classes look like.
+- See Section 9 for full CSS conventions.
+
+### 3.6 `ui/window.py` — Main Window
 
 **Responsibility:** Assemble all UI components and wire all callbacks. The **single place** where all modules are connected.
 
@@ -218,13 +230,13 @@ self._agent_to_project = {}        # {agent_session_key: project_name} — rever
 
 **Phase 1 (ChatHandler) extracted:** `_on_send`, `_on_send_clicked`, `_switch_to_session_tab`, and chat.final routing are now in `ui/handlers/chat_handler.py`.
 
-### 3.6 `ui/views/left_panel.py` — Left Sidebar
+### 3.7 `ui/views/left_panel.py` — Left Sidebar
 
 **Responsibility:** Three-tab notebook: Prompts, Agents, Projects.
 
 **Prompts tab:** Lists `.md` files from `prompts/` directory. Double-click calls `on_prompt_selected(content)`.
 
-**Agents tab:** Initially empty placeholder. After `set_agents()` is called, builds avatar cards (colored circle + initials + name + Chat/+ button). Uses `AgentListHandler` for initials/color computation. Single-click calls `on_agent_selected(session_key, name)`. When a project is open, each row shows a `+`/`−` toggle button — `+` adds the agent to the project, `−` removes them.
+**Agents tab:** Initially empty placeholder. After `set_agents()` is called, builds avatar cards (colored circle + initials + name + +/− toggle button). Double-click calls `on_agent_selected(session_key, name)`. CSS for agent rows is scoped to `left_panel`. When a project is open, the toggle button is visible — `+` adds the agent to the project, `−` removes them. Toggle button uses `.agent-add-btn` (green) or `.agent-remove-btn` (red) CSS classes.
 
 **Projects tab:** `FileTree` widget — `Gtk.TreeView` with `Gtk.TreeStore`, lazy-loading subdirectories, back button.
 
@@ -238,23 +250,23 @@ panel.refresh_agents_with_project(name)      # rebuilds agents list with +/− b
 panel.set_on_project_members_changed(cb)      # fires when membership changes
 ```
 
-### 3.7 `ui/views/file_tree.py` — FileTree Widget
+### 3.8 `ui/views/file_tree.py` — FileTree Widget
 
 **Responsibility:** Expandable directory browser with lazy-loading. Used by the Projects tab.
 
 **Features:**
 - `Gtk.TreeView` + `Gtk.TreeStore`
-- Single-click expand/collapse on directory rows
+- Clicking expander icons expands/collapses directories; row-activated fires on double-click
 - Double-click on a project directory calls `on_project_opened(name, path)`
 - Subdirectory children are placeholder rows until first expand, then populated via `scan_directory()`
 
 **Public API:**
 ```python
-tree = FileTree(on_file_selected=cb)  # single-click file selection
-tree.set_on_project_opened(cb)        # double-click on directory fires callback
+tree = FileTree(on_file_selected=cb)  # double-click file selection
+tree.set_on_project_opened(cb)        # double-click on project row fires callback
 ```
 
-### 3.8 `ui/views/main_content.py` — Main Content Area
+### 3.9 `ui/views/main_content.py` — Main Content Area
 
 **Responsibility:** Right panel — chat notebook + user input.
 
@@ -279,7 +291,7 @@ content.update_stt_state(state) # "idle" | "recording" — button label/style
 
 **Tab close:** Each tab has an × button (top-right of tab label) and responds to middle-click. Both call `_close_tab(page_idx)` which removes the page and re-indexes tracking dicts.
 
-### 3.9 `utils/` — Utilities
+### 3.10 `utils/` — Utilities
 
 **Responsibility:** File I/O helpers for prompts, projects, and project membership.
 
@@ -294,7 +306,7 @@ content.update_stt_state(state) # "idle" | "recording" — button label/style
 | `STTEngine` class | `stt.py` | Push-to-talk STT via faster-whisper — arecord → PCM buffer → faster-whisper (base model) → stop_async callback |
 | `show_session_menu(parent, agent_name, sessions, on_select)` | `session_menu.py` | GTK popover menu listing sessions; clicking fires `on_select(session_key)` |
 
-### 3.10 `ui/handlers/agent_list_handler.py` — Agent List Handler (Agent Cards)
+### 3.11 `ui/handlers/agent_list_handler.py` — Agent List Handler (Agent Cards)
 
 **Responsibility:** Agent card rendering data — initials, colors, sorting. Does NOT build widgets (view does).
 
@@ -311,11 +323,11 @@ def on_chat_clicked(session_key: str, name: str): pass
 def on_toggle_clicked(session_key: str, name: str, in_project: bool): pass
 ```
 
-### 3.11 `ui/handlers/chat_handler.py` — Chat Handler (Phase 1)
+### 3.12 `ui/handlers/chat_handler.py` — Chat Handler (Phase 1)
 
 **Responsibility:** All chat logic — sending, project fan-out, incoming message routing, tab switching. Extracted from `window.py` in Phase 1.
 
-### 3.12 `ui/handlers/gateway_handler.py` — Gateway Handler (Phase 2)
+### 3.13 `ui/handlers/gateway_handler.py` — Gateway Handler (Phase 2)
 
 **Responsibility:** All gateway lifecycle — connecting, disconnecting, agent discovery, error handling, and thread-safe state dispatch to GTK. Extracted from `window.py` in Phase 2.
 
@@ -348,7 +360,7 @@ def dispatch(fn: Callable, *args, **kwargs) -> None:
     """Thread-safe dispatch to main thread via GLib.idle_add(fn, *args, **kwargs)."""
 ```
 
-### 3.13 `ui/handlers/media_handler.py` — Media Handler (Phase 4)
+### 3.14 `ui/handlers/media_handler.py` — Media Handler (Phase 4)
 
 **Responsibility:** All media I/O — STT (whisper.cpp push-to-talk) and prompt improvement. Extracted from `window.py` in Phase 4.
 
@@ -641,7 +653,6 @@ pytest              # auto-discovers tests/ via pytest.ini
 
 **Test coverage:**
 - `tests/test_architecture.py` — AST guard: handler isolation, models/gateway layer separation, public API existence
-- `tests/test_architecture.py` — AST guard: handler isolation, models/gateway layer separation, public API existence
 - `tests/test_agent_list_handler.py` — AgentListHandler: initials, colors, sorting, callbacks
 - `tests/test_agents.py` — AgentManager: edge cases, unknown inputs, clear/reregister
 - `tests/test_projects.py` — file I/O: missing files, empty dirs, JSON corruption, round-trip
@@ -709,7 +720,78 @@ The `ui/handlers/` directory contains self-contained logic modules extracted fro
 
 ---
 
-## 9. Environment Variables
+## 9. CSS and Styling
+
+### 9.1 Single Source of Truth
+
+All CSS for the application lives in **`ui/styles.py`**. No other file may define CSS.
+
+- `ui/styles.py` contains a single `APP_CSS` string constant with all style rules
+- `apply_styles()` registers the CSS provider once at app startup
+- This function is called from `main.py` before the window is created
+
+### 9.2 Rule: Views Add Classes, Never Define Them
+
+Views use `widget.add_css_class("class-name")` to apply styles. They **never** call `Gtk.CssProvider().load_from_data()` or define CSS inline.
+
+```python
+# ✅ Correct — view applies a class name
+self._send_button.add_css_class("suggested-action")
+
+# ❌ Wrong — view defines its own CSS
+provider = Gtk.CssProvider()
+provider.load_from_data(b".my-button { background: red; }")
+```
+
+The reasoning: a view decides *what* something is ("this is a send button"), not *how it looks* ("indigo with 6px border-radius"). Appearance belongs in one place.
+
+### 9.3 Naming Conventions for CSS Classes
+
+| Pattern | Example | Usage |
+|---------|---------|-------|
+| `component-element` | `agent-row`, `code-block-header` | Widget-specific styles |
+| `component-element-state` | `agent-row:hover`, `agent-add-btn:hover` | Pseudo-states (in CSS, not the class name) |
+| `component-element-variant` | `agent-avatar-3`, `lang-python` | Numbered or named variants |
+| `semantic-role` | `suggested-action`, `destructive-action` | Reusable semantic roles (GTK convention) |
+| `flat` | `flat` | Ghost/transparent button style |
+
+### 9.4 Adding New CSS
+
+1. Add the CSS rule to the `APP_CSS` constant in `ui/styles.py`
+2. Add the corresponding `add_css_class()` call in the view that uses it
+3. Document the class name in a comment above the CSS rule
+4. If it's a new color, check `models/colors.py` — don't hardcode new palette entries in CSS
+
+### 9.5 CSS Architecture Anti-Patterns
+
+| Anti-pattern | Correct approach |
+|-------------|-----------------|
+| Inline `load_from_data()` in a view file | Add CSS to `ui/styles.py` instead |
+| Multiple CSS providers across the app | One provider, applied once globally |
+| Hardcoded hex colors in Python code | Use CSS classes or `models/colors.py` |
+| View files containing CSS strings | All CSS in `ui/styles.py` |
+| `set_background_color()` or `override_background_color()` | Use CSS classes instead |
+
+### 9.6 Color Palette
+
+The app uses a dark theme. Core colors defined in CSS:
+
+| Role | Color | Variable |
+|------|-------|----------|
+| Background | `#1a1a20` | `CLR_BG` |
+| Panel | `#2a2a35` | `CLR_PANEL` |
+| Text | `#e8e8ec` | `CLR_TEXT` |
+| Muted text | `#6b6b7a` | `CLR_MUTED` |
+| Accent | `#6366f1` | `CLR_ACCENT` |
+| Success | `#10b981` / `#6ee7b7` | green tones |
+| Danger | `#f43f5e` / `#fda4af` | red tones |
+| Warning | `#f59e0b` | amber |
+
+Agent and project avatars use a 10-color round-robin palette defined in `models/colors.py`.
+
+---
+
+## 10. Environment Variables
 
 | Variable | Default | Purpose |
 |---------|---------|---------|
@@ -724,7 +806,7 @@ The `ui/handlers/` directory contains self-contained logic modules extracted fro
 
 ---
 
-## 10. Gateway Protocol Reference
+## 11. Gateway Protocol Reference
 
 **Events arrive as `(event_name, payload_dict)` tuples via `on_event` callback in `GatewayClient`.**
 
@@ -762,7 +844,7 @@ The `ui/handlers/` directory contains self-contained logic modules extracted fro
 
 ---
 
-## 11. File Inventory
+## 12. File Inventory
 
 ```
 crabcakes/
@@ -775,12 +857,13 @@ crabcakes/
 │
 ├── models/
 │   ├── __init__.py            # 12 lines — exports AgentManager, next_agent_color, reset_color_indices
-│   ├── agents.py              # 49 lines — AgentManager (get_color added 2026-04-11)
+│   ├── agents.py              # 49 lines — AgentManager
 │   └── colors.py              # 32 lines — agent color palette only
 │
 ├── ui/
 │   ├── __init__.py            # 1 line
 │   ├── toolbar.py             # 83 lines — Toolbar widget
+│   ├── styles.py              # 141 lines — APP_CSS constant + apply_styles() (single CSS source of truth)
 │   ├── window.py              # 240 lines — MainWindow + handler wiring + AgentListHandler
 │   ├── handlers/
 │   │   ├── __init__.py
@@ -792,9 +875,9 @@ crabcakes/
 │       ├── __init__.py        # 1 line
 │       ├── chat_control_bar.py # 34 lines — ChatControlBar (stub: update() not wired)
 │       ├── feedbar.py          # 48 lines — FeedBar (stub: update() not wired)
-│       ├── file_tree.py        # 252 lines — FileTree (TreeView directory browser, idle-based picker mode)
-│       ├── left_panel.py       # 324 lines — LeftPanel (agent cards, set_agent_list_handler)
-│       └── main_content.py    # 428 lines — MainContent (tabs + input + STT/Improve/feed bar + tab close + session switch menu + bulk close)
+│       ├── file_tree.py        # 219 lines — FileTree (TreeView directory browser, double-click project load)
+│       ├── left_panel.py       # 311 lines — LeftPanel (avatar cards, CSS scoped, set_agent_list_handler)
+│       └── main_content.py    # 459 lines — MainContent (tabs + input + STT/Improve/feed bar + tab close + session switch menu + bulk close)
 │
 └── utils/
     ├── __init__.py            # 1 line
@@ -805,20 +888,11 @@ crabcakes/
     └── icons.py              # 77 lines — SVG avatar/folder icon rendering (Gdk.Texture)
 ```
 
-**Dead files removed (2026-04-10 audit):**
 
-| File | Reason |
-|------|--------|
-| `gateway/dispatch.py` | EventDispatcher never instantiated |
-| `gateway/protocol.py` | All constants/functions dead; window uses string literals |
-| `gateway/session.py` | SessionManager never instantiated |
-| `models/app_state.py` | AppState placeholder never used |
-| `models/chat_buffer.py` | ChatBuffer never instantiated |
-| `utils/helpers.py` | Empty placeholder |
 
 ---
 
-## 12. Principles to Preserve
+## 13. Principles to Preserve
 
 1. **Gateway is foundational.** It must remain independent of UI. Never import `ui/` from `gateway/`.
 
@@ -837,3 +911,7 @@ crabcakes/
 ---
 
 *This document is the law. Violations require discussion with the team before the code is merged.*
+
+---
+
+**For current project status — what's done, what's in progress, what's planned — see [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md).**
