@@ -48,6 +48,14 @@ class ChatHandler:
 
     # ── Public API ───────────────────────────────────────────────────────────
 
+    def set_gateway_client(self, gw):
+        """
+        Set or replace the live GatewayClient reference.
+        Called by GatewayHandler after successful connect.
+        Window no longer needs to reach into _gw directly.
+        """
+        self._gw = gw
+
     def on_send_clicked(self, _btn=None):
         """GTK signal handler for the Send button. Delegates to on_send."""
         self.on_send()

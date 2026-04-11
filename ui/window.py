@@ -35,6 +35,7 @@ from ui.views.main_content import MainContent
 from ui.handlers.chat_handler import ChatHandler
 from ui.handlers.gateway_handler import GatewayHandler
 from ui.handlers.media_handler import MediaHandler
+from ui.handlers.project_handler import ProjectHandler
 
 
 # Gateway URL — WebSocket endpoint for OpenClaw gateway
@@ -119,12 +120,6 @@ class MainWindow(Gtk.ApplicationWindow):
         )
         # Sync the live GatewayClient reference into ChatHandler after connect
         self._gateway_handler.set_sync_callback(self._sync_gateway_to_chat_handler)
-        self._left_panel.set_on_project_opened(self._on_project_opened)
-        self._left_panel._file_tree.set_on_project_opened(self._on_project_opened)
-        self._left_panel.set_on_project_members_changed(self._on_project_members_changed)
-        self._active_project_name = None  # set when a project tab is opened
-        self._agent_to_project = {}  # {agent_session_key: project_name} — for routing
-        self._projects_module = __import__("utils.projects", fromlist=["projects"])
 
         # FeedBar — right-side activity strip
         self._feedbar = FeedBar()
@@ -135,8 +130,24 @@ class MainWindow(Gtk.ApplicationWindow):
             improve_module=__import__("utils.improve", fromlist=["improve"]),
             GLib_module=GLib,
         )
-        # Voice input: transcript goes to input box at cursor — user sends manually
-        # (no auto-send callback)
+
+        # Project handler — owns active project state + agent-to-project routing (Phase 3)
+        from ui.handlers.project_handler import ProjectHandler
+        self._project_handler = ProjectHandler(
+            main_content=self._main_content,
+            left_panel=self._left_panel,
+            projects_module=__import__("utils.projects", fromlist=["projects"]),
+            agent_to_project=self._agent_to_project,  # shared with ChatHandler — the ONE true dict
+            GLib_module=GLib,
+        )
+        # Wire project opened / members-changed callbacks (for cross-handler sync)
+        self._project_handler.set_on_project_opened(self._on_project_opened)
+        self._project_handler.set_on_members_changed(self._on_project_members_changed)
+
+        # Wire left_panel to forward project events to the handler
+        left_panel.set_on_project_opened(self._project_handler.open_project)
+        left_panel._file_tree.set_on_project_opened(self._project_handler.open_project)
+        left_panel.set_on_project_members_changed(self._project_handler.toggle_agent)
 
         # Wire STT + improve buttons
         self._main_content.set_on_stt_click(self._media_handler.on_stt_click)
@@ -186,36 +197,15 @@ class MainWindow(Gtk.ApplicationWindow):
         buffer = self._main_content.user_input.get_buffer()
         buffer.set_text(content)
 
-    # ── STT callbacks ──────────────────────────────────────────────────────
-
-    # ── Project callbacks ───────────────────────────────────────────────────
-
-    def _on_project_selected(self, path):
-        """A project file was clicked — placeholder for future file action."""
-        pass
+    # ── Project callbacks (delegated to ProjectHandler) ──────────────────
 
     def _on_project_opened(self, name, path):
-        """A project was opened — create a chat tab and set active project."""
-        self._active_project_name = name
-        self._main_content.create_chat_tab(f"project:{name}", f"Project: {name}")
-        self._left_panel.refresh_agents_with_project(name)
-        # Build agent → project lookup
-        for member_key in self._projects_module.load_members(name):
-            self._agent_to_project[member_key] = name
+        """Cross-handler notification — ProjectHandler calls this after open_project completes."""
+        pass  # Currently no additional window-level side-effects needed
 
     def _on_project_members_changed(self, project_name, members):
-        """Membership changed — rebuild the agent → project lookup for this project."""
-        # Remove stale entries for this project
-        stale = [k for k, v in self._agent_to_project.items() if v == project_name]
-        for k in stale:
-            del self._agent_to_project[k]
-        # Add current members
-        for member_key in members:
-            self._agent_to_project[member_key] = project_name
-
-    # ── Send button ────────────────────────────────────────────────────────
-
-    # ── Connect button ─────────────────────────────────────────────────────
+        """Cross-handler notification — ProjectHandler calls this after toggle_agent completes."""
+        pass  # Currently no additional window-level side-effects needed
 
     # ── Gateway toggle ──────────────────────────────────────────────────────
 
@@ -224,7 +214,7 @@ class MainWindow(Gtk.ApplicationWindow):
         gh = self._gateway_handler
         if gh.is_connected():
             gh.disconnect()
-            self._chat_handler._gw = None
+            self._chat_handler.set_gateway_client(None)
             self._main_content.set_agent_manager(None)
         else:
             gh.connect()
@@ -236,7 +226,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _sync_gateway_to_chat_handler(self, gw):
         """Called by GatewayHandler after connect succeeds — sync live GatewayClient to ChatHandler."""
-        self._chat_handler._gw = gw
+        self._chat_handler.set_gateway_client(gw)
         self._main_content.set_agent_manager(self._gateway_handler.agent_mgr)
         # Wire AgentListHandler to the live AgentManager
         self._agent_list_handler.set_agent_mgr(self._gateway_handler.agent_mgr)
