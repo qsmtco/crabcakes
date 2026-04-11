@@ -323,7 +323,7 @@ toggle_favorite(filepath) -> bool   # True if now favorited
 | `load_members(project_name)` | `projects.py` | Returns `[{session_key}, ...]` from `~/.config/crabcakes/projects/<name>/members.json` |
 | `save_members(project_name, members)` | `projects.py` | Writes members list to `members.json`, creates dir if needed |
 | `improve_prompt(text, callback, GLib)` | `improve.py` | Sends text to MiniMax API, calls `callback(improved, error)` with GLib dispatch |
-| `STTEngine` class | `stt.py` | Push-to-talk STT via faster-whisper — arecord → PCM buffer → faster-whisper (base model) → stop_async callback |
+| `STTEngine` class | `stt.py` | Push-to-talk STT via faster-whisper — arecord → PCM buffer → faster-whisper (tiny.en model) → stop_async callback |
 | `show_session_menu(parent, agent_name, sessions, on_select)` | `session_menu.py` | GTK popover menu listing sessions; clicking fires `on_select(session_key)` |
 
 ### 3.12 `ui/handlers/agent_list_handler.py` — Agent List Handler (Agent Cards)
@@ -423,6 +423,31 @@ def set_on_send_callback(cb: Callable):
 - Handler does NOT import other handlers -- window wires them together
 - STTEngine runs its own background thread; handler dispatches all GTK calls via `GLib.idle_add()`
 - improve_prompt() callback is already GLib-dispatched when `GLib_module` is provided
+
+### 3.17 `utils/icons.py` — SVG Icon Rendering
+
+**Responsibility:** Renders agent avatars and project folder icons as `Gdk.Texture`.
+
+**Public API:**
+```python
+def render_agent_icon(color_hex: str, initials: str, size: int = 44) -> Gdk.Texture:
+    """Colored circle with inscribed hexagon outline + 2-char initials."""
+
+def render_folder_icon(color_hex: str, letter: str, size: int = 44) -> Gdk.Texture | None:
+    """Colored folder SVG with tab notch + white letter. Returns None on error."""
+```
+
+### 3.18 `models/colors.py` — Color Palette
+
+**Responsibility:** Agent and project color assignment via round-robin.
+
+**Public API:**
+```python
+AGENT_COLORS: list[str]  # 10-color palette
+next_agent_color() -> str
+next_project_color() -> str  # same palette, separate counter
+reset_color_indices()
+```
 
 ## 4. Data Flow
 
@@ -876,12 +901,12 @@ Agent and project avatars use a 10-color round-robin palette defined in `models/
 |---------|---------|---------|
 | `CRABCAKES_GATEWAY_URL` | `ws://localhost:18789` | OpenClaw gateway WebSocket URL |
 | `CRABCAKES_PROJECTS_DIR` | `~/projects` | Directory containing project folders for the Projects tab |
-| `STT_MODEL_SIZE` | `base` | faster-whisper model size — "tiny", "base", "small", etc. |
+| `STT_MODEL_SIZE` | `tiny.en` | faster-whisper model size — "tiny.en" recommended for English (fastest CPU transcription) |
 
 **External binaries required for STT:**
 - `arecord` — ALSA audio capture (part of alsa-utils)
-- `faster-whisper` Python package (already installed; downloads base model on first use)
-- Model: `Systran/faster-whisper-base` (~142MB, HuggingFace cache)
+- `faster-whisper` Python package (already installed; downloads tiny.en model on first use)
+- Model: `Systran/faster-whisper-tiny.en` (~75MB, HuggingFace cache)
 
 ---
 
@@ -937,15 +962,16 @@ crabcakes/
 ├── models/
 │   ├── __init__.py            # 13 lines — exports AgentManager, next_agent_color, reset_color_indices
 │   ├── agents.py              # 49 lines — AgentManager
-│   └── colors.py              # 31 lines — agent color palette only
+│   └── colors.py              # 45 lines — agent + project color palette (round-robin)
 │
 ├── ui/
 │   ├── __init__.py            # 1 line
 │   ├── toolbar.py             # 83 lines — Toolbar widget
-│   ├── styles.py              # 169 lines — APP_CSS constant + apply_styles() (single CSS source of truth)
+│   ├── styles.py              # 190 lines — APP_CSS constant + apply_styles() (single CSS source of truth)
 │   ├── window.py              # 224 lines — MainWindow + handler wiring
 │   ├── handlers/
 │   │   ├── __init__.py        # 0 lines — package marker
+│   │   ├── project_list_handler.py  # 60 lines — project card data + color round-robin
 │   │   ├── prompts_handler.py  # 187 lines — favorites, search, last-used, on_prompt_activated
 │   │   ├── agent_list_handler.py  # 107 lines — agent card data (initials, colors, sorting)
 │   │   ├── chat_handler.py     # 166 lines — send, fan-out, routing (Phase 1)
@@ -969,7 +995,7 @@ crabcakes/
     ├── favorites.py           # 59 lines — favorites persistence (favorites.json)
     ├── improve.py             # 141 lines — improve_prompt (MiniMax API)
     ├── stt.py                 # 182 lines — STTEngine (faster-whisper push-to-talk, stop_async pattern)
-    └── icons.py               # 77 lines — SVG avatar rendering (Gdk.Texture)
+    └── icons.py               # 165 lines — Gdk.Texture SVG rendering (agent avatars + folder icons)
 ```
 
 

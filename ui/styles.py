@@ -149,6 +149,27 @@ button.flat:hover {
     border-radius: 4px;
     padding: 1px 4px;
 }
+/* Project cards */
+.project-card {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 8px;
+    cursor: pointer;
+}
+.project-card:hover {
+    background: rgba(99, 102, 241, 0.15);
+    border-color: rgba(99, 102, 241, 0.4);
+}
+.project-card-name {
+    font-size: 13px;
+    color: #e2e8f0;
+    font-weight: 500;
+}
+.project-card-path {
+    font-size: 11px;
+    color: #6b6b7a;
+}
 """
 
 

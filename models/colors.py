@@ -26,6 +26,20 @@ def next_agent_color() -> str:
 
 
 def reset_color_indices() -> None:
-    """Reset the agent round-robin counter. Call on gateway reconnect."""
-    global _agent_color_next
+    """Reset both agent and project round-robin counters. Call on gateway reconnect."""
+    global _agent_color_next, _project_color_next
     _agent_color_next = 0
+    _project_color_next = 0
+
+
+# ── Project color palette (same colors, separate counter) ────────────────────
+
+_project_color_next: int = 0
+
+
+def next_project_color() -> str:
+    """Return the next round-robin project color and advance the counter."""
+    global _project_color_next
+    color = AGENT_COLORS[_project_color_next % len(AGENT_COLORS)]
+    _project_color_next += 1
+    return color

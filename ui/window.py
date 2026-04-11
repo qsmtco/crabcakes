@@ -141,8 +141,12 @@ class MainWindow(Gtk.ApplicationWindow):
             GLib_module=GLib,
         )
         # Wire left_panel project events → ProjectHandler
-        self._left_panel.set_on_project_opened(self._project_handler.open_project)
-        self._left_panel._file_tree.set_on_project_opened(self._project_handler.open_project)
+        # Project list handler — provides project cards with colors and data
+        from ui.handlers.project_list_handler import ProjectListHandler
+        self._project_list_handler = ProjectListHandler(
+            on_project_opened=self._project_handler.open_project,
+        )
+        left_panel._file_tree.set_project_list_handler(self._project_list_handler)
         self._left_panel.set_on_project_members_changed(self._project_handler.toggle_agent)
 
         # Wire STT + improve buttons

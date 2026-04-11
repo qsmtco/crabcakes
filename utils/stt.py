@@ -10,7 +10,7 @@
 #   - stop_async() → stop capture, transcribe in background thread, call callback
 #
 # Security Manifest:
-#   Reads: ALSA device (plughw:CARD=PCH,DEV=0 via arecord subprocess)
+#   Reads: ALSA device ("default" via PipeWire ALSA plugin)
 #   No files written; no network calls; no secrets
 
 import io
@@ -34,21 +34,21 @@ class STTEngine:
         stt.stop_async()   → stop capture, transcribe in background, callback(text)
         stt.stop()         → stop capture, transcribe, return text (blocking)
 
-    Audio source: ALSA device (plughw:CARD=PCH,DEV=0 via arecord).
-    Works with PipeWire's ALSA plugin.
+    Audio source: PipeWire ALSA plugin ("default" device).
+    Much faster device open than direct hardware (~5ms vs ~230ms).
     """
 
     def __init__(
         self,
-        model_size="base",
-        device="plughw:CARD=PCH,DEV=0",
+        model_size="tiny.en",
+        device="default",
         on_result=None,
     ):
         """
         Args:
-            model_size:   faster-whisper model — "tiny", "base", "small", etc.
-                          "base" is good balance of speed/accuracy on CPU.
+            model_size:   faster-whisper model — "tiny.en" for English-only (fastest CPU).
             device:       ALSA device name for capture (arecord -D <device>).
+                          "default" uses PipeWire ALSA plugin (~5ms open vs ~230ms direct HW).
             on_result:    Callback(text: str) — called with transcript on stop_async.
         """
         self._model_size = model_size

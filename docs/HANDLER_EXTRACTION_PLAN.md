@@ -4,7 +4,7 @@
 **Additions by:** Lieutenant Qrusher (agent comments, debugging guides, phase ordering) — 2026-04-10
 **Clarified by:** Qaster — import guard rule: window importing handlers is correct, the guard is handlers importing each other — 2026-04-10
 **Created:** 2026-04-10
-**Status:** Phase 4 COMPLETE — Testing period before Phase 3
+**Status:** ALL PHASES COMPLETE ✅
 
 ---
 
@@ -33,7 +33,7 @@ This plan is for agents working on this codebase. Key things to know:
 ## Phase Ordering
 
 ```
-Phase 1 ✅ → Phase 2 ✅ → Phase 4 ✅ → [TESTING PERIOD] → Phase 3
+Phase 1 ✅ → Phase 2 ✅ → Phase 4 ✅ → Phase 3 ✅ → Phase 5 ✅
 ```
 
 > **Why this order?** Phase 3 (Project Handler) has the most complex
@@ -236,7 +236,7 @@ starts, and `main_content.update_stt_state("idle")` when it ends.
 
 ---
 
-## Phase 3 — Project Handler (DEFERRED)
+## ✅ Phase 3 — Project Handler (COMPLETE — 2026-04-11)
 
 **Extract into:** `ui/handlers/project_handler.py`
 
@@ -356,7 +356,11 @@ After Phases 1, 2, and 4 are complete and all tests pass, there is a
 
 ---
 
-## Phase 5 — Slim Down window.py
+## ✅ Phase 5 — Slim Down window.py (COMPLETE — 2026-04-11)
+
+**Final state:** window.py at 224 lines / 133 code lines. Methods match the target list exactly.
+All dead stubs removed, stale section headers removed, direct handler state mutation replaced
+with proper public setters. See `docs/ARCHITECTURE.md` for current line counts.
 
 After all extractions, window.py should be:
 
@@ -408,7 +412,7 @@ tests/
 4. **No behavior changes.** This is pure extraction. If something works differently after, the refactor went wrong.
 5. **Each phase is a git commit.** Bisectable. Revertable.
 6. **Import guard.** Handlers must NOT import other handlers — window.py wires them together. Window.py importing handlers is expected and correct; handlers importing each other is the violation. After each phase, a test asserts that no handler file imports any other handler file.
-7. **Phase 3 wait rule.** Phase 3 does not start until the testing period confirms Phase 1+2+4 handlers are stable.
+7. **Phase 3 wait rule.** N/A — Phase 3 is complete.
 
 ---
 
