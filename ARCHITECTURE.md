@@ -234,7 +234,9 @@ self._agent_to_project = {}        # {agent_session_key: project_name} — rever
 
 **Responsibility:** Three-tab notebook: Prompts, Agents, Projects.
 
-**Prompts tab:** Lists `.md` files from `prompts/` directory. Double-click calls `on_prompt_selected(content)`.
+**Prompts tab:** PromptsHandler-backed list with search, favorites, and rich metadata rows. Star/favorite persisted to `~/.config/crabcakes/favorites.json`. Double-click or `+` button calls `on_prompt_loaded(filepath, name, content)`, which loads content into chat input. Search filters by name (case-insensitive). Favorites sort to top.
+
+**Agents tab:** Initially empty placeholder. After `set_agents()` is called, builds avatar cards (colored circle + initials + name + +/− toggle button). Double-click calls `on_agent_selected(session_key, name)`. CSS for agent rows is scoped to `left_panel`. When a project is open, the toggle button is visible — `+` adds the agent to the project, `−` removes them. Toggle button uses `.agent-add-btn` (green) or `.agent-remove-btn` (red) CSS classes.
 
 **Agents tab:** Initially empty placeholder. After `set_agents()` is called, builds avatar cards (colored circle + initials + name + +/− toggle button). Double-click calls `on_agent_selected(session_key, name)`. CSS for agent rows is scoped to `left_panel`. When a project is open, the toggle button is visible — `+` adds the agent to the project, `−` removes them. Toggle button uses `.agent-add-btn` (green) or `.agent-remove-btn` (red) CSS classes.
 
@@ -245,6 +247,8 @@ self._agent_to_project = {}        # {agent_session_key: project_name} — rever
 panel = LeftPanel(on_prompt_selected=cb, on_project_selected=cb)
 panel.set_agents(agent_names_dict, on_agent_selected_callback)
 panel.set_agent_list_handler(handler)         # wires AgentListHandler for avatar cards
+panel.set_prompts_handler(handler)             # wires PromptsHandler for prompt library
+panel.refresh_prompts()                       # rebuilds the prompts list
 panel.set_on_project_opened(cb)               # fires when project tab opens
 panel.refresh_agents_with_project(name)      # rebuilds agents list with +/− buttons
 panel.set_on_project_members_changed(cb)      # fires when membership changes
@@ -323,11 +327,28 @@ def on_chat_clicked(session_key: str, name: str): pass
 def on_toggle_clicked(session_key: str, name: str, in_project: bool): pass
 ```
 
-### 3.12 `ui/handlers/chat_handler.py` — Chat Handler (Phase 1)
+### 3.12 `ui/handlers/prompts_handler.py` — Prompts Handler
+
+**Responsibility:** Prompts tab data and logic — favorites, search, last-used tracking, prompt content loading. Does NOT build widgets (view does).
+
+**Owns:** In-memory prompt list, favorites set, last-used timestamps, active search query.
+
+**Public API:**
+```python
+def load_prompts() -> list[dict]:         # scan prompts/ dir, sort (favs first), apply filter
+def toggle_favorite(filepath: str) -> bool:   # True if now favorited
+def search(query: str) -> list[dict]:    # set filter + return filtered results
+def record_usage(filepath: str):          # track last-used timestamp
+def get_last_used_str(filepath: str) -> str:   # "just now", "5m ago", etc.
+def get_prompt_content(filepath: str) -> tuple[str, str]:   # (name, content)
+def on_prompt_activated(filepath: str):   # load + fire on_prompt_loaded callback
+```
+
+### 3.13 `ui/handlers/chat_handler.py` — Chat Handler (Phase 1)
 
 **Responsibility:** All chat logic — sending, project fan-out, incoming message routing, tab switching. Extracted from `window.py` in Phase 1.
 
-### 3.13 `ui/handlers/gateway_handler.py` — Gateway Handler (Phase 2)
+### 3.14 `ui/handlers/gateway_handler.py` — Gateway Handler (Phase 2)
 
 **Responsibility:** All gateway lifecycle — connecting, disconnecting, agent discovery, error handling, and thread-safe state dispatch to GTK. Extracted from `window.py` in Phase 2.
 
@@ -360,7 +381,7 @@ def dispatch(fn: Callable, *args, **kwargs) -> None:
     """Thread-safe dispatch to main thread via GLib.idle_add(fn, *args, **kwargs)."""
 ```
 
-### 3.14 `ui/handlers/media_handler.py` — Media Handler (Phase 4)
+### 3.15 `ui/handlers/media_handler.py` — Media Handler (Phase 4)
 
 **Responsibility:** All media I/O — STT (whisper.cpp push-to-talk) and prompt improvement. Extracted from `window.py` in Phase 4.
 
@@ -653,6 +674,8 @@ pytest              # auto-discovers tests/ via pytest.ini
 
 **Test coverage:**
 - `tests/test_architecture.py` — AST guard: handler isolation, models/gateway layer separation, public API existence
+- `tests/test_favorites.py` — favorites persistence: missing file, empty list, round-trip, JSON corruption
+- `tests/test_prompts_handler.py` — PromptsHandler: search/filter, favorites sort, last-used timestamps
 - `tests/test_agent_list_handler.py` — AgentListHandler: initials, colors, sorting, callbacks
 - `tests/test_agents.py` — AgentManager: edge cases, unknown inputs, clear/reregister
 - `tests/test_projects.py` — file I/O: missing files, empty dirs, JSON corruption, round-trip
@@ -867,6 +890,7 @@ crabcakes/
 │   ├── window.py              # 240 lines — MainWindow + handler wiring + AgentListHandler
 │   ├── handlers/
 │   │   ├── __init__.py
+│   │   ├── prompts_handler.py  # 186 lines — favorites, search, last-used, on_prompt_activated
 │   │   ├── agent_list_handler.py  # 107 lines — agent card data (initials, colors, sorting)
 │   │   ├── chat_handler.py  # ~100 lines — send, fan-out, routing (Phase 1)
 │   │   ├── gateway_handler.py # ~100 lines — connect, agents, lifecycle (Phase 2)
@@ -876,15 +900,16 @@ crabcakes/
 │       ├── chat_control_bar.py # 34 lines — ChatControlBar (stub: update() not wired)
 │       ├── feedbar.py          # 48 lines — FeedBar (stub: update() not wired)
 │       ├── file_tree.py        # 219 lines — FileTree (TreeView directory browser, double-click project load)
-│       ├── left_panel.py       # 311 lines — LeftPanel (avatar cards, CSS scoped, set_agent_list_handler)
+│       ├── left_panel.py       # 445 lines — LeftPanel (PromptsHandler + AgentListHandler, rich prompt rows)
 │       └── main_content.py    # 459 lines — MainContent (tabs + input + STT/Improve/feed bar + tab close + session switch menu + bulk close)
 │
 └── utils/
     ├── __init__.py            # 1 line
     ├── prompts.py             # 35 lines — load_prompts()
-    └── projects.py            # 91 lines — load_projects, load/save_members
+    ├── projects.py            # 91 lines — load_projects, load/save_members
+    ├── favorites.py          # 59 lines — favorites persistence (favorites.json)
     ├── improve.py            # 133 lines — improve_prompt (MiniMax API)
-    └── stt.py                 # 182 lines — STTEngine (faster-whisper push-to-talk, stop_async pattern)
+    ├── stt.py                 # 182 lines — STTEngine (faster-whisper push-to-talk, stop_async pattern)
     └── icons.py              # 77 lines — SVG avatar/folder icon rendering (Gdk.Texture)
 ```
 

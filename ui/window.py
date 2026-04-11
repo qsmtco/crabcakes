@@ -100,6 +100,14 @@ class MainWindow(Gtk.ApplicationWindow):
         )
         self._left_panel.set_agent_list_handler(self._agent_list_handler)
 
+        # Prompts handler — wired to left_panel after both are created
+        from ui.handlers.prompts_handler import PromptsHandler
+        self._prompts_handler = PromptsHandler(
+            on_refresh_ui=lambda: self._left_panel.refresh_prompts(),
+            on_prompt_loaded=lambda fp, name, content: self._on_prompt_selected(content),
+        )
+        self._left_panel.set_prompts_handler(self._prompts_handler)
+
         # Gateway handler — owns GatewayClient + AgentManager (Phase 2)
         # Note: connect button is wired via Toolbar(on_connect_clicked=...) — not here
         self._gateway_handler = GatewayHandler(
@@ -127,8 +135,8 @@ class MainWindow(Gtk.ApplicationWindow):
             improve_module=__import__("utils.improve", fromlist=["improve"]),
             GLib_module=GLib,
         )
-        # Voice input: after transcript captured, send it automatically
-        self._media_handler.set_on_send_callback(lambda _text: self._chat_handler.on_send())
+        # Voice input: transcript goes to input box at cursor — user sends manually
+        # (no auto-send callback)
 
         # Wire STT + improve buttons
         self._main_content.set_on_stt_click(self._media_handler.on_stt_click)

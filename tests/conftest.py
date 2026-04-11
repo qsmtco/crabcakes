@@ -22,6 +22,20 @@ def tmp_config_dir(tmp_path, monkeypatch):
     return config_dir
 
 
+@pytest.fixture
+def tmp_prompts_dir(tmp_path, monkeypatch):
+    """
+    Create an isolated temp prompts directory with some .md files.
+    Patch PromptsHandler._get_prompts_dir to return it.
+    """
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    # Create a couple of sample .md files
+    (prompts_dir / "sample.md").write_text("# Sample\nHello world")
+    (prompts_dir / "example.md").write_text("# Example\nTest content")
+    return prompts_dir
+
+
 def test_handlers_do_not_import_each_other():
     """
     Import guard: handlers must NOT import other handlers.

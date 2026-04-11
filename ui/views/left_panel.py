@@ -6,10 +6,10 @@ import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
 
-from utils.prompts import load_prompts
 from utils.projects import load_members, save_members
 from utils.icons import render_agent_icon
 from ui.views.file_tree import FileTree
+from ui.handlers.prompts_handler import PromptsHandler
 
 
 class LeftPanel(Gtk.Box):
@@ -38,13 +38,20 @@ class LeftPanel(Gtk.Box):
         self._on_project_opened = None
         self._on_project_members_changed = None
 
+        # Prompts tab state — built once in _build_prompts_tab()
+        self._prompts_handler = None     # set via set_prompts_handler()
+        self._prompts_list_box = None   # rebuilt on search/refresh
+        self._prompts_scroll = None
+        self._search_entry = None
+        self._prompts_tab_header = None  # [title, search] box
+
         # Create the notebook (tabbed interface)
         PAP_notebook = Gtk.Notebook()
 
         # Tab 1: Prompts
-        prompts_list = self._build_prompts_list()
+        prompts_tab = self._build_prompts_tab()
         PAP_notebook.append_page(
-            prompts_list,
+            prompts_tab,
             Gtk.Label(label="Prompts")
         )
 
@@ -99,6 +106,11 @@ class LeftPanel(Gtk.Box):
     def set_on_project_members_changed(self, cb):
         """Set callback for when project membership changes."""
         self._on_project_members_changed = cb
+
+    def set_prompts_handler(self, handler):
+        """Set the PromptsHandler and refresh the prompts tab."""
+        self._prompts_handler = handler
+        self.refresh_prompts()
 
     def refresh_agents_with_project(self, project_name):
         """Called by window when a project tab opens — refreshes +/− buttons."""
@@ -275,37 +287,156 @@ class LeftPanel(Gtk.Box):
 
     # ── Prompts tab ─────────────────────────────────────────────────────────
 
-    def _build_prompts_list(self):
-        """Build a scrollable list of prompt files from the prompts/ directory."""
+    def _build_prompts_tab(self):
+        """Build the full Prompts tab: header box + scrollable list."""
+        tab = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        tab.set_vexpand(True)
+
+        # Header: ["Prompts" title + search entry]
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        header.set_margin_start(8)
+        header.set_margin_end(8)
+        header.set_margin_top(8)
+        header.set_margin_bottom(4)
+        header.set_spacing(6)
+
+        title = Gtk.Label(label="Prompts")
+        title.set_valign(Gtk.Align.CENTER)
+        title.set_margin_end(4)
+
+        search_entry = Gtk.SearchEntry()
+        search_entry.set_placeholder_text("Search prompts...")
+        search_entry.set_hexpand(True)
+        search_entry.set_valign(Gtk.Align.CENTER)
+        search_entry.connect("search-changed", self._on_prompt_search_changed)
+        self._search_entry = search_entry
+
+        header.append(title)
+        header.append(search_entry)
+        self._prompts_tab_header = header
+
+        # Scrollable prompt list
         scroll = Gtk.ScrolledWindow()
         scroll.set_vexpand(True)
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self._prompts_scroll = scroll
 
         list_box = Gtk.ListBox()
         list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
-
-        prompts = load_prompts()
-
-        for display_name, content in prompts:
-            row = Gtk.ListBoxRow()
-            row._prompt_content = content
-
-            label = Gtk.Label(label=display_name, xalign=0)
-            label.set_margin_top(8)
-            label.set_margin_bottom(8)
-            label.set_margin_start(8)
-            label.set_margin_end(8)
-            row.set_child(label)
-            list_box.append(row)
-
         list_box.set_activate_on_single_click(False)
         list_box.connect("row_activated", self._on_prompt_row_activated)
+        self._prompts_list_box = list_box
 
         scroll.set_child(list_box)
-        return scroll
+        tab.append(header)
+        tab.append(scroll)
+        return tab
+
+    def refresh_prompts(self):
+        """Rebuild the prompts list from handler data. Called on init and after toggle/search."""
+        if self._prompts_list_box is None:
+            return
+        list_box = self._prompts_list_box
+        # Clear existing rows
+        while True:
+            row = list_box.get_row_at_index(0)
+            if row is None:
+                break
+            list_box.remove(row)
+
+        if self._prompts_handler is None:
+            return
+
+        prompts = self._prompts_handler.load_prompts()
+        for prompt in prompts:
+            row = self._build_prompt_row(prompt)
+            list_box.append(row)
+
+        list_box.show()
+
+    def _build_prompt_row(self, prompt: dict) -> Gtk.ListBoxRow:
+        """Build a single prompt row with: [★] [name] [meta] [+/− toggle]."""
+        row = Gtk.ListBoxRow()
+        row._filepath = prompt['filepath']
+        row._name = prompt['name']
+
+        row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        row_box.set_halign(Gtk.Align.FILL)
+        row_box.set_margin_start(4)
+        row_box.set_margin_end(4)
+        row_box.set_margin_top(3)
+        row_box.set_margin_bottom(3)
+        row_box.add_css_class("lib-row")
+
+        # Star button (★/☆)
+        fav_btn = Gtk.Button()
+        fav_btn.add_css_class("flat")
+        fav_btn.set_size_request(24, 24)
+        fav_btn.set_label("★" if prompt['is_favorite'] else "☆")
+        if prompt['is_favorite']:
+            fav_btn.add_css_class("lib-fav-star")
+        fav_btn.connect("clicked", self._on_prompt_toggle_favorite, prompt['filepath'])
+
+        # Name label
+        name_lbl = Gtk.Label(label=prompt['name'], xalign=0)
+        name_lbl.set_hexpand(True)
+        name_lbl.set_halign(Gtk.Align.START)
+        name_lbl.set_valign(Gtk.Align.CENTER)
+        name_lbl.set_margin_start(6)
+
+        # Metadata: lines + size + last-used
+        meta_parts = []
+        if prompt.get('lines'):
+            meta_parts.append(f"{prompt['lines']}L")
+        if prompt.get('size'):
+            size_kb = prompt['size'] // 1024
+            meta_parts.append(f"{size_kb}KB" if size_kb > 0 else f"{prompt['size']}B")
+        if prompt.get('last_used_str'):
+            meta_parts.append(prompt['last_used_str'])
+        meta_lbl = Gtk.Label(label=" · ".join(meta_parts) if meta_parts else "")
+        meta_lbl.set_valign(Gtk.Align.CENTER)
+        meta_lbl.set_margin_start(6)
+        meta_lbl.add_css_class("lib-tag")
+
+        # Add button
+        add_btn = Gtk.Button()
+        add_btn.set_size_request(24, 24)
+        add_btn.add_css_class("flat")
+        add_btn.set_label("+")
+        add_btn.connect("clicked", self._on_prompt_add_clicked, prompt)
+
+        fav_btn.show()
+        name_lbl.show()
+        meta_lbl.show()
+        add_btn.show()
+
+        row_box.append(fav_btn)
+        row_box.append(name_lbl)
+        row_box.append(meta_lbl)
+        row_box.append(add_btn)
+        row.set_child(row_box)
+        row.show()
+        return row
+
+    def _on_prompt_toggle_favorite(self, btn, filepath):
+        """Toggle favorite star — handler does persistence; we just refresh."""
+        if self._prompts_handler:
+            self._prompts_handler.toggle_favorite(filepath)
+            self.refresh_prompts()
+
+    def _on_prompt_add_clicked(self, btn, prompt):
+        """Load prompt into chat input (same as double-click)."""
+        self._prompts_handler.on_prompt_activated(prompt['filepath'])
+
+    def _on_prompt_search_changed(self, entry):
+        """Filter prompts list on search-changed."""
+        query = entry.get_text()
+        if self._prompts_handler:
+            self._prompts_handler.search(query)
+            self.refresh_prompts()
 
     def _on_prompt_row_activated(self, list_box, row):
-        """Called when a prompt row is double-clicked."""
-        if self._on_prompt_selected is not None:
-            self._on_prompt_selected(row._prompt_content)
+        """Called when a prompt row is double-clicked — load into chat input."""
+        if self._prompts_handler and hasattr(row, '_filepath'):
+            self._prompts_handler.on_prompt_activated(row._filepath)
 

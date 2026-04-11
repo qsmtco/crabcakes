@@ -419,17 +419,11 @@ class MainContent(Gtk.Box):
 
     def append_stt_text(self, text):
         """
-        Append STT partial transcript text to the user input buffer.
-        Preserves any existing text and appends with a space separator.
+        Insert STT transcript text at the current cursor position in the input buffer.
+        If text is selected, it is replaced. Cursor ends up after the inserted text.
         """
         buf = self.user_input.get_buffer()
-        existing = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
-        if existing and not existing.endswith(" "):
-            text = " " + text
-        buf.set_text(existing + text)
-        # Move cursor to end
-        end_iter = buf.get_end_iter()
-        buf.place_cursor(end_iter)
+        buf.insert_at_cursor(text)
         self.user_input.grab_focus()
 
     def set_agent_manager(self, agent_mgr):

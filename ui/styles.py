@@ -89,11 +89,12 @@ button.flat:hover {
 .agent-row {
     background: rgba(255, 255, 255, 0.04);
     border-radius: 6px;
+    border: 1px solid transparent;
     margin: 2px 4px;
 }
 .agent-row:hover {
     background: rgba(99, 102, 241, 0.15);
-    border: 1px solid rgba(99, 102, 241, 0.4);
+    border-color: rgba(99, 102, 241, 0.4);
 }
 .agent-name-label {
     color: #e8e8ec;
@@ -126,12 +127,13 @@ button.flat:hover {
 .lib-row {
     background: transparent;
     border-radius: 6px;
+    border: 1px solid transparent;
     margin: 1px 4px;
-    transition: background 0.15s ease;
+    transition: background 0.15s ease, border-color 0.15s ease;
 }
 .lib-row:hover {
     background: rgba(99, 102, 241, 0.15);
-    border: 1px solid rgba(99, 102, 241, 0.4);
+    border-color: rgba(99, 102, 241, 0.4);
 }
 .lib-row.selected {
     background: rgba(99, 102, 241, 0.25);

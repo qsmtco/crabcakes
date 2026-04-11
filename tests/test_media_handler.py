@@ -67,7 +67,7 @@ class FakeMainContent:
     def __init__(self, initial_input=""):
         self._stt_state = "idle"
         self._input_text = initial_input
-        self._improved_button = MagicMock()
+        self._improve_button = MagicMock()
         self._append_calls = []
         self._input_buffer = FakeTextBuffer(initial_input)
         self._input_view = FakeTextView(self._input_buffer)
@@ -275,7 +275,7 @@ class TestImproveClick:
 
         handler.on_improve_click()
 
-        mc._improved_button.set_sensitive.assert_not_called()
+        mc._improve_button.set_sensitive.assert_not_called()
 
     def test_disables_button_before_api_call(self):
         """Button is disabled before improve API is called."""
@@ -285,7 +285,7 @@ class TestImproveClick:
 
         handler.on_improve_click()
 
-        mc._improved_button.set_sensitive.assert_called_once_with(False)
+        mc._improve_button.set_sensitive.assert_called_once_with(False)
 
     def test_sends_input_text_to_api(self):
         """on_improve_click extracts and sends current input text."""
@@ -305,30 +305,30 @@ class TestImproveResult:
         """Successful improve result replaces input with improved text."""
         mc = FakeMainContent()
         handler = make_handler(main_content=mc)
-        handler._mc._improved_button = MagicMock()
+        handler._mc._improve_button = MagicMock()
 
         handler._on_improve_result("Better prompt text", None)
 
         assert mc._input_text == "Better prompt text"
-        mc._improved_button.set_sensitive.assert_called_once_with(True)
+        mc._improve_button.set_sensitive.assert_called_once_with(True)
 
     def test_result_reenables_button_on_error(self):
         """Error message re-enables the button."""
         mc = FakeMainContent()
         handler = make_handler(main_content=mc)
-        handler._mc._improved_button = MagicMock()
+        handler._mc._improve_button = MagicMock()
 
         handler._on_improve_result(None, "API error")
 
-        mc._improved_button.set_sensitive.assert_called_once_with(True)
+        mc._improve_button.set_sensitive.assert_called_once_with(True)
 
     def test_empty_result_no_change(self):
         """Empty improved text does not change input."""
         mc = FakeMainContent(initial_input="original")
         handler = make_handler(main_content=mc)
-        handler._mc._improved_button = MagicMock()
+        handler._mc._improve_button = MagicMock()
 
         handler._on_improve_result("", None)
 
         assert mc._input_text == "original"
-        mc._improved_button.set_sensitive.assert_called_once_with(True)
+        mc._improve_button.set_sensitive.assert_called_once_with(True)
