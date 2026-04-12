@@ -65,7 +65,7 @@ class FakeMainContent:
     def get_buffer(self):
         return self._input_buffer
 
-    def append_message_to_current_tab(self, role, text):
+    def append_message_to_current_tab(self, role, text, session_key=None):
         self._messages.append((role, text))
 
     def set_current_session(self, key):

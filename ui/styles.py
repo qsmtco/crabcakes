@@ -169,6 +169,155 @@ button.flat:hover {
     font-size: 11px;
     color: #6b6b7a;
 }
+
+/* ── Chat bubbles (Phase 1) ───────────────────────────────────────────── */
+.chat-bubble-agent {
+    background: rgba(255, 255, 255, 0.07);
+    border-radius: 12px 12px 12px 4px;
+    padding: 6px 10px 8px 10px;
+    margin: 2px 12px 2px 8px;
+}
+.chat-bubble-you {
+    background: rgba(99, 102, 241, 0.22);
+    border-radius: 12px 12px 4px 12px;
+    padding: 6px 10px 8px 10px;
+    margin: 2px 8px 2px 12px;
+}
+.chat-role-label {
+    font-size: 11px;
+    color: #8888a0;
+    margin-bottom: 2px;
+}
+.chat-bubble-you .chat-role-label {
+    color: #9090c0;
+}
+.chat-msg-label {
+    font-size: 14px;
+    color: #d8d8e8;
+}
+.chat-msg-label:selected {
+    background-color: #6366f1;
+    color: #ffffff;
+}
+
+/* ── Bubble pending state (optimistic UI) ─────────────────────────────── */
+.chat-bubble-pending {
+    opacity: 0.6;
+    transition: opacity 0.3s ease;
+}
+.chat-bubble-pending.chat-bubble-you {
+    background: rgba(99, 102, 241, 0.15);
+}
+.chat-bubble-pending.chat-bubble-agent {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+/* ── Code blocks ─────────────────────────────────────────────────────── */
+.code-block {
+    background: rgba(30, 30, 40, 0.95);
+    border-radius: 8px;
+    border-left: 3px solid #3d59a1;
+    margin: 4px 0;
+    overflow: hidden;
+}
+.code-block-content {
+    font-family: monospace;
+    font-size: 13px;
+    color: #a9b1d6;
+    padding: 8px 12px;
+    background: transparent;
+}
+.code-block-header {
+    background: rgba(61, 89, 161, 0.3);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 4px 10px;
+    font-size: 11px;
+    color: #7aa2f7;
+    font-family: monospace;
+}
+.code-copy-btn {
+    background: transparent;
+    color: #565f89;
+    border: none;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 11px;
+}
+.code-copy-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #a9b1d6;
+}
+
+/* ── Per-language code block accents ─────────────────────────────────── */
+.code-block.lang-python  { border-left-color: #61afef; }
+.code-block.lang-javascript, .code-block.lang-js { border-left-color: #e5c07b; }
+.code-block.lang-typescript, .code-block.lang-ts { border-left-color: #61afef; }
+.code-block.lang-bash, .code-block.lang-sh, .code-block.lang-shell { border-left-color: #98c379; }
+.code-block.lang-html { border-left-color: #e06c75; }
+.code-block.lang-css { border-left-color: #61afef; }
+.code-block.lang-rust { border-left-color: #e06c75; }
+.code-block.lang-go { border-left-color: #56b6c2; }
+.code-block.lang-java { border-left-color: #e5c07b; }
+.code-block.lang-c, .code-block.lang-cpp { border-left-color: #61afef; }
+.code-block.lang-ruby { border-left-color: #e06c75; }
+.code-block.lang-php { border-left-color: #c678dd; }
+.code-block.lang-swift { border-left-color: #e5c07b; }
+.code-block.lang-kotlin { border-left-color: #c678dd; }
+.code-block.lang-sql { border-left-color: #98c379; }
+.code-block.lang-json { border-left-color: #98c379; }
+.code-block.lang-yaml { border-left-color: #98c379; }
+.code-block.lang-markdown { border-left-color: #61afef; }
+.code-block.lang-r-lang { border-left-color: #61afef; }
+
+/* ── Blockquotes ──────────────────────────────────────────────────────── */
+.blockquote {
+    border-left: 3px solid rgba(168, 85, 247, 0.6);
+    padding: 4px 10px;
+    margin: 4px 0;
+    background: rgba(168, 85, 247, 0.06);
+    border-radius: 0 4px 4px 0;
+}
+.blockquote-text {
+    font-size: 13px;
+    color: #9b9bab;
+    font-style: italic;
+}
+
+/* ── Terminal blocks ──────────────────────────────────────────────────── */
+.terminal-block {
+    background: rgba(20, 20, 30, 0.95);
+    border-radius: 6px;
+    border-left: 3px solid #e5c07b;
+    margin: 4px 0;
+    overflow: hidden;
+}
+.terminal-header {
+    background: rgba(229, 192, 123, 0.12);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 4px 10px;
+    font-size: 11px;
+    color: #e5c07b;
+    font-family: monospace;
+}
+.terminal-content {
+    font-family: monospace;
+    font-size: 13px;
+    color: #a9b1d6;
+    padding: 8px 12px;
+    background: transparent;
+}
+
+/* ── Headings inside bubbles ─────────────────────────────────────────── */
+.chat-heading { font-weight: 700; color: #e8e8f0; }
+.chat-heading-1 { font-size: 20px; }
+.chat-heading-2 { font-size: 17px; }
+.chat-heading-3 { font-size: 15px; }
+.chat-heading-4 { font-size: 14px; }
+
+/* ── Task list items ─────────────────────────────────────────────────── */
+.task-item { font-size: 13px; color: #c0caf5; padding: 1px 0; }
+.task-checked { color: #9ece6a; text-decoration: line-through; }
+.task-unchecked { color: #f0f0f0; }
 """
 
 

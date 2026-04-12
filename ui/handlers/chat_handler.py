@@ -80,7 +80,7 @@ class ChatHandler:
             return
 
         # Display user's message in the current tab
-        self._dispatch(lambda: self._mc.append_message_to_current_tab("You", text))
+        self._dispatch(lambda sk=session_key, txt=text: self._mc.append_message_to_current_tab("You", txt, sk))
 
         # Clear the input buffer
         buf.set_text("")
@@ -148,7 +148,7 @@ class ChatHandler:
             target_tab = session_key
 
         # Route to correct tab first, then display — both dispatched to main thread
-        self._dispatch(lambda: (self.switch_to_tab(target_tab), self._mc.append_message_to_current_tab("Agent", final_text)))
+        self._dispatch(lambda tab=target_tab, txt=final_text: (self.switch_to_tab(tab), self._mc.append_message_to_current_tab("Agent", txt, tab)))
 
     def switch_to_tab(self, session_key: str):
         """

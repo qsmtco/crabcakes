@@ -4,12 +4,12 @@
 # Resizable paned divider between top (notebook+bar) and bottom (input+buttons)
 
 import gi
-# Require GTK 4.0 — must be called before importing Gtk
 gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk, Gdk
+from gi.repository import Gtk, Gdk, GLib
 
 from ui.views.chat_control_bar import ChatControlBar
 from ui.views.session_menu import show_session_menu
+from ui.handlers.chat_render_handler import ChatRenderHandler
 
 class MainContent(Gtk.Box):
     """
@@ -47,6 +47,8 @@ class MainContent(Gtk.Box):
         self._tab_sessions = {}  # page_index -> session_key
         # Track chat boxes per page_index so we can append to them
         self._tab_chat_boxes = {}  # page_index -> chat_box widget
+        # Render handler for styled chat bubbles (Phase 1)
+        self._chat_render_handler = ChatRenderHandler(GLib_module=GLib)
         # Bulk-close guard: skip reindex until all removals are done
         self._bulk_closing = False
 
@@ -414,38 +416,20 @@ class MainContent(Gtk.Box):
             page_index = self._chat_notebook.get_current_page()
         return self._tab_chat_boxes.get(page_index)
 
-    def append_message_to_tab(self, session_key, role, text):
-        """
-        Append a message bubble to the tab matching session_key.
-        If no matching tab exists, does nothing.
-        """
-        for page_idx, sk in self._tab_sessions.items():
-            if sk == session_key:
-                chat_box = self._tab_chat_boxes.get(page_idx)
-                if chat_box is not None:
-                    label = Gtk.Label()
-                    label.set_markup(f"<b>{role}:</b> {text}")
-                    label.set_xalign(0)
-                    label.set_margin_top(4)
-                    label.set_margin_bottom(4)
-                    label.set_margin_start(8)
-                    label.set_margin_end(8)
-                    chat_box.append(label)
-                return
+    def append_message_to_current_tab(self, role, text, session_key=None):
+        """Append a styled chat bubble to the current tab's chat box.
 
-    def append_message_to_current_tab(self, role, text):
-        """Append a message bubble to the current tab's chat box."""
+        Uses ChatRenderHandler.render_sync() with reentrancy guard.
+        session_key is resolved from the current notebook tab if not provided.
+        """
         chat_box = self.get_chat_box()
         if chat_box is None:
             return
-        label = Gtk.Label()
-        label.set_markup(f"<b>{role}:</b> {text}")
-        label.set_xalign(0)
-        label.set_margin_top(4)
-        label.set_margin_bottom(4)
-        label.set_margin_start(8)
-        label.set_margin_end(8)
-        chat_box.append(label)
+        if session_key is None:
+            session_key = self.get_current_session_key()
+        bubble = self._chat_render_handler.render_sync(role, text, session_key)
+        if bubble is not None:
+            chat_box.append(bubble)
 
     # ── STT (Speech-to-Text) ───────────────────────────────────────────────
     # State machine: idle → click → recording → click → idle.

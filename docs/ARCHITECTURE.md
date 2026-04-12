@@ -75,11 +75,14 @@ crabcakes/
 │   │   ├── __init__.py
 │   │   ├── prompts_handler.py  # PromptsHandler — favorites, search, last-used
 │   │   ├── agent_list_handler.py  # AgentListHandler — avatar cards data
-│   │   ├── chat_handler.py    # ChatHandler — send, fan-out, routing (Phase 1)
-│   │   ├── gateway_handler.py # GatewayHandler — connect, agents, lifecycle (Phase 2)
-│   │   └── media_handler.py   # MediaHandler — STT + improve (Phase 4)
+│   │   ├── chat_handler.py    # ChatHandler — send, fan-out, routing
+│   │   ├── chat_render_handler.py  # ChatRenderHandler — escape + markdown + bubble pipeline
+│   │   ├── gateway_handler.py # GatewayHandler — connect, agents, lifecycle
+│   │   ├── media_handler.py   # MediaHandler — STT + improve
+│   │   └── project_handler.py  # ProjectHandler — active project + agent-to-project routing
 │   └── views/                 # View widgets
 │       ├── __init__.py
+│       ├── chat_bubble.py      # build_role_bubble() — chat bubble widget factories (Phase 1)
 │       ├── chat_control_bar.py # ChatControlBar — planned stub (update() not wired)
 │       ├── feedbar.py          # FeedBar — planned stub (update() not wired)
 │       ├── file_tree.py        # FileTree — Gtk.TreeView directory browser
@@ -88,11 +91,16 @@ crabcakes/
 │       ├── main_content.py     # MainContent — chat notebook + input + button bar
 │       └── session_menu.py     # Right-click session switcher popover
 │
-└── utils/                     # File I/O utilities
+└── utils/                     # Pure Python utilities — no GTK, no network
     ├── __init__.py
+    ├── escaping.py             # escape_for_pango(), xml_escape_text() — Pango-aware XML escape
+    ├── markdown.py             # format_markdown() — inline markdown → Pango Markup
     ├── prompts.py             # load_prompts() — reads .md from prompts/
     ├── projects.py             # load_projects(), scan_directory(), load_members(), save_members()
-    └── favorites.py           # favorites persistence (favorites.json)
+    ├── favorites.py           # favorites persistence (favorites.json)
+    ├── improve.py             # improve_prompt() — MiniMax API for prompt improvement
+    ├── stt.py                 # STTEngine — faster-whisper push-to-talk
+    └── icons.py               # Gdk.Texture SVG rendering (agent avatars + folder icons)
 ```
 
 **Top-level packages and their rules:**
@@ -363,6 +371,147 @@ def on_prompt_activated(filepath: str):   # load + fire on_prompt_loaded callbac
 ### 3.14 `ui/handlers/chat_handler.py` — Chat Handler (Phase 1)
 
 **Responsibility:** All chat logic — sending, project fan-out, incoming message routing, tab switching. Extracted from `window.py` in Phase 1.
+
+### 3.14a `utils/escaping.py` — Pango-Aware XML Escape
+
+**Responsibility:** Escape XML/Pango specials while preserving known Pango markup tags.
+
+**Public API:**
+```python
+from utils.escaping import escape_for_pango, xml_escape_text
+
+# Escape specials, preserve known Pango tags (<b>, <i>, <span>, <a>, <br>, etc.)
+# Unknown tags (<script>, <div>) are escaped — prevents Pango from silently
+# rendering the ENTIRE message as empty when it encounters an unknown tag.
+safe = escape_for_pango("<b>bold</b> and <script>x</script>")
+# → "<b>bold</b> and &lt;script&gt;x&lt;/script&gt;"
+
+# Simple XML entity escaping for plain text (no Pango markup)
+xml_escape_text("Tom & Jerry")  # → "Tom &amp; Jerry"
+```
+
+**Key design:** Uses a Pango-known-tag whitelist (`_PANGO_KNOWN_TAGS`). Only tags in this set are preserved; everything else (HTML, `<script>`, `<div>`) is escaped. This prevents the critical bug where Pango renders unknown tags as invisible, making the entire message content disappear.
+
+### 3.14b `utils/markdown.py` — Inline Markdown → Pango Markup
+
+**Responsibility:** Convert inline markdown formatting to Pango Markup for use in `Gtk.Label.set_markup()`.
+
+**Public API:**
+```python
+from utils.markdown import format_markdown
+
+# Conversion rules:
+#   **bold**   → <b>bold</b>
+#   *italic*   → <i>italic</i>
+#   `code`     → <tt>code</tt>   (underscores inside code are protected)
+#   ~~strike~~ → <s>strike</s>
+#   [text](url)→ <a href="url"><u>text</u></a>
+#   bare URL   → clickable <a href="..."> link (trailing punctuation stripped)
+result = format_markdown("use `my_var` for **bold** and *italic*")
+```
+
+**Important:** Handles ONLY inline formatting. Block-level elements (code blocks, blockquotes) are handled by `utils/block_parser.py` in Phase 2.
+
+### 3.14c `ui/views/chat_bubble.py` — Chat Bubble Widget Factories
+
+**Responsibility:** Create styled GTK bubble widgets for chat messages.
+
+**Public API:**
+```python
+from ui.views.chat_bubble import build_role_bubble
+
+# "You" bubbles are right-aligned, agent bubbles left-aligned.
+# CSS classes: .chat-bubble-you / .chat-bubble-agent
+widget = build_role_bubble("Agent", "<b>Hello</b> and **bold** text")
+```
+
+**Architecture:** A **view** — only creates widgets. No state, no callbacks, no logic.
+
+### 3.14d `ui/handlers/chat_render_handler.py` — Chat Render Orchestrator
+
+**Responsibility:** Owns the text processing pipeline (escape → markdown → bubble) and all rendering state.
+
+**Public API:**
+```python
+from ui.handlers.chat_render_handler import ChatRenderHandler
+
+handler = ChatRenderHandler(GLib_module=GLib)
+
+# Async (thread-safe): dispatch work to main thread, call callback with bubble
+# session_key enables reentrancy guarding — concurrent renders for the same
+# session_key are skipped to prevent visual glitches.
+handler.render(role, text, session_key, on_bubble_ready, on_error=None)
+
+# Sync (main thread only): return bubble immediately
+widget = handler.render_sync(role, text, session_key=None)
+```
+
+**Reentrancy guard (`_ReentrancySet`):** Tracks which session keys are currently being rendered. If a render is already in-flight for a key, subsequent calls with that same key are skipped.
+
+**Processing pipeline:**
+1. `escape_for_pango(text)` — protect existing Pango markup tags
+2. `format_markdown(text)` — convert markdown → Pango inline markup
+3. `build_role_bubble(role, text)` — create styled GTK bubble widget
+
+### 3.14e `utils/block_parser.py` — Block Segment Extractor (Phase 2)
+
+**Responsibility:** Split raw message text into typed block segments. Pure function, no GTK, no network.
+
+**Public API:**
+```python
+from utils.block_parser import extract_blocks
+
+segments = extract_blocks("Hello\n\n```python\nx = 1\n```")
+# [{'type': 'text', 'content': 'Hello'},
+#  {'type': 'code', 'content': 'x = 1', 'lang': 'python'}]
+```
+
+**Segment types produced:**
+
+| Type | Description | Key fields |
+|------|-------------|------------|
+| `text` | Plain paragraph | `content` |
+| `code` | Fenced code block | `content`, `lang` |
+| `quote` | `>` blockquote | `content` |
+| `terminal` | `$` command lines | `content` |
+| `heading` | `#` heading | `content`, `level` (1-4) |
+| `task` | `- [ ]` / `- [x]` | `content` |
+
+**Processing order:** Fenced code blocks are extracted first (since they can contain `$`, `#`, `>` chars). Remaining text is split on blank lines and classified.
+
+### 3.14f `utils/syntax_highlight.py` — Pygments → Pango Highlighter (Phase 2)
+
+**Responsibility:** Convert source code to Pango Markup with syntax colors. Degrades gracefully if Pygments unavailable.
+
+**Public API:**
+```python
+from utils.syntax_highlight import highlight
+
+markup = highlight("def foo(): pass", "python")
+# '<span foreground="#c792ea">def</span> ...'
+```
+
+**Color scheme:** Tokyo Night dark theme (16 token color mappings). Falls back to `<tt>escaped</tt>` if Pygments unavailable or lexer unknown.
+
+**Security:** All output is HTML-escaped before span wrapping. Safe for untrusted code content.
+
+### 3.14g `ui/views/chat_bubble.py` — Block-Aware Bubble Factory (Phase 2)
+
+**Responsibility:** Build styled GTK bubble widgets for any message content. Handles both inline (Phase 1) and block-level (Phase 2) rendering.
+
+**Phase 1** (unchanged API):
+- `build_role_bubble(role, text)` — creates bubble, routes text through extract_blocks internally
+- Text segments → `format_markdown()` → bold/italic/code links
+
+**Phase 2 additions:**
+- `code` segments → code block widget (syntax-highlighted header bar + copy button + monospace content)
+- `quote` segments → left-bordered italic muted box
+- `terminal` segments → amber-bordered block with `$` prefixes
+- `heading` segments → scaled font sizes (h1–h4)
+- `task` segments → checkbox characters (☑/☐)
+
+**Architecture:** Each segment becomes a child widget inside a vertical `Gtk.Box`. The bubble's CSS class (`.chat-bubble-you` / `.chat-bubble-agent`) controls bubble background.
+
 
 ### 3.15 `ui/handlers/gateway_handler.py` — Gateway Handler (Phase 2)
 
@@ -863,6 +1012,10 @@ The reasoning: a view decides *what* something is ("this is a send button"), not
 | Pattern | Example | Usage |
 |---------|---------|-------|
 | `component-element` | `agent-row`, `code-block-header` | Widget-specific styles |
+| `chat-bubble-*` | `.chat-bubble-you`, `.chat-bubble-agent` | Chat message bubbles (Phase 1) |
+| `chat-role-*` | `.chat-role-label` | Role label inside bubbles |
+| `chat-msg-*` | `.chat-msg-label` | Message content inside bubbles |
+| `chat-bubble-pending` | `.chat-bubble-pending` | Optimistic UI state (semi-transparent, Phase 1) |
 | `component-element-state` | `agent-row:hover`, `agent-add-btn:hover` | Pseudo-states (in CSS, not the class name) |
 | `component-element-variant` | `agent-avatar-3`, `lang-python` | Numbered or named variants |
 | `semantic-role` | `suggested-action`, `destructive-action` | Reusable semantic roles (GTK convention) |
@@ -976,14 +1129,15 @@ crabcakes/
 ├── ui/
 │   ├── __init__.py            # 1 line
 │   ├── toolbar.py             # 83 lines — Toolbar widget
-│   ├── styles.py              # 189 lines — APP_CSS constant + apply_styles() (single CSS source of truth)
+│   ├── styles.py              # 338 lines — APP_CSS constant + apply_styles() (Phase 1 + 2 block CSS)
 │   ├── window.py              # 260 lines — MainWindow + handler wiring
 │   ├── handlers/
 │   │   ├── __init__.py        # 0 lines — package marker
 │   │   ├── project_list_handler.py  # 60 lines — project card data + color round-robin
 │   │   ├── prompts_handler.py  # 187 lines — favorites, search, last-used, on_prompt_activated
 │   │   ├── agent_list_handler.py  # 107 lines — agent card data (initials, colors, sorting)
-│   │   ├── chat_handler.py     # 174 lines — send, fan-out, routing (Phase 1)
+│   │   ├── chat_handler.py     # 174 lines — send, fan-out, routing
+│   │   ├── chat_render_handler.py  # 151 lines — escape + markdown + bubble pipeline (Phase 1)
 │   │   ├── gateway_handler.py  # 188 lines — connect, agents, lifecycle (Phase 2)
 │   │   ├── media_handler.py   # 89 lines — STT + improve (Phase 4)
 │   │   └── project_handler.py  # 181 lines — active project + agent-to-project routing (Phase 3)
@@ -994,7 +1148,8 @@ crabcakes/
 │       ├── file_tree.py        # 309 lines — FileTree (TreeView directory browser + project card picker)
 │       ├── left_panel.py       # 442 lines — LeftPanel (Prompts/Agents/Projects notebook)
 │       ├── left_progress.py    # 0 lines — stub placeholder
-│       ├── main_content.py     # 506 lines — MainContent (tabs + input + STT/Improve/feed bar + tab close + bulk close)
+│       ├── chat_bubble.py      # 274 lines — build_role_bubble() widget factory (Phase 1 + 2 block-level rendering)
+│       ├── main_content.py     # 512 lines — MainContent (tabs + input + STT/Improve/feed bar + tab close + bulk close)
 │       └── session_menu.py     # 98 lines — right-click session switcher popover
 │
 └── utils/
@@ -1002,9 +1157,22 @@ crabcakes/
     ├── prompts.py             # 25 lines — load_prompts()
     ├── projects.py            # 75 lines — load_projects, scan_directory, load/save_members
     ├── favorites.py           # 59 lines — favorites persistence (favorites.json)
+    ├── escaping.py             # 169 lines — escape_for_pango(), xml_escape_text() — Pango-aware escape (Phase 1)
+    ├── markdown.py             # 137 lines — format_markdown() — inline markdown → Pango (Phase 1)
+    ├── block_parser.py          # 158 lines — extract_blocks() — block segment extraction (Phase 2)
+    ├── syntax_highlight.py      # 164 lines — highlight() — Pygments → Pango markup (Phase 2)
     ├── improve.py             # 141 lines — improve_prompt (MiniMax API)
     ├── stt.py                 # 182 lines — STTEngine (faster-whisper push-to-talk, stop_async pattern)
     └── icons.py               # 165 lines — Gdk.Texture SVG rendering (agent avatars + folder icons)
+
+tests/
+    ├── test_block_parser.py     # 158 lines — extract_blocks() unit tests (Phase 2)
+    ├── test_syntax_highlight.py # 67 lines — highlight() unit tests (Phase 2)
+    ├── test_escaping.py         # 169 lines — escape_for_pango() tests
+    ├── test_markdown.py         # 137 lines — format_markdown() tests
+    ├── test_chat_handler.py     # ChatHandler tests
+    ├── test_chat_render_handler.py  # ChatRenderHandler tests
+    └── ...                      # other test files
 ```
 
 
