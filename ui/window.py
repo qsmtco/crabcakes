@@ -121,8 +121,8 @@ class MainWindow(Gtk.ApplicationWindow):
         # Sync the live GatewayClient reference into ChatHandler after connect
         self._gateway_handler.set_sync_callback(self._sync_gateway_to_chat_handler)
 
-        # FeedBar — right-side activity strip
-        self._feedbar = FeedBar()
+        # # Response Status bar (right side)
+        self._response_status = FeedBar()
 
         # Media handler — owns STT (whisper.cpp push-to-talk) + improve (Phase 4)
         self._media_handler = MediaHandler(
@@ -133,10 +133,11 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # Project handler — owns active project state + agent-to-project routing (Phase 3)
         from ui.handlers.project_handler import ProjectHandler
+        self._projects = __import__("utils.projects", fromlist=["projects"])
         self._project_handler = ProjectHandler(
             main_content=self._main_content,
             left_panel=self._left_panel,
-            projects_module=__import__("utils.projects", fromlist=["projects"]),
+            projects_module=self._projects,
             agent_to_project=self._agent_to_project,  # shared with ChatHandler — the ONE true dict
             GLib_module=GLib,
         )
@@ -147,7 +148,15 @@ class MainWindow(Gtk.ApplicationWindow):
             on_project_opened=self._project_handler.open_project,
         )
         left_panel._file_tree.set_project_list_handler(self._project_list_handler)
-        self._left_panel.set_on_project_members_changed(self._project_handler.toggle_agent)
+        left_panel._file_tree.set_on_navigate_back(self._on_file_tree_navigate_back)
+        left_panel._file_tree.set_on_project_opened(self._project_handler.open_project)
+        self._left_panel.set_toggle_agent_callback(self._project_handler.toggle_agent)
+
+        # Wire feed bar — updates when project opens or members change
+        self._main_content.set_on_project_tab_close(self._on_tab_close)
+        self._main_content.set_on_project_settings_update(self._on_feed_bar_update)
+        self._project_handler.set_on_project_opened(lambda n, p: self._on_feed_bar_update(n, len(self._projects.load_members(n)) if n else 0))
+        self._project_handler.set_on_members_changed(lambda n, m: self._on_feed_bar_update(n, len(m)))
 
         # Wire STT + improve buttons
         self._main_content.set_on_stt_click(self._media_handler.on_stt_click)
@@ -155,7 +164,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # Right-side vertical stack: feedbar above main content
         right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        right_box.append(self._feedbar)
+        right_box.append(self._response_status)
         right_box.append(self._main_content)
 
         # Horizontal paned split: left panel | right content
@@ -193,9 +202,14 @@ class MainWindow(Gtk.ApplicationWindow):
     # ── Prompt callback ─────────────────────────────────────────────────────
 
     def _on_prompt_selected(self, content):
-        """Load prompt content into the user input TextView."""
+        """Insert prompt content into the user input TextView at cursor position."""
         buffer = self._main_content.user_input.get_buffer()
-        buffer.set_text(content)
+        cursor_iter = buffer.get_iter_at_mark(buffer.get_insert())
+        buffer.insert(cursor_iter, content)
+
+    def _on_project_selected(self, path):
+        """Handle file tree selection — no-op; project card clicks route via ProjectHandler."""
+        pass
 
     # ── Gateway toggle ──────────────────────────────────────────────────────
 
@@ -208,6 +222,37 @@ class MainWindow(Gtk.ApplicationWindow):
             self._main_content.set_agent_manager(None)
         else:
             gh.connect()
+
+    def _close_project_tab(self, name: str):
+        """Close a project tab and reset all state. Called by both × and < paths.
+
+        Does: close notebook tab, navigate file_tree back, reset agents +/-, clear feed bar.
+        """
+        # 1. Close the tab in the notebook
+        session_key = f"project:{name}"
+        page_idx = self._main_content._find_page_by_session(session_key)
+        if page_idx is not None:
+            self._main_content._close_tab(page_idx)
+        # 2. Navigate back to the project card picker in left_panel
+        self._left_panel._file_tree.navigate_back()
+        # 3. Reset project state (clears _active_project_name, refreshes +/− buttons)
+        self._project_handler.close_project(name)
+        # 4. Clear the feed bar
+        self._on_feed_bar_update(None, 0)
+
+    def _on_file_tree_navigate_back(self, project_name):
+        """← back button in FileTree — close project tab (delegates to shared method)."""
+        if project_name:
+            self._close_project_tab(project_name)
+
+    def _on_tab_close(self, session_key: str):
+        """× clicked on a project tab — close project tab."""
+        project_name = session_key.replace("project:", "")
+        self._close_project_tab(project_name)
+
+    def _on_feed_bar_update(self, project_name: str, member_count: int):
+        """Update the project settings bar with project name + member count."""
+        self._main_content._update_project_settings_from_project(project_name, member_count)
 
     def _on_ws_event(self, event, payload):
         """Handle incoming gateway events — delegates to ChatHandler for chat events."""

@@ -107,7 +107,7 @@ def test_all_documented_public_apis_exist():
         "set_agent_list_handler",
         "set_on_project_opened",
         "refresh_agents_with_project",
-        "set_on_project_members_changed",
+        "set_toggle_agent_callback",
     ]
     missing_lp = [m for m in left_panel_api if not hasattr(LeftPanel, m)]
     assert not missing_lp, f"LeftPanel missing: {missing_lp}"

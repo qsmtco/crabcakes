@@ -116,6 +116,23 @@ class ProjectHandler:
         if self._on_members_changed:
             self._on_members_changed(self._active_project_name, members)
 
+    def close_project(self, name: str):
+        """
+        Close a project: navigate left_panel file_tree back to picker.
+        Does NOT close the tab — caller handles that.
+
+        Args:
+            name:  Project display name (ignored, just clears state)
+        """
+        self._active_project_name = None
+        # Clear routing entries for this project
+        stale = [k for k, v in self._agent_to_project.items() if v == name]
+        for k in stale:
+            del self._agent_to_project[k]
+        self._dispatch(lambda: self._lp.refresh_agents_with_project(None))
+        if self._on_project_opened:
+            self._on_project_opened(None, None)
+
     def is_project_session(self, session_key: str) -> bool:
         """
         True if session_key belongs to any known project.

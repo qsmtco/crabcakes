@@ -37,7 +37,7 @@ class MainContent(Gtk.Box):
     def __init__(self):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
 
-        # --- TOP: Notebook + control bar (stacked, shrink together) ---
+        # --- TOP: Notebook (with chat scroll overlaid by project settings bar) ---
         top_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 
         self._chat_notebook = Gtk.Notebook()
@@ -52,18 +52,30 @@ class MainContent(Gtk.Box):
 
         self._control_bar = ChatControlBar()
 
-        # Project feed bar — shared live feed strip, semi-transparent placeholder
-        self._feed_bar = Gtk.Box()
-        self._feed_bar.set_size_request(-1, 28)
-        self._feed_bar.add_css_class("project-feed-bar")
-        # CSS for feed bar, buttons, and input is in ui/styles.py (applied globally at startup)
-
         # Top box minimum height — prevents it collapsing when notebook is empty
         top_box.set_size_request(-1, 120)
 
         top_box.append(self._chat_notebook)
-        top_box.append(self._feed_bar)
         top_box.append(self._control_bar)
+
+        # ── Project Settings Bar — floating OVER the chat scroll area only ────
+        # Placed as overlay on the notebook's chat area (not the tab bar).
+        # Semi-transparent; chat content scrolls underneath it.
+        # CSS .project-feed-bar provides rgba background + border-radius.
+        self._project_settings = Gtk.Box()
+        self._project_settings.set_halign(Gtk.Align.FILL)
+        self._project_settings.set_valign(Gtk.Align.START)
+        self._project_settings.set_size_request(-1, 28)
+        self._project_settings.set_margin_top(4)
+        self._project_settings.set_margin_bottom(0)
+        self._project_settings.add_css_class("project-feed-bar")
+        self._project_settings.set_visible(False)  # hidden until a project is opened
+        _feed_lbl = Gtk.Label()
+        _feed_lbl.set_halign(Gtk.Align.END)
+        _feed_lbl.set_margin_start(8)
+        _feed_lbl.set_margin_end(8)
+        _feed_lbl.set_markup('<span foreground="#6b6b7a" font_desc="Sans 10">Project Settings</span>')
+        self._project_settings.append(_feed_lbl)
 
         # --- BOTTOM: User input area + button bar ---
         bottom_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -112,6 +124,9 @@ class MainContent(Gtk.Box):
         # Improve state
         self._on_improve_click = None
 
+        # Project tab close callback — set by window via set_on_project_tab_close()
+        self._on_project_tab_close = None
+
         # Agent manager reference — set via set_agent_manager()
         self._agent_mgr = None
 
@@ -133,18 +148,49 @@ class MainContent(Gtk.Box):
 
         self.append(paned)
 
-    # ── Project Feed Bar ───────────────────────────────────────────────────
+    def set_project_settings_text(self, text: str):
+        """Set text or markup on the project settings bar. Handles Pango markup correctly."""
+        for child in list(self._project_settings):
+            self._project_settings.remove(child)
+        lbl = Gtk.Label()
+        lbl.set_halign(Gtk.Align.END)
+        lbl.set_margin_start(8)
+        lbl.set_margin_end(8)
+        if text.startswith("<"):
+            lbl.set_markup(text)
+        else:
+            lbl.set_text(text)
+        self._project_settings.append(lbl)
+
+    def set_on_project_settings_update(self, cb):
+        """Set callback for project settings updates. cb(project_name, member_count)."""
+        self._on_feed_bar_update = cb
+
+    def _update_project_settings_from_project(self, project_name: str, member_count: int):
+        """Internal — called by window to refresh the project settings bar."""
+        if project_name:
+            self._project_settings.set_visible(True)
+            self.set_project_settings_text(
+                f'<span font_desc="Sans 10"><b>{project_name}</b>  ·  {member_count} member{"s" if member_count != 1 else ""}</span>'
+            )
+        else:
+            self._project_settings.set_visible(False)
+            self.set_project_settings_text('Project Settings')
 
     def set_feed_bar_text(self, text):
         """Update the project feed bar with a status message."""
-        for child in list(self._feed_bar):  # copy list to avoid modify-while-iterate
-            self._feed_bar.remove(child)
+        for child in list(self._project_settings):
+            self._project_settings.remove(child)
         if text:
-            label = Gtk.Label(label=text)
-            label.set_xalign(0)
-            label.set_margin_start(8)
-            label.set_margin_end(8)
-            self._feed_bar.append(label)
+            lbl = Gtk.Label()
+            lbl.set_halign(Gtk.Align.END)
+            lbl.set_margin_start(8)
+            lbl.set_margin_end(8)
+            if text.startswith("<"):
+                lbl.set_markup(text)
+            else:
+                lbl.set_text(text)
+            self._project_settings.append(lbl)
 
     # ── Tab management ──────────────────────────────────────────────────────
 
@@ -159,11 +205,17 @@ class MainContent(Gtk.Box):
                 self._chat_notebook.set_current_page(page_idx)
                 return page_idx
 
-        # Scrollable container for the chat content
+        # Scrollable container for the chat content — wrapped in Overlay so the
+        # project settings bar can float over it (below the tab row).
         chat_scroll = Gtk.ScrolledWindow()
         chat_scroll.set_vexpand(True)
         chat_scroll.set_hexpand(True)
         chat_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+
+        chat_overlay = Gtk.Overlay()
+        chat_overlay.set_vexpand(True)
+        chat_overlay.set_child(chat_scroll)
+        chat_overlay.add_overlay(self._project_settings)
 
         # Vertical box for chat messages
         chat_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -190,7 +242,7 @@ class MainContent(Gtk.Box):
         tab_label_box.append(close_btn)
 
         # Append the new tab FIRST to get page_idx, then wire handlers
-        page_idx = self._chat_notebook.append_page(chat_scroll, tab_label_box)
+        page_idx = self._chat_notebook.append_page(chat_overlay, tab_label_box)
 
         # Store session_key on the tab label box so close handlers can look up
         # the CURRENT page index dynamically (avoids stale captured page_idx bug
@@ -217,15 +269,16 @@ class MainContent(Gtk.Box):
         return page_idx
 
     def _find_page_by_session(self, session_key):
-        """Return the current page index for a session_key by scanning notebook pages.
+        """Return the current page index for a session_key by scanning notebook tab labels.
 
-        This is the canonical way to find a tab — iterates current GTK state rather
-        than trusting stale captured page_idx values in signal closures.
+        The _session_key attribute is stored on the tab_label_box (the tab),
+        not the page widget. Use get_tab_label() to access it.
         """
         n_pages = self._chat_notebook.get_n_pages()
         for idx in range(n_pages):
-            widget = self._chat_notebook.get_nth_page(idx)
-            if widget and getattr(widget, "_session_key", None) == session_key:
+            page_widget = self._chat_notebook.get_nth_page(idx)
+            tab_label = self._chat_notebook.get_tab_label(page_widget)
+            if tab_label and getattr(tab_label, "_session_key", None) == session_key:
                 return idx
         return None
 
@@ -291,19 +344,22 @@ class MainContent(Gtk.Box):
         self._reindex_tabs()
 
     def _on_tab_close_clicked(self, _btn):
-        """× button clicked on a tab — close it.
-
-        Looks up the current page by session_key stored on the tab widget,
-        avoiding stale page_idx from the signal connection captured at tab creation.
-        """
+        """× button clicked on a tab — close it. For project tabs, also close the project."""
         tab_label_box = _btn.get_parent()
         session_key = getattr(tab_label_box, "_session_key", None) if tab_label_box else None
         if session_key is None:
             return
-        # Find current page index for this session_key
         page_idx = self._find_page_by_session(session_key)
-        if page_idx is not None:
-            self._close_tab(page_idx)
+        if page_idx is None:
+            return
+        # If it's a project tab, close the project in left_panel
+        if self._on_project_tab_close and session_key.startswith("project:"):
+            self._on_project_tab_close(session_key)
+        self._close_tab(page_idx)
+
+    def set_on_project_tab_close(self, cb):
+        """Set callback for when a project tab is closed. cb(session_key)."""
+        self._on_project_tab_close = cb
 
     def _on_tab_middle_click(self, ctrl, n_press, x, y):
         """Middle-click on tab label — close it."""

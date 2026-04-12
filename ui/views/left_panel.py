@@ -36,7 +36,7 @@ class LeftPanel(Gtk.Box):
         # Project state — set via set_on_project_opened() when a project tab opens
         self._active_project_name = None
         self._on_project_opened = None
-        self._on_project_members_changed = None
+        self._toggle_agent_callback = None  # set via set_toggle_agent_callback()
 
         # Prompts tab state — built once in _build_prompts_tab()
         self._prompts_handler = None     # set via set_prompts_handler()
@@ -103,9 +103,9 @@ class LeftPanel(Gtk.Box):
         """Set callback for when a project tab is opened."""
         self._on_project_opened = cb
 
-    def set_on_project_members_changed(self, cb):
-        """Set callback for when project membership changes."""
-        self._on_project_members_changed = cb
+    def set_toggle_agent_callback(self, cb):
+        """Set the toggle_agent callback (from ProjectHandler)."""
+        self._toggle_agent_callback = cb
 
     def set_prompts_handler(self, handler):
         """Set the PromptsHandler and refresh the prompts tab."""
@@ -250,12 +250,12 @@ class LeftPanel(Gtk.Box):
             toggle_btn.add_css_class("agent-add-btn" if not in_project else "agent-remove-btn")
             toggle_btn.set_label("−" if in_project else "+")
             toggle_btn.set_visible(True)
+            toggle_btn.show()
         else:
             toggle_btn.set_visible(False)
 
         avatar_picture.show()
         name_lbl.show()
-        toggle_btn.show()
 
         buttons_box.append(toggle_btn)
         row_box.append(avatar_picture)
@@ -271,19 +271,12 @@ class LeftPanel(Gtk.Box):
             self._on_agent_selected(row._session_key, row._agent_name)
 
     def _on_agent_toggle_clicked(self, button):
-        """Add or remove an agent from the active project."""
+        """Add or remove an agent from the active project via toggle_agent callback."""
         if not self._active_project_name:
             return
         session_key = button._agent_session_key
-        members = load_members(self._active_project_name)
-        if session_key in members:
-            members.remove(session_key)
-        else:
-            members.append(session_key)
-        save_members(self._active_project_name, members)
-        self._refresh_agents_list()
-        if self._on_project_members_changed:
-            self._on_project_members_changed(self._active_project_name, members)
+        if self._toggle_agent_callback:
+            self._toggle_agent_callback(session_key)
 
     # ── Prompts tab ─────────────────────────────────────────────────────────
 

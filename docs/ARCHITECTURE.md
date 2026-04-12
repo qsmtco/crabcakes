@@ -229,7 +229,7 @@ self._agent_to_project = {}        # {agent_session_key: project_name} — rever
 - Window creates all sub-components and passes callbacks to each.
 - Window holds references to gateway client and agent manager.
 - Window creates and wires handler instances (ChatHandler, etc.) — see `ui/handlers/`.
-- Window defines callback handlers not yet extracted (`_on_ws_connect`, `_on_agent_selected`, `_on_project_opened`, `_on_stt_*`, `_on_improve_*`, etc.).
+- Window defines callback handlers not yet extracted (`_on_agent_selected`, `_on_tab_close`, `_on_feed_bar_update`, `_on_file_tree_navigate_back`, `_on_ws_event`, `_on_prompt_selected`, `_on_project_selected`, `_on_connect_clicked`, `_on_input_key_press`, `_on_prompt_clicked`, `_on_improve_clicked`, `_on_stt_partial`, `_on_agent_chat`, `_on_prompt_loaded`, `_on_refresh_ui`).
 - Window does NOT define GTK widgets directly — it composes sub-views.
 
 **Phase 1 (ChatHandler) extracted:** `_on_send`, `_on_send_clicked`, `_switch_to_session_tab`, and chat.final routing are now in `ui/handlers/chat_handler.py`.
@@ -253,7 +253,7 @@ panel.set_prompts_handler(handler)             # wires PromptsHandler for prompt
 panel.refresh_prompts()                       # rebuilds the prompts list
 panel.set_on_project_opened(cb)               # fires when project tab opens
 panel.refresh_agents_with_project(name)      # rebuilds agents list with +/− buttons
-panel.set_on_project_members_changed(cb)      # fires when membership changes
+panel.set_toggle_agent_callback(cb)            # wires +/− toggle to ProjectHandler.toggle_agent()
 ```
 
 ### 3.8 `ui/views/file_tree.py` — FileTree Widget
@@ -445,36 +445,11 @@ def render_folder_icon(color_hex: str, letter: str, size: int = 44) -> Gdk.Textu
 ```python
 AGENT_COLORS: list[str]  # 10-color palette
 next_agent_color() -> str
-next_project_color() -> str  # same palette, separate counter
+next_project_color() -> str  # same palette, separate counter — used by ProjectListHandler
 reset_color_indices()
 ```
 
-## 4. Data Flow
-
-### 4.1 Gateway Connection Flow
-
-```
-User clicks Connect
-  → window._on_connect_clicked()
-    → window._connect_gateway()
-      → creates AgentManager()
-      → creates GatewayClient(on_connect=window._on_ws_connect, ...)
-      → client.start()
-
-Connected
-  → window._on_ws_connect()
-    → toolbar.update_connection_state("connected")
-    → snapshot = gw.get_snapshot()
-    → for each agent: agent_mgr.register(session_key, name)
-    → left_panel.set_agents(names_ref, _on_agent_selected)
-
-User clicks Disconnect
-  → window._on_disconnect_gateway()
-    → gw.stop()
-    → toolbar.update_connection_state("disconnected")
-```
-
-### 3.17 `ui/handlers/project_handler.py` — Project Handler (Phase 3)
+### 3.19 `ui/handlers/project_handler.py` — Project Handler (Phase 3)
 
 **Responsibility:** Project tab lifecycle and agent-to-project membership routing. Extracted from `window.py` in Phase 3.
 
@@ -506,8 +481,42 @@ def get_project_members(project_name: str) -> list[str]:
 def get_active_project_name() -> str | None:
     """Return currently active project name, or None."""
 
-def set_on_project_opened(cb: Callable): pass
 def set_on_members_changed(cb: Callable): pass
+def set_on_navigate_back(cb: Callable): pass
+def close_project(name: str): pass
+```
+### 3.20 `ui/views/session_menu.py` — Session Switcher Popover
+
+**Responsibility:** GTK popover listing active sessions for an agent. Right-click to switch.
+
+**Public API:**
+```python
+show_session_menu(parent, agent_name, sessions, on_select)
+```
+
+## 4. Data Flow
+
+### 4.1 Gateway Connection Flow
+
+```
+User clicks Connect
+  → window._on_connect_clicked()
+    → window._connect_gateway()
+      → creates AgentManager()
+      → creates GatewayClient(on_connect=window._on_ws_connect, ...)
+      → client.start()
+
+Connected
+  → window._on_ws_connect()
+    → toolbar.update_connection_state("connected")
+    → snapshot = gw.get_snapshot()
+    → for each agent: agent_mgr.register(session_key, name)
+    → left_panel.set_agents(names_ref, _on_agent_selected)
+
+User clicks Disconnect
+  → window._on_disconnect_gateway()
+    → gw.stop()
+    → toolbar.update_connection_state("disconnected")
 ```
 
 ### 4.2 Agent Selection Flow
@@ -967,25 +976,25 @@ crabcakes/
 ├── ui/
 │   ├── __init__.py            # 1 line
 │   ├── toolbar.py             # 83 lines — Toolbar widget
-│   ├── styles.py              # 190 lines — APP_CSS constant + apply_styles() (single CSS source of truth)
-│   ├── window.py              # 224 lines — MainWindow + handler wiring
+│   ├── styles.py              # 189 lines — APP_CSS constant + apply_styles() (single CSS source of truth)
+│   ├── window.py              # 260 lines — MainWindow + handler wiring
 │   ├── handlers/
 │   │   ├── __init__.py        # 0 lines — package marker
 │   │   ├── project_list_handler.py  # 60 lines — project card data + color round-robin
 │   │   ├── prompts_handler.py  # 187 lines — favorites, search, last-used, on_prompt_activated
 │   │   ├── agent_list_handler.py  # 107 lines — agent card data (initials, colors, sorting)
-│   │   ├── chat_handler.py     # 166 lines — send, fan-out, routing (Phase 1)
+│   │   ├── chat_handler.py     # 174 lines — send, fan-out, routing (Phase 1)
 │   │   ├── gateway_handler.py  # 188 lines — connect, agents, lifecycle (Phase 2)
 │   │   ├── media_handler.py   # 89 lines — STT + improve (Phase 4)
-│   │   └── project_handler.py  # 164 lines — active project + agent-to-project routing (Phase 3)
+│   │   └── project_handler.py  # 181 lines — active project + agent-to-project routing (Phase 3)
 │   └── views/
 │       ├── __init__.py        # 1 line
 │       ├── chat_control_bar.py # 34 lines — ChatControlBar (stub: update() not wired)
 │       ├── feedbar.py          # 48 lines — FeedBar (stub: update() not wired)
-│       ├── file_tree.py        # 219 lines — FileTree (TreeView directory browser)
+│       ├── file_tree.py        # 309 lines — FileTree (TreeView directory browser + project card picker)
 │       ├── left_panel.py       # 442 lines — LeftPanel (Prompts/Agents/Projects notebook)
 │       ├── left_progress.py    # 0 lines — stub placeholder
-│       ├── main_content.py     # 453 lines — MainContent (tabs + input + STT/Improve/feed bar + tab close + bulk close)
+│       ├── main_content.py     # 506 lines — MainContent (tabs + input + STT/Improve/feed bar + tab close + bulk close)
 │       └── session_menu.py     # 98 lines — right-click session switcher popover
 │
 └── utils/

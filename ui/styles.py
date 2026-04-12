@@ -155,11 +155,10 @@ button.flat:hover {
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 6px;
     padding: 8px;
-    cursor: pointer;
 }
 .project-card:hover {
     background: rgba(99, 102, 241, 0.15);
-    border-color: rgba(99, 102, 241, 0.4);
+    border-color: rgba(102, 102, 241, 0.4);
 }
 .project-card-name {
     font-size: 13px;

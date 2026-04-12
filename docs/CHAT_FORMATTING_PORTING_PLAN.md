@@ -557,12 +557,106 @@ pip install pygments  # optional, for syntax-highlighted code blocks
 
 ---
 
+## Additions After Deep Review (2026-04-11)
+
+The following were discovered during a line-by-line comparison of deadcode source files against the original porting plan. Each addition addresses a feature or detail that was missed.
+
+### Missed Feature: Routing Notes
+
+**Source:** `chat_render.py` lines 157–164
+
+Deadcode renders a small "routing note" at the bottom of bubbles when `event_data["routing_note"]` is present. This shows which agent a message was routed through (e.g., "via Qaster"). This is relevant for project group chats where messages fan out to multiple agents.
+
+**Action:** Add to Phase 4 — `create_bubble()` should check for `routing_note` in event_data and append a muted label.
+
+### Missed Feature: Bubble-Pending State
+
+**Source:** `styles.py` `.bubble-pending` class
+
+Deadcode has a `.bubble-pending` CSS class (indigo, semi-transparent) for messages that are sent but not yet confirmed. This is used for optimistic UI updates.
+
+**Action:** Add `.bubble-pending` CSS to Phase 1 CSS additions. Handler can add this class and remove it on confirmation.
+
+### Missed Feature: Edit-Applied State
+
+**Source:** `styles.py` `.bubble-edit-applied` class
+
+When an edit proposal is approved, the card transitions to `.bubble-edit-applied` state (green left border). This provides visual feedback that the edit was applied.
+
+**Action:** Add `.bubble-edit-applied` CSS class to Phase 4 CSS. This pairs with edit proposal cards.
+
+### Missed Feature: Idle/Message Event Type Borders
+
+**Source:** `styles.py` `.bubble-theirs.bubble-idle` and `.bubble-theirs.bubble-message`
+
+Deadcode adds subtle left-border color coding for idle (gray) and regular message (default) event types. These provide visual rhythm in the chat.
+
+**Action:** Add these CSS classes to Phase 1 CSS. Low priority — cosmetic only.
+
+### Missed Feature: Tab Unread Indicators
+
+**Source:** `chat.py` lines 126, 563–576 — `_unread` set, `mark_unread()`, `clear_unread()`
+
+Deadcode tracks unread state per session and shows a dot indicator on tab labels. When a message arrives in a non-active tab, the tab gets an unread dot.
+
+**Action:** This is NOT a chat formatting feature — it's a tab management feature. Recommend adding to a separate tab management plan, NOT this one. But worth noting.
+
+### Missed Feature: Scroll-to-Bottom Button
+
+**Source:** `chat.py` lines 307–321
+
+Deadcode has a floating "scroll to bottom" button that appears when the user scrolls up. It calls `_scroll_to_bottom()` and then hides itself.
+
+**Action:** Add to Phase 5 (polish). This is a UX feature that pairs with auto-scroll. When user scrolls up, the auto-scroll should stop and a ↓ button should appear.
+
+### Missed Detail: Code Block Language Variants Incomplete
+
+**Source:** `styles.py` lines 191–230
+
+The port plan mentions "per-language variants" but only lists a few. Deadcode has **16 language-specific color variants**: Python (teal), JavaScript/JS (amber), Bash/SH/Shell (green), HTML (orange), CSS (sky blue), Rust (red), Go (cyan), Java (orange), C/C++ (blue), Ruby (red), PHP (purple), Swift (orange), Kotlin (purple), TypeScript/TS (blue).
+
+**Action:** Port ALL 16 language CSS variants to Phase 2 CSS additions, not just a few examples.
+
+### Missed Detail: `_ReentrancySet` Guard
+
+**Source:** `chat.py` lines 19–33
+
+Deadcode uses a `_ReentrancySet` to prevent concurrent renders for the same session key. This prevents visual glitches when multiple events arrive simultaneously.
+
+**Action:** Add a reentrancy guard to `ChatRenderHandler.render_message()` in Phase 1. Simple set-based check: if session_key is in the set, skip or queue.
+
+### Missed Detail: Typing Activity in Top Bar
+
+**Source:** `chat.py` lines 327–341 — `_update_top_bar()`
+
+Deadcode shows "Agent · typing…" in a top bar label above the chat area when the agent is typing. This is separate from the typing bubble.
+
+**Action:** CrabCakes has `feedbar.py` and `chat_control_bar.py` stubs that could serve this purpose. Wire typing state to update the control bar in Phase 3.
+
+---
+
+## Updated File Estimate
+
+With these additions, the estimated line counts change slightly:
+
+| Phase | Original Est. | Updated Est. | Reason |
+|-------|--------------|-------------|--------|
+| Phase 1 | ~500 | ~530 | +reentrancy guard, bubble-pending CSS |
+| Phase 2 | ~370 | ~400 | +all 16 language CSS variants |
+| Phase 3 | ~140 | ~170 | +top bar typing label wiring |
+| Phase 4 | ~160 | ~170 | +routing notes, edit-applied CSS |
+| Phase 5 | ~90 | ~120 | +scroll-to-bottom button |
+| **Total** | **~1,260** | **~1,390** | **+130 lines** |
+
+---
+
 ## What We're NOT Porting
 
 These deadcode features are deliberately excluded:
 
 1. **Approval cards** — complex UI with approve/deny buttons, requires gateway approval protocol integration. Future work.
 2. **Forward menu** — requires agent picker popover that doesn't exist yet. Stub only in Phase 5.
+3. **Tab unread indicators** — tab management feature, not formatting. Separate plan needed.
 3. **File lock integration** — deadcode's `FileTreePanel` has lock management. Not a formatting feature.
 4. **Feed-specific rendering** — deadcode's `feed.py` (737 lines) is a separate subsystem. May be ported later but not part of chat formatting.
 5. **Toast notifications** — already have a deadcode `widgets.py` implementation but not a formatting concern.

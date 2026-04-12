@@ -27,6 +27,10 @@ class FileTree(Gtk.Box):
         self._on_file_selected = on_file_selected
         # Project list handler — wired by window via set_project_list_handler()
         self._project_list_handler = None
+        # On project opened callback — wired by window via set_on_project_opened()
+        self._on_project_opened = None
+        # Callback when navigate_back is called — window wires this to close project tabs
+        self._on_navigate_back = None
 
         # Project state
         self._project_name = None
@@ -100,22 +104,29 @@ class FileTree(Gtk.Box):
     def load_project(self, name, path):
         """Load a project root and show its directory tree."""
         self._project_name = name
-        if self._on_project_opened:
-            self._on_project_opened(name, path)
         self._project_path = path
         self._project_history.clear()
+        if self._on_project_opened:
+            self._on_project_opened(name, path)
         self._show_tree(name, path)
 
     def navigate_back(self):
-        """Return to the project picker."""
+        """Return to the project picker. Fires on_navigate_back if set."""
+        project_name = self._project_name  # capture before clearing
         self._project_name = None
         self._project_path = None
         self._project_history.clear()
         self._show_project_picker()
+        if self._on_navigate_back:
+            self._on_navigate_back(project_name)
 
     def set_page(self, page):
         """Set the notebook page container (for clearing content)."""
         self._page = page
+
+    def set_on_navigate_back(self, cb):
+        """Set callback for when navigate_back is called. cb(project_name)."""
+        self._on_navigate_back = cb
 
     def set_on_project_opened(self, cb):
         """Set callback for when a project is opened (name, path)."""

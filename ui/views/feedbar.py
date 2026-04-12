@@ -33,7 +33,7 @@ class FeedBar(Gtk.Box):
         self._feed_label.set_margin_start(12)
         self._feed_label.set_markup(
             '<span foreground="#6b6b7a" font_desc="Sans 10">'
-            'Feed — activity will appear here</span>'
+            'Response Status</span>'
         )
         self.append(self._feed_label)
 
