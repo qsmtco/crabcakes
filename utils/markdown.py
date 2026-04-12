@@ -155,6 +155,9 @@ def format_markdown(text: str) -> str:
 
     # ── Step 2: Bold, italic, strikethrough ──────────────────────────────────
 
+    # Bold+italic: ***text*** -> <b><i>text</i></b> (MUST run before bold/italic)
+    protected = re.sub(r'\*\*\*(.+?)\*\*\*', r'<b><i>\1</i></b>', protected)
+
     # Bold: **text** -> <b>text</b>
     protected = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', protected)
 

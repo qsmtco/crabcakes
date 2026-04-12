@@ -113,10 +113,12 @@ def _build_text_segment(seg: dict) -> Gtk.Widget:
     if not raw.strip():
         return Gtk.Box()  # empty spacer
 
-    safe = escape_for_pango(raw)
-    formatted = format_markdown(safe)
+    # Apply markdown first (may produce <b>, <i>, <a> Pango tags),
+    # then escape any remaining literal angle brackets in the original text.
+    formatted = format_markdown(raw)
+    safe = escape_for_pango(formatted)
     label = Gtk.Label()
-    label.set_markup(formatted)
+    label.set_markup(safe)
     label.set_xalign(0)
     label.set_wrap(True)
     label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -183,10 +185,11 @@ def _build_quote_segment(seg: dict) -> Gtk.Widget:
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
     box.add_css_class("blockquote")
 
-    safe = escape_for_pango(content)
-    formatted = format_markdown(safe)
+    # Apply markdown first, then escape remaining angle brackets.
+    formatted = format_markdown(content)
+    safe = escape_for_pango(formatted)
     label = Gtk.Label()
-    label.set_markup(formatted)
+    label.set_markup(safe)
     label.set_xalign(0)
     label.set_wrap(True)
     label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)

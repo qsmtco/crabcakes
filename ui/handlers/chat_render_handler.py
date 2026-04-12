@@ -57,12 +57,16 @@ class _ReentrancySet:
 
 class ChatRenderHandler:
     """
-    Orchestrates text processing and bubble widget creation for chat messages.
+    Orchestrates bubble widget creation for chat messages.
 
-    Processing pipeline per message:
-      1. escape_for_pango(text)      — protect existing Pango markup tags
-      2. format_markdown(text)       — convert markdown -> Pango inline markup
-      3. build_role_bubble(role, text) — create styled GTK bubble widget
+    Pipeline (owned by build_role_bubble()):
+      1. extract_blocks(raw_text)          — split into typed segments
+      2. Per segment:
+         - text   → escape_for_pango() + format_markdown()
+         - code   → syntax_highlight() (HTML-escapes internally)
+         - quote  → escape_for_pango() + format_markdown()
+         - heading/task/terminal → escape_for_pango()
+      3. Wrap each segment in GTK widgets per CSS classes
 
     Thread safety: render() dispatches GTK calls via GLib.idle_add.
     Use render_sync() only when already on the GTK main thread.

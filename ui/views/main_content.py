@@ -9,7 +9,6 @@ from gi.repository import Gtk, Gdk, GLib
 
 from ui.views.chat_control_bar import ChatControlBar
 from ui.views.session_menu import show_session_menu
-from ui.handlers.chat_render_handler import ChatRenderHandler
 
 class MainContent(Gtk.Box):
     """
@@ -47,8 +46,7 @@ class MainContent(Gtk.Box):
         self._tab_sessions = {}  # page_index -> session_key
         # Track chat boxes per page_index so we can append to them
         self._tab_chat_boxes = {}  # page_index -> chat_box widget
-        # Render handler for styled chat bubbles (Phase 1)
-        self._chat_render_handler = ChatRenderHandler(GLib_module=GLib)
+        self._chat_render_handler = None  # injected via set_chat_render_handler()
         # Bulk-close guard: skip reindex until all removals are done
         self._bulk_closing = False
 
@@ -419,9 +417,11 @@ class MainContent(Gtk.Box):
     def append_message_to_current_tab(self, role, text, session_key=None):
         """Append a styled chat bubble to the current tab's chat box.
 
-        Uses ChatRenderHandler.render_sync() with reentrancy guard.
+        Uses the injected ChatRenderHandler.render_sync() with reentrancy guard.
         session_key is resolved from the current notebook tab if not provided.
         """
+        if self._chat_render_handler is None:
+            return
         chat_box = self.get_chat_box()
         if chat_box is None:
             return
@@ -430,6 +430,10 @@ class MainContent(Gtk.Box):
         bubble = self._chat_render_handler.render_sync(role, text, session_key)
         if bubble is not None:
             chat_box.append(bubble)
+
+    def set_chat_render_handler(self, handler):
+        """Inject ChatRenderHandler instance. Called by window.py._build()."""
+        self._chat_render_handler = handler
 
     # ── STT (Speech-to-Text) ───────────────────────────────────────────────
     # State machine: idle → click → recording → click → idle.

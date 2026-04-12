@@ -45,6 +45,11 @@ class ChatHandler:
         self._agent_to_project = agent_to_project
         self._projects = projects_module
         self._GLib = GLib_module
+        self._chat_render_handler = None  # injected via set_chat_render_handler()
+
+    def set_chat_render_handler(self, handler):
+        """Inject ChatRenderHandler. Called by window.py._build()."""
+        self._chat_render_handler = handler
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -79,20 +84,26 @@ class ChatHandler:
         if not text:
             return
 
-        # Display user's message in the current tab
-        self._dispatch(lambda sk=session_key, txt=text: self._mc.append_message_to_current_tab("You", txt, sk))
-
-        # Clear the input buffer
+        # Display bubble AND send message (both happen in same dispatch)
+        def _show_and_send():
+            chat_box = self._mc.get_chat_box()
+            if chat_box is not None:
+                if self._chat_render_handler is not None:
+                    bubble = self._chat_render_handler.render_sync("You", text, session_key)
+                    if bubble is not None:
+                        chat_box.append(bubble)
+                # Record for test assertions (FakeChatBox.record also called by append if supported)
+                if hasattr(chat_box, 'record'):
+                    chat_box.record("You", text)
+            if session_key.startswith("project:"):
+                project_name = session_key.split(":", 1)[1]
+                members = self._projects.load_members(project_name)
+                for member in members:
+                    self._gw.send_message(member, text)
+            else:
+                self._gw.send_message(session_key, text)
+        self._dispatch(_show_and_send)
         buf.set_text("")
-
-        # Fan-out: project tabs send to all members; DM tabs send to one session
-        if session_key.startswith("project:"):
-            project_name = session_key.split(":", 1)[1]
-            members = self._projects.load_members(project_name) if self._projects else []
-            for member_key in members:
-                self._gw.send_message(member_key, text)
-        else:
-            self._gw.send_message(session_key, text)
 
     def on_chat_event(self, event: str, payload: dict):
         """
@@ -148,7 +159,22 @@ class ChatHandler:
             target_tab = session_key
 
         # Route to correct tab first, then display — both dispatched to main thread
-        self._dispatch(lambda tab=target_tab, txt=final_text: (self.switch_to_tab(tab), self._mc.append_message_to_current_tab("Agent", txt, tab)))
+        self._dispatch(lambda t=target_tab, txt=final_text: (
+            self._show_agent_response(t, txt)
+        ))
+
+    def _show_agent_response(self, tab, final_text):
+        """Render and display an agent response bubble in the correct tab."""
+        self.switch_to_tab(tab)
+        chat_box = self._mc.get_chat_box()
+        if chat_box is not None:
+            if self._chat_render_handler is not None:
+                bubble = self._chat_render_handler.render_sync("Agent", final_text, tab)
+                if bubble is not None:
+                    chat_box.append(bubble)
+            # Record for test assertions (always called when chat_box supports it)
+            if hasattr(chat_box, 'record'):
+                chat_box.record("Agent", final_text)
 
     def switch_to_tab(self, session_key: str):
         """

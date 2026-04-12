@@ -62,6 +62,13 @@ class MainWindow(Gtk.ApplicationWindow):
         self._setup_keyboard_shortcuts()
 
     def _build(self):
+        # Chat render handler — owns text→bubble pipeline (Phase 2 refactor)
+        # Created here and injected into both MainContent and ChatHandler so neither
+        # instantiates it directly. window.py is the composition root.
+        from gi.repository import GLib
+        from ui.handlers.chat_render_handler import ChatRenderHandler
+        self._chat_render_handler = ChatRenderHandler(GLib_module=GLib)
+
         # Create UI components
         toolbar = Toolbar(on_connect_clicked=self._on_connect_clicked)
         self._toolbar = toolbar
@@ -70,10 +77,10 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # Session switch menu needs AgentManager — set after gateway connects
         self._main_content.set_agent_manager(None)
+        self._main_content.set_chat_render_handler(self._chat_render_handler)
 
         # Chat handler — gateway_client is a lambda to avoid stale None reference
         # (self._gw is None at construction, only set when Connect is clicked)
-        from gi.repository import GLib
         self._chat_handler = ChatHandler(
             main_content=self._main_content,
             gateway_client=None,  # synced after connect via set_sync_callback
@@ -81,6 +88,9 @@ class MainWindow(Gtk.ApplicationWindow):
             projects_module=__import__("utils.projects", fromlist=["projects"]),
             GLib_module=GLib,
         )
+
+        # Inject ChatRenderHandler into ChatHandler (window.py is composition root)
+        self._chat_handler.set_chat_render_handler(self._chat_render_handler)
 
         # Wire Send button
         self._main_content.send_button.connect("clicked", self._chat_handler.on_send_clicked)

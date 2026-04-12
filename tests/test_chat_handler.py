@@ -22,6 +22,28 @@ class FakeTextIter:
         return self._offset
 
 
+class FakeChatBox:
+    """Fake chat box that records appended bubbles."""
+
+    def __init__(self):
+        self.bubbles = []       # list of widgets appended
+        self._roles_texts = []  # parallel list of (role, text) for assertion convenience
+
+    def append(self, widget, role=None, text=None):
+        self.bubbles.append(widget)
+        # Record (role, text) if provided — allows tests to assert on message content
+        if role is not None and text is not None:
+            self._roles_texts.append((role, text))
+
+    def record(self, role, text):
+        """Explicitly record a (role, text) pair for test assertions."""
+        self._roles_texts.append((role, text))
+
+    def get_messages(self):
+        """Returns the list of (role, text) pairs recorded."""
+        return list(self._roles_texts)
+
+
 class FakeTextBuffer:
     """Pretends to be a Gtk.TextBuffer for input text access."""
 
@@ -51,6 +73,11 @@ class FakeMainContent:
         # _tab_sessions: plain dict — matches MainContent._tab_sessions exactly
         self._tab_sessions = {}
         self._messages = []       # (role, text) appended to current tab
+        # Chat bubble rendering (Phase 2 refactor — ChatRenderHandler calls get_chat_box())
+        self._fake_chat_box = FakeChatBox()
+        # Tab management for switch_to_tab tests
+        self._notebook_mock = MagicMock()
+        self._notebook_mock.get_n_pages.return_value = 0
 
     def get_current_session_key(self):
         return self._current_session_key
@@ -65,23 +92,20 @@ class FakeMainContent:
     def get_buffer(self):
         return self._input_buffer
 
+    def get_chat_box(self):
+        return self._fake_chat_box
+
     def append_message_to_current_tab(self, role, text, session_key=None):
         self._messages.append((role, text))
+
+    def get_messages(self):
+        # Delegate to FakeChatBox for test compatibility
+        return self._fake_chat_box.get_messages()
 
     def set_current_session(self, key):
         self._current_session_key = key
 
     # ── Tab management for switch_to_tab tests ──────────────────────────────
-
-    def __init__(self, session_key="agent:main", input_text=""):
-        self._current_session_key = session_key
-        self._input_buffer = FakeTextBuffer(input_text)
-        # _tab_sessions: plain dict — matches MainContent._tab_sessions exactly
-        self._tab_sessions = {}
-        self._messages = []       # (role, text) appended to current tab
-        # Cache notebook mock so get_n_pages and set_current_page share the same mock
-        self._notebook_mock = MagicMock()
-        self._notebook_mock.get_n_pages.return_value = 0
 
     @property
     def notebook(self):
@@ -100,9 +124,6 @@ class FakeMainContent:
         return None
 
     # ── Helpers for test assertions ──────────────────────────────────────────
-
-    def get_messages(self):
-        return list(self._messages)
 
     def clear_messages(self):
         self._messages = []
