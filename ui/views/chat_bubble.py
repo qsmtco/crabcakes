@@ -242,7 +242,8 @@ def _build_heading_segment(seg: dict) -> Gtk.Widget:
     label = Gtk.Label()
     label.set_markup(escape_for_pango(content))
     label.set_xalign(0)
-    label.add_css_class(f"chat-heading chat-heading-{level}")
+    label.add_css_class("chat-heading")
+    label.add_css_class(f"chat-heading-{level}")
     return label
 
 

@@ -126,8 +126,21 @@ def escape_for_pango(text: str) -> str:
                 is_void = is_self_closing or tag_name in _PANGO_VOID_TAGS
 
                 if tag_name in _PANGO_KNOWN_TAGS or is_void:
-                    # Known Pango tag OR void tag — preserve and track on stack
-                    result.append(match.group(0))
+                    # Known Pango tag OR void tag — preserve and track on stack.
+                    # Also escape bare & in attribute values (e.g. URLs like
+                    # href="http://example.com?a=1&b=2") to prevent XML parse
+                    # errors in Gtk.Label.set_markup(). Only escape & not already
+                    # part of an entity by checking for ; following &.
+                    full_tag = match.group(0)
+                    if attrs.strip():
+                        # Escape bare ampersands in attributes only
+                        def _escape_attr_ampersands(m):
+                            amp = m.group(0)
+                            return amp.replace("&", "&amp;")
+                        # Only & not followed by valid entity (letter/digit/# then ;)
+                        attrs_escaped = re.sub(r'&(?![a-zA-Z#0-9]+;)', _escape_attr_ampersands, attrs)
+                        full_tag = f"<{tag_name}{attrs_escaped}>"
+                    result.append(full_tag)
                     if not is_void:
                         open_tags.append(tag_name)
                 else:

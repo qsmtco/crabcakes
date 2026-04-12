@@ -414,23 +414,6 @@ class MainContent(Gtk.Box):
             page_index = self._chat_notebook.get_current_page()
         return self._tab_chat_boxes.get(page_index)
 
-    def append_message_to_current_tab(self, role, text, session_key=None):
-        """Append a styled chat bubble to the current tab's chat box.
-
-        Uses the injected ChatRenderHandler.render_sync() with reentrancy guard.
-        session_key is resolved from the current notebook tab if not provided.
-        """
-        if self._chat_render_handler is None:
-            return
-        chat_box = self.get_chat_box()
-        if chat_box is None:
-            return
-        if session_key is None:
-            session_key = self.get_current_session_key()
-        bubble = self._chat_render_handler.render_sync(role, text, session_key)
-        if bubble is not None:
-            chat_box.append(bubble)
-
     def set_chat_render_handler(self, handler):
         """Inject ChatRenderHandler instance. Called by window.py._build()."""
         self._chat_render_handler = handler

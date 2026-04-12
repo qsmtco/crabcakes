@@ -5,7 +5,7 @@
 # Does NOT own: gateway connection lifecycle, project state, STT, prompt selection.
 #
 # Thread safety: on_chat_event() is called from the gateway background thread.
-# All GTK calls (append_message_to_current_tab, switch_to_session_tab) MUST
+# All GTK calls (switch_to_tab, get_chat_box) MUST
 # be dispatched via GLib.idle_add(). The handler receives GLib as a constructor
 # argument for this purpose.
 #

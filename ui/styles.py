@@ -218,7 +218,6 @@ button.flat:hover {
     border-radius: 8px;
     border-left: 3px solid #3d59a1;
     margin: 4px 0;
-    overflow: hidden;
 }
 .code-block-content {
     font-family: monospace;
@@ -289,7 +288,6 @@ button.flat:hover {
     border-radius: 6px;
     border-left: 3px solid #e5c07b;
     margin: 4px 0;
-    overflow: hidden;
 }
 .terminal-header {
     background: rgba(229, 192, 123, 0.12);

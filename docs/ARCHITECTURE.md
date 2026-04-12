@@ -291,8 +291,8 @@ content.user_input              # property → Gtk.TextView
 content.send_button             # property → Gtk.Button
 content.notebook                # property → Gtk.Notebook (chat tabs)
 content.create_chat_tab(session_key, agent_name)   # creates/returns to existing tab
-content.append_message_to_tab(session_key, role, text)  # append to specific tab by key
-content.append_message_to_current_tab(role, text)       # append to current tab
+content.get_chat_box(page_index=None)  # get the chat box for a tab (used by ChatHandler)
+content.set_chat_render_handler(handler)  # inject ChatRenderHandler (called by window.py)
 content.set_feed_bar_text(text)  # update the project feed bar
 content.set_agent_manager(agent_mgr)  # set AgentManager for session switch lookup
 content.close_tabs(page_indices)       # close multiple tabs, reindex once
@@ -429,7 +429,7 @@ widget = build_role_bubble("Agent", "<b>Hello</b> and **bold** text")
 
 ### 3.14d `ui/handlers/chat_render_handler.py` — Chat Render Orchestrator
 
-**Responsibility:** Owns the text processing pipeline (escape → markdown → bubble) and all rendering state.
+**Responsibility:** Owns bubble creation. Calls `build_role_bubble()` which owns the full text processing pipeline (extract_blocks → per-segment escape/markdown/highlight). Exposes `render_sync()` for synchronous use and `render()` for thread-safe async use.
 
 **Public API:**
 ```python
@@ -702,7 +702,7 @@ User types message in project tab and clicks Send
         for member_key in members: gw.send_message(member_key, text)
       else:
         gw.send_message(session_key, text)
-    → append_message_to_current_tab("You", text)
+    → get_chat_box().append(render_sync("You", text, session_key))
 ```
 
 ### 4.5 Project Group Chat — Response Routing
@@ -715,10 +715,10 @@ Gateway sends chat.final event
       → if session_key in _agent_to_project:
           project_name = _agent_to_project[session_key]
           switch_to_tab(f"project:{project_name}")
-          append_message_to_current_tab("Agent", final_text)
+          chat_box.append(render_sync("Agent", final_text, tab))
         else:
           switch_to_tab(session_key)
-          append_message_to_current_tab("Agent", final_text)
+          chat_box.append(render_sync("Agent", final_text, tab))
 ```
 
 ### 4.6 Project Membership — Toggle Agent
