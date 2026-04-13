@@ -235,7 +235,52 @@ class ChatRenderHandler:
 
         self._dispatch(_finalize)
 
-    # ── Internal ─────────────────────────────────────────────────────────
+    def render_event_card(self, event_type: str, container: Gtk.Box, **kwargs):
+        """
+        Render a special event card into container.
+
+        Args:
+            event_type: "file_read" | "edit_proposal" | "tool_call" | "error"
+            container: Parent box to append the card widget to.
+            kwargs: Per-event-type fields:
+                file_read:   file_path, snippet="", line_range=""
+                edit_proposal: file_path, diff=""
+                tool_call:   tool_name, detail=""
+                error:       error_msg
+                thinking:    thought_text
+        """
+        from ui.views.chat_bubble import (
+            create_file_card,
+            create_edit_card,
+            create_tool_card,
+            create_error_bubble,
+        )
+
+        if event_type == "file_read":
+            card = create_file_card(kwargs.get("file_path", ""),
+                                   kwargs.get("snippet", ""),
+                                   kwargs.get("line_range", ""))
+        elif event_type == "edit_proposal":
+            card = create_edit_card(kwargs.get("file_path", ""),
+                                    kwargs.get("diff", ""))
+        elif event_type == "tool_call":
+            card = create_tool_card(kwargs.get("tool_name", ""),
+                                    kwargs.get("detail", ""))
+        elif event_type == "error":
+            card = create_error_bubble(kwargs.get("error_msg", ""))
+        elif event_type == "thinking":
+            # Fall back to plain text bubble for thoughts
+            text = kwargs.get("thought_text", "")
+            card = build_role_bubble("Agent", text)
+        else:
+            # Unknown event type — ignore silently
+            return
+
+        def _append():
+            container.append(card)
+
+        self._dispatch(_append)
+
 
     def _dispatch(self, fn):
         """Call fn on the GTK main thread."""

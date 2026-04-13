@@ -46,6 +46,7 @@ class MainContent(Gtk.Box):
         self._tab_sessions = {}  # page_index -> session_key
         # Track chat boxes per page_index so we can append to them
         self._tab_chat_boxes = {}  # page_index -> chat_box widget
+        self._tab_scrolls = {}   # page_index -> ScrolledWindow widget
         self._chat_render_handler = None  # injected via set_chat_render_handler()
         # Bulk-close guard: skip reindex until all removals are done
         self._bulk_closing = False
@@ -265,6 +266,7 @@ class MainContent(Gtk.Box):
         tab_label_box.add_controller(right_ctrl)
         self._tab_sessions[page_idx] = session_key
         self._tab_chat_boxes[page_idx] = chat_box
+        self._tab_scrolls[page_idx] = chat_scroll
         self._chat_notebook.set_current_page(page_idx)
         return page_idx
 
@@ -301,6 +303,7 @@ class MainContent(Gtk.Box):
         # Snapshot current state before rebuilding
         saved_sessions = dict(self._tab_sessions)
         saved_chat_boxes = dict(self._tab_chat_boxes)
+        saved_scrolls = dict(self._tab_scrolls)
 
         # Build widget -> old_page_idx map from snapshot
         widget_to_idx = {}
@@ -310,6 +313,7 @@ class MainContent(Gtk.Box):
 
         new_sessions = {}
         new_chat_boxes = {}
+        new_scrolls = {}
         n_pages = self._chat_notebook.get_n_pages()
         for new_idx in range(n_pages):
             page_widget = self._chat_notebook.get_nth_page(new_idx)
@@ -317,9 +321,11 @@ class MainContent(Gtk.Box):
             if old_idx is not None:
                 new_sessions[new_idx] = saved_sessions[old_idx]
                 new_chat_boxes[new_idx] = saved_chat_boxes[old_idx]
+                new_scrolls[new_idx] = saved_scrolls[old_idx]
 
         self._tab_sessions = new_sessions
         self._tab_chat_boxes = new_chat_boxes
+        self._tab_scrolls = new_scrolls
 
     def close_tabs(self, page_indices):
         """
@@ -430,6 +436,23 @@ class MainContent(Gtk.Box):
     def set_chat_render_handler(self, handler):
         """Inject ChatRenderHandler instance. Called by window.py._build()."""
         self._chat_render_handler = handler
+
+    def scroll_chat_to_bottom(self, page_index=None):
+        """Scroll the chat ScrolledWindow to the bottom."""
+        if page_index is None:
+            page_index = self._chat_notebook.get_current_page()
+        scroll = self._tab_scrolls.get(page_index)
+        if scroll is None:
+            return
+        vadj = scroll.get_vadjustment()
+        if vadj is None:
+            return
+        # Defer scroll to next frame — widget layout must recalculate first
+        def _do_scroll():
+            vadj.set_value(vadj.get_upper() - vadj.get_page_size())
+            return False  # don't repeat
+        from gi.repository import GLib
+        GLib.idle_add(_do_scroll)
 
     # ── STT (Speech-to-Text) ───────────────────────────────────────────────
     # State machine: idle → click → recording → click → idle.

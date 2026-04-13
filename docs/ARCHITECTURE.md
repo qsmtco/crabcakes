@@ -444,7 +444,13 @@ handler.render(role, text, session_key, on_bubble_ready, on_error=None)
 
 # Sync (main thread only): return bubble immediately
 widget = handler.render_sync(role, text, session_key=None)
+
+# Phase 4: special event card (file_read, edit_proposal, tool_call, error, thinking)
+handler.render_event_card(event_type, container, **fields)
 ```
+
+**Phase 4 — `render_event_card(event_type, container, **fields)`:**
+Dispatches to the appropriate event card factory in `chat_bubble.py`. Thread-safe via `_dispatch()`. Unknown event types are silently ignored.
 
 **Reentrancy guard (`_ReentrancySet`):** Tracks which session keys are currently being rendered. If a render is already in-flight for a key, subsequent calls with that same key are skipped.
 
@@ -495,7 +501,7 @@ markup = highlight("def foo(): pass", "python")
 
 **Security:** All output is HTML-escaped before span wrapping. Safe for untrusted code content.
 
-### 3.14g `ui/views/chat_bubble.py` — Block-Aware Bubble Factory (Phase 2)
+### 3.14g `ui/views/chat_bubble.py` — Block-Aware Bubble Factory (Phase 2+4)
 
 **Responsibility:** Build styled GTK bubble widgets for any message content. Handles both inline (Phase 1) and block-level (Phase 2) rendering.
 
@@ -509,6 +515,14 @@ markup = highlight("def foo(): pass", "python")
 - `terminal` segments → amber-bordered block with `$` prefixes
 - `heading` segments → scaled font sizes (h1–h4)
 - `task` segments → checkbox characters (☑/☐)
+
+**Phase 4 additions** — Event card widget factories:
+- `create_file_card(file_path, snippet, line_range)` → `.bubble-file-read` card (green border, 📄 icon)
+- `create_edit_card(file_path, diff)` → `.bubble-edit-proposal` card (amber border, ✏️ icon)
+- `create_tool_card(tool_name, detail)` → `.bubble-tool-call` card (slate border, 🔧 icon)
+- `create_error_bubble(error_msg)` → `.bubble-error` bubble (red border + tint, ❌ icon)
+- All user content is Pango-escaped via `escape_for_pango()`
+- All content is `set_selectable(True)` for copy
 
 **Architecture:** Each segment becomes a child widget inside a vertical `Gtk.Box`. The bubble's CSS class (`.chat-bubble-you` / `.chat-bubble-agent`) controls bubble background.
 
@@ -724,7 +738,38 @@ Gateway sends events → ChatHandler.on_chat_event(event, payload)
       → chat_box.record("Agent", final_text)
 ```
 
-### 4.6 Project Membership — Toggle Agent
+### 4.6 Special Event Cards — Phase 4
+
+```
+Gateway sends special events → ChatHandler.on_chat_event(event, payload)
+
+  (non-"chat" events only)
+
+  event in ("file_read", "edit_proposal", "tool_call", "error", "thinking"):
+    → _handle_special_event(event, session_key, target_tab, payload)
+      → switch_to_tab(target_tab)        # route to project or agent tab
+      → chat_box = get_chat_box_for_session(target_tab)
+      → ChatRenderHandler.render_event_card(event, chat_box, **fields)
+        → route to factory:
+            "file_read"       → create_file_card(file_path, snippet, line_range)
+            "edit_proposal"   → create_edit_card(file_path, diff)
+            "tool_call"       → create_tool_card(tool_name, detail)
+            "error"           → create_error_bubble(error_msg)
+            "thinking"        → build_role_bubble("Agent", thought_text)  # plain text
+            (unknown)         → no-op (silently ignored)
+```
+
+**New widget factories** (Phase 4 additions to `ui/views/chat_bubble.py`):
+- `create_file_card(file_path, snippet, line_range)` — green left border, 📄 icon
+- `create_edit_card(file_path, diff)` — amber left border, ✏️ icon
+- `create_tool_card(tool_name, detail)` — slate left border, 🔧 icon
+- `create_error_bubble(error_msg)` — red left border + tint, ❌ icon
+
+**New CSS classes** (`ui/styles.py`):
+- `.bubble-file-read`, `.bubble-edit-proposal`, `.bubble-tool-call`
+- `.bubble-error`, `.bubble-thinking`, `.bubble-streaming`
+
+### 4.7 Project Membership — Toggle Agent
 
 ```
 User clicks +/− button on agent row

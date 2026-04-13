@@ -330,6 +330,185 @@ def build_streaming_bubble(agent_name: str = "Agent") -> Gtk.Widget:
 # Utilities
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Event card factories (Phase 4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def create_file_card(file_path: str, snippet: str = "", line_range: str = "") -> Gtk.Widget:
+    """
+    Build a file-read event card with 📄 icon, filename, optional line range, and snippet.
+
+    """
+    container = Gtk.Box()
+    container.set_halign(Gtk.Align.START)
+
+    bubble = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    bubble.add_css_class("chat-bubble-agent")
+    bubble.add_css_class("bubble-file-read")
+    bubble.set_margin_top(4)
+    bubble.set_margin_bottom(4)
+
+    # Header: 📄 icon + file path + optional line range
+    header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+    header.add_css_class("code-block-header")
+
+    icon_label = Gtk.Label(label="<b>📄 File read</b>")
+    icon_label.set_markup("<b>📄 File read</b>")
+    icon_label.set_xalign(0)
+    path_label = Gtk.Label()
+    path_label.set_markup(f"<b>{escape_for_pango(file_path)}</b>")
+    path_label.set_xalign(0)
+    path_label.set_hexpand(True)
+    if line_range:
+        lr_label = Gtk.Label(label=f"  {line_range}")
+        lr_label.set_markup(f"  <span foreground=\"#9b9bab\">{escape_for_pango(line_range)}</span>")
+        header.append(icon_label)
+        header.append(path_label)
+        header.append(lr_label)
+    else:
+        header.append(icon_label)
+        header.append(path_label)
+    bubble.append(header)
+
+    # Snippet if provided
+    if snippet:
+        snippet_code = Gtk.Label()
+        snippet_code.set_markup(escape_for_pango(snippet))
+        snippet_code.set_xalign(0)
+        snippet_code.set_wrap(True)
+        snippet_code.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        snippet_code.set_selectable(True)
+        snippet_code.add_css_class("code-block-content")
+        snippet_code.set_margin_start(12)
+        bubble.append(snippet_code)
+
+    container.append(bubble)
+    return container
+
+
+def create_edit_card(file_path: str, diff: str = "") -> Gtk.Widget:
+    """
+    Build an edit-proposal event card with ✏️ icon, filename, and diff content.
+    """
+    container = Gtk.Box()
+    container.set_halign(Gtk.Align.START)
+
+    bubble = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    bubble.add_css_class("chat-bubble-agent")
+    bubble.add_css_class("bubble-edit-proposal")
+    bubble.set_margin_top(4)
+    bubble.set_margin_bottom(4)
+
+    # Header: ✏️ icon + file path
+    header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+    header.add_css_class("code-block-header")
+    icon_label = Gtk.Label()
+    icon_label.set_markup("<b>✏️ Edit proposal</b>")
+    icon_label.set_xalign(0)
+    path_label = Gtk.Label()
+    path_label.set_markup(f"<b>{escape_for_pango(file_path)}</b>")
+    path_label.set_xalign(0)
+    path_label.set_hexpand(True)
+    header.append(icon_label)
+    header.append(path_label)
+    bubble.append(header)
+
+    # Diff content
+    if diff:
+        diff_label = Gtk.Label()
+        diff_label.set_markup(escape_for_pango(diff))
+        diff_label.set_xalign(0)
+        diff_label.set_wrap(True)
+        diff_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        diff_label.set_selectable(True)
+        diff_label.add_css_class("code-block-content")
+        diff_label.set_margin_start(12)
+        bubble.append(diff_label)
+
+    container.append(bubble)
+    return container
+
+
+def create_tool_card(tool_name: str, detail: str = "") -> Gtk.Widget:
+    """
+    Build a tool-call event card with 🔧 icon and tool name.
+    """
+    container = Gtk.Box()
+    container.set_halign(Gtk.Align.START)
+
+    bubble = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    bubble.add_css_class("chat-bubble-agent")
+    bubble.add_css_class("bubble-tool-call")
+    bubble.set_margin_top(4)
+    bubble.set_margin_bottom(4)
+
+    # Header: 🔧 icon + tool name
+    header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+    header.add_css_class("code-block-header")
+    icon_label = Gtk.Label()
+    icon_label.set_markup("<b>🔧 Tool call</b>")
+    icon_label.set_xalign(0)
+    name_label = Gtk.Label()
+    name_label.set_markup(f"<b>{escape_for_pango(tool_name)}</b>")
+    name_label.set_xalign(0)
+    name_label.set_hexpand(True)
+    header.append(icon_label)
+    header.append(name_label)
+    bubble.append(header)
+
+    # Detail if provided
+    if detail:
+        detail_label = Gtk.Label()
+        detail_label.set_markup(escape_for_pango(detail))
+        detail_label.set_xalign(0)
+        detail_label.set_wrap(True)
+        detail_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        detail_label.set_selectable(True)
+        detail_label.add_css_class("code-block-content")
+        detail_label.set_margin_start(12)
+        bubble.append(detail_label)
+
+    container.append(bubble)
+    return container
+
+
+def create_error_bubble(error_msg: str) -> Gtk.Widget:
+    """
+    Build an error bubble with ❌ icon and error message.
+    """
+    container = Gtk.Box()
+    container.set_halign(Gtk.Align.START)
+
+    bubble = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    bubble.add_css_class("chat-bubble-agent")
+    bubble.add_css_class("bubble-error")
+    bubble.set_margin_top(4)
+    bubble.set_margin_bottom(4)
+
+
+    # Header: ❌ icon + error label
+    header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+    header.add_css_class("code-block-header")
+    icon_label = Gtk.Label()
+    icon_label.set_markup("<b>❌ Error</b>")
+    icon_label.set_xalign(0)
+    header.append(icon_label)
+    bubble.append(header)
+
+    # Error message
+    msg_label = Gtk.Label()
+    msg_label.set_markup(escape_for_pango(error_msg))
+    msg_label.set_xalign(0)
+    msg_label.set_wrap(True)
+    msg_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    msg_label.set_selectable(True)
+    msg_label.set_margin_start(12)
+    bubble.append(msg_label)
+
+    container.append(bubble)
+    return container
+
+
 def _copy_to_clipboard(text: str):
     """Copy text to the system clipboard using GTK4 clipboard API."""
     display = Gdk.Display.get_default()

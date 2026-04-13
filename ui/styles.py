@@ -282,6 +282,15 @@ button.flat:hover {
     font-style: italic;
 }
 
+
+/* ── Event cards (Phase 4) ──────────────────────────────────────────────── */
+.bubble-file-read       { border-left: 3px solid #22c55e; }
+.bubble-edit-proposal   { border-left: 3px solid #f59e0b; }
+.bubble-tool-call       { border-left: 3px solid #94a3b8; }
+.bubble-error           { border-left: 3px solid #ef4444; background: rgba(239,68,68,0.08); }
+.bubble-thinking        { border-left: 3px solid #f59e0b; }
+.bubble-streaming       { border-left: 3px solid #6366f1; }
+
 /* ── Terminal blocks ──────────────────────────────────────────────────── */
 .terminal-block {
     background: rgba(20, 20, 30, 0.95);

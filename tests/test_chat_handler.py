@@ -79,6 +79,9 @@ class FakeMainContent:
         self._notebook_mock = MagicMock()
         self._notebook_mock.get_n_pages.return_value = 0
 
+    def scroll_chat_to_bottom(self, page_index=None):
+        pass  # no-op in tests
+
     def get_current_session_key(self):
         return self._current_session_key
 

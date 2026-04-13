@@ -96,6 +96,7 @@ class ChatHandler:
                     bubble = self._chat_render_handler.render_sync("You", text, session_key)
                     if bubble is not None:
                         chat_box.append(bubble)
+                self._mc.scroll_chat_to_bottom()
                 # Record for test assertions (FakeChatBox.record also called by append if supported)
                 if hasattr(chat_box, 'record'):
                     chat_box.record("You", text)
@@ -131,6 +132,12 @@ class ChatHandler:
         target_tab = f"project:{project_name}" if project_name else session_key
 
         if event != "chat":
+            # Handle Phase 4 special event cards
+            special_events = ("file_read", "edit_proposal", "tool_call", "error", "thinking")
+            if event in special_events:
+                self._dispatch(lambda e=event, sk=session_key, tt=target_tab, pl=payload: (
+                    self._handle_special_event(e, sk, tt, pl)
+                ))
             return
 
         state = payload.get("state", "")
@@ -171,24 +178,27 @@ class ChatHandler:
 
     def _handle_final_response(self, tab: str, session_key: str, final_text: str):
         """
-        End any streaming bubble (which already appends the final rendered bubble)
-        and record the final message in the chat buffer.
+        End any streaming bubble (if one exists) and record the message.
 
-        Args:
-            tab:         Target tab for UI switch (may be project tab).
-            session_key: Bubble key used in start_streaming() — used for teardown.
-            final_text:  Final message text.
-
-        Note: end_streaming() removes the cursor, renders the final bubble via
-        build_role_bubble(), and appends it to the container. No additional
-        render_sync() call is needed — that would create a duplicate bubble.
+        When STREAMING_ENABLED is False, no streaming bubble is ever started,
+        so end_streaming() is a no-op. In that case we fall back to render_sync()
+        to create the final bubble directly.
         """
         self.switch_to_tab(tab)
         chat_box = self._mc.get_chat_box()
         if hasattr(chat_box, 'record'):
             chat_box.record("Agent", final_text)
-        if self._chat_render_handler is not None:
+        if self._chat_render_handler is None:
+            return
+        if self._chat_render_handler.is_streaming(session_key):
             self._chat_render_handler.end_streaming(session_key)
+        else:
+            # No streaming bubble existed (STREAMING_ENABLED=False or first msg):
+            # render the final bubble via render_sync instead.
+            bubble = self._chat_render_handler.render_sync("Agent", final_text, session_key)
+            if bubble is not None and chat_box is not None:
+                chat_box.append(bubble)
+                self._mc.scroll_chat_to_bottom()
 
     def _extract_text(self, msg_obj) -> str:
         """Extract plain text from a message object."""
@@ -217,9 +227,58 @@ class ChatHandler:
                 bubble = self._chat_render_handler.render_sync("Agent", final_text, tab)
                 if bubble is not None:
                     chat_box.append(bubble)
+            self._mc.scroll_chat_to_bottom()
             # Record for test assertions (always called when chat_box supports it)
             if hasattr(chat_box, 'record'):
                 chat_box.record("Agent", final_text)
+
+    def _handle_special_event(self, event_type: str, session_key: str, target_tab: str, payload: dict):
+        """
+        Render a special event card (Phase 4: file_read, edit_proposal, tool_call, error, thinking).
+
+        Args:
+            event_type: Event name from gateway (e.g. "file_read")
+            session_key: Session key for the agent/project tab
+            target_tab:  Tab name for UI switching
+            payload:     Full event payload dict
+        """
+        self.switch_to_tab(target_tab)
+        chat_box = self._mc.get_chat_box_for_session(target_tab)
+        if chat_box is None or self._chat_render_handler is None:
+            return
+
+        msg_obj = payload.get("message", {})
+
+        if event_type == "file_read":
+            self._chat_render_handler.render_event_card(
+                "file_read", chat_box,
+                file_path=msg_obj.get("file_path", "<unknown file>"),
+                snippet=msg_obj.get("snippet", ""),
+                line_range=msg_obj.get("line_range", ""),
+            )
+        elif event_type == "edit_proposal":
+            self._chat_render_handler.render_event_card(
+                "edit_proposal", chat_box,
+                file_path=msg_obj.get("file_path", "<unknown file>"),
+                diff=msg_obj.get("diff", ""),
+            )
+        elif event_type == "tool_call":
+            self._chat_render_handler.render_event_card(
+                "tool_call", chat_box,
+                tool_name=msg_obj.get("tool_name", "<unknown tool>"),
+                detail=msg_obj.get("detail", ""),
+            )
+        elif event_type == "error":
+            self._chat_render_handler.render_event_card(
+                "error", chat_box,
+                error_msg=msg_obj.get("error_msg", msg_obj.get("content", "Unknown error")),
+            )
+        elif event_type == "thinking":
+            self._chat_render_handler.render_event_card(
+                "thinking", chat_box,
+                thought_text=msg_obj.get("thought_text", msg_obj.get("content", "")),
+            )
+        self._mc.scroll_chat_to_bottom()
 
     def switch_to_tab(self, session_key: str):
         """
