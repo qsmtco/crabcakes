@@ -14,6 +14,10 @@
 
 from typing import Callable
 
+# ── Feature flags ──────────────────────────────────────────────────────────────
+STREAMING_ENABLED = False  # True = show live updates as agent types; False = final only
+# ──────────────────────────────────────────────────────────────────────────────
+
 
 class ChatHandler:
     """
@@ -107,10 +111,14 @@ class ChatHandler:
 
     def on_chat_event(self, event: str, payload: dict):
         """
-        Handle incoming gateway events. Only "chat" events with state="final"
-        are processed — partial transcripts are handled by STT handlers.
+        Handle incoming gateway events.
 
-        Routing logic:
+        Event types:
+          - "chat" (delta)   → update streaming bubble
+          - "chat" (final)   → end streaming + render final bubble
+          - Other events      → ignored
+
+        Routing logic (for chat events):
         - If the sending agent is a known project member, switch to and display
           in the project tab.
         - Otherwise, switch to and display in the agent's own tab.
@@ -118,23 +126,76 @@ class ChatHandler:
         Called from: gateway background thread. GTK calls are dispatched via
         GLib.idle_add when available.
         """
+        session_key = payload.get("sessionKey", "") or ""
+        project_name = self._agent_to_project.get(session_key)
+        target_tab = f"project:{project_name}" if project_name else session_key
+
         if event != "chat":
             return
 
         state = payload.get("state", "")
-        if state != "final":
-            return
-
-        session_key = payload.get("sessionKey", "")
         msg_obj = payload.get("message", {})
 
-        # Extract text from message content — supports str, list of text blocks,
-        # or other types (falls back to str() or "")
+        if state == "delta":
+            delta_text = self._extract_text(msg_obj)
+            if not delta_text:
+                return
+            self._dispatch(lambda sk=session_key, tt=target_tab, txt=delta_text: (
+                self._handle_streaming_delta(sk, tt, txt)
+            ))
+        elif state == "final":
+            final_text = self._extract_text(msg_obj)
+            if not final_text:
+                return
+            # session_key: bubble teardown key; target_tab: UI switch + chat box
+            self._dispatch(lambda t=target_tab, sk=session_key, txt=final_text: (
+                self._handle_final_response(t, sk, txt)
+            ))
+
+    def _handle_streaming_delta(self, session_key: str, target_tab: str, delta_text: str):
+        """
+        Update the streaming bubble for session_key with the latest delta text.
+
+        Controlled by STREAMING_ENABLED. When disabled, delta events are ignored
+        and the message appears only when the final event arrives.
+        """
+        if not STREAMING_ENABLED:
+            return  # streaming disabled — wait for final event
+        if self._chat_render_handler is None:
+            return
+        if not self._chat_render_handler.is_streaming(session_key):
+            chat_box = self._mc.get_chat_box_for_session(target_tab)
+            if chat_box is not None:
+                self._chat_render_handler.start_streaming(session_key, chat_box, "Agent")
+        self._chat_render_handler.update_streaming(session_key, delta_text)
+
+    def _handle_final_response(self, tab: str, session_key: str, final_text: str):
+        """
+        End any streaming bubble (which already appends the final rendered bubble)
+        and record the final message in the chat buffer.
+
+        Args:
+            tab:         Target tab for UI switch (may be project tab).
+            session_key: Bubble key used in start_streaming() — used for teardown.
+            final_text:  Final message text.
+
+        Note: end_streaming() removes the cursor, renders the final bubble via
+        build_role_bubble(), and appends it to the container. No additional
+        render_sync() call is needed — that would create a duplicate bubble.
+        """
+        self.switch_to_tab(tab)
+        chat_box = self._mc.get_chat_box()
+        if hasattr(chat_box, 'record'):
+            chat_box.record("Agent", final_text)
+        if self._chat_render_handler is not None:
+            self._chat_render_handler.end_streaming(session_key)
+
+    def _extract_text(self, msg_obj) -> str:
+        """Extract plain text from a message object."""
         if isinstance(msg_obj, dict):
             content = msg_obj.get("content", "")
         else:
             content = msg_obj
-
         if isinstance(content, list):
             parts = []
             for block in content:
@@ -142,26 +203,10 @@ class ChatHandler:
                     t = block.get("text", "")
                     if t:
                         parts.append(t)
-            final_text = "".join(parts)
+            return "".join(parts)
         elif isinstance(content, str):
-            final_text = content
-        else:
-            final_text = str(content) if content else ""
-
-        if not final_text:
-            return
-
-        # Determine which tab to display in: project tab if agent is a project member
-        project_name = self._agent_to_project.get(session_key)
-        if project_name:
-            target_tab = f"project:{project_name}"
-        else:
-            target_tab = session_key
-
-        # Route to correct tab first, then display — both dispatched to main thread
-        self._dispatch(lambda t=target_tab, txt=final_text: (
-            self._show_agent_response(t, txt)
-        ))
+            return content
+        return str(content) if content else ""
 
     def _show_agent_response(self, tab, final_text):
         """Render and display an agent response bubble in the correct tab."""

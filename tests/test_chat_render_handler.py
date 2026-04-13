@@ -183,3 +183,122 @@ class TestPipeline:
         handler = ChatRenderHandler(GLib_module=None)
         widget = handler.render_sync("Agent", "Hello **Agent**")
         assert widget is not None
+
+
+class TestPhase3Streaming:
+    """Tests for Phase 3 streaming and typing indicator methods."""
+
+    def setup_method(self):
+        # FakeGLib: records idle_add/timeout_add, runs funcs synchronously
+        self.idle_calls = []
+        self.timeout_calls = []
+        self._next_timer_id = 1
+
+        class FakeGLib:
+            @staticmethod
+            def idle_add(fn):
+                self.idle_calls.append(fn)
+                return len(self.idle_calls)
+
+            @staticmethod
+            def timeout_add(interval, fn, *user_data):
+                self.timeout_calls.append(fn)
+                tid = self._next_timer_id
+                self._next_timer_id += 1
+                return tid
+
+            @staticmethod
+            def source_remove(timer_id):
+                pass  # no-op for tests
+
+        self.fake_glib = FakeGLib
+        self.handler = ChatRenderHandler(GLib_module=FakeGLib)
+        # FakeChatBox: minimal container that holds appended widgets
+        self.fake_box = FakeChatBox()
+
+    def _run_all_idle(self):
+        """Execute all dispatched idle functions to simulate main thread."""
+        for fn in self.idle_calls:
+            fn()
+        self.idle_calls.clear()
+
+    # ── Streaming ───────────────────────────────────────────────────────────
+
+    def test_is_streaming_false_initially(self):
+        """is_streaming() returns False when no streaming bubble exists."""
+        assert self.handler.is_streaming("agent:1") is False
+
+    def test_start_streaming_creates_bubble(self):
+        """start_streaming() creates a streaming bubble in _streaming_bubbles."""
+        self.handler.start_streaming("agent:1", self.fake_box, "Agent")
+        self._run_all_idle()
+        assert "agent:1" in self.handler._streaming_bubbles
+
+    def test_start_streaming_twice_idempotent(self):
+        """Calling start_streaming twice does not create duplicate bubbles."""
+        self.handler.start_streaming("agent:1", self.fake_box, "Agent")
+        self._run_all_idle()
+        # start_streaming is called again — it should clean up old one first
+        # but only one entry should exist
+        entries_before = len(self.handler._streaming_bubbles)
+        self.handler.start_streaming("agent:1", self.fake_box, "Agent")
+        self._run_all_idle()
+        assert len(self.handler._streaming_bubbles) == entries_before
+
+    def test_update_streaming_uses_delta_as_full_text(self):
+        """update_streaming() uses delta as complete accumulated text (no append).
+
+        The gateway sends full cumulative text in each delta. Using delta directly
+        avoids double-accumulation when the gateway already includes prior content.
+        """
+        self.handler.start_streaming("agent:1", self.fake_box, "Agent")
+        self._run_all_idle()
+        self.handler.update_streaming("agent:1", "Hello world")
+        self._run_all_idle()
+        _c, _l, _r, plain, _b = self.handler._streaming_bubbles["agent:1"]
+        assert plain == "Hello world"  # last delta wins, no double-accumulation
+
+    def test_update_streaming_escapes_html_chars(self):
+        """update_streaming() escapes < > & in the label to prevent markup corruption."""
+        self.handler.start_streaming("agent:1", self.fake_box, "Agent")
+        self._run_all_idle()
+        self.handler.update_streaming("agent:1", "Use <div>")
+        self._run_all_idle()
+        _c, label, _r, _plain, _b = self.handler._streaming_bubbles["agent:1"]
+        markup = label.get_label()
+        # Raw <div> must NOT appear in markup — it should be &lt;div&gt;
+        assert "<div>" not in markup
+        assert "&lt;div&gt;" in markup
+
+    def test_is_streaming_true_after_start(self):
+        """is_streaming() returns True after start_streaming() is called."""
+        self.handler.start_streaming("agent:1", self.fake_box, "Agent")
+        self._run_all_idle()
+        assert self.handler.is_streaming("agent:1") is True
+
+    def test_end_streaming_removes_entry(self):
+        """end_streaming() removes the streaming bubble entry."""
+        self.handler.start_streaming("agent:1", self.fake_box, "Agent")
+        self._run_all_idle()
+        self.handler.end_streaming("agent:1")
+        self._run_all_idle()
+        assert "agent:1" not in self.handler._streaming_bubbles
+
+    def test_end_streaming_idempotent(self):
+        """end_streaming() is safe to call when no streaming bubble exists."""
+        self.handler.end_streaming("agent:1")  # no-op, no crash
+
+
+class FakeChatBox:
+    """Minimal Gtk.Box stand-in for testing bubble append/remove."""
+    def __init__(self):
+        self._children = []
+
+    def append(self, widget):
+        self._children.append(widget)
+
+    def remove(self, widget):
+        self._children.remove(widget)
+
+    def __contains__(self, widget):
+        return widget in self._children

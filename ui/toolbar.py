@@ -6,6 +6,8 @@ import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
 
+from ui.handlers.chat_handler import STREAMING_ENABLED
+
 class Toolbar(Gtk.Box):
     """
     Top toolbar widget.
@@ -22,6 +24,13 @@ class Toolbar(Gtk.Box):
 
         # Store the connect button callback
         self._on_connect_clicked = on_connect_clicked
+
+        # Stream toggle — left side of toolbar
+        self._stream_btn = Gtk.ToggleButton(label="Stream: OFF")
+        self._stream_btn.set_size_request(100, -1)
+        self._stream_btn.set_active(STREAMING_ENABLED)
+        self._update_stream_label()
+        self._stream_btn.connect("toggled", self._on_stream_toggled)
 
         # Spacer — expands to push everything after it to the right
         spacer = Gtk.Box()
@@ -49,7 +58,8 @@ class Toolbar(Gtk.Box):
         right_box.append(self._status_label)
         right_box.append(self._connect_btn)
 
-        # Assemble: left content | spacer | right content
+        # Assemble: stream btn | spacer | right content
+        self.append(self._stream_btn)
         self.append(spacer)
         self.append(right_box)
 
@@ -57,6 +67,19 @@ class Toolbar(Gtk.Box):
         """Called when Connect button is clicked. Delegates to window's callback."""
         if self._on_connect_clicked is not None:
             self._on_connect_clicked()
+
+    def _on_stream_toggled(self, button):
+        """Toggle streaming on/off and update the button label."""
+        import ui.handlers.chat_handler as chat_handler
+        chat_handler.STREAMING_ENABLED = button.get_active()
+        self._update_stream_label()
+
+    def _update_stream_label(self):
+        """Update stream button label to reflect current state."""
+        import ui.handlers.chat_handler as chat_handler
+        self._stream_btn.set_label(
+            "Stream: ON" if chat_handler.STREAMING_ENABLED else "Stream: OFF"
+        )
 
     # ── State update methods ─────────────────────────────────────────────────
 

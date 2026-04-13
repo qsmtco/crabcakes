@@ -705,20 +705,23 @@ User types message in project tab and clicks Send
     → get_chat_box().append(render_sync("You", text, session_key))
 ```
 
-### 4.5 Project Group Chat — Response Routing
+### 4.5 Project Group Chat — Response Routing (Phase 3)
 
 ```
-Gateway sends chat.final event
-  → window._on_ws_event(event="chat", payload)
-    → ChatHandler.on_chat_event(event, payload)
-      → session_key = payload.get("sessionKey")
-      → if session_key in _agent_to_project:
-          project_name = _agent_to_project[session_key]
-          switch_to_tab(f"project:{project_name}")
-          chat_box.append(render_sync("Agent", final_text, tab))
-        else:
-          switch_to_tab(session_key)
-          chat_box.append(render_sync("Agent", final_text, tab))
+Gateway sends events → ChatHandler.on_chat_event(event, payload)
+
+  event="chat", state="delta":
+    → _handle_streaming_delta(session_key, target_tab, delta_text)
+      → ChatRenderHandler.start_streaming(session_key, chat_box)  # first delta only
+        → build_streaming_bubble() — pending bubble with cursor (▍)
+      → ChatRenderHandler.update_streaming(session_key, delta_text)
+        → update label with gateway's cumulative delta text (no local accumulation)
+
+  event="chat", state="final":
+    → _handle_final_response(tab, session_key, final_text)
+      → ChatRenderHandler.end_streaming(session_key)
+        → remove cursor, replace with final bubble via build_role_bubble()
+      → chat_box.record("Agent", final_text)
 ```
 
 ### 4.6 Project Membership — Toggle Agent
@@ -1082,7 +1085,7 @@ Agent and project avatars use a 10-color round-robin palette defined in `models/
 |-------|---------------|---------|
 | `"chat"` | `"final"` | Complete agent response — `payload["sessionKey"]`, `payload["message"]["content"]` |
 
-**Other event types** arrive at `on_event` but are not yet handled (streaming, tool calls, approvals).
+**Other event types** arrive at `on_event` but are not yet handled (tool calls, approvals). Streaming and typing handled in Phase 3.
 
 **Snapshot structure (`get_snapshot()`):**
 ```python

@@ -22,6 +22,10 @@
 #   render_sync(role, text, session_key=None) -> Gtk.Widget
 #       Synchronous version — only call from the main thread.
 
+import gi
+gi.require_version('Gtk', '4.0')
+from gi.repository import Gtk
+
 from utils.escaping import escape_for_pango
 from utils.markdown import format_markdown
 from ui.views.chat_bubble import build_role_bubble
@@ -68,6 +72,8 @@ class ChatRenderHandler:
          - heading/task/terminal → escape_for_pango()
       3. Wrap each segment in GTK widgets per CSS classes
 
+    Phase 3 addition: streaming bubbles — text updates live as the agent types.
+
     Thread safety: render() dispatches GTK calls via GLib.idle_add.
     Use render_sync() only when already on the GTK main thread.
 
@@ -81,6 +87,8 @@ class ChatRenderHandler:
     def __init__(self, GLib_module=None):
         self._GLib = GLib_module
         self._reentrancy = _ReentrancySet()
+        # Phase 3: streaming bubbles — session_key → (container, label, role, plain_text)
+        self._streaming_bubbles: dict = {}
 
     # ── Async (thread-safe) ──────────────────────────────────────────────
 
@@ -140,6 +148,92 @@ class ChatRenderHandler:
         # Pass raw text — build_role_bubble() owns the full pipeline:
         # extract_blocks() on raw text, then per-segment escape+markdown/highlight.
         return build_role_bubble(role, text)
+
+
+    # ── Streaming bubbles (Phase 3) ────────────────────────────────────
+
+    def start_streaming(self, session_key: str, container: Gtk.Box, role: str = "Agent"):
+        """
+        Start a streaming response bubble in container.
+
+        Creates a pending bubble with a cursor (▍) that text will be appended to.
+        If a streaming bubble already exists for session_key, clears it first.
+
+        Args:
+            session_key: Session key for this streaming bubble.
+            container:   The chat box Gtk.Box to append the bubble to.
+            role:        "Agent" or "You" — determines bubble alignment.
+        """
+        # Clear any existing streaming bubble for this session
+        if session_key in self._streaming_bubbles:
+            self.end_streaming(session_key)
+
+        from ui.views.chat_bubble import build_streaming_bubble
+        bubble, label = build_streaming_bubble(role)
+
+        # Store synchronously so end_streaming can access bubble even before
+        # _show runs on the main thread (important when end_streaming is called
+        # immediately after start_streaming from the same dispatch chain).
+        self._streaming_bubbles[session_key] = (container, label, role, "", bubble)
+
+        def _show():
+            container.append(bubble)
+
+        self._dispatch(_show)
+
+    def is_streaming(self, session_key: str) -> bool:
+        """Return True if a streaming bubble exists for session_key."""
+        return session_key in self._streaming_bubbles
+
+    def update_streaming(self, session_key: str, delta_text: str):
+        """
+        Update the streaming bubble label for session_key.
+
+        The gateway sends FULL cumulative text in each delta (each delta contains
+        all text accumulated so far). Use delta_text directly — do NOT append
+        to the stored plain text, as that would double-accumulate.
+
+        Safe to call from any thread.
+        """
+        if session_key not in self._streaming_bubbles:
+            print(f"[STREAM] update_streaming: SKIP sk={session_key!r} not in _streaming_bubbles")
+            return
+
+        container, label, role, _old_plain, _bubble = self._streaming_bubbles[session_key]
+
+        def _update():
+            from utils.escaping import escape_for_pango
+            # delta_text is already the complete accumulated text — use it directly
+            self._streaming_bubbles[session_key] = (container, label, role, delta_text, _bubble)
+            escaped = escape_for_pango(delta_text)
+            label.set_markup(escaped + "<tt>▍</tt>")
+
+        self._dispatch(_update)
+
+    def end_streaming(self, session_key: str):
+        """
+        End streaming for session_key: remove cursor and replace with final bubble.
+
+        The streaming bubble is replaced with a proper rendered final bubble.
+        """
+        if session_key not in self._streaming_bubbles:
+            return
+
+        container, label, role, plain, streaming_bubble = self._streaming_bubbles.pop(session_key)
+
+        def _finalize():
+            # Use tracked plain text directly (cursor already absent after pop)
+            full_text = plain
+
+            # Remove streaming bubble widget
+            if streaming_bubble in container:
+                container.remove(streaming_bubble)
+
+            # Build and append final bubble
+            final_bubble = build_role_bubble(role, full_text)
+            container.append(final_bubble)
+
+        self._dispatch(_finalize)
 
     # ── Internal ─────────────────────────────────────────────────────────
 

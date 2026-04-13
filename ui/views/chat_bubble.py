@@ -73,11 +73,29 @@ def build_role_bubble(role: str, text: str) -> Gtk.Widget:
     bubble.set_margin_bottom(4)
 
     # ── Parse into segments and render each ─────────────────────────────
+    # Group all consecutive text segments into one label so the user can
+    # select the entire bubble text with a single drag. Block-level segments
+    # (code, quote, terminal) are kept as individual widgets.
     segments = extract_blocks(text)
+    text_parts = []
     for seg in segments:
-        widget = _build_segment_widget(seg)
-        if widget is not None:
-            bubble.append(widget)
+        if seg.get("type") == "text":
+            text_parts.append(seg.get("content", ""))
+        else:
+            # Flush accumulated text segments first
+            if text_parts:
+                joined_text = "\n".join(text_parts)
+                widget = _build_text_segment({"type": "text", "content": joined_text})
+                bubble.append(widget)
+                text_parts = []
+            block_widget = _build_segment_widget(seg)
+            if block_widget is not None:
+                bubble.append(block_widget)
+    # Flush any remaining text at the end
+    if text_parts:
+        joined_text = "\n".join(text_parts)
+        widget = _build_text_segment({"type": "text", "content": joined_text})
+        bubble.append(widget)
 
     container.append(bubble)
     return container
@@ -122,6 +140,7 @@ def _build_text_segment(seg: dict) -> Gtk.Widget:
     label.set_xalign(0)
     label.set_wrap(True)
     label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    label.set_selectable(True)
     label.add_css_class("chat-msg-label")
     return label
 
@@ -193,6 +212,7 @@ def _build_quote_segment(seg: dict) -> Gtk.Widget:
     label.set_xalign(0)
     label.set_wrap(True)
     label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    label.set_selectable(True)
     label.add_css_class("blockquote-text")
     box.append(label)
     return box
@@ -228,6 +248,7 @@ def _build_terminal_segment(seg: dict) -> Gtk.Widget:
         line_widget.set_xalign(0)
         line_widget.set_wrap(True)
         line_widget.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        line_widget.set_selectable(True)
         content_box.append(line_widget)
 
     block.append(content_box)
@@ -242,6 +263,7 @@ def _build_heading_segment(seg: dict) -> Gtk.Widget:
     label = Gtk.Label()
     label.set_markup(escape_for_pango(content))
     label.set_xalign(0)
+    label.set_selectable(True)
     label.add_css_class("chat-heading")
     label.add_css_class(f"chat-heading-{level}")
     return label
@@ -256,8 +278,52 @@ def _build_task_segment(seg: dict) -> Gtk.Widget:
     label = Gtk.Label()
     label.set_markup(safe)
     label.set_xalign(0)
+    label.set_wrap(True)
+    label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    label.set_selectable(True)
     label.add_css_class("task-item")
     return label
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Streaming bubble factory (Phase 3)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_streaming_bubble(agent_name: str = "Agent") -> Gtk.Widget:
+    """
+    Build a streaming response bubble with an inline cursor (▍).
+
+    The bubble starts with just the cursor and text is appended incrementally
+    via update_streaming(). When streaming ends, the cursor is removed and
+    the bubble is re-rendered as a final message.
+
+    Args:
+        agent_name: Display name for the agent role label.
+
+    Returns:
+        A tuple (container, label) where container goes in the chat box
+        and label is the mutable text label the caller updates.
+    """
+    container = Gtk.Box()
+    container.set_halign(Gtk.Align.START)
+
+    bubble = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    bubble.add_css_class("chat-bubble-pending")
+    bubble.add_css_class("chat-bubble-agent")
+    bubble.set_margin_top(4)
+    bubble.set_margin_bottom(4)
+
+    label = Gtk.Label()
+    label.set_markup("<tt>▍</tt>")
+    label.set_xalign(0)
+    label.set_wrap(True)
+    label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    label.set_selectable(True)
+    label.add_css_class("chat-msg-label")
+    bubble.append(label)
+
+    container.append(bubble)
+    return container, label
 
 
 # ─────────────────────────────────────────────────────────────────────────────

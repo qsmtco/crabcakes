@@ -414,6 +414,19 @@ class MainContent(Gtk.Box):
             page_index = self._chat_notebook.get_current_page()
         return self._tab_chat_boxes.get(page_index)
 
+    def get_chat_box_for_session(self, session_key: str):
+        """
+        Return the chat box widget for the tab matching session_key.
+
+        Iterates over _tab_sessions to find the page_index with the matching
+        session_key, then returns the corresponding chat box.
+        Returns None if no tab exists for that session_key.
+        """
+        for page_idx, sk in self._tab_sessions.items():
+            if sk == session_key:
+                return self._tab_chat_boxes.get(page_idx)
+        return None
+
     def set_chat_render_handler(self, handler):
         """Inject ChatRenderHandler instance. Called by window.py._build()."""
         self._chat_render_handler = handler
