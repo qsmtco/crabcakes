@@ -33,6 +33,11 @@ def reset_color_indices() -> None:
 
 
 # ── Project color palette (same colors, separate counter) ────────────────────
+# NOTE: _agent_color_next and _project_color_next are global module-state.
+# Agents keep their colors across reconnects (reset_color_indices() is called
+# on reconnect to start fresh, but agents already registered retain their color
+# via AgentManager._agent_colors which is a separate dict). This is intentional:
+# reconnecting agents get the same color they had before.
 
 _project_color_next: int = 0
 

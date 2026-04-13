@@ -30,7 +30,7 @@ class ChatHandler:
     Args:
         main_content:       MainContent instance — for tab ops and input access
         gateway_client:     GatewayClient instance — for send_message()
-        agent_to_project:   dict — maps session_key → project_name (read-only ref)
+        agent_to_project   — AgentRoutingTable — ProjectHandler writes, ChatHandler reads
         projects_module:    utils.projects module — for load_members()
         GLib_module:        gi.repository.GLib or None — for thread-safe GTK calls
     """
@@ -39,13 +39,13 @@ class ChatHandler:
         self,
         main_content,      # MainContent
         gateway_client,    # GatewayClient
-        agent_to_project: dict,
+        agent_to_project,  # AgentRoutingTable — ProjectHandler writes, ChatHandler reads
         projects_module,   # module — utils.projects
         GLib_module=None,  # gi.repository.GLib or None
     ):
         self._mc = main_content
         self._gw = gateway_client
-        # agent_to_project is a read-only reference — window owns and updates it
+        # agent_to_project is an AgentRoutingTable — ProjectHandler writes, ChatHandler reads
         self._agent_to_project = agent_to_project
         self._projects = projects_module
         self._GLib = GLib_module
@@ -109,7 +109,7 @@ class ChatHandler:
             chat_box = self._mc.get_chat_box()
             if chat_box is not None:
                 if self._chat_render_handler is not None:
-                    bubble = self._chat_render_handler.render_sync("You", text, session_key, on_forward_click=self._on_forward_message)
+                    bubble = self._chat_render_handler.render_sync("You", text, session_key, on_forward_click=self._on_forward_message, agent_name="You")
                     if bubble is not None:
                         chat_box.append(bubble)
                 self._mc.scroll_chat_to_bottom()
@@ -144,7 +144,9 @@ class ChatHandler:
         GLib.idle_add when available.
         """
         session_key = payload.get("sessionKey", "") or ""
-        project_name = self._agent_to_project.get(session_key)
+        project_name = self._agent_to_project.get_project(session_key)
+        # Route to project tab if agent is a member, otherwise to their personal tab.
+        # Project tab keys are "project:<name>" — see ProjectHandler.open_project().
         target_tab = f"project:{project_name}" if project_name else session_key
 
         if event != "chat":
@@ -217,7 +219,14 @@ class ChatHandler:
                 self._mc.scroll_chat_to_bottom()
 
     def _extract_text(self, msg_obj) -> str:
-        """Extract plain text from a message object."""
+        """Extract plain text from a gateway message object.
+
+        The gateway sends message content in two forms:
+        - A string (simple text responses)
+        - A list of typed blocks (block-level formatting: code, quote, etc.)
+
+        This method normalizes both into a single string for bubble rendering.
+        """
         if isinstance(msg_obj, dict):
             content = msg_obj.get("content", "")
         else:
@@ -268,6 +277,7 @@ class ChatHandler:
         if event_type == "file_read":
             self._chat_render_handler.render_event_card(
                 "file_read", chat_box,
+                session_key=target_tab,
                 file_path=msg_obj.get("file_path", "<unknown file>"),
                 snippet=msg_obj.get("snippet", ""),
                 line_range=msg_obj.get("line_range", ""),
@@ -275,23 +285,27 @@ class ChatHandler:
         elif event_type == "edit_proposal":
             self._chat_render_handler.render_event_card(
                 "edit_proposal", chat_box,
+                session_key=target_tab,
                 file_path=msg_obj.get("file_path", "<unknown file>"),
                 diff=msg_obj.get("diff", ""),
             )
         elif event_type == "tool_call":
             self._chat_render_handler.render_event_card(
                 "tool_call", chat_box,
+                session_key=target_tab,
                 tool_name=msg_obj.get("tool_name", "<unknown tool>"),
                 detail=msg_obj.get("detail", ""),
             )
         elif event_type == "error":
             self._chat_render_handler.render_event_card(
                 "error", chat_box,
+                session_key=target_tab,
                 error_msg=msg_obj.get("error_msg", msg_obj.get("content", "Unknown error")),
             )
         elif event_type == "thinking":
             self._chat_render_handler.render_event_card(
                 "thinking", chat_box,
+                session_key=target_tab,
                 thought_text=msg_obj.get("thought_text", msg_obj.get("content", "")),
             )
         self._mc.scroll_chat_to_bottom()

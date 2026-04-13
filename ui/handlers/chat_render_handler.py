@@ -140,7 +140,7 @@ class ChatRenderHandler:
         """Set MainContent reference for self-contained scroll operations."""
         self._main_content = main_content
 
-    def render_sync(self, role: str, text: str, session_key: str = None, on_forward_click=None, forwarded_from: str = None):
+    def render_sync(self, role: str, text: str, session_key: str = None, on_forward_click=None, forwarded_from: str = None, agent_name: str = None):
         """
         Process text and return a bubble widget synchronously.
 
@@ -152,15 +152,22 @@ class ChatRenderHandler:
             text:  Raw message text
             session_key: Optional session key for reentrancy guarding.
                        If a render is in-flight for this key, returns None.
+            agent_name: Optional agent display name. If None and role is "Agent",
+                        looked up from _main_content._agent_mgr using session_key.
 
         Returns:
             Gtk.Widget (a bubble container box), or None if re-entrant.
         """
         if session_key is not None and session_key in self._reentrancy:
             return None
+        # Auto-lookup agent name for Agent role if not provided
+        if agent_name is None and role == "Agent" and session_key and self._main_content is not None:
+            agent_mgr = getattr(self._main_content, '_agent_mgr', None)
+            if agent_mgr is not None:
+                agent_name = agent_mgr.get_name(session_key)
         current_key = f"{role}:{session_key}" if session_key else None
         tight = (current_key == self._last_message_key) and self._last_message_key is not None
-        bubble = build_role_bubble(role, text, on_forward_click=on_forward_click, tight=tight, session_key=session_key, forwarded_from=forwarded_from)
+        bubble = build_role_bubble(role, text, on_forward_click=on_forward_click, tight=tight, session_key=session_key, forwarded_from=forwarded_from, agent_name=agent_name)
         self._last_message_key = current_key
         return bubble
 
@@ -218,7 +225,9 @@ class ChatRenderHandler:
 
         def _update():
             from utils.escaping import escape_for_pango
-            # delta_text is already the complete accumulated text — use it directly
+            # CRITICAL: delta_text is the FULL cumulative text from gateway.
+            # Do NOT append to _old_plain — that would double-accumulate.
+            # Store it directly as the new plain text.
             self._streaming_bubbles[session_key] = (container, label, role, delta_text, _bubble)
             escaped = escape_for_pango(delta_text)
             label.set_markup(escaped + "<tt>▍</tt>")
@@ -244,8 +253,20 @@ class ChatRenderHandler:
             if streaming_bubble in container:
                 container.remove(streaming_bubble)
 
+            # Look up agent name for header
+            agent_name = None
+            if role == "Agent" and self._main_content is not None:
+                agent_mgr = getattr(self._main_content, '_agent_mgr', None)
+                if agent_mgr is not None:
+                    agent_name = agent_mgr.get_name(session_key)
+
             # Build and append final bubble
-            final_bubble = build_role_bubble(role, full_text, on_forward_click=self._on_forward_message)
+            final_bubble = build_role_bubble(
+                role, full_text,
+                on_forward_click=self._on_forward_message,
+                session_key=session_key,
+                agent_name=agent_name,
+            )
             container.append(final_bubble)
             if self._main_content is not None:
                 self._main_content.scroll_chat_to_bottom()
@@ -254,13 +275,14 @@ class ChatRenderHandler:
         # Reset message grouping key so next message starts fresh
         self._last_message_key = None
 
-    def render_event_card(self, event_type: str, container: Gtk.Box, **kwargs):
+    def render_event_card(self, event_type: str, container: Gtk.Box, session_key: str = None, **kwargs):
         """
         Render a special event card into container.
 
         Args:
-            event_type: "file_read" | "edit_proposal" | "tool_call" | "error"
+            event_type: "file_read" | "edit_proposal" | "tool_call" | "error" | "thinking"
             container: Parent box to append the card widget to.
+            session_key: Optional session key for agent name lookup (thinking events).
             kwargs: Per-event-type fields:
                 file_read:   file_path, snippet="", line_range=""
                 edit_proposal: file_path, diff=""
@@ -290,7 +312,13 @@ class ChatRenderHandler:
         elif event_type == "thinking":
             # Fall back to plain text bubble for thoughts
             text = kwargs.get("thought_text", "")
-            card = build_role_bubble("Agent", text)
+            # Look up agent name for header
+            agent_name = None
+            if session_key and self._main_content is not None:
+                agent_mgr = getattr(self._main_content, '_agent_mgr', None)
+                if agent_mgr is not None:
+                    agent_name = agent_mgr.get_name(session_key)
+            card = build_role_bubble("Agent", text, agent_name=agent_name)
         else:
             # Unknown event type — ignore silently
             return

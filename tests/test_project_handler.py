@@ -63,7 +63,8 @@ def lp():
 @pytest.fixture
 def handler(mc, lp, fake_projects, fake_glib):
     from ui.handlers.project_handler import ProjectHandler
-    agent_to_project = {}  # shared dict (same pattern as ChatHandler in window)
+    from models import AgentRoutingTable
+    agent_to_project = AgentRoutingTable()
     return ProjectHandler(
         main_content=mc,
         left_panel=lp,

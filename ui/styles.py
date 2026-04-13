@@ -96,6 +96,13 @@ button.flat:hover {
     background: rgba(99, 102, 241, 0.15);
     border-color: rgba(99, 102, 241, 0.4);
 }
+.agent-row:selected,
+.agent-row:focus,
+.agent-row:focus-visible {
+    background: rgba(99, 102, 241, 0.2) !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
 .agent-name-label {
     color: #e8e8ec;
     font-size: 14px;
@@ -135,8 +142,15 @@ button.flat:hover {
     background: rgba(99, 102, 241, 0.15);
     border-color: rgba(99, 102, 241, 0.4);
 }
-.lib-row.selected {
-    background: rgba(99, 102, 241, 0.25);
+.lib-row.selected,
+.agent-row.selected {
+    background: rgba(99, 102, 241, 0.2) !important;
+    border-color: transparent !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+.lib-row:selected {
+    background: rgba(99, 102, 241, 0.2) !important;
 }
 .lib-fav-star {
     color: #f59e0b;
@@ -160,6 +174,13 @@ button.flat:hover {
     background: rgba(99, 102, 241, 0.15);
     border-color: rgba(102, 102, 241, 0.4);
 }
+.project-card:selected,
+.project-card.selected {
+    background: rgba(99, 102, 241, 0.2) !important;
+    border-color: transparent !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
 .project-card-name {
     font-size: 13px;
     color: #e2e8f0;
@@ -176,6 +197,28 @@ button.flat:hover {
     border-radius: 12px 12px 12px 4px;
     padding: 6px 10px 8px 10px;
     margin: 2px 12px 2px 8px;
+}
+.chat-bubble-header {
+    margin: 0 0 2px 0;
+    padding: 0;
+}
+.chat-bubble-header-name {
+    font-size: 11px;
+    font-weight: 600;
+    color: #c0c0d8;
+}
+.chat-bubble-header-dot {
+    background: #22c55e;
+    border-radius: 50%;
+    min-width: 6px;
+    max-width: 6px;
+    min-height: 6px;
+    max-height: 6px;
+    margin: 0 2px;
+}
+.chat-bubble-header-time {
+    font-size: 10px;
+    color: #707088;
 }
 .chat-bubble-you {
     background: rgba(99, 102, 241, 0.22);

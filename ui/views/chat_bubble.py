@@ -42,7 +42,7 @@ from utils.syntax_highlight import highlight
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool = False, forwarded_from: str = None, session_key: str = None) -> Gtk.Widget:
+def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool = False, forwarded_from: str = None, session_key: str = None, agent_name: str = None) -> Gtk.Widget:
     """
     Build a styled chat bubble for the given role and raw text.
 
@@ -54,7 +54,9 @@ def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool =
     Args:
         role: "You" for user messages (right-aligned), "Agent" otherwise
               (left-aligned, for agent responses)
-        text: Raw message text — may contain markdown, code blocks, quotes, etc.
+        text: Raw message text — may contain markdown, code blocks, quotes, etc.)
+        agent_name: Optional display name for the agent (used in header row).
+                   If None, no header is shown.
 
     Returns:
         A Gtk.Widget (Gtk.Box) containing the bubble.
@@ -71,6 +73,37 @@ def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool =
     )
     bubble.set_margin_top(1 if tight else 4)
     bubble.set_margin_bottom(4)
+
+    # ── Header row: "Name ● HH:MM" ───────────────────────────────────
+    # Always show for agents; show for You bubbles too (right-aligned)
+    if agent_name or role == "You":
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M")
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        header.add_css_class("chat-bubble-header")
+        header.set_spacing(4)
+        header.set_margin_bottom(2)
+        header.set_hexpand(role == "You")
+        header.set_halign(Gtk.Align.END if role == "You" else Gtk.Align.START)
+
+        display_name = agent_name if agent_name else "You"
+        name_label = Gtk.Label(label=display_name)
+        name_label.add_css_class("chat-bubble-header-name")
+        name_label.set_halign(Gtk.Align.START)
+
+        dot = Gtk.Box()
+        dot.set_size_request(6, 6)
+        dot.add_css_class("chat-bubble-header-dot")
+        dot.set_valign(Gtk.Align.CENTER)
+
+        time_label = Gtk.Label(label=timestamp)
+        time_label.add_css_class("chat-bubble-header-time")
+        time_label.set_halign(Gtk.Align.START)
+
+        header.append(name_label)
+        header.append(dot)
+        header.append(time_label)
+        bubble.append(header)
 
     # ── Parse into segments and render each ─────────────────────────────
     # Group all consecutive text segments into one label so the user can
@@ -100,52 +133,51 @@ def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool =
         widget = _build_text_segment({"type": "text", "content": joined_text})
         bubble.append(widget)
 
-    # ── Action buttons (agent only, hover-to-reveal) ───────────────────
-    if role != "You":
-        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        actions.add_css_class("chat-bubble-actions")
-        actions.set_spacing(4)
+    # ── Action buttons (hover-to-reveal) ───────────────────────────────
+    actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+    actions.add_css_class("chat-bubble-actions")
+    actions.set_spacing(4)
 
-        # Copy button — SVG icon, hover reveal (opacity 0.3 → 1.0)
-        copy_btn = Gtk.Button()
-        copy_btn.add_css_class("flat")
-        copy_btn.set_tooltip_text("Copy message")
-        copy_btn.set_size_request(22, 22)
-        copy_btn.set_opacity(0.3)
-        try:
-            copy_btn.set_child(Gtk.Image.new_from_file(
-                "/home/q/projects/crabcakes/ui/icons/copy.svg"))
-        except Exception:
-            copy_btn.set_label("📋")
-        copy_btn.connect("clicked", lambda _, t=text: _copy_to_clipboard(t))
-        copy_motion = Gtk.EventControllerMotion()
-        copy_motion.connect("enter", lambda _c, _x, _y: copy_btn.set_opacity(1.0))
-        copy_motion.connect("leave", lambda _c: copy_btn.set_opacity(0.3))
-        copy_btn.add_controller(copy_motion)
+    # Copy button — SVG icon, hover reveal (opacity 0.3 → 1.0)
+    copy_btn = Gtk.Button()
+    copy_btn.add_css_class("flat")
+    copy_btn.set_tooltip_text("Copy message")
+    copy_btn.set_size_request(22, 22)
+    copy_btn.set_opacity(0.3)
+    try:
+        copy_btn.set_child(Gtk.Image.new_from_file(
+            "/home/q/projects/crabcakes/ui/icons/copy.svg"))
+    except Exception:
+        copy_btn.set_label("📋")
+    copy_btn.connect("clicked", lambda _, t=text: _copy_to_clipboard(t))
+    copy_motion = Gtk.EventControllerMotion()
+    copy_motion.connect("enter", lambda _c, _x, _y: copy_btn.set_opacity(1.0))
+    copy_motion.connect("leave", lambda _c: copy_btn.set_opacity(0.3))
+    copy_btn.add_controller(copy_motion)
 
-        # Forward button — SVG icon, hover reveal, popover menu on click
-        fwd_btn = Gtk.Button()
-        fwd_btn.add_css_class("flat")
-        fwd_btn.set_tooltip_text("Forward to another agent")
-        fwd_btn.set_size_request(22, 22)
-        fwd_btn.set_opacity(0.3)
-        try:
-            fwd_btn.set_child(Gtk.Image.new_from_file(
-                "/home/q/projects/crabcakes/ui/icons/forward.svg"))
-        except Exception:
-            fwd_btn.set_label("↗")
-        if on_forward_click:
-            fwd_btn.connect("clicked", lambda btn, t=text, sk=session_key: on_forward_click(t, btn, sk))
-        else:
-            fwd_btn.connect("clicked", lambda _: print("[chat_bubble] forward (no handler)"))
-        fwd_motion = Gtk.EventControllerMotion()
-        fwd_motion.connect("enter", lambda _c, _x, _y: fwd_btn.set_opacity(1.0))
-        fwd_motion.connect("leave", lambda _c: fwd_btn.set_opacity(0.3))
-        fwd_btn.add_controller(fwd_motion)
+    # Forward button — SVG icon, hover reveal, popover menu on click
+    fwd_btn = Gtk.Button()
+    fwd_btn.add_css_class("flat")
+    fwd_btn.set_tooltip_text("Forward to another agent")
+    fwd_btn.set_size_request(22, 22)
+    fwd_btn.set_opacity(0.3)
+    try:
+        fwd_btn.set_child(Gtk.Image.new_from_file(
+            "/home/q/projects/crabcakes/ui/icons/forward.svg"))
+    except Exception:
+        fwd_btn.set_label("↗")
+    if on_forward_click:
+        fwd_btn.connect("clicked", lambda btn, t=text, sk=session_key: on_forward_click(t, btn, sk))
+    else:
+        fwd_btn.connect("clicked", lambda _: print("[chat_bubble] forward (no handler)"))
+    fwd_motion = Gtk.EventControllerMotion()
+    fwd_motion.connect("enter", lambda _c, _x, _y: fwd_btn.set_opacity(1.0))
+    fwd_motion.connect("leave", lambda _c: fwd_btn.set_opacity(0.3))
+    fwd_btn.add_controller(fwd_motion)
 
-        actions.append(copy_btn)
-        actions.append(fwd_btn)
-        bubble.append(actions)
+    actions.append(copy_btn)
+    actions.append(fwd_btn)
+    bubble.append(actions)
 
     container.append(bubble)
     return container

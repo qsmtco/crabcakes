@@ -55,13 +55,20 @@ class MainWindow(Gtk.ApplicationWindow):
         self._gateway_handler = None
         # Media handler — owns STT + improve (Phase 4)
         self._media_handler = None
-        # Project fan-out lookup — {session_key: project_name} — initialized early (referenced in _build)
-        self._agent_to_project = {}
+        # Agent-to-project routing table — shared between ProjectHandler (writes) and ChatHandler (reads)
+        from models import AgentRoutingTable
+        self._agent_to_project = AgentRoutingTable()
 
         self._build()
         self._setup_keyboard_shortcuts()
 
     def _build(self):
+        """Composition root — all handler and view wiring lives here.
+
+        This method is intentionally dense. It is the single place where
+        all components are instantiated and connected. New handlers receive
+        their dependencies here. See ARCHITECTURE.md §3.6 for the pattern.
+        """
         # Chat render handler — owns text→bubble pipeline (Phase 2 refactor)
         # Created here and injected into both MainContent and ChatHandler so neither
         # instantiates it directly. window.py is the composition root.
@@ -149,7 +156,7 @@ class MainWindow(Gtk.ApplicationWindow):
             main_content=self._main_content,
             left_panel=self._left_panel,
             projects_module=self._projects,
-            agent_to_project=self._agent_to_project,  # shared with ChatHandler — the ONE true dict
+            agent_to_project=self._agent_to_project,  # shared AgentRoutingTable — ProjectHandler writes, ChatHandler reads
             GLib_module=GLib,
         )
         # Wire left_panel project events → ProjectHandler
@@ -271,7 +278,13 @@ class MainWindow(Gtk.ApplicationWindow):
             self._chat_handler.on_chat_event(event, payload)
 
     def _sync_gateway_to_chat_handler(self, gw):
-        """Called by GatewayHandler after connect succeeds — sync live GatewayClient to ChatHandler."""
+        """Sync the live GatewayClient into ChatHandler after connect succeeds.
+
+        Called by GatewayHandler via set_sync_callback() after on_connected() dispatches.
+        GatewayClient is not available at window construction time (gateway isn't running yet),
+        so we defer the reference injection until after the WebSocket handshake completes.
+        This is the only place where ChatHandler._gw gets set — it's write-once after connect.
+        """
         self._chat_handler.set_gateway_client(gw)
         self._main_content.set_agent_manager(self._gateway_handler.agent_mgr)
         # Wire AgentListHandler to the live AgentManager
@@ -362,7 +375,8 @@ class MainWindow(Gtk.ApplicationWindow):
             bubble = self._chat_render_handler.render_sync(
                 "You", text, target_session_key,
                 on_forward_click=self._chat_render_handler._on_forward_message,
-                forwarded_from=source_name
+                forwarded_from=source_name,
+                agent_name="You",
             )
             if bubble is not None:
                 chat_box.append(bubble)

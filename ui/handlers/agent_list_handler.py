@@ -73,7 +73,9 @@ class AgentListHandler:
         """
         Return [(session_key, name)] for all agents, grouped by unique name.
 
-        Prefers :main session as the primary key for each agent.
+        One row per UNIQUE agent name (not one per session). When an agent has
+        multiple sessions, the :main session is used as the primary key — the
+        session switcher (right-click → SessionMenu) handles the other sessions.
         project_members: list of session_keys currently in the project (for +/− state)
 
         Returns:

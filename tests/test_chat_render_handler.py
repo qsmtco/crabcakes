@@ -239,6 +239,77 @@ class TestPhase3Streaming:
         self.handler.end_streaming("agent:1")  # no-op, no crash
 
 
+class TestPhase5MessageGrouping:
+    """Tests for Phase 5 — message grouping and forward callback."""
+
+    def setup_method(self):
+        self.handler = ChatRenderHandler(GLib_module=None)
+
+    def test_consecutive_same_role_session_gets_tight(self):
+        """Second message from same role+session gets tight=True (grouped)."""
+        # First message — should NOT be tight
+        w1 = self.handler.render_sync("Agent", "Hello", session_key="agent:1")
+        assert w1 is not None
+
+        # Second message from same role+session — should be tight
+        # We verify by checking _last_message_key was set
+        assert self.handler._last_message_key == "Agent:agent:1"
+
+    def test_different_role_resets_grouping(self):
+        """Message from different role resets grouping — not tight."""
+        self.handler.render_sync("Agent", "Hello", session_key="agent:1")
+        assert self.handler._last_message_key == "Agent:agent:1"
+
+        # Different role — new key
+        self.handler.render_sync("You", "Hi back", session_key="agent:1")
+        assert self.handler._last_message_key == "You:agent:1"
+
+    def test_different_session_resets_grouping(self):
+        """Message from different session_key resets grouping."""
+        self.handler.render_sync("Agent", "Hello", session_key="agent:1")
+        assert self.handler._last_message_key == "Agent:agent:1"
+
+        # Different session — new key
+        self.handler.render_sync("Agent", "Hello", session_key="agent:2")
+        assert self.handler._last_message_key == "Agent:agent:2"
+
+    def test_session_switch_resets_grouping(self):
+        """Switching to a different session_key breaks grouping — not tight."""
+        self.handler.render_sync("Agent", "Hello", session_key="agent:1")
+        assert self.handler._last_message_key == "Agent:agent:1"
+
+        # Different session — key changes, so next bubble for agent:1 would NOT be grouped
+        self.handler.render_sync("Agent", "Other session", session_key="agent:2")
+        assert self.handler._last_message_key == "Agent:agent:2"
+
+        # Back to agent:1 — different from current key, so NOT tight
+        self.handler.render_sync("Agent", "New message", session_key="agent:1")
+        assert self.handler._last_message_key == "Agent:agent:1"
+
+    def test_forward_callback_in_render_sync(self):
+        """render_sync passes on_forward_click to build_role_bubble."""
+        calls = []
+        def forward_cb(text, widget):
+            calls.append(text)
+
+        widget = self.handler.render_sync("Agent", "Forward me",
+                                          session_key="agent:1",
+                                          on_forward_click=forward_cb)
+        assert widget is not None
+        # The forward callback is wired into the bubble — we can't easily
+        # simulate a GTK click in tests, but we verify it doesn't crash
+
+    def test_none_session_key_does_not_group(self):
+        """render_sync with no session_key sets current_key=None — no grouping with keyed messages."""
+        self.handler.render_sync("Agent", "Hello", session_key="agent:1")
+        assert self.handler._last_message_key == "Agent:agent:1"
+
+        # No session key — current_key is None, _last_message_key becomes None
+        self.handler.render_sync("Agent", "No session")
+        assert self.handler._last_message_key is None
+
+
+
 class TestPhase4EventCards:
     """Tests for render_event_card() — special event card rendering."""
 

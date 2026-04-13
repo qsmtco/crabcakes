@@ -6,8 +6,10 @@ import os
 
 PROJECTS_DIR: str = os.environ.get("CRABCAKES_PROJECTS_DIR", os.path.expanduser("~/projects"))
 
-# Allow tests to patch this directly
-_PROJECTS_DIR_REF: list[str] = [PROJECTS_DIR]  # wrap in list for mutation
+# Allow tests to patch this directly without patching the module-level constant.
+# Wrapped in a list so tests can mutate _PROJECTS_DIR_REF[0] in-place rather than
+# rebinding the name (which wouldn't affect already-imported references).
+_PROJECTS_DIR_REF: list[str] = [PROJECTS_DIR]
 
 
 def load_projects() -> list[tuple[str, str]]:

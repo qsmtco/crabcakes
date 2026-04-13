@@ -168,9 +168,16 @@ class FakeProjectsModule:
 def make_handler(main_content, gateway_client, agent_to_project=None, projects_module=None):
     """Create a ChatHandler with all dependencies injected."""
     from ui.handlers.chat_handler import ChatHandler
+    from models import AgentRoutingTable
 
     if agent_to_project is None:
-        agent_to_project = {}
+        agent_to_project = AgentRoutingTable()
+    elif isinstance(agent_to_project, dict):
+        # Support legacy dict-based test fixtures — convert to AgentRoutingTable
+        table = AgentRoutingTable()
+        for k, v in agent_to_project.items():
+            table.add(k, v)
+        agent_to_project = table
 
     handler = ChatHandler(
         main_content=main_content,

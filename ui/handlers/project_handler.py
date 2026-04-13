@@ -20,7 +20,7 @@ class ProjectHandler:
 
     Owns:
       _active_project_name — currently open project name (or None)
-      _agent_to_project   — {session_key: project_name} for fan-out routing
+      _agent_to_project   — AgentRoutingTable instance; shared with ChatHandler
 
     Does NOT own: MainContent, LeftPanel, ChatHandler — receives them as deps.
 
@@ -31,6 +31,7 @@ class ProjectHandler:
         main_content:      MainContent instance — for create_chat_tab()
         left_panel:       LeftPanel instance — for refresh_agents_with_project()
         projects_module:  utils.projects module — for load_members() / save_members()
+        agent_to_project: AgentRoutingTable — shared with ChatHandler (writes here, reads there)
         GLib_module:      gi.repository.GLib or None — for thread-safe GTK dispatch
     """
 
@@ -39,7 +40,7 @@ class ProjectHandler:
         main_content,
         left_panel,
         projects_module,
-        agent_to_project: dict,
+        agent_to_project,  # AgentRoutingTable
         GLib_module=None,
     ):
         self._mc = main_content
@@ -47,8 +48,8 @@ class ProjectHandler:
         self._projects = projects_module
         self._GLib = GLib_module
 
-        # Owned state (delegated to shared dict from window)
-        self._agent_to_project = agent_to_project  # shared ref — window passes same dict to ChatHandler
+        # Shared routing table — AgentRoutingTable instance from window
+        self._agent_to_project = agent_to_project
         self._active_project_name: str | None = None
 
         # ── Cross-handler callbacks (set by window) ───────────────────────
@@ -77,7 +78,7 @@ class ProjectHandler:
         # Populate agent → project routing lookup
         members = self._projects.load_members(name) if self._projects else []
         for member_key in members:
-            self._agent_to_project[member_key] = name
+            self._agent_to_project.add(member_key, name)
 
         # Notify window (for any external side-effects)
         if self._on_project_opened:
@@ -102,12 +103,10 @@ class ProjectHandler:
 
         self._projects.save_members(self._active_project_name, members)
 
-        # Rebuild routing dict for this project
-        stale = [k for k, v in self._agent_to_project.items() if v == self._active_project_name]
-        for k in stale:
-            del self._agent_to_project[k]
+        # Rebuild routing table for this project
+        self._agent_to_project.remove_project(self._active_project_name)
         for m in members:
-            self._agent_to_project[m] = self._active_project_name
+            self._agent_to_project.add(m, self._active_project_name)
 
         # Refresh agents list (+/− button state)
         self._dispatch(lambda: self._lp.refresh_agents_with_project(self._active_project_name))
@@ -126,9 +125,7 @@ class ProjectHandler:
         """
         self._active_project_name = None
         # Clear routing entries for this project
-        stale = [k for k, v in self._agent_to_project.items() if v == name]
-        for k in stale:
-            del self._agent_to_project[k]
+        self._agent_to_project.remove_project(name)
         self._dispatch(lambda: self._lp.refresh_agents_with_project(None))
         if self._on_project_opened:
             self._on_project_opened(None, None)
@@ -138,14 +135,14 @@ class ProjectHandler:
         True if session_key belongs to any known project.
         Used by ChatHandler to detect project tabs.
         """
-        return session_key in self._agent_to_project
+        return self._agent_to_project.is_routed(session_key)
 
     def get_project_for_agent(self, session_key: str) -> str | None:
         """
         Return the project name this agent belongs to, or None.
         Used by ChatHandler to route responses to the correct project tab.
         """
-        return self._agent_to_project.get(session_key)
+        return self._agent_to_project.get_project(session_key)
 
     def get_project_members(self, project_name: str) -> list[str]:
         """

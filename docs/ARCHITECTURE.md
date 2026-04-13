@@ -62,9 +62,10 @@ crabcakes/
 │   └── client.py              # GatewayClient — threaded WebSocket + v3 device auth
 │
 ├── models/                    # Data models — no UI dependencies
-│   ├── __init__.py           # Exports: AgentManager, next_agent_color, reset_color_indices
+│   ├── __init__.py           # Exports: AgentManager, AgentRoutingTable, next_agent_color, reset_color_indices
 │   ├── agents.py              # AgentManager — session_key → name, colors, sessions
-│   └── colors.py              # Color palettes + round-robin assignment
+│   ├── colors.py              # Color palettes + round-robin assignment
+│   └── routing.py             # AgentRoutingTable — session_key → project_name routing
 │
 ├── ui/                        # All UI components
 │   ├── __init__.py
@@ -79,7 +80,8 @@ crabcakes/
 │   │   ├── chat_render_handler.py  # ChatRenderHandler — escape + markdown + bubble pipeline
 │   │   ├── gateway_handler.py # GatewayHandler — connect, agents, lifecycle
 │   │   ├── media_handler.py   # MediaHandler — STT + improve
-│   │   └── project_handler.py  # ProjectHandler — active project + agent-to-project routing
+│   │   ├── project_handler.py  # ProjectHandler — active project + agent-to-project routing
+│   │   └── project_list_handler.py  # ProjectListHandler — project card data + color round-robin
 │   └── views/                 # View widgets
 │       ├── __init__.py
 │       ├── chat_bubble.py      # build_role_bubble() — chat bubble widget factories (Phase 1)
@@ -177,6 +179,26 @@ client.send_message(session_key, text, on_sent=cb)
 | Class | File | Responsibility |
 |-------|------|---------------|
 | `AgentManager` | `agents.py` | Tracks session_key → name, colors, sessions |
+| `AgentRoutingTable` | `routing.py` | Maps session_key → project_name; shared between ProjectHandler and ChatHandler |
+
+### 3.3a `models/routing.py` — Agent Routing Table
+
+**Responsibility:** Maps agent session keys to their active project name. Shared between
+ProjectHandler (writes) and ChatHandler (reads). Replaces a raw shared dict with explicit
+methods and a clear contract.
+
+**Public API:**
+```python
+class AgentRoutingTable:
+    def add(session_key, project_name) -> None
+    def remove(session_key) -> None
+    def remove_project(project_name) -> None
+    def get_project(session_key) -> str | None
+    def is_routed(session_key) -> bool
+    def clear() -> None
+```
+
+**Rules:** Pure data container. No GTK, no network, no callbacks.
 
 **Color system (`colors.py`):**
 - `AGENT_COLORS` — round-robin palette for agents
@@ -225,7 +247,7 @@ apply_styles()  # Call once at startup, before any windows are created
 **Project group chat state:**
 ```python
 self._active_project_name = None   # set when a project tab is opened
-self._agent_to_project = {}        # {agent_session_key: project_name} — reverse lookup for routing
+self._agent_to_project = AgentRoutingTable()  # shared with ProjectHandler (writes) and ChatHandler (reads)
 ```
 
 **Phase 4 (MediaHandler) wiring:** `_media_handler` created and wired in `_build()`:
@@ -657,7 +679,7 @@ reset_color_indices()
 
 **Owns:**
 - `_active_project_name` — currently open project name (or None)
-- `_agent_to_project` — shared dict mapping `session_key → project_name`; same instance that `ChatHandler` holds (injected by window at construction)
+- `_agent_to_project` — AgentRoutingTable instance; shared with ChatHandler (injected by window at construction)
 
 **Does NOT own:** MainContent, LeftPanel, ChatHandler — received as dependencies.
 
@@ -687,7 +709,23 @@ def set_on_members_changed(cb: Callable): pass
 def set_on_navigate_back(cb: Callable): pass
 def close_project(name: str): pass
 ```
-### 3.20 `ui/views/session_menu.py` — Session Switcher Popover
+
+### 3.20 `ui/handlers/project_list_handler.py` — Project List Handler
+
+**Responsibility:** Project card data for the Projects tab — color assignment, project listing, click handling. Does NOT build widgets (view does).
+
+**Owns:** Project color round-robin (separate counter from agent colors), in-memory project list.
+
+**Public API:**
+```python
+class ProjectListHandler:
+    def __init__(self, *, on_project_opened: Callable | None = None)
+    def get_projects() -> list[tuple[str, str, str]]    # (name, path, color)
+    def get_project_color(path: str) -> str
+    def on_project_clicked(name: str, path: str)
+```
+
+### 3.21 `ui/views/session_menu.py` — Session Switcher Popover
 
 **Responsibility:** GTK popover listing active sessions for an agent. Right-click to switch.
 
@@ -740,7 +778,7 @@ User double-clicks project directory
         → _active_project_name = name
         → main_content.create_chat_tab(f"project:{name}", f"Project: {name}")
         → left_panel.refresh_agents_with_project(name)  # shows +/− buttons
-        → for member_key in load_members(name): _agent_to_project[member_key] = name
+        → for member_key in load_members(name): _agent_to_project.add(member_key, name)
 ```
 
 ### 4.4 Project Group Chat — Fan-Out Send
@@ -808,7 +846,26 @@ Gateway sends special events → ChatHandler.on_chat_event(event, payload)
 - `.bubble-file-read`, `.bubble-edit-proposal`, `.bubble-tool-call`
 - `.bubble-error`, `.bubble-thinking`, `.bubble-streaming`
 
-### 4.7 Scroll-to-Bottom Button
+### 4.7 Forward Callback Wiring Chain
+
+```
+window._build()
+  → ChatHandler.set_on_forward_message(cb)     # window provides the callback
+    → ChatRenderHandler.set_on_forward_message(cb) # render handler stores it
+
+On render_sync() call:
+  → ChatHandler.render_sync(role, text, session_key, on_forward_click=self._on_forward_message)
+    → ChatRenderHandler.render_sync(role, text, session_key, on_forward_click=cb)
+      → build_role_bubble(role, text, on_forward_click=cb, tight=...)
+        → creates Forward button → on click → cb(text, anchor_widget)
+
+On forward click (user clicks Forward button on agent bubble):
+  → bubble._on_forward_click(text, widget)
+    → ChatHandler._on_forward_message(text, widget)
+      → window._on_forward_message(text, widget)   # (future: popover to pick target)
+```
+
+### 4.8 Scroll-to-Bottom Button
 
 ```
 User scrolls up in chat tab
@@ -822,7 +879,7 @@ User clicks scroll button
     → _scroll_btn.set_opacity(0)
 ```
 
-### 4.8 Project Membership — Toggle Agent
+### 4.9 Project Membership — Toggle Agent
 
 ```
 User clicks +/− button on agent row
@@ -1223,34 +1280,36 @@ crabcakes/
 │   └── client.py              # 418 lines — GatewayClient (threaded WebSocket + v3 device auth)
 │
 ├── models/
-│   ├── __init__.py            # 13 lines — exports AgentManager, next_agent_color, reset_color_indices
+│   ├── __init__.py            # 15 lines — exports AgentManager, AgentRoutingTable, next_agent_color, reset_color_indices
 │   ├── agents.py              # 49 lines — AgentManager
-│   └── colors.py              # 45 lines — agent + project color palette (round-robin)
+│   ├── colors.py              # 45 lines — agent + project color palette (round-robin)
+│   └── routing.py             # 38 lines — AgentRoutingTable (session_key → project_name)
 │
 ├── ui/
 │   ├── __init__.py            # 1 line
-│   ├── toolbar.py             # 83 lines — Toolbar widget
-│   ├── styles.py              # 338 lines — APP_CSS constant + apply_styles() (Phase 1 + 2 block CSS)
-│   ├── window.py              # 260 lines — MainWindow + handler wiring
+│   ├── toolbar.py             # 106 lines — Toolbar widget
+│   ├── styles.py              # 426 lines — APP_CSS constant + apply_styles() (Phase 1 + 2 block CSS)
+│   ├── window.py              # 372 lines — MainWindow + handler wiring
 │   ├── handlers/
 │   │   ├── __init__.py        # 0 lines — package marker
 │   │   ├── project_list_handler.py  # 60 lines — project card data + color round-robin
 │   │   ├── prompts_handler.py  # 187 lines — favorites, search, last-used, on_prompt_activated
 │   │   ├── agent_list_handler.py  # 107 lines — agent card data (initials, colors, sorting)
-│   │   ├── chat_handler.py     # 174 lines — send, fan-out, routing
-│   │   ├── chat_render_handler.py  # 151 lines — escape + markdown + bubble pipeline (Phase 1)
+│   │   ├── chat_handler.py     # 325 lines — send, fan-out, routing
+│   │   ├── chat_render_handler.py  # 340 lines — escape + markdown + bubble pipeline (Phase 1)
 │   │   ├── gateway_handler.py  # 188 lines — connect, agents, lifecycle (Phase 2)
 │   │   ├── media_handler.py   # 89 lines — STT + improve (Phase 4)
-│   │   └── project_handler.py  # 181 lines — active project + agent-to-project routing (Phase 3)
+│   │   ├── project_handler.py  # 181 lines — active project + agent-to-project routing (Phase 3)
+│   │   └── project_list_handler.py  # 60 lines — project card data + color round-robin
 │   └── views/
 │       ├── __init__.py        # 1 line
 │       ├── chat_control_bar.py # 34 lines — ChatControlBar (stub: update() not wired)
 │       ├── feedbar.py          # 48 lines — FeedBar (stub: update() not wired)
-│       ├── file_tree.py        # 309 lines — FileTree (TreeView directory browser + project card picker)
+│       ├── file_tree.py        # 313 lines — FileTree (TreeView directory browser + project card picker)
 │       ├── left_panel.py       # 442 lines — LeftPanel (Prompts/Agents/Projects notebook)
 │       ├── left_progress.py    # 0 lines — stub placeholder
-│       ├── chat_bubble.py      # 274 lines — build_role_bubble() widget factory (Phase 1 + 2 block-level rendering)
-│       ├── main_content.py     # 512 lines — MainContent (tabs + input + STT/Improve/feed bar + tab close + bulk close)
+│       ├── chat_bubble.py      # 608 lines — build_role_bubble() widget factory (Phase 1 + 2 block-level rendering)
+│       ├── main_content.py     # 566 lines — MainContent (tabs + input + STT/Improve/feed bar + tab close + bulk close)
 │       └── session_menu.py     # 98 lines — right-click session switcher popover
 │
 └── utils/
@@ -1258,8 +1317,8 @@ crabcakes/
     ├── prompts.py             # 25 lines — load_prompts()
     ├── projects.py            # 75 lines — load_projects, scan_directory, load/save_members
     ├── favorites.py           # 59 lines — favorites persistence (favorites.json)
-    ├── escaping.py             # 169 lines — escape_for_pango(), xml_escape_text() — Pango-aware escape (Phase 1)
-    ├── markdown.py             # 137 lines — format_markdown() — inline markdown → Pango (Phase 1)
+    ├── escaping.py             # 182 lines — escape_for_pango(), xml_escape_text() — Pango-aware escape (Phase 1)
+    ├── markdown.py             # 220 lines — format_markdown() — inline markdown → Pango (Phase 1)
     ├── block_parser.py          # 158 lines — extract_blocks() — block segment extraction (Phase 2)
     ├── syntax_highlight.py      # 164 lines — highlight() — Pygments → Pango markup (Phase 2)
     ├── improve.py             # 141 lines — improve_prompt (MiniMax API)

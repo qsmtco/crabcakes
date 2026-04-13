@@ -43,7 +43,10 @@ class MainContent(Gtk.Box):
         self._chat_notebook.set_show_tabs(True)
         self._chat_notebook.set_scrollable(True)
         self._chat_notebook.connect("switch-page", self._on_notebook_switch_page)
-        # Track which session_key each tab belongs to
+        # Track which session_key each tab belongs to.
+        # KEY INSIGHT: page_index is NOT stable across tab additions/removals — GTK
+        # reuses and shifts indices. Always look up by session_key via _find_page_by_session()
+        # or rebuild via _reindex_tabs(). Never capture page_idx in closures.
         self._tab_sessions = {}  # page_index -> session_key
         # Track chat boxes per page_index so we can append to them
         self._tab_chat_boxes = {}  # page_index -> chat_box widget
