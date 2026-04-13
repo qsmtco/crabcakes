@@ -196,7 +196,10 @@ class ChatRenderHandler:
         # Store synchronously so end_streaming can access bubble even before
         # _show runs on the main thread (important when end_streaming is called
         # immediately after start_streaming from the same dispatch chain).
-        self._streaming_bubbles[session_key] = (container, label, role, "", bubble)
+        from models import StreamingBubble
+        self._streaming_bubbles[session_key] = StreamingBubble(
+            container=container, label=label, role=role, bubble=bubble
+        )
 
         def _show():
             container.append(bubble)
@@ -221,16 +224,15 @@ class ChatRenderHandler:
             print(f"[STREAM] update_streaming: SKIP sk={session_key!r} not in _streaming_bubbles")
             return
 
-        container, label, role, _old_plain, _bubble = self._streaming_bubbles[session_key]
+        sb = self._streaming_bubbles[session_key]
 
         def _update():
             from utils.escaping import escape_for_pango
             # CRITICAL: delta_text is the FULL cumulative text from gateway.
-            # Do NOT append to _old_plain — that would double-accumulate.
-            # Store it directly as the new plain text.
-            self._streaming_bubbles[session_key] = (container, label, role, delta_text, _bubble)
+            # Mutate sb.plain_text in-place — do NOT append, that would double-accumulate.
+            sb.plain_text = delta_text
             escaped = escape_for_pango(delta_text)
-            label.set_markup(escaped + "<tt>▍</tt>")
+            sb.label.set_markup(escaped + "<tt>▍</tt>")
 
         self._dispatch(_update)
 
@@ -243,31 +245,31 @@ class ChatRenderHandler:
         if session_key not in self._streaming_bubbles:
             return
 
-        container, label, role, plain, streaming_bubble = self._streaming_bubbles.pop(session_key)
+        sb = self._streaming_bubbles.pop(session_key)
 
         def _finalize():
             # Use tracked plain text directly (cursor already absent after pop)
-            full_text = plain
+            full_text = sb.plain_text
 
             # Remove streaming bubble widget
-            if streaming_bubble in container:
-                container.remove(streaming_bubble)
+            if sb.bubble in sb.container:
+                sb.container.remove(sb.bubble)
 
             # Look up agent name for header
             agent_name = None
-            if role == "Agent" and self._main_content is not None:
+            if sb.role == "Agent" and self._main_content is not None:
                 agent_mgr = getattr(self._main_content, '_agent_mgr', None)
                 if agent_mgr is not None:
                     agent_name = agent_mgr.get_name(session_key)
 
             # Build and append final bubble
             final_bubble = build_role_bubble(
-                role, full_text,
+                sb.role, full_text,
                 on_forward_click=self._on_forward_message,
                 session_key=session_key,
                 agent_name=agent_name,
             )
-            container.append(final_bubble)
+            sb.container.append(final_bubble)
             if self._main_content is not None:
                 self._main_content.scroll_chat_to_bottom()
 

@@ -37,9 +37,7 @@ from ui.handlers.gateway_handler import GatewayHandler
 from ui.handlers.media_handler import MediaHandler
 from ui.handlers.project_handler import ProjectHandler
 
-
-# Gateway URL — WebSocket endpoint for OpenClaw gateway
-GATEWAY_URL = "ws://localhost:18789"
+from utils.config import get_gateway_url
 
 
 class MainWindow(Gtk.ApplicationWindow):

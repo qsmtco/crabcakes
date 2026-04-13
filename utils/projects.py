@@ -4,12 +4,12 @@
 import json
 import os
 
-PROJECTS_DIR: str = os.environ.get("CRABCAKES_PROJECTS_DIR", os.path.expanduser("~/projects"))
+from utils.config import get_projects_dir, get_projects_config_dir
 
 # Allow tests to patch this directly without patching the module-level constant.
 # Wrapped in a list so tests can mutate _PROJECTS_DIR_REF[0] in-place rather than
 # rebinding the name (which wouldn't affect already-imported references).
-_PROJECTS_DIR_REF: list[str] = [PROJECTS_DIR]
+_PROJECTS_DIR_REF: list[str] = [get_projects_dir()]
 
 
 def load_projects() -> list[tuple[str, str]]:
@@ -51,7 +51,7 @@ def load_members(project_name: str) -> list[str]:
     Returns [] if not found or unreadable.
     """
     path: str = os.path.join(
-        os.path.expanduser("~/.config/crabcakes/projects"),
+        get_projects_config_dir(),
         project_name,
         "members.json"
     )
@@ -68,7 +68,7 @@ def save_members(project_name: str, members: list[str]) -> None:
     Creates the project directory if needed.
     """
     dir_path: str = os.path.join(
-        os.path.expanduser("~/.config/crabcakes/projects"),
+        get_projects_config_dir(),
         project_name
     )
     os.makedirs(dir_path, exist_ok=True)

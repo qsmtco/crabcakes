@@ -12,13 +12,14 @@
 import json
 import os
 
-_FAVORITES_DIR = os.path.expanduser("~/.config/crabcakes")
-_FAVORITES_PATH = os.path.join(_FAVORITES_DIR, 'favorites.json')
+from utils.config import get_config_dir
+
+_FAVORITES_PATH = os.path.join(get_config_dir(), "favorites.json")
 
 
 def _ensure_dir():
     """Create config directory if it doesn't exist."""
-    os.makedirs(_FAVORITES_DIR, exist_ok=True)
+    os.makedirs(get_config_dir(), exist_ok=True)
 
 
 def load_favorites() -> set[str]:

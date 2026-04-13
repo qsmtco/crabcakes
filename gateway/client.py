@@ -24,6 +24,8 @@ from typing import Any, Optional
 
 from gi.repository import GLib  # type: ignore[attr-defined]
 
+from utils.config import get_identity_dir
+
 _logger = logging.getLogger(__name__)
 
 # ── Device Identity ──────────────────────────────────────────────────────────────
@@ -32,11 +34,10 @@ _IDENTITY_CACHE = None
 
 
 def _load_identity():
-    """Load device credentials from ~/.openclaw/identity/."""
-    home = os.path.expanduser("~")
-    base = os.path.join(home, ".openclaw", "identity")
+    """Load device credentials from the OpenClaw identity directory."""
+    identity_dir = get_identity_dir()
 
-    auth_path = os.path.join(base, "device-auth.json")
+    auth_path = os.path.join(identity_dir, "device-auth.json")
     try:
         with open(auth_path) as f:
             auth = json.load(f)
@@ -78,7 +79,7 @@ def _load_identity():
                 f"  Run 'openclaw login' to regenerate."
             )
 
-    dev_path = os.path.join(base, "device.json")
+    dev_path = os.path.join(identity_dir, "device.json")
     try:
         with open(dev_path) as f:
             dev = json.load(f)

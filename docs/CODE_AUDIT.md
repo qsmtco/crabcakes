@@ -72,16 +72,18 @@ No exceptions, no logging, no signal to the caller that something went wrong.
 
 ## Moderate Issues
 
-### 4. Config loading is duplicated and ad-hoc
+### 4. Config loading is duplicated and ad-hoc — RESOLVED
 
-Three different config-loading patterns in three different places:
-- `utils/improve.py` — reads `~/.config/crabcakes/config.json` directly
-- `gateway/client.py` — reads `~/.openclaw/identity/` directly
-- `utils/projects.py` — reads from `~/.config/crabcakes/projects/` directly
+~~Three different config-loading patterns in three different places:~~
+~~- `utils/improve.py` — reads `~/.config/crabcakes/config.json` directly~~
+~~- `gateway/client.py` — reads `~/.openclaw/identity/` directly~~
+~~- `utils/projects.py` — reads from `~/.config/crabcakes/projects/` directly~~
 
-No shared `Config` module. No centralized path management. Each utility re-implements the same pattern.
-
-**Risk:** If the config location needs to change (e.g., for testing), every file needs updating independently.
+Centralized in `utils/config.py` (2026-04-13). All paths now go through typed helpers
+(`get_config_dir()`, `get_config_file()`, `get_projects_dir()`, `get_projects_config_dir()`,
+`get_gateway_url()`, `get_identity_dir()`). Env vars `$XDG_CONFIG_HOME`, `$CRABCAKES_PROJECTS_DIR`,
+and `$CRABCAKES_GATEWAY_URL` are respected. Zero hardcoded `os.path.expanduser` paths remain
+outside `utils/config.py`.
 
 ### 5. PromptsHandler has fragile path resolution
 
@@ -93,15 +95,14 @@ Four levels of `os.path.dirname` to resolve a sibling `prompts/` directory. Work
 
 **Risk:** Refactoring by moving files breaks this silently.
 
-### 6. `_streaming_bubbles` uses positional tuple access
+### 6. `_streaming_bubbles` uses positional tuple access — RESOLVED
 
-```python
-container, label, role, _old_plain, _bubble = self._streaming_bubbles[session_key]
-```
+~~Five-element tuple, positional access. Adding a sixth field requires updating every access site.~~
 
-Five-element tuple, positional access. Adding a sixth field requires updating every access site.
-
-**Risk:** Easy to introduce off-by-one bugs when accessing tuple fields.
+Replaced with `StreamingBubble` dataclass in `models/streaming.py` (2026-04-13). All tuple
+unpack sites in `chat_render_handler.py` updated to use named attributes (`sb.container`,
+`sb.label`, `sb.role`, `sb.plain_text`, `sb.bubble`). Adding a new field now requires only
+adding one dataclass attribute.
 
 ### 7. "thinking" events handled differently from other special events
 
@@ -120,11 +121,13 @@ Five-element tuple, positional access. Adding a sixth field requires updating ev
 
 Slightly different keys for similar concepts. Not wrong, but adds cognitive overhead.
 
-### 9. Test file may not run correctly
+### 9. Test file may not run correctly — VERIFIED NON-ISSUE
 
-`test_architecture.py` uses plain `assert` statements and `pytest.skip()` without `@pytest.fixture` or `def test_*` naming. The functions look like they should run as pytest tests but may be silently skipped or not discovered by pytest depending on configuration.
+~~`test_architecture.py` uses plain `assert` statements and `pytest.skip()` without `@pytest.fixture` or `def test_*` naming.~~
 
-**Recommendation:** Verify with `pytest --collect-only` to confirm tests are actually collected.
+Verified 2026-04-13: `pytest --collect-only tests/test_architecture.py` collects 3 tests.
+The test functions are named `test_handlers_do_not_import_each_other`, `test_models_and_gateway_do_not_import_ui`,
+and `test_all_documented_public_apis_exist` — all pass. No code changes needed.
 
 ---
 

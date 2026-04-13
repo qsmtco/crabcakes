@@ -14,6 +14,8 @@
 
 from typing import Callable
 
+from utils.config import get_gateway_url
+
 
 class GatewayHandler:
     """
@@ -78,7 +80,7 @@ class GatewayHandler:
         self._toolbar.update_connection_state("connecting")
 
         self._gw = self._gw_class(
-            url="ws://localhost:18789",
+            url=get_gateway_url(),
             on_connect=self.on_connected,
             on_error=self.on_error,
             on_event=self._on_event_stub,

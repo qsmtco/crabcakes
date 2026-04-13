@@ -205,8 +205,8 @@ class TestPhase3Streaming:
         self._run_all_idle()
         self.handler.update_streaming("agent:1", "Hello world")
         self._run_all_idle()
-        _c, _l, _r, plain, _b = self.handler._streaming_bubbles["agent:1"]
-        assert plain == "Hello world"  # last delta wins, no double-accumulation
+        # StreamingBubble dataclass: access .plain_text attribute directly
+        assert self.handler._streaming_bubbles["agent:1"].plain_text == "Hello world"  # last delta wins, no double-accumulation
 
     def test_update_streaming_escapes_html_chars(self):
         """update_streaming() escapes < > & in the label to prevent markup corruption."""
@@ -214,8 +214,8 @@ class TestPhase3Streaming:
         self._run_all_idle()
         self.handler.update_streaming("agent:1", "Use <div>")
         self._run_all_idle()
-        _c, label, _r, _plain, _b = self.handler._streaming_bubbles["agent:1"]
-        markup = label.get_label()
+        # StreamingBubble dataclass: access .label attribute directly
+        markup = self.handler._streaming_bubbles["agent:1"].label.get_label()
         # Raw <div> must NOT appear in markup — it should be &lt;div&gt;
         assert "<div>" not in markup
         assert "&lt;div&gt;" in markup

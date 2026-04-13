@@ -12,6 +12,8 @@ import os
 import threading
 import urllib.request
 
+from utils.config import get_config_file
+
 DEFAULT_BASE_URL = "https://api.minimax.io/v1/text/chatcompletion_v2"
 DEFAULT_MODEL = "MiniMax-M2.5-Lightning"
 DEFAULT_SYSTEM_PROMPT = """You are an expert technical editor. Rewrite all input text to be maximally clear, detailed, and precise.
@@ -39,7 +41,7 @@ def _load_config():
     with _config_lock:
         if _config is not None:
             return _config
-        path = os.path.join(os.path.expanduser("~/.config/crabcakes/config.json"))
+        path = get_config_file()
         try:
             with open(path) as f:
                 _config = json.load(f)
