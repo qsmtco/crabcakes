@@ -459,7 +459,46 @@ Dispatches to the appropriate event card factory in `chat_bubble.py`. Thread-saf
 2. `format_markdown(text)` — convert markdown → Pango inline markup
 3. `build_role_bubble(role, text)` — create styled GTK bubble widget
 
-### 3.14e `utils/block_parser.py` — Block Segment Extractor (Phase 2)
+### 3.14e `ui/views/chat_bubble.py` — Bubble Widget Factories (Phase 2–5)
+
+**Responsibility:** Pure widget factories — create GTK bubble widgets for all message types. No state, no callbacks beyond widget signals.
+
+**Phase 5 additions:**
+- `build_role_bubble(role, text, on_forward_click=None, tight=False)`:
+  - `on_forward_click`: optional callback; when set, agent bubbles get Copy+Forward buttons
+  - `tight`: reduces margin_top from 4→1 for consecutive same-role messages (message grouping)
+  - Action buttons row (Copy/Forward) only on agent bubbles — revealed via CSS hover (opacity 0 → 1)
+  - Copy button: `_copy_to_clipboard(text)` copies full bubble text
+  - Forward button: calls `on_forward_click()` if registered, else logs stub
+
+**Message grouping:** Consecutive messages from same role+session get tight spacing (1px top margin instead of 4px). Tracked in `ChatRenderHandler._last_message_key`.
+
+### 3.14f `ui/views/main_content.py` — Scroll-to-Bottom Button (Phase 5)
+
+**Phase 5 addition:** Floating ↓ button bottom-right of chat overlay.
+
+**New components:**
+- `self._scroll_btn` — Gtk.Button, opacity 0 by default
+- `self._scroll_btn_box` — positioned bottom-right via `Gtk.Align.END`
+
+**Wired in `create_chat_tab()`:**
+- Scroll button box added to each tab's `chat_overlay`
+- Each tab's `vadjustment.value-changed` → `_on_vadjustment_changed()`
+- Shows (opacity=1) when scrolled >80px from bottom; hides when near bottom
+
+**Scroll handler (`_on_vadjustment_changed`):**
+```python
+distance_from_bottom = upper - page_size - value
+self._scroll_btn.set_opacity(1 if distance_from_bottom > 80 else 0)
+```
+
+**Click handler (`_on_scroll_to_bottom_clicked`):**
+```python
+self.scroll_chat_to_bottom()
+self._scroll_btn.set_opacity(0)
+```
+
+### 3.14g `utils/block_parser.py` — Block Segment Extractor (Phase 2)
 
 **Responsibility:** Split raw message text into typed block segments. Pure function, no GTK, no network.
 
@@ -769,7 +808,21 @@ Gateway sends special events → ChatHandler.on_chat_event(event, payload)
 - `.bubble-file-read`, `.bubble-edit-proposal`, `.bubble-tool-call`
 - `.bubble-error`, `.bubble-thinking`, `.bubble-streaming`
 
-### 4.7 Project Membership — Toggle Agent
+### 4.7 Scroll-to-Bottom Button
+
+```
+User scrolls up in chat tab
+  → vadjustment.value-changed → _on_vadjustment_changed()
+    → if distance_from_bottom > 80px: _scroll_btn.set_opacity(1)
+      else: _scroll_btn.set_opacity(0)
+
+User clicks scroll button
+  → _on_scroll_to_bottom_clicked()
+    → scroll_chat_to_bottom()  # GLib deferred via idle_add
+    → _scroll_btn.set_opacity(0)
+```
+
+### 4.8 Project Membership — Toggle Agent
 
 ```
 User clicks +/− button on agent row

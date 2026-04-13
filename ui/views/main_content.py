@@ -42,11 +42,15 @@ class MainContent(Gtk.Box):
         self._chat_notebook = Gtk.Notebook()
         self._chat_notebook.set_show_tabs(True)
         self._chat_notebook.set_scrollable(True)
+        self._chat_notebook.connect("switch-page", self._on_notebook_switch_page)
         # Track which session_key each tab belongs to
         self._tab_sessions = {}  # page_index -> session_key
         # Track chat boxes per page_index so we can append to them
         self._tab_chat_boxes = {}  # page_index -> chat_box widget
         self._tab_scrolls = {}   # page_index -> ScrolledWindow widget
+        # Phase 5b: scroll-to-bottom button — single floating button overlay on current tab
+        self._scroll_to_bottom_btn = None
+        self._scroll_to_bottom_overlay = None  # per-tab overlay holding the button
         self._chat_render_handler = None  # injected via set_chat_render_handler()
         # Bulk-close guard: skip reindex until all removals are done
         self._bulk_closing = False
@@ -77,6 +81,19 @@ class MainContent(Gtk.Box):
         _feed_lbl.set_margin_end(8)
         _feed_lbl.set_markup('<span foreground="#6b6b7a" font_desc="Sans 10">Project Settings</span>')
         self._project_settings.append(_feed_lbl)
+
+        # Phase 5b: scroll-to-bottom floating button
+        self._scroll_btn = Gtk.Button(label="↓")
+        self._scroll_btn.add_css_class("scroll-to-bottom-btn")
+        self._scroll_btn.set_opacity(0)  # hidden by default
+        self._scroll_btn.connect("clicked", self._on_scroll_to_bottom_clicked)
+        self._scroll_btn_box = Gtk.Box()
+        self._scroll_btn_box.set_halign(Gtk.Align.END)
+        self._scroll_btn_box.set_valign(Gtk.Align.END)
+        self._scroll_btn_box.set_hexpand(False)
+        self._scroll_btn_box.set_vexpand(False)
+        self._scroll_btn_box.append(self._scroll_btn)
+        self._scroll_btn_box.set_size_request(48, 36)
 
         # --- BOTTOM: User input area + button bar ---
         bottom_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -217,6 +234,8 @@ class MainContent(Gtk.Box):
         chat_overlay.set_vexpand(True)
         chat_overlay.set_child(chat_scroll)
         chat_overlay.add_overlay(self._project_settings)
+        # Phase 5b: scroll-to-bottom button on this tab's overlay
+        chat_overlay.add_overlay(self._scroll_btn_box)
 
         # Vertical box for chat messages
         chat_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -267,8 +286,16 @@ class MainContent(Gtk.Box):
         self._tab_sessions[page_idx] = session_key
         self._tab_chat_boxes[page_idx] = chat_box
         self._tab_scrolls[page_idx] = chat_scroll
+        # Phase 5b: wire scroll adjustment callback for scroll-to-bottom button
+        vadj = chat_scroll.get_vadjustment()
+        if vadj is not None:
+            vadj.connect("value-changed", self._on_vadjustment_changed, page_idx)
         self._chat_notebook.set_current_page(page_idx)
         return page_idx
+
+    def _on_notebook_switch_page(self, notebook, _page, page_num):
+        """Scroll to bottom when user switches to a tab."""
+        self.scroll_chat_to_bottom(page_num)
 
     def _find_page_by_session(self, session_key):
         """Return the current page index for a session_key by scanning notebook tab labels.
@@ -453,6 +480,29 @@ class MainContent(Gtk.Box):
             return False  # don't repeat
         from gi.repository import GLib
         GLib.idle_add(_do_scroll)
+
+    def _on_scroll_to_bottom_clicked(self, *args):
+        """Handle scroll-to-bottom button click — scroll current tab to bottom."""
+        self.scroll_chat_to_bottom()
+        self._scroll_btn.set_opacity(0)
+
+    def _on_vadjustment_changed(self, adjustment, page_index):
+        """
+        Show scroll-to-bottom button when user scrolls up away from bottom.
+        Hide it when user is at or near the bottom of the chat.
+        """
+        current_page = self._chat_notebook.get_current_page()
+        if page_index != current_page:
+            return  # only track current page
+        upper = adjustment.get_upper()
+        page_size = adjustment.get_page_size()
+        current_value = adjustment.get_value()
+        # distance_from_bottom: how far the scroll is from the bottom
+        distance_from_bottom = upper - page_size - current_value
+        if distance_from_bottom > 80:
+            self._scroll_btn.set_opacity(1)
+        else:
+            self._scroll_btn.set_opacity(0)
 
     # ── STT (Speech-to-Text) ───────────────────────────────────────────────
     # State machine: idle → click → recording → click → idle.

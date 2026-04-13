@@ -50,6 +50,7 @@ class ChatHandler:
         self._projects = projects_module
         self._GLib = GLib_module
         self._chat_render_handler = None  # injected via set_chat_render_handler()
+        self._on_forward_message = None   # injected via set_on_forward_message()
 
     def set_chat_render_handler(self, handler):
         """Inject ChatRenderHandler. Called by window.py._build()."""
@@ -64,6 +65,21 @@ class ChatHandler:
         Window no longer needs to reach into _gw directly.
         """
         self._gw = gw
+
+    def set_on_forward_message(self, cb):
+        """Set callback for forward button: cb(text, anchor_widget)."""
+        self._on_forward_message = cb
+        # Propagate to render handler so streaming final bubbles also get the button
+        if self._chat_render_handler is not None:
+            self._chat_render_handler.set_on_forward_message(cb)
+
+    def _show_forward_menu(self, text, anchor_widget):
+        """
+        Show a popover listing other agents to forward text to.
+        Called by bubble forward button via set_on_forward_message.
+        """
+        if self._on_forward_message:
+            self._on_forward_message(text, anchor_widget)
 
     def on_send_clicked(self, _btn=None):
         """GTK signal handler for the Send button. Delegates to on_send."""
@@ -93,7 +109,7 @@ class ChatHandler:
             chat_box = self._mc.get_chat_box()
             if chat_box is not None:
                 if self._chat_render_handler is not None:
-                    bubble = self._chat_render_handler.render_sync("You", text, session_key)
+                    bubble = self._chat_render_handler.render_sync("You", text, session_key, on_forward_click=self._on_forward_message)
                     if bubble is not None:
                         chat_box.append(bubble)
                 self._mc.scroll_chat_to_bottom()
@@ -195,7 +211,7 @@ class ChatHandler:
         else:
             # No streaming bubble existed (STREAMING_ENABLED=False or first msg):
             # render the final bubble via render_sync instead.
-            bubble = self._chat_render_handler.render_sync("Agent", final_text, session_key)
+            bubble = self._chat_render_handler.render_sync("Agent", final_text, session_key, on_forward_click=self._on_forward_message)
             if bubble is not None and chat_box is not None:
                 chat_box.append(bubble)
                 self._mc.scroll_chat_to_bottom()

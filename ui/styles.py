@@ -314,6 +314,44 @@ button.flat:hover {
     background: transparent;
 }
 
+.chat-bubble-actions {
+    margin-top: 2px;
+}
+.chat-action-btn {
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    padding: 2px;
+    font-size: 11px;
+    color: #9b9bab;
+}
+.chat-action-btn:hover {
+    color: #a9b1d6;
+}
+/* ── Scroll-to-bottom floating button ─────────────────────────────── */
+.scroll-to-bottom-btn {
+    background: rgba(30, 30, 50, 0.9);
+    border: 1px solid rgba(99, 102, 241, 0.4);
+    border-radius: 20px;
+    padding: 4px 12px;
+    color: #a9b1d6;
+    font-size: 13px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+.scroll-to-bottom-btn.visible {
+    opacity: 1;
+}
+.scroll-to-bottom-btn:hover {
+    background: rgba(60, 60, 90, 0.95);
+    color: #d8d8e8;
+}
+
+.chat-action-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #a9b1d6;
+}
+
 /* ── Headings inside bubbles ─────────────────────────────────────────── */
 .chat-heading { font-weight: 700; color: #e8e8f0; }
 .chat-heading-1 { font-size: 20px; }

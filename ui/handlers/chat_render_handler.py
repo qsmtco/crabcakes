@@ -89,10 +89,15 @@ class ChatRenderHandler:
         self._reentrancy = _ReentrancySet()
         # Phase 3: streaming bubbles — session_key → (container, label, role, plain_text)
         self._streaming_bubbles: dict = {}
+        # Phase 5b: message grouping — tracks last role+session_key for tight spacing
+        self._last_message_key: str = None
+        self._on_forward_message = None   # set via set_on_forward_message()
+        # Phase 5: MainContent reference for self-contained scroll operations
+        self._main_content = None
 
     # ── Async (thread-safe) ──────────────────────────────────────────────
 
-    def render(self, role: str, text: str, session_key: str, on_bubble_ready, on_error=None):
+    def render(self, role: str, text: str, session_key: str, on_bubble_ready, on_forward_click=None, on_error=None):
         """
         Process text and produce a bubble widget asynchronously.
 
@@ -111,7 +116,7 @@ class ChatRenderHandler:
         def _build():
             try:
                 # Pass raw text — build_role_bubble() owns the full pipeline.
-                bubble = build_role_bubble(role, text)
+                bubble = build_role_bubble(role, text, on_forward_click=on_forward_click)
 
                 def _deliver():
                     self._reentrancy.remove(session_key)
@@ -127,7 +132,15 @@ class ChatRenderHandler:
 
     # ── Sync (main thread only) ──────────────────────────────────────────
 
-    def render_sync(self, role: str, text: str, session_key: str = None):
+    def set_on_forward_message(self, cb):
+        """Set callback for forward button: cb(text, anchor_widget)."""
+        self._on_forward_message = cb
+
+    def set_main_content(self, main_content):
+        """Set MainContent reference for self-contained scroll operations."""
+        self._main_content = main_content
+
+    def render_sync(self, role: str, text: str, session_key: str = None, on_forward_click=None, forwarded_from: str = None):
         """
         Process text and return a bubble widget synchronously.
 
@@ -145,9 +158,11 @@ class ChatRenderHandler:
         """
         if session_key is not None and session_key in self._reentrancy:
             return None
-        # Pass raw text — build_role_bubble() owns the full pipeline:
-        # extract_blocks() on raw text, then per-segment escape+markdown/highlight.
-        return build_role_bubble(role, text)
+        current_key = f"{role}:{session_key}" if session_key else None
+        tight = (current_key == self._last_message_key) and self._last_message_key is not None
+        bubble = build_role_bubble(role, text, on_forward_click=on_forward_click, tight=tight, session_key=session_key, forwarded_from=forwarded_from)
+        self._last_message_key = current_key
+        return bubble
 
 
     # ── Streaming bubbles (Phase 3) ────────────────────────────────────
@@ -230,10 +245,14 @@ class ChatRenderHandler:
                 container.remove(streaming_bubble)
 
             # Build and append final bubble
-            final_bubble = build_role_bubble(role, full_text)
+            final_bubble = build_role_bubble(role, full_text, on_forward_click=self._on_forward_message)
             container.append(final_bubble)
+            if self._main_content is not None:
+                self._main_content.scroll_chat_to_bottom()
 
         self._dispatch(_finalize)
+        # Reset message grouping key so next message starts fresh
+        self._last_message_key = None
 
     def render_event_card(self, event_type: str, container: Gtk.Box, **kwargs):
         """
@@ -278,6 +297,8 @@ class ChatRenderHandler:
 
         def _append():
             container.append(card)
+            if self._main_content is not None:
+                self._main_content.scroll_chat_to_bottom()
 
         self._dispatch(_append)
 

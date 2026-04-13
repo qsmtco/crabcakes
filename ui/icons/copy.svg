@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- Copy icon: two overlapping rectangles -->
+  <!-- Back document -->
+  <rect x="4.5" y="3" width="7.5" height="10" rx="1"
+        fill="none" stroke="#9b9bab" stroke-width="1.2"/>
+  <!-- Front document -->
+  <rect x="2" y="1" width="7.5" height="10" rx="1"
+        fill="#27272a" stroke="#9b9bab" stroke-width="1.2"/>
+</svg>

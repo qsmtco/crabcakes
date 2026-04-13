@@ -355,10 +355,10 @@ class LeftPanel(Gtk.Box):
 
         row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         row_box.set_halign(Gtk.Align.FILL)
-        row_box.set_margin_start(4)
-        row_box.set_margin_end(4)
-        row_box.set_margin_top(3)
-        row_box.set_margin_bottom(3)
+        row_box.set_margin_start(2)
+        row_box.set_margin_end(2)
+        row_box.set_margin_top(1)
+        row_box.set_margin_bottom(1)
         row_box.add_css_class("lib-row")
 
         # Star button (★/☆)
@@ -370,12 +370,17 @@ class LeftPanel(Gtk.Box):
             fav_btn.add_css_class("lib-fav-star")
         fav_btn.connect("clicked", self._on_prompt_toggle_favorite, prompt['filepath'])
 
+        # Name + meta column (vertical stack so meta is BELOW name)
+        name_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        name_col.set_hexpand(True)
+        name_col.set_halign(Gtk.Align.START)
+        name_col.set_valign(Gtk.Align.CENTER)
+        name_col.set_margin_start(4)
+
         # Name label
         name_lbl = Gtk.Label(label=prompt['name'], xalign=0)
-        name_lbl.set_hexpand(True)
         name_lbl.set_halign(Gtk.Align.START)
-        name_lbl.set_valign(Gtk.Align.CENTER)
-        name_lbl.set_margin_start(6)
+        name_lbl.set_valign(Gtk.Align.END)
 
         # Metadata: lines + size + last-used
         meta_parts = []
@@ -387,8 +392,8 @@ class LeftPanel(Gtk.Box):
         if prompt.get('last_used_str'):
             meta_parts.append(prompt['last_used_str'])
         meta_lbl = Gtk.Label(label=" · ".join(meta_parts) if meta_parts else "")
-        meta_lbl.set_valign(Gtk.Align.CENTER)
-        meta_lbl.set_margin_start(6)
+        meta_lbl.set_halign(Gtk.Align.START)
+        meta_lbl.set_valign(Gtk.Align.START)
         meta_lbl.add_css_class("lib-tag")
 
         # Add button
@@ -401,11 +406,14 @@ class LeftPanel(Gtk.Box):
         fav_btn.show()
         name_lbl.show()
         meta_lbl.show()
+        name_col.show()
         add_btn.show()
 
+        name_col.append(name_lbl)
+        name_col.append(meta_lbl)
+
         row_box.append(fav_btn)
-        row_box.append(name_lbl)
-        row_box.append(meta_lbl)
+        row_box.append(name_col)
         row_box.append(add_btn)
         row.set_child(row_box)
         row.show()
