@@ -143,7 +143,13 @@ class ActivityHandler:
 
         # Route to state-transition handlers
         if event == "agent":
-            phase = payload.get("phase", "")
+            # BUG FIX: lifecycle events (stream="lifecycle") nest phase in data.phase.
+            # Item-level events (stream="item") put phase directly in payload.phase.
+            stream = payload.get("stream", "")
+            if stream == "lifecycle":
+                phase = payload.get("data", {}).get("phase", "")
+            else:
+                phase = payload.get("phase", "")
             if phase == "start":
                 self.on_agent_start(session_key, payload)
             elif phase == "end":

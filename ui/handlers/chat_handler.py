@@ -218,6 +218,10 @@ class ChatHandler:
         self._dispatch(_show_and_send)
         buf.set_text("")
 
+        # Trigger Pre Flight state in ActivityHandler (FeedBar status bar)
+        if self._on_send_initiated:
+            self._on_send_initiated(session_key)
+
     def on_chat_event(self, event: str, payload: dict):
         """
         Handle incoming gateway events.
