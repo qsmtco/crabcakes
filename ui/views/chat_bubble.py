@@ -213,12 +213,12 @@ def _build_text_segment(seg: dict) -> Gtk.Widget:
     if not raw.strip():
         return Gtk.Box()  # empty spacer
 
-    # Apply markdown first (may produce <b>, <i>, <a> Pango tags),
-    # then escape any remaining literal angle brackets in the original text.
-    formatted = format_markdown(raw)
-    safe = escape_for_pango(formatted)
+    # Order: 1. escape, 2. markdown.  Escape first so that literal < > in the
+    # original text don't corrupt the Pango tags that format_markdown produces.
+    escaped = escape_for_pango(raw)
+    formatted = format_markdown(escaped)
     label = Gtk.Label()
-    label.set_markup(safe)
+    label.set_markup(formatted)
     label.set_xalign(0)
     label.set_wrap(True)
     label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -227,13 +227,56 @@ def _build_text_segment(seg: dict) -> Gtk.Widget:
     return label
 
 
+# ── Block widget helpers ────────────────────────────────────────────────────────
+
+def _make_block_header(
+    label_text: str,
+    content_for_copy: str,
+    header_css: str,
+    copy_btn_css: str = "code-copy-btn",
+) -> tuple[Gtk.Box, Gtk.Button]:
+    """
+    Shared header bar factory for code/terminal block widgets.
+
+    Returns (header_box, copy_btn) so callers can optionally suppress or
+    re-style the copy button. The button is pre-wired — callers just ignore
+    the reference if they don't need it.
+
+    Args:
+        label_text:       Text for the left-side label (e.g. "python" or "$ terminal")
+        content_for_copy: String passed to _copy_to_clipboard when Copy is clicked
+        header_css:      CSS class for the header row (e.g. "code-block-header")
+        copy_btn_css:    CSS class for the copy button (default "code-copy-btn")
+
+    Returns:
+        (header_box, copy_btn) — header is fully built, copy_btn is wired
+    """
+    header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+    header.add_css_class(header_css)
+
+    label = Gtk.Label()
+    label.set_text(label_text)
+    label.set_xalign(0)
+    label.set_hexpand(True)
+
+    copy_btn = Gtk.Button(label="Copy")
+    copy_btn.add_css_class(copy_btn_css)
+    copy_btn.connect("clicked", lambda _: _copy_to_clipboard(content_for_copy))
+
+    header.append(label)
+    header.append(copy_btn)
+    return header, copy_btn
+
+
+# ── Segment widget factories ──────────────────────────────────────────────────
+
 def _build_code_segment(seg: dict) -> Gtk.Widget:
     """
     Render a code block with syntax highlighting, language label, and copy button.
 
     Structure:
       code-block (css class with lang variant)
-      ├── header: [lang-label] [Copy]
+      ├── header: [lang-label] [Copy]  ← via _make_block_header
       └── content: syntax-highlighted monospace label
     """
     lang = seg.get("lang", "").lower().strip()
@@ -246,20 +289,11 @@ def _build_code_segment(seg: dict) -> Gtk.Widget:
         block.add_css_class(f"lang-{lang}")
 
     # ── Header bar ────────────────────────────────────────────────────
-    header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-    header.add_css_class("code-block-header")
-
-    lang_label = Gtk.Label()
-    lang_label.set_text(lang or "code")
-    lang_label.set_xalign(0)
-    lang_label.set_hexpand(True)
-
-    copy_btn = Gtk.Button(label="Copy")
-    copy_btn.add_css_class("code-copy-btn")
-    copy_btn.connect("clicked", lambda _: _copy_to_clipboard(code))
-
-    header.append(lang_label)
-    header.append(copy_btn)
+    header, _copy_btn = _make_block_header(
+        label_text=lang or "code",
+        content_for_copy=code,
+        header_css="code-block-header",
+    )
     block.append(header)
 
     # ── Content: syntax-highlighted code ──────────────────────────────
@@ -286,11 +320,12 @@ def _build_quote_segment(seg: dict) -> Gtk.Widget:
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
     box.add_css_class("blockquote")
 
-    # Apply markdown first, then escape remaining angle brackets.
-    formatted = format_markdown(content)
-    safe = escape_for_pango(formatted)
+    # Order: 1. escape, 2. markdown.  Escape first so that literal < > in
+    # the original text don't corrupt the Pango tags that format_markdown produces.
+    escaped = escape_for_pango(content)
+    formatted = format_markdown(escaped)
     label = Gtk.Label()
-    label.set_markup(safe)
+    label.set_markup(formatted)
     label.set_xalign(0)
     label.set_wrap(True)
     label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -309,14 +344,12 @@ def _build_terminal_segment(seg: dict) -> Gtk.Widget:
     block = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
     block.add_css_class("terminal-block")
 
-    # Header with amber styling
-    header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-    header.add_css_class("terminal-header")
-    term_label = Gtk.Label()
-    term_label.set_text("$ terminal")
-    term_label.set_xalign(0)
-    term_label.set_hexpand(True)
-    header.append(term_label)
+    # Header with amber styling — uses shared header factory
+    header, _copy_btn = _make_block_header(
+        label_text="$ terminal",
+        content_for_copy=content,
+        header_css="terminal-header",
+    )
     block.append(header)
 
     # Content lines — each prefixed with $ (or plain for continuation)

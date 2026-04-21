@@ -28,6 +28,41 @@ from utils.config import get_identity_dir
 
 _logger = logging.getLogger(__name__)
 
+# ── Snapshot Schema ───────────────────────────────────────────────────────────────
+
+class SnapshotValidationError(Exception):
+    """Raised when the gateway hello-ok snapshot does not match the expected schema."""
+    pass
+
+_EXPECTED_SNAPSHOT_KEYS = {"health"}
+_EXPECTED_HEALTH_KEYS = {"agents"}
+_EXPECTED_AGENT_KEYS = {"agentId", "sessions"}
+
+
+def _validate_snapshot(snapshot: Any) -> list:
+    """Validate hello-ok snapshot and return the agents list. Raises on failure."""
+    if not isinstance(snapshot, dict):
+        raise SnapshotValidationError(f"snapshot is not a dict: {type(snapshot).__name__}")
+    missing = _EXPECTED_SNAPSHOT_KEYS - set(snapshot.keys())
+    if missing:
+        raise SnapshotValidationError(f"snapshot missing keys: {missing}")
+    health = snapshot["health"]
+    if not isinstance(health, dict):
+        raise SnapshotValidationError(f"snapshot.health is not a dict: {type(health).__name__}")
+    missing_health = _EXPECTED_HEALTH_KEYS - set(health.keys())
+    if missing_health:
+        raise SnapshotValidationError(f"snapshot.health missing keys: {missing_health}")
+    agents = health["agents"]
+    if not isinstance(agents, list):
+        raise SnapshotValidationError(f"snapshot.health.agents is not a list: {type(agents).__name__}")
+    for i, agent in enumerate(agents):
+        if not isinstance(agent, dict):
+            raise SnapshotValidationError(f"snapshot.health.agents[{i}] is not a dict: {type(agent).__name__}")
+        missing_agent = _EXPECTED_AGENT_KEYS - set(agent.keys())
+        if missing_agent:
+            raise SnapshotValidationError(f"snapshot.health.agents[{i}] missing keys: {missing_agent}")
+    return agents
+
 # ── Device Identity ──────────────────────────────────────────────────────────────
 
 _IDENTITY_CACHE = None
@@ -160,6 +195,7 @@ class GatewayClient:
       on_connect    — callable(): connection established successfully
       on_error      — callable(str): connection/error state changed
       on_event      — callable(event_name, payload): gateway event received
+      on_tick       — callable(): called every ~15s while connected (keepalive heartbeat)
     """
 
     def __init__(
@@ -168,13 +204,16 @@ class GatewayClient:
         on_connect: Callable[[], None],
         on_error: Callable[[str], None],
         on_event: Callable[[str, dict[str, Any]], None],
+        on_tick: Callable[[], None] | None = None,
     ) -> None:
         self.url: str = url
         self.on_connect: Callable[[], None] = on_connect
         self.on_error: Callable[[str], None] = on_error
         self.on_event: Callable[[str, dict[str, Any]], None] = on_event
+        self.on_tick: Callable[[], None] = on_tick if on_tick is not None else lambda: None
         self._running: bool = False
         self._stopping: bool = False
+        self._tick_task: Optional[asyncio.Task] = None
         self._thread: Optional[threading.Thread] = None
         self._connected: threading.Event = threading.Event()
         self._ws: Optional[Any] = None  # websockets.WebSocketServerProtocol
@@ -184,6 +223,11 @@ class GatewayClient:
         self._hello_snapshot: Optional[dict[str, Any]] = None
         self._id: dict[str, Any] = _IDENTITY_CACHE if _IDENTITY_CACHE is not None else _load_identity()
         self._RPC_TIMEOUT_SEC: float = 30.0
+        self._on_res: Callable[[str, dict[str, Any]], None] | None = None  # res correlation callback
+
+    def set_on_res(self, cb: Callable[[str, dict[str, Any]], None]):
+        """Set callback for incoming res events (main thread). cb(session_key, payload)."""
+        self._on_res = cb
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -238,7 +282,7 @@ class GatewayClient:
             self.on_error("Not connected to gateway")
             return
 
-        def on_send_response(payload):
+        def on_send_response(payload, _req_id=None):
             run_id = payload.get("runId")
             if not run_id:
                 err = payload.get("error", {})
@@ -248,18 +292,21 @@ class GatewayClient:
             else:
                 _logger.debug("[gateway] send OK, runId=%s", run_id)
                 if on_sent:
-                    on_sent(run_id)
+                    on_sent(run_id, req_id)
 
+        req_id = str(uuid.uuid4())
+        # Embed req_id in the closure so it's available when res fires
+        stored_cb = lambda p: on_send_response(p, req_id)
         self._send({
             "type": "req",
-            "id": str(uuid.uuid4()),
+            "id": req_id,
             "method": "chat.send",
             "params": {
                 "idempotencyKey": str(uuid.uuid4()),
                 "message": text,
                 "sessionKey": session_key,
             },
-        }, on_response=on_send_response)
+        }, on_response=stored_cb)
 
     # ── Internals ────────────────────────────────────────────────────────────
 
@@ -301,6 +348,7 @@ class GatewayClient:
                     retry_delay = 1.0
                     await self._handshake()
                     GLib.idle_add(self.on_connect)
+                    self._tick_task = self._loop.create_task(self._tick_loop())
                     await self._listen()
             except websockets.exceptions.ConnectionClosed as e:
                 self._connected.clear()
@@ -375,12 +423,23 @@ class GatewayClient:
             raise Exception(
                 f"connect failed [{err.get('code', '?')}]: {err.get('message', 'unknown error')}"
             )
-        self._hello_snapshot = resp.get("payload", {}).get("snapshot")
+        raw_snapshot = resp.get("payload", {}).get("snapshot")
+        _validate_snapshot(raw_snapshot)  # raises SnapshotValidationError on failure
+        self._hello_snapshot = raw_snapshot
+
+    async def _tick_loop(self):
+        """Fire on_tick every 15 seconds while connected."""
+        while self._running and not self._stopping:
+            await asyncio.sleep(15)
+            if self._connected.is_set() and not self._stopping:
+                GLib.idle_add(self.on_tick)
 
     async def _listen(self) -> None:
         """Pump the WebSocket — dispatch events and responses to GTK main thread."""
         assert self._ws is not None, "_ws must be set before _listen"
         async for raw in self._ws:
+            self._expire_pending()
+            print(f"[gateway>>] {raw[:300]}")
             self._expire_pending()
             try:
                 msg = json.loads(raw)
@@ -393,6 +452,9 @@ class GatewayClient:
                         entry = self._pending.pop(req_id, None)
                     if entry:
                         GLib.idle_add(entry["callback"], msg.get("payload", {}))
+                    # Fire global res correlation callback (pre-flight confirmation)
+                    if self._on_res:
+                        GLib.idle_add(self._on_res, req_id, msg.get("payload", {}))
             except json.JSONDecodeError:
                 _logger.warning("Gateway sent malformed JSON: %r", raw[:200])
             except Exception as exc:

@@ -81,12 +81,13 @@ crabcakes/
 │   │   ├── gateway_handler.py # GatewayHandler — connect, agents, lifecycle
 │   │   ├── media_handler.py   # MediaHandler — STT + improve
 │   │   ├── project_handler.py  # ProjectHandler — active project + agent-to-project routing
+│   │   ├── activity_handler.py  # ActivityHandler — 6-state activity machine (Phase 6)
 │   │   └── project_list_handler.py  # ProjectListHandler — project card data + color round-robin
 │   └── views/                 # View widgets
 │       ├── __init__.py
 │       ├── chat_bubble.py      # build_role_bubble() — chat bubble widget factories (Phase 1)
 │       ├── chat_control_bar.py # ChatControlBar — planned stub (update() not wired)
-│       ├── feedbar.py          # FeedBar — planned stub (update() not wired)
+│       ├── feedbar.py          # FeedBar — Response Status Bar + progress bar + ActivityHandler public API (Phase 6)
 │       ├── file_tree.py        # FileTree — Gtk.TreeView directory browser
 │       ├── left_panel.py       # LeftPanel — PAP notebook (Prompts/Agents/Projects)
 │       ├── left_progress.py    # Stub — progress indicator placeholder
@@ -570,12 +571,33 @@ markup = highlight("def foo(): pass", "python")
 - `build_role_bubble(role, text)` — creates bubble, routes text through extract_blocks internally
 - Text segments → `format_markdown()` → bold/italic/code links
 
-**Phase 2 additions:**
-- `code` segments → code block widget (syntax-highlighted header bar + copy button + monospace content)
-- `quote` segments → left-bordered italic muted box
-- `terminal` segments → amber-bordered block with `$` prefixes
-- `heading` segments → scaled font sizes (h1–h4)
-- `task` segments → checkbox characters (☑/☐)
+**New helper (Phase 5 — shared header factory):**
+
+```python
+def _make_block_header(
+    label_text: str,
+    content_for_copy: str,
+    header_css: str,
+    copy_btn_css: str = "code-copy-btn",
+) -> tuple[Gtk.Box, Gtk.Button]:
+    """
+    Shared header bar factory for code/terminal block widgets.
+    Returns (header_box, copy_btn) — copy_btn is pre-wired.
+    """
+```
+
+Used by `_build_code_segment` and `_build_terminal_segment`. Eliminates copy-paste between block builders.
+
+**Phase 5 — Project Solo DM (per-project direct message override):**
+
+Right-clicking a project tab now shows a project-specific menu (All / member entries) instead of the generic session switcher. This allows routing messages to a single project member rather than broadcasting to all.
+
+- `ProjectHandler._solo_targets: dict[str, str | None]` — maps project_name → solo target session_key, or None for group broadcast
+- `ProjectHandler.get_solo_target(project_name) -> str | None`
+- `ProjectHandler.set_solo_target(project_name, member_session_key | None)`
+- `ChatHandler.on_send()` queries `get_solo_target()` before fan-out; if set, sends to only that member
+- `MainContent._on_tab_right_click()` detects `session_key.startswith("project:")` and routes to `show_project_menu()` instead of `show_session_menu()`
+- `session_menu.show_project_menu(parent, project_name, member_names, current_solo, on_select)` — builds the popover with checkmark on current selection
 
 **Phase 4 additions** — Event card widget factories:
 - `create_file_card(file_path, snippet, line_range)` → `.bubble-file-read` card (green border, 📄 icon)
@@ -733,6 +755,60 @@ class ProjectListHandler:
 ```python
 show_session_menu(parent, agent_name, sessions, on_select)
 ```
+
+### 3.22 `ui/views/feedbar.py` — Response Status Bar (Phase 6)
+
+**Responsibility:** Horizontal bar between toolbar and main content. Pure view — no business logic.
+
+**Owns:** Status label + progress bar GTK widgets.
+
+**Does NOT own:** Any state. All updates come from ActivityHandler via public API.
+
+**Layout:** Horizontal outer box containing a vertical inner box (label on top, progress bar below).
+
+**Public API:**
+```python
+set_status_text(markup)           # Update the state label (Pango markup)
+set_progress_fraction(fraction)    # Set 0.0..1.0 bar fill; stops any active pulse
+set_progress_hidden(hidden)         # Show/hide the progress bar (opacity 0 or 1)
+set_progress_pulse(enable)         # Start/stop GTK pulse animation
+pulse_progress()                   # Advance the pulse by one step (call every ~100ms)
+set_progress_opacity(opacity)      # Set bar opacity 0.0..1.0 (for subtle idle pulse)
+```
+
+**States driven by ActivityHandler:** idle | sending | reasoning | streaming | tool_use | done
+
+---
+
+### 3.23 `ui/handlers/activity_handler.py` — Activity State Machine (Phase 6)
+
+**Responsibility:** The 6-state activity machine that drives the Response Status bar (FeedBar). Manages state transitions, live timers, and FeedBar updates.
+
+**Owns:** All state machine state (timers, counters, timestamps). Does NOT own any GTK widgets — manipulates FeedBar only through its public API.
+
+**Does NOT own:** FeedBar or MainContent — received as constructor dependencies.
+
+**Thread safety:** All GTK calls via `GLib.idle_add()` / `timeout_add()`. Entry points are called from GTK main thread only.
+
+**States:** idle | sending | reasoning | streaming | tool_use | done
+
+**Public API (entry points — called from `window._on_ws_event`):**
+```python
+on_agent_start(session_key, data=None)            # agent phase=start → reasoning
+on_agent_end(session_key, data=None)             # agent phase=end → done (+ 5s idle timer)
+on_agent_error(session_key, data=None)           # agent phase=error → idle
+on_tool_use(tool_name, session_key, data=None)  # tool_call event → tool_use
+on_chat_delta(delta_text, session_key)          # first delta → streaming
+on_agent_message_received(session_key)           # pre-flight → sending
+```
+
+**State transitions:**
+- `agent phase=start` → `reasoning`
+- `agent phase=end` → `done` (auto → `idle` after 5s)
+- `agent phase=error` → `idle`
+- `tool_call` event → `tool_use`
+- First chat delta → `streaming`
+- Agent message in history → `sending` (pre-flight)
 
 ## 4. Data Flow
 
@@ -894,6 +970,31 @@ User clicks +/− button on agent row
 ```
 
 ---
+
+### 4.10 Activity State Machine (Phase 6)
+
+```
+Gateway events → window._on_ws_event() → ActivityHandler methods
+
+  agent phase=start    → on_agent_start()   → set_reasoning
+  agent phase=end      → on_agent_end()     → set_done + 5s idle timer
+  agent phase=error    → on_agent_error()  → set_idle
+  tool_call event      → on_tool_use()      → set_tool_use
+  chat delta           → on_chat_delta()    → first delta: set_streaming
+  agent message        → on_agent_message_received() → set_sending (pre-flight)
+
+ActivityHandler → FeedBar public API:
+  set_status_text(markup)              → updates state label
+  set_progress_fraction(fraction)       → 0.0..1.0 bar fill (stops pulse)
+  set_progress_hidden(hidden)          → show/hide bar
+  set_progress_pulse(enable)          → start/stop GTK pulse animation
+  pulse_progress()                     → advance pulse by one step
+  set_progress_opacity(opacity)        → 0.0..1.0 (for subtle idle pulse)
+
+FeedBar → GTK widgets:
+  _status_label (Gtk.Label)            → state text
+  _progress_bar (Gtk.ProgressBar)       → animated fill / pulse
+```
 
 ## 5. Callback Pattern
 
@@ -1300,11 +1401,12 @@ crabcakes/
 │   │   ├── gateway_handler.py  # 188 lines — connect, agents, lifecycle (Phase 2)
 │   │   ├── media_handler.py   # 89 lines — STT + improve (Phase 4)
 │   │   ├── project_handler.py  # 181 lines — active project + agent-to-project routing (Phase 3)
+│   │   ├── activity_handler.py  # 281 lines — 6-state activity machine (Phase 6)
 │   │   └── project_list_handler.py  # 60 lines — project card data + color round-robin
 │   └── views/
 │       ├── __init__.py        # 1 line
 │       ├── chat_control_bar.py # 34 lines — ChatControlBar (stub: update() not wired)
-│       ├── feedbar.py          # 48 lines — FeedBar (stub: update() not wired)
+│       ├── feedbar.py          # 105 lines — FeedBar + progress bar + ActivityHandler public API (Phase 6)
 │       ├── file_tree.py        # 313 lines — FileTree (TreeView directory browser + project card picker)
 │       ├── left_panel.py       # 442 lines — LeftPanel (Prompts/Agents/Projects notebook)
 │       ├── left_progress.py    # 0 lines — stub placeholder

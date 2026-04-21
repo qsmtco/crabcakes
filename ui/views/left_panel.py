@@ -9,6 +9,7 @@ from gi.repository import Gtk
 from utils.projects import load_members, save_members
 from utils.icons import render_agent_icon
 from ui.views.file_tree import FileTree
+from ui.views.session_menu import show_session_menu
 from ui.handlers.prompts_handler import PromptsHandler
 
 
@@ -254,6 +255,12 @@ class LeftPanel(Gtk.Box):
         else:
             toggle_btn.set_visible(False)
 
+        # Right-click gesture for session switcher menu
+        right_click = Gtk.GestureClick()
+        right_click.set_button(3)  # right mouse button
+        right_click.connect("pressed", self._on_agent_right_click, session_key, name)
+        row_box.add_controller(right_click)
+
         avatar_picture.show()
         name_lbl.show()
 
@@ -269,6 +276,22 @@ class LeftPanel(Gtk.Box):
         """Called when an agent row is clicked — open/create chat tab."""
         if self._on_agent_selected is not None:
             self._on_agent_selected(row._session_key, row._agent_name)
+
+    def _on_agent_right_click(self, gesture, n_press, x, y, session_key, name):
+        """Show session switcher menu on right-click over an agent row."""
+        if self._agent_list_handler is None:
+            return
+        sessions = self._agent_list_handler.get_all_sessions_for_agent(name)
+        if len(sessions) <= 1:
+            return  # nothing to switch between
+        # Use the row's root widget as parent for the popover
+        row_widget = gesture.get_widget()
+        show_session_menu(
+            parent=row_widget,
+            agent_name=name,
+            sessions=sessions,
+            on_select=lambda sk: self._on_agent_selected(sk, name),
+        )
 
     def _on_agent_toggle_clicked(self, button):
         """Add or remove an agent from the active project via toggle_agent callback."""

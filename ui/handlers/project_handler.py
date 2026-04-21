@@ -52,8 +52,12 @@ class ProjectHandler:
         self._agent_to_project = agent_to_project
         self._active_project_name: str | None = None
 
+        # ── Per-project solo DM target ────────────────────────────────────
+        # Key: project_name, Value: member session_key or None (all = broadcast)
+        self._solo_targets: dict[str, str | None] = {}
+
         # ── Cross-handler callbacks (set by window) ───────────────────────
-        self._on_project_opened: Callable | None = None   # window's callback
+        self._on_project_opened: list[Callable] = []   # window's callbacks
         self._on_members_changed: Callable | None = None   # window's callback
 
     # ── Public API — for window / other handlers ───────────────────────────
@@ -81,8 +85,8 @@ class ProjectHandler:
             self._agent_to_project.add(member_key, name)
 
         # Notify window (for any external side-effects)
-        if self._on_project_opened:
-            self._on_project_opened(name, path)
+        for cb in self._on_project_opened:
+            cb(name, path)
 
     def toggle_agent(self, session_key: str):
         """
@@ -127,8 +131,8 @@ class ProjectHandler:
         # Clear routing entries for this project
         self._agent_to_project.remove_project(name)
         self._dispatch(lambda: self._lp.refresh_agents_with_project(None))
-        if self._on_project_opened:
-            self._on_project_opened(None, None)
+        for cb in self._on_project_opened:
+            cb(None, None)
 
     def is_project_session(self, session_key: str) -> bool:
         """
@@ -155,11 +159,36 @@ class ProjectHandler:
         """Return the currently active project name, or None."""
         return self._active_project_name
 
+    # ── Solo DM target (Phase 5 — per-project direct message override) ─────
+
+    def get_solo_target(self, project_name: str) -> str | None:
+        """
+        Return the solo DM target for a project, or None for group broadcast.
+
+        Args:
+            project_name: Name of the project.
+
+        Returns:
+            Member session_key if solo mode is active, None if all members receive messages.
+        """
+        return self._solo_targets.get(project_name)
+
+    def set_solo_target(self, project_name: str, member_session_key: str | None):
+        """
+        Set or clear the solo DM target for a project.
+
+        Args:
+            project_name:          Name of the project.
+            member_session_key:    Session key of the solo recipient, or None to
+                                   restore group broadcast (All members).
+        """
+        self._solo_targets[project_name] = member_session_key
+
     # ── Setters for cross-handler callbacks ─────────────────────────────────
 
     def set_on_project_opened(self, cb: Callable):
-        """Window calls this to receive project-opened notifications."""
-        self._on_project_opened = cb
+        """Add a callback for when a project is opened. Supports multiple callbacks."""
+        self._on_project_opened.append(cb)
 
     def set_on_members_changed(self, cb: Callable):
         """Window calls this to receive membership-change notifications."""

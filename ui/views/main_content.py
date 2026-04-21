@@ -6,9 +6,10 @@
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gdk, GLib
+from typing import Callable
 
 from ui.views.chat_control_bar import ChatControlBar
-from ui.views.session_menu import show_session_menu
+from ui.views.session_menu import show_session_menu, show_project_menu
 
 class MainContent(Gtk.Box):
     """
@@ -55,6 +56,7 @@ class MainContent(Gtk.Box):
         self._scroll_to_bottom_btn = None
         self._scroll_to_bottom_overlay = None  # per-tab overlay holding the button
         self._chat_render_handler = None  # injected via set_chat_render_handler()
+        self._project_handler = None   # injected via set_project_handler()
         # Bulk-close guard: skip reindex until all removals are done
         self._bulk_closing = False
 
@@ -146,7 +148,7 @@ class MainContent(Gtk.Box):
         self._on_improve_click = None
 
         # Project tab close callback — set by window via set_on_project_tab_close()
-        self._on_project_tab_close = None
+        self._on_project_tab_close: list[Callable] = []
 
         # Agent manager reference — set via set_agent_manager()
         self._agent_mgr = None
@@ -389,13 +391,13 @@ class MainContent(Gtk.Box):
         if page_idx is None:
             return
         # If it's a project tab, close the project in left_panel
-        if self._on_project_tab_close and session_key.startswith("project:"):
-            self._on_project_tab_close(session_key)
+        for cb in self._on_project_tab_close:
+            cb(session_key)
         self._close_tab(page_idx)
 
-    def set_on_project_tab_close(self, cb):
-        """Set callback for when a project tab is closed. cb(session_key)."""
-        self._on_project_tab_close = cb
+    def set_on_project_tab_close(self, cb: Callable):
+        """Add a callback for when a project tab is closed. Supports multiple callbacks."""
+        self._on_project_tab_close.append(cb)
 
     def _on_tab_middle_click(self, ctrl, n_press, x, y):
         """Middle-click on tab label — close it."""
@@ -410,16 +412,41 @@ class MainContent(Gtk.Box):
             self._close_tab(page_idx)
 
     def _on_tab_right_click(self, ctrl, n_press, x, y, session_key):
-        """Right-click on tab label — show session switch menu."""
+        """Right-click on tab label — show appropriate menu."""
         if n_press != 1:
             return
         if self._agent_mgr is None:
             return
+        tab_widget = ctrl.get_widget()
+
+        # Project tab — show project solo-DM menu
+        if session_key.startswith("project:"):
+            project_name = session_key.replace("project:", "", 1)
+            if self._project_handler is None:
+                return
+            members = self._project_handler.get_project_members(project_name)
+            if not members:
+                return
+            # Build (session_key, display_name) pairs using agent_mgr
+            member_names = []
+            for sk in members:
+                name = self._agent_mgr.get_name(sk) or sk
+                member_names.append((sk, name))
+            current_solo = self._project_handler.get_solo_target(project_name)
+            show_project_menu(
+                tab_widget,
+                f"Project: {project_name}",
+                member_names,
+                current_solo,
+                lambda target_sk: self._on_project_solo_selected(session_key, project_name, target_sk),
+            )
+            return
+
+        # Agent tab — show session switcher (existing behavior)
         agent_name = self._agent_mgr.get_name(session_key)
         if not agent_name:
             return
         sessions = self._agent_mgr.get_sessions(agent_name)
-        tab_widget = ctrl.get_widget()
         page_idx = self._find_page_by_session(session_key)
         if page_idx is None:
             return
@@ -429,6 +456,13 @@ class MainContent(Gtk.Box):
             sessions,
             lambda sk: self._switch_tab_session(page_idx, sk),
         )
+
+    def _on_project_solo_selected(self, session_key, project_name, target_sk):
+        """
+        Handle project tab solo-DM target selection.
+        target_sk = session_key of selected member, or None = All (group broadcast).
+        """
+        self._project_handler.set_solo_target(project_name, target_sk)
 
     def _switch_tab_session(self, page_idx, new_session_key):
         """Switch an existing tab to a new session key.
@@ -467,6 +501,10 @@ class MainContent(Gtk.Box):
         """Inject ChatRenderHandler instance. Called by window.py._build()."""
         self._chat_render_handler = handler
 
+    def set_project_handler(self, handler):
+        """Inject ProjectHandler instance. Called by window.py._build()."""
+        self._project_handler = handler
+
     def scroll_chat_to_bottom(self, page_index=None):
         """Scroll the chat ScrolledWindow to the bottom."""
         if page_index is None:
@@ -482,7 +520,10 @@ class MainContent(Gtk.Box):
             vadj.set_value(vadj.get_upper() - vadj.get_page_size())
             return False  # don't repeat
         from gi.repository import GLib
-        GLib.idle_add(_do_scroll)
+        # Use timeout_add(16) to wait one frame (~16ms at 60fps) — this gives GTK
+        # time to allocate the new child widget and update vadjustment values before
+        # we read them. idle_add/timeout_add(0) can race with the layout phase.
+        GLib.timeout_add(16, _do_scroll)
 
     def _on_scroll_to_bottom_clicked(self, *args):
         """Handle scroll-to-bottom button click — scroll current tab to bottom."""
@@ -555,6 +596,10 @@ class MainContent(Gtk.Box):
         """Set callback for when the Improve button is clicked."""
         self._on_improve_click = cb
 
+    def set_on_send_click(self, cb):
+        """Set callback for send button click. Called in addition to ChatHandler.on_send_clicked."""
+        self._send_button.connect("clicked", lambda _: cb())
+
     def _on_improve_clicked(self, *args):
         """Forward button click to the registered improve callback."""
         if self._on_improve_click:
@@ -567,3 +612,32 @@ class MainContent(Gtk.Box):
         end_iter = buf.get_end_iter()
         buf.place_cursor(end_iter)
         self.user_input.grab_focus()
+
+    def set_review_bar(self, bar: Gtk.Widget | None):
+        """
+        Add or remove a review bar widget above the chat area.
+
+        Called by ReviewHandler when a review session starts or ends.
+        """
+        # Remove existing review bar if any
+        if hasattr(self, '_review_bar') and self._review_bar is not None:
+            old_bar = self._review_bar
+            old_bar.unparent()
+            self._review_bar = None
+
+        self._review_bar = bar
+        if bar is None:
+            return
+
+        # Insert the bar at the top of the top_box (above the notebook).
+        # MainContent's direct child is a vertical Gtk.Paned.
+        # The paned's start child is the top_box containing the notebook.
+        paned = self.get_first_child()
+        if paned is None:
+            return
+        top_box = paned.get_start_child()
+        if top_box is None:
+            return
+        # Insert at the very top of top_box (position 0 = above notebook)
+        top_box.pack_start(bar, 0, 0, 0)
+        bar.show()

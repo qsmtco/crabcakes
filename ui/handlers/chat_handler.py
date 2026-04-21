@@ -49,8 +49,13 @@ class ChatHandler:
         self._agent_to_project = agent_to_project
         self._projects = projects_module
         self._GLib = GLib_module
+        self._project_handler = None   # injected via set_project_handler()
         self._chat_render_handler = None  # injected via set_chat_render_handler()
         self._on_forward_message = None   # injected via set_on_forward_message()
+        self._command_handler = None     # injected via set_command_handler() — for backtick commands
+        self._on_send_initiated = None    # injected via set_on_send_initiated()
+        self._pending_req_id: str | None = None  # tracks last sent req_id for res correlation
+        self._on_res_confirmed: Callable[[str], None] | None = None  # pre-flight confirm via res
 
     def set_chat_render_handler(self, handler):
         """Inject ChatRenderHandler. Called by window.py._build()."""
@@ -73,6 +78,27 @@ class ChatHandler:
         if self._chat_render_handler is not None:
             self._chat_render_handler.set_on_forward_message(cb)
 
+    def set_on_send_initiated(self, cb):
+        """Set callback for send-initiated: cb(session_key). Called before message is sent."""
+        self._on_send_initiated = cb
+
+    def set_on_res_confirmed(self, cb):
+        """Set callback for pre-flight res confirmation: cb(session_key)."""
+        self._on_res_confirmed = cb
+
+    def on_res_confirmed(self, session_key: str):
+        """Handle gateway res — notify ActivityHandler to end pre-flight."""
+        if self._on_res_confirmed is not None:
+            self._on_res_confirmed(session_key)
+
+    def set_project_handler(self, handler):
+        """Inject ProjectHandler. Called by window.py._build()."""
+        self._project_handler = handler
+
+    def set_command_handler(self, handler):
+        """Inject CommandHandler. Called by window.py._build()."""
+        self._command_handler = handler
+
     def _show_forward_menu(self, text, anchor_widget):
         """
         Show a popover listing other agents to forward text to.
@@ -91,6 +117,9 @@ class ChatHandler:
 
         If the current tab is a project tab ("project:<name>"), fan-out to all
         project members. Otherwise send directly to the single agent session.
+
+        If input starts with the command prefix and CommandHandler is wired, the
+        command is parsed and executed — gateway send is skipped.
         """
         if self._gw is None or not self._gw.is_connected():
             return
@@ -103,6 +132,59 @@ class ChatHandler:
         text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True).strip()
         if not text:
             return
+
+        # ── Command handler check ────────────────────────────────────────────────
+        if self._command_handler is not None:
+            result = self._command_handler.process_input(session_key, text)
+            if result.handled:
+                buf.set_text("")
+                # Forward-to commands: show echo and route via gateway
+                if result.forward_to and result.forward_text:
+                    agent_name = result.forward_to.split("/")[-1]
+                    echo_text = f"→ @{agent_name}: {result.forward_text}"
+                    def _show_echo_and_forward():
+                        chat_box = self._mc.get_chat_box()
+                        if chat_box is not None:
+                            if self._chat_render_handler is not None:
+                                bubble = self._chat_render_handler.render_sync(
+                                    "You", echo_text, session_key,
+                                    on_forward_click=self._on_forward_message,
+                                    agent_name="You"
+                                )
+                                if bubble is not None:
+                                    chat_box.append(bubble)
+                            self._mc.scroll_chat_to_bottom()
+                            if hasattr(chat_box, 'record'):
+                                chat_box.record("You", echo_text)
+                        if self._gw is not None and self._gw.is_connected():
+                            self._gw.send_message(result.forward_to, result.forward_text)
+                    self._dispatch(_show_echo_and_forward)
+                elif result.broadcast_targets and result.forward_text:
+                    # BUG #4 fix: fan-out @ broadcast to all project members
+                    echo_text = f"→ @all: {result.forward_text}"
+                    def _show_broadcast_and_forward():
+                        chat_box = self._mc.get_chat_box()
+                        if chat_box is not None:
+                            if self._chat_render_handler is not None:
+                                bubble = self._chat_render_handler.render_sync(
+                                    "You", echo_text, session_key,
+                                    on_forward_click=self._on_forward_message,
+                                    agent_name="You"
+                                )
+                                if bubble is not None:
+                                    chat_box.append(bubble)
+                            self._mc.scroll_chat_to_bottom()
+                            if hasattr(chat_box, 'record'):
+                                chat_box.record("You", echo_text)
+                        if self._gw is not None and self._gw.is_connected():
+                            for target in result.broadcast_targets:
+                                self._gw.send_message(target, result.forward_text)
+                    self._dispatch(_show_broadcast_and_forward)
+                # Commands with response_text/card: CommandHandler already dispatched via callbacks
+                return
+            # Not a command (handled=False) — fall through to normal send
+
+        # ── Normal send (not a command) ──────────────────────────────────────────
 
         # Display bubble AND send message (both happen in same dispatch)
         def _show_and_send():
@@ -118,9 +200,19 @@ class ChatHandler:
                     chat_box.record("You", text)
             if session_key.startswith("project:"):
                 project_name = session_key.split(":", 1)[1]
-                members = self._projects.load_members(project_name)
-                for member in members:
-                    self._gw.send_message(member, text)
+                # Check for solo DM target (set by right-click → "Member name" menu)
+                if self._project_handler is not None:
+                    solo_target = self._project_handler.get_solo_target(project_name)
+                else:
+                    solo_target = None
+                if solo_target:
+                    # Solo DM — send only to the selected member
+                    self._gw.send_message(solo_target, text)
+                else:
+                    # Group broadcast — fan out to all members
+                    members = self._projects.load_members(project_name)
+                    for member in members:
+                        self._gw.send_message(member, text)
             else:
                 self._gw.send_message(session_key, text)
         self._dispatch(_show_and_send)

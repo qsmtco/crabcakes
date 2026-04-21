@@ -63,3 +63,10 @@ def get_identity_dir() -> str:
     Defaults to ~/.openclaw/identity/.
     """
     return os.path.join(os.path.expanduser("~"), ".openclaw", "identity")
+
+
+# Command system configuration
+# Backtick prefix — triggers command parsing in ChatHandler.on_send().
+# Zero collision with gateway commands (/approve, /status, etc.) which use /.
+COMMAND_PREFIX = "`"
+

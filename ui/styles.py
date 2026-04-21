@@ -14,28 +14,28 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gdk
 
 
-# ── Feed bar ──────────────────────────────────────────────────────────────
+# -- Feed bar --------------------------------------------------------------
 # Applied to the thin strip between chat notebook and control bar.
 
-# ── Button styles ────────────────────────────────────────────────────────
+# -- Button styles --------------------------------------------------------
 # suggested-action = primary solid (Send button)
 # btn-improve      = indigo tint (Improve button)
 # flat             = ghost/transparent (Prompt button, toolbar mic)
 
-# ── Input area ───────────────────────────────────────────────────────────
+# -- Input area -----------------------------------------------------------
 # input-bubble = dark rounded input field
 
-# ── Agent cards ──────────────────────────────────────────────────────────
+# -- Agent cards ----------------------------------------------------------
 # agent-row, agent-name-label, agent-add-btn, agent-remove-btn
 
 APP_CSS = """
-/* ── Feed bar ─────────────────────────────────────────────────────────── */
+/* -- Feed bar ----------------------------------------------------------- */
 .project-feed-bar {
     background: rgba(30, 30, 40, 0.75);
     border-radius: 4px;
 }
 
-/* ── Buttons ──────────────────────────────────────────────────────────── */
+/* -- Buttons ------------------------------------------------------------ */
 button.suggested-action {
     background: #6366f1;
     color: #ffffff;
@@ -69,7 +69,7 @@ button.flat:hover {
     color: #9b9bab;
 }
 
-/* ── Input area ───────────────────────────────────────────────────────── */
+/* -- Input area --------------------------------------------------------- */
 .input-bubble {
     background: #111114;
     border: none;
@@ -85,7 +85,7 @@ button.flat:hover {
     color: #ffffff;
 }
 
-/* ── Agent cards ──────────────────────────────────────────────────────── */
+/* -- Agent cards -------------------------------------------------------- */
 .agent-row {
     background: rgba(255, 255, 255, 0.04);
     border-radius: 6px;
@@ -99,9 +99,9 @@ button.flat:hover {
 .agent-row:selected,
 .agent-row:focus,
 .agent-row:focus-visible {
-    background: rgba(99, 102, 241, 0.2) !important;
-    outline: none !important;
-    box-shadow: none !important;
+    background: rgba(99, 102, 241, 0.2);
+    outline: none;
+    box-shadow: none;
 }
 .agent-name-label {
     color: #e8e8ec;
@@ -130,7 +130,7 @@ button.flat:hover {
     color: #fecdd3;
 }
 
-/* ── Prompt library ────────────────────────────────────────────────────── */
+/* -- Prompt library ------------------------------------------------------ */
 .lib-row {
     background: transparent;
     border-radius: 6px;
@@ -144,13 +144,13 @@ button.flat:hover {
 }
 .lib-row.selected,
 .agent-row.selected {
-    background: rgba(99, 102, 241, 0.2) !important;
-    border-color: transparent !important;
-    outline: none !important;
-    box-shadow: none !important;
+    background: rgba(99, 102, 241, 0.2);
+    border-color: transparent;
+    outline: none;
+    box-shadow: none;
 }
 .lib-row:selected {
-    background: rgba(99, 102, 241, 0.2) !important;
+    background: rgba(99, 102, 241, 0.2);
 }
 .lib-fav-star {
     color: #f59e0b;
@@ -176,10 +176,10 @@ button.flat:hover {
 }
 .project-card:selected,
 .project-card.selected {
-    background: rgba(99, 102, 241, 0.2) !important;
-    border-color: transparent !important;
-    outline: none !important;
-    box-shadow: none !important;
+    background: rgba(99, 102, 241, 0.2);
+    border-color: transparent;
+    outline: none;
+    box-shadow: none;
 }
 .project-card-name {
     font-size: 13px;
@@ -191,7 +191,7 @@ button.flat:hover {
     color: #6b6b7a;
 }
 
-/* ── Chat bubbles (Phase 1) ───────────────────────────────────────────── */
+/* -- Chat bubbles (Phase 1) --------------------------------------------- */
 .chat-bubble-agent {
     background: rgba(255, 255, 255, 0.07);
     border-radius: 12px 12px 12px 4px;
@@ -211,9 +211,7 @@ button.flat:hover {
     background: #22c55e;
     border-radius: 50%;
     min-width: 6px;
-    max-width: 6px;
     min-height: 6px;
-    max-height: 6px;
     margin: 0 2px;
 }
 .chat-bubble-header-time {
@@ -243,7 +241,7 @@ button.flat:hover {
     color: #ffffff;
 }
 
-/* ── Bubble pending state (optimistic UI) ─────────────────────────────── */
+/* -- Bubble pending state (optimistic UI) ------------------------------- */
 .chat-bubble-pending {
     opacity: 0.6;
     transition: opacity 0.3s ease;
@@ -255,7 +253,7 @@ button.flat:hover {
     background: rgba(255, 255, 255, 0.04);
 }
 
-/* ── Code blocks ─────────────────────────────────────────────────────── */
+/* -- Code blocks ------------------------------------------------------- */
 .code-block {
     background: rgba(30, 30, 40, 0.95);
     border-radius: 8px;
@@ -290,7 +288,7 @@ button.flat:hover {
     color: #a9b1d6;
 }
 
-/* ── Per-language code block accents ─────────────────────────────────── */
+/* -- Per-language code block accents ----------------------------------- */
 .code-block.lang-python  { border-left-color: #61afef; }
 .code-block.lang-javascript, .code-block.lang-js { border-left-color: #e5c07b; }
 .code-block.lang-typescript, .code-block.lang-ts { border-left-color: #61afef; }
@@ -311,7 +309,7 @@ button.flat:hover {
 .code-block.lang-markdown { border-left-color: #61afef; }
 .code-block.lang-r-lang { border-left-color: #61afef; }
 
-/* ── Blockquotes ──────────────────────────────────────────────────────── */
+/* -- Blockquotes -------------------------------------------------------- */
 .blockquote {
     border-left: 3px solid rgba(168, 85, 247, 0.6);
     padding: 4px 10px;
@@ -326,7 +324,7 @@ button.flat:hover {
 }
 
 
-/* ── Event cards (Phase 4) ──────────────────────────────────────────────── */
+/* -- Event cards (Phase 4) ------------------------------------------------ */
 .bubble-file-read       { border-left: 3px solid #22c55e; }
 .bubble-edit-proposal   { border-left: 3px solid #f59e0b; }
 .bubble-tool-call       { border-left: 3px solid #94a3b8; }
@@ -334,7 +332,7 @@ button.flat:hover {
 .bubble-thinking        { border-left: 3px solid #f59e0b; }
 .bubble-streaming       { border-left: 3px solid #6366f1; }
 
-/* ── Terminal blocks ──────────────────────────────────────────────────── */
+/* -- Terminal blocks ---------------------------------------------------- */
 .terminal-block {
     background: rgba(20, 20, 30, 0.95);
     border-radius: 6px;
@@ -371,7 +369,7 @@ button.flat:hover {
 .chat-action-btn:hover {
     color: #a9b1d6;
 }
-/* ── Scroll-to-bottom floating button ─────────────────────────────── */
+/* -- Scroll-to-bottom floating button ------------------------------- */
 .scroll-to-bottom-btn {
     background: rgba(30, 30, 50, 0.9);
     border: 1px solid rgba(99, 102, 241, 0.4);
@@ -395,17 +393,211 @@ button.flat:hover {
     color: #a9b1d6;
 }
 
-/* ── Headings inside bubbles ─────────────────────────────────────────── */
+/* -- Headings inside bubbles ------------------------------------------- */
 .chat-heading { font-weight: 700; color: #e8e8f0; }
 .chat-heading-1 { font-size: 20px; }
 .chat-heading-2 { font-size: 17px; }
 .chat-heading-3 { font-size: 15px; }
 .chat-heading-4 { font-size: 14px; }
 
-/* ── Task list items ─────────────────────────────────────────────────── */
+/* -- Task list items --------------------------------------------------- */
 .task-item { font-size: 13px; color: #c0caf5; padding: 1px 0; }
 .task-checked { color: #9ece6a; text-decoration: line-through; }
 .task-unchecked { color: #f0f0f0; }
+
+/* -- Response Status progress bar ------------------------------------- */
+.response-progress {
+    margin-top: 2px;
+    margin-bottom: 0;
+    min-height: 2px;
+    border-radius: 1px;
+}
+.response-progress trough {
+    background: rgba(99, 102, 241, 0.1);
+    border-radius: 1px;
+    min-height: 2px;
+}
+.response-progress progress {
+    background: linear-gradient(90deg, #6366f1, #3b82f6, #6366f1);
+    background-size: 200% 100%;
+    border-radius: 1px;
+    min-height: 2px;
+    animation: progress-stripe 1.5s linear infinite;
+}
+@keyframes progress-stripe {
+    from { background-position: 0 0; }
+    to { background-position: 40px 0; }
+}
+
+/* -- Review Bar -------------------------------------------------------- */
+.review-bar {
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 8px;
+    padding: 6px 12px;
+    margin: 4px 8px;
+}
+.review-bar-status {
+    color: alpha(@theme_fg_color, 0.6);
+    font-size: 0.9em;
+}
+.review-bar-btn-start {
+    background: #6366f1;
+    color: white;
+    border-radius: 6px;
+    padding: 4px 12px;
+}
+.review-bar-btn-start:hover {
+    background: #4f46e5;
+}
+.review-bar-btn-check {
+    background: alpha(@theme_fg_color, 0.1);
+    border-radius: 6px;
+    padding: 4px 12px;
+}
+.review-bar-btn-check:hover {
+    background: alpha(@theme_fg_color, 0.15);
+}
+.review-bar-btn-accept {
+    background: #10b981;
+    color: white;
+    border-radius: 6px;
+    padding: 4px 12px;
+}
+.review-bar-btn-accept:hover {
+    background: #059669;
+}
+.review-bar-btn-reject {
+    background: #f43f5e;
+    color: white;
+    border-radius: 6px;
+    padding: 4px 12px;
+}
+.review-bar-btn-reject:hover {
+    background: #e11d48;
+}
+.review-bar-loading {
+    opacity: 0.6;
+}
+
+/* -- Diff Cards -------------------------------------------------------- */
+.diff-card {
+    background: rgba(0, 0, 0, 0.03);
+    border: 1px solid alpha(@theme_fg_color, 0.1);
+    border-radius: 8px;
+    margin: 4px 0;
+}
+.diff-card-header {
+    padding: 8px 12px;
+    border-bottom: 1px solid alpha(@theme_fg_color, 0.08);
+    font-family: monospace;
+    font-size: 0.9em;
+}
+.diff-card-header:hover {
+    background: alpha(@theme_fg_color, 0.03);
+}
+.diff-card-body {
+    padding: 4px 0;
+}
+.diff-line-add {
+    background: rgba(16, 185, 129, 0.15);
+    padding: 1px 12px;
+    font-family: monospace;
+    font-size: 0.85em;
+}
+.diff-line-remove {
+    background: rgba(244, 63, 94, 0.15);
+    padding: 1px 12px;
+    font-family: monospace;
+    font-size: 0.85em;
+}
+.diff-line-context {
+    color: alpha(@theme_fg_color, 0.5);
+    padding: 1px 12px;
+    font-family: monospace;
+    font-size: 0.85em;
+}
+.diff-line-number {
+    font-family: monospace;
+    min-width: 3em;
+}
+.diff-hunk-header {
+    background: rgba(6, 182, 212, 0.1);
+    color: alpha(@theme_fg_color, 0.5);
+    padding: 2px 12px;
+    font-family: monospace;
+    font-size: 0.85em;
+}
+.diff-badge-add {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 0.8em;
+}
+.diff-badge-remove {
+    background: rgba(244, 63, 94, 0.2);
+    color: #f43f5e;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 0.8em;
+}
+.diff-badge-new {
+    background: rgba(6, 182, 212, 0.2);
+    color: #06b6d4;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 0.8em;
+}
+.diff-badge-deleted {
+    background: alpha(@theme_fg_color, 0.1);
+    color: alpha(@theme_fg_color, 0.5);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 0.8em;
+}
+.diff-collapsed .diff-card-body {
+    visibility: hidden;
+}
+.diff-btn-accept-file {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 0.8em;
+}
+.diff-btn-accept-file:hover {
+    background: rgba(16, 185, 129, 0.3);
+}
+.diff-btn-reject-file {
+    background: rgba(244, 63, 94, 0.2);
+    color: #f43f5e;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 0.8em;
+}
+.diff-btn-reject-file:hover {
+    background: rgba(244, 63, 94, 0.3);
+}
+.diff-btn-accept-all {
+    background: #10b981;
+    color: white;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-size: 0.9em;
+}
+.diff-btn-accept-all:hover {
+    background: #059669;
+}
+.diff-btn-reject-all {
+    background: #f43f5e;
+    color: white;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-size: 0.9em;
+}
+.diff-btn-reject-all:hover {
+    background: #e11d48;
+}
 """
 
 

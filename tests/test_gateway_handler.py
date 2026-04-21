@@ -93,11 +93,12 @@ class FakeAgentManager:
 class FakeGatewayClient:
     """Fake GatewayClient — matches the real GatewayClient constructor signature."""
 
-    def __init__(self, url="ws://localhost:18789", on_connect=None, on_error=None, on_event=None):
+    def __init__(self, url="ws://localhost:18789", on_connect=None, on_error=None, on_event=None, on_tick=None):
         self.url = url
         self._on_connect = on_connect
         self._on_error = on_error
         self._on_event = on_event
+        self._on_tick = on_tick if on_tick is not None else lambda: None
         self._connected = False
         self._snapshot = {"health": {"agents": []}}
 

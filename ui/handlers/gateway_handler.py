@@ -12,9 +12,12 @@
 # to send messages. Window calls set_sync_callback(fn) with a function that updates
 # ChatHandler._gw. The handler calls this function from on_connected() via idle_add.
 
+import logging
 from typing import Callable
 
 from utils.config import get_gateway_url
+
+_logger = logging.getLogger(__name__)
 
 
 class GatewayHandler:
@@ -43,6 +46,7 @@ class GatewayHandler:
         left_panel,
         on_agent_selected: Callable,
         on_event: Callable[[str, dict], None],
+        on_tick: Callable[[], None] = None,
         GLib_module=None,
         gateway_client_class=None,
         agent_manager_class=None,
@@ -53,6 +57,7 @@ class GatewayHandler:
         self._toolbar = toolbar
         self._left_panel = left_panel
         self._on_agent_selected = on_agent_selected
+        self._on_tick = on_tick if on_tick is not None else lambda: None
         self._on_event = on_event  # window's event handler (e.g. ChatHandler routing)
         self._GLib = GLib_module
 
@@ -84,6 +89,7 @@ class GatewayHandler:
             on_connect=self.on_connected,
             on_error=self.on_error,
             on_event=self._on_event_stub,
+            on_tick=self._on_tick,
         )
         self._gw.start()
 
@@ -123,6 +129,7 @@ class GatewayHandler:
         Handle successful gateway connection.
         ⚠️ Called from gateway background thread — all GTK calls need idle_add.
         """
+        from gateway import SnapshotValidationError
         from models import reset_color_indices
 
         if self._agent_mgr is not None:
@@ -131,11 +138,26 @@ class GatewayHandler:
 
         # Dispatch GTK operations to main thread
         def _do_connect():
-            self._toolbar.update_connection_state("connected")
+            try:
+                self._toolbar.update_connection_state("connected")
+            except Exception as e:
+                _logger.error("[gateway] _do_connect: update_connection_state failed: %s", e)
+                return
 
             # Populate agent manager from snapshot
-            snapshot = self._gw.get_snapshot() if self._gw else None
-            agents = snapshot.get("health", {}).get("agents", []) if snapshot else []
+            try:
+                snapshot = self._gw.get_snapshot() if self._gw else None
+            except SnapshotValidationError as e:
+                _logger.error("[gateway] snapshot validation failed: %s", e)
+                self._toolbar.update_connection_state("disconnected")
+                return
+
+            if snapshot is None:
+                _logger.error("[gateway] no snapshot available")
+                self._toolbar.update_connection_state("disconnected")
+                return
+
+            agents = snapshot.get("health", {}).get("agents", [])
 
             if self._agent_mgr is not None:
                 for agent in agents:
@@ -148,14 +170,26 @@ class GatewayHandler:
                             self._agent_mgr.register(session_key, name)
 
             # Tell window to build the agents list in the sidebar
-            self._left_panel.set_agents(
-                self._agent_mgr.get_names_ref() if self._agent_mgr else {},
-                self._on_agent_selected,
-            )
+            try:
+                self._left_panel.set_agents(
+                    self._agent_mgr.get_names_ref() if self._agent_mgr else {},
+                    self._on_agent_selected,
+                )
+            except Exception as e:
+                _logger.error("[gateway] _do_connect: set_agents failed: %s", e)
 
             # Sync live gateway to ChatHandler (via window's callback)
-            if self._sync_callback is not None:
-                self._sync_callback(self._gw)
+            try:
+                if self._sync_callback is not None:
+                    self._sync_callback(self._gw)
+            except Exception as e:
+                _logger.error("[gateway] _do_connect: sync_callback failed: %s", e)
+
+            # Wire res correlation callback for pre-flight detection
+            try:
+                self._gw.set_on_res(self._on_res_stub)
+            except Exception as e:
+                _logger.error("[gateway] _do_connect: set_on_res failed: %s", e)
 
         self._dispatch(_do_connect)
 
@@ -176,6 +210,10 @@ class GatewayHandler:
         """
         if self._on_event is not None:
             self._on_event(event, payload)
+
+    def _on_res_stub(self, req_id: str, payload: dict):
+        """Forward res events to window for pre-flight correlation."""
+        self._dispatch(lambda: self._on_event("res", {"req_id": req_id, **payload}))
 
     # ── Internal ─────────────────────────────────────────────────────────────
 

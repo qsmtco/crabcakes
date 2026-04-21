@@ -107,3 +107,12 @@ class AgentListHandler:
         """Handle +/− button click — delegate to registered callback."""
         if self._on_agent_toggle:
             self._on_agent_toggle(session_key, name, in_project)
+
+    def get_all_sessions_for_agent(self, name: str) -> list[str]:
+        """Return all session_keys for a given agent name."""
+        if self._agent_mgr is None:
+            return []
+        return [
+            sk for sk, n in self._agent_mgr._agent_names.items()
+            if n == name
+        ]

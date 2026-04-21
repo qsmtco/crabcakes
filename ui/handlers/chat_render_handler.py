@@ -321,6 +321,38 @@ class ChatRenderHandler:
                 if agent_mgr is not None:
                     agent_name = agent_mgr.get_name(session_key)
             card = build_role_bubble("Agent", text, agent_name=agent_name)
+        elif event_type == "task":
+            card = self.render_task_card(
+                action=kwargs.get("action", ""),
+                task_id=kwargs.get("id", ""),
+                title=kwargs.get("title", ""),
+                status=kwargs.get("status", ""),
+                priority=kwargs.get("priority", ""),
+                assigned_to=kwargs.get("assigned_to", ""),
+            )
+        elif event_type == "diff_summary":
+            from ui.views.diff_card import build_diff_summary_card
+            parsed_diff = kwargs.get("parsed_diff")
+            on_accept_all = kwargs.get("on_accept_all")
+            on_reject_all = kwargs.get("on_reject_all")
+            card = build_diff_summary_card(
+                parsed_diff=parsed_diff,
+                on_accept_all=on_accept_all,
+                on_reject_all=on_reject_all,
+            )
+        elif event_type == "diff_file":
+            from ui.views.diff_card import build_file_diff_card
+            file_diff = kwargs.get("file_diff")
+            on_accept_file = kwargs.get("on_accept_file")
+            on_reject_file = kwargs.get("on_reject_file")
+            card = build_file_diff_card(
+                file_diff=file_diff,
+                on_accept_file=on_accept_file,
+                on_reject_file=on_reject_file,
+            )
+        elif event_type == "widget":
+            # Pass-through for pre-built widgets
+            card = kwargs.get("widget")
         else:
             # Unknown event type — ignore silently
             return
@@ -332,6 +364,51 @@ class ChatRenderHandler:
 
         self._dispatch(_append)
 
+
+    def render_task_card(
+        self,
+        action: str,
+        task_id: str,
+        title: str,
+        status: str,
+        priority: str,
+        assigned_to: str,
+    ) -> Gtk.Widget | None:
+        """Render a task card bubble (created/updated)."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.set_margin_start(8)
+        box.set_margin_end(8)
+        box.set_margin_top(4)
+        box.set_margin_bottom(4)
+
+        # Title label
+        title_label = Gtk.Label()
+        title_label.set_markup(f"<b>Task {action.capitalize()}:</b> {task_id}")
+        title_label.set_xalign(0)
+        box.append(title_label)
+
+        # Task title
+        if title:
+            desc_label = Gtk.Label(label=title)
+            desc_label.set_xalign(0)
+            desc_label.set_selectable(True)
+            box.append(desc_label)
+
+        # Status + priority row
+        meta_label = Gtk.Label()
+        parts = [s for s in [status, priority] if s]
+        meta_label.set_markup(" | ".join(parts))
+        meta_label.set_xalign(0)
+        box.append(meta_label)
+
+        # Assigned-to
+        if assigned_to:
+            at_label = Gtk.Label()
+            at_label.set_markup(f"→ {assigned_to}")
+            at_label.set_xalign(0)
+            box.append(at_label)
+
+        return box
 
     def _dispatch(self, fn):
         """Call fn on the GTK main thread."""
