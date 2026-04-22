@@ -42,6 +42,59 @@ from utils.syntax_highlight import highlight
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
+def process_segments(text: str) -> list[dict]:
+    """
+    Pre-process raw message text into a list of render-ready segment dicts.
+    Pure Python — no GTK calls. Safe to run on a background thread.
+
+    Each segment dict has a 'type' key and processed content:
+      - text segments: 'markup' key with Pango-formatted string
+      - code segments: 'code_markup' with highlighted Pango, 'raw_content' for copy
+      - other segments (quote, terminal, heading, task): 'content' passthrough
+
+    Groups consecutive text segments for unified rendering (same as build_role_bubble).
+    """
+    segments = extract_blocks(text)
+    processed = []
+    text_buf = []  # accumulate consecutive text segments
+
+    def flush_text():
+        if not text_buf:
+            return
+        joined = "\n".join(text_buf)
+        escaped = escape_for_pango(joined)
+        formatted = format_markdown(escaped)
+        processed.append({"type": "text", "markup": formatted})
+        text_buf.clear()
+
+    for seg in segments:
+        seg_type = seg.get("type", "text")
+        if seg_type == "text":
+            text_buf.append(seg.get("content", ""))
+        else:
+            flush_text()
+            if seg_type == "code":
+                lang = seg.get("lang", "")
+                raw = seg.get("content", "")
+                code_markup = highlight(raw, lang)
+                processed.append({
+                    "type": "code",
+                    "code_markup": code_markup,
+                    "lang": lang,
+                    "raw_content": raw,
+                })
+            else:
+                # quote, terminal, heading, task — pass through raw content
+                processed.append({
+                    "type": seg_type,
+                    "content": seg.get("content", ""),
+                    **({"lang": seg.get("lang", "")} if "lang" in seg else {}),
+                    **({"level": seg.get("level", 1)} if "level" in seg else {}),
+                })
+    flush_text()
+    return processed
+
+
 def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool = False, forwarded_from: str = None, session_key: str = None, agent_name: str = None) -> Gtk.Widget:
     """
     Build a styled chat bubble for the given role and raw text.
@@ -105,40 +158,94 @@ def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool =
         header.append(time_label)
         bubble.append(header)
 
-    # ── Parse into segments and render each ─────────────────────────────
-    # Group all consecutive text segments into one label so the user can
-    # select the entire bubble text with a single drag. Block-level segments
-    # (code, quote, terminal) are kept as individual widgets.
-    # If forwarded_from is set, prepend a header line.
+    # ── Pre-process text (pure Python, can run off-thread) ────────────
     if forwarded_from:
         text = f"[Forwarded from {forwarded_from}]\n{text}"
-    segments = extract_blocks(text)
-    text_parts = []
-    for seg in segments:
-        if seg.get("type") == "text":
-            text_parts.append(seg.get("content", ""))
+    raw_text = text  # keep original for copy button
+    processed = process_segments(text)
+
+    # ── Assemble GTK widgets from processed segments ──────────────────
+    for pseg in processed:
+        seg_type = pseg.get("type", "text")
+        if seg_type == "text":
+            # Pre-formatted Pango markup — create label directly
+            markup = pseg.get("markup", "")
+            if not markup.strip():
+                bubble.append(Gtk.Box())  # empty spacer
+                continue
+            label = Gtk.Label()
+            label.set_markup(markup)
+            label.set_xalign(0)
+            label.set_wrap(True)
+            label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            label.set_can_focus(False)
+            label.set_selectable(True)
+            label.add_css_class("chat-msg-label")
+            bubble.append(label)
+        elif seg_type == "code":
+            # Build code widget using pre-highlighted markup
+            code_markup = pseg.get("code_markup", "")
+            lang = pseg.get("lang", "")
+            raw_content = pseg.get("raw_content", "")
+            block = _build_code_from_markup(lang, code_markup, raw_content)
+            if block is not None:
+                bubble.append(block)
         else:
-            # Flush accumulated text segments first
-            if text_parts:
-                joined_text = "\n".join(text_parts)
-                widget = _build_text_segment({"type": "text", "content": joined_text})
+            # quote, terminal, heading, task — use original segment builders
+            seg_dict = {"type": seg_type, "content": pseg.get("content", "")}
+            if "lang" in pseg:
+                seg_dict["lang"] = pseg["lang"]
+            if "level" in pseg:
+                seg_dict["level"] = pseg["level"]
+            widget = _build_segment_widget(seg_dict)
+            if widget is not None:
                 bubble.append(widget)
-                text_parts = []
-            block_widget = _build_segment_widget(seg)
-            if block_widget is not None:
-                bubble.append(block_widget)
-    # Flush any remaining text at the end
-    if text_parts:
-        joined_text = "\n".join(text_parts)
-        widget = _build_text_segment({"type": "text", "content": joined_text})
-        bubble.append(widget)
 
     # ── Action buttons (hover-to-reveal) ───────────────────────────────
+    _add_action_buttons(bubble, raw_text, on_forward_click, session_key)
+
+    container.append(bubble)
+    return container
+
+
+def _build_code_from_markup(lang: str, code_markup: str, raw_content: str) -> Gtk.Widget | None:
+    """Build a code block widget from pre-highlighted Pango markup."""
+    outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    outer.add_css_class("code-block")
+
+    header, _ = _make_block_header(
+        lang or "code",
+        raw_content,
+        "code-header",
+    )
+    outer.append(header)
+
+    scroll = Gtk.ScrolledWindow()
+    scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    scroll.set_max_content_height(400)
+    scroll.set_propagate_natural_height(True)
+
+    code_label = Gtk.Label()
+    code_label.set_markup(code_markup)
+    code_label.set_xalign(0)
+    code_label.set_selectable(True)
+    code_label.add_css_class("code-content")
+    code_label.set_wrap(False)
+    code_label.set_hexpand(True)
+
+    code_box = Gtk.Box()
+    code_box.append(code_label)
+    scroll.set_child(code_box)
+    outer.append(scroll)
+    return outer
+
+
+def _add_action_buttons(bubble: Gtk.Box, raw_text: str, on_forward_click, session_key: str = None) -> None:
+    """Add Copy + Forward action buttons to a bubble."""
     actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
     actions.add_css_class("chat-bubble-actions")
     actions.set_spacing(4)
 
-    # Copy button — SVG icon, hover reveal (opacity 0.3 → 1.0)
     copy_btn = Gtk.Button()
     copy_btn.add_css_class("flat")
     copy_btn.set_tooltip_text("Copy message")
@@ -149,13 +256,12 @@ def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool =
             "/home/q/projects/crabcakes/ui/icons/copy.svg"))
     except Exception:
         copy_btn.set_label("📋")
-    copy_btn.connect("clicked", lambda _, t=text: _copy_to_clipboard(t))
+    copy_btn.connect("clicked", lambda _, t=raw_text: _copy_to_clipboard(t))
     copy_motion = Gtk.EventControllerMotion()
     copy_motion.connect("enter", lambda _c, _x, _y: copy_btn.set_opacity(1.0))
     copy_motion.connect("leave", lambda _c: copy_btn.set_opacity(0.3))
     copy_btn.add_controller(copy_motion)
 
-    # Forward button — SVG icon, hover reveal, popover menu on click
     fwd_btn = Gtk.Button()
     fwd_btn.add_css_class("flat")
     fwd_btn.set_tooltip_text("Forward to another agent")
@@ -167,7 +273,7 @@ def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool =
     except Exception:
         fwd_btn.set_label("↗")
     if on_forward_click:
-        fwd_btn.connect("clicked", lambda btn, t=text, sk=session_key: on_forward_click(t, btn, sk))
+        fwd_btn.connect("clicked", lambda btn, t=raw_text, sk=session_key: on_forward_click(t, btn, sk))
     else:
         fwd_btn.connect("clicked", lambda _: print("[chat_bubble] forward (no handler)"))
     fwd_motion = Gtk.EventControllerMotion()
@@ -178,9 +284,6 @@ def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool =
     actions.append(copy_btn)
     actions.append(fwd_btn)
     bubble.append(actions)
-
-    container.append(bubble)
-    return container
 
 
 # ─────────────────────────────────────────────────────────────────────────────

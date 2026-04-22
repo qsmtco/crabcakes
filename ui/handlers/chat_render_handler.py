@@ -28,7 +28,9 @@ from gi.repository import Gtk
 
 from utils.escaping import escape_for_pango
 from utils.markdown import format_markdown
-from ui.views.chat_bubble import build_role_bubble
+from concurrent.futures import ThreadPoolExecutor
+
+from ui.views.chat_bubble import build_role_bubble, process_segments
 
 
 class _ReentrancySet:
@@ -57,6 +59,95 @@ class _ReentrancySet:
 
     def __contains__(self, key: str) -> bool:
         return key in self._keys
+
+
+def _assemble_from_processed(role: str, raw_text: str, processed: list[dict], on_forward_click=None, agent_name: str = None) -> Gtk.Widget:
+    """
+    Assemble a GTK bubble widget from pre-processed segments.
+    Must be called on the main thread — creates GTK widgets.
+    """
+    from gi.repository import Pango
+    from datetime import datetime
+    from ui.views.chat_bubble import _build_segment_widget, _build_code_from_markup, _add_action_buttons
+
+    container = Gtk.Box()
+    container.set_halign(Gtk.Align.END if role == "You" else Gtk.Align.START)
+
+    bubble = Gtk.Box(
+        orientation=Gtk.Orientation.VERTICAL,
+        css_classes=["chat-bubble-you" if role == "You" else "chat-bubble-agent"],
+    )
+    bubble.set_margin_top(4)
+    bubble.set_margin_bottom(4)
+
+    # Header row
+    if agent_name or role == "You":
+        timestamp = datetime.now().strftime("%H:%M")
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        header.add_css_class("chat-bubble-header")
+        header.set_spacing(4)
+        header.set_margin_bottom(2)
+        header.set_hexpand(role == "You")
+        header.set_halign(Gtk.Align.END if role == "You" else Gtk.Align.START)
+
+        display_name = agent_name if agent_name else "You"
+        name_label = Gtk.Label(label=display_name)
+        name_label.add_css_class("chat-bubble-header-name")
+        name_label.set_halign(Gtk.Align.START)
+
+        dot = Gtk.Box()
+        dot.set_size_request(6, 6)
+        dot.add_css_class("chat-bubble-header-dot")
+        dot.set_valign(Gtk.Align.CENTER)
+
+        time_label = Gtk.Label(label=timestamp)
+        time_label.add_css_class("chat-bubble-header-time")
+        time_label.set_halign(Gtk.Align.START)
+
+        header.append(name_label)
+        header.append(dot)
+        header.append(time_label)
+        bubble.append(header)
+
+    # Assemble widgets from pre-processed segments
+    for pseg in processed:
+        seg_type = pseg.get("type", "text")
+        if seg_type == "text":
+            markup = pseg.get("markup", "")
+            if not markup.strip():
+                bubble.append(Gtk.Box())
+                continue
+            label = Gtk.Label()
+            label.set_markup(markup)
+            label.set_xalign(0)
+            label.set_wrap(True)
+            label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            label.set_can_focus(False)
+            label.set_selectable(True)
+            label.add_css_class("chat-msg-label")
+            bubble.append(label)
+        elif seg_type == "code":
+            code_markup = pseg.get("code_markup", "")
+            lang = pseg.get("lang", "")
+            raw_content = pseg.get("raw_content", "")
+            block = _build_code_from_markup(lang, code_markup, raw_content)
+            if block is not None:
+                bubble.append(block)
+        else:
+            seg_dict = {"type": seg_type, "content": pseg.get("content", "")}
+            if "lang" in pseg:
+                seg_dict["lang"] = pseg["lang"]
+            if "level" in pseg:
+                seg_dict["level"] = pseg["level"]
+            widget = _build_segment_widget(seg_dict)
+            if widget is not None:
+                bubble.append(widget)
+
+    # Action buttons
+    _add_action_buttons(bubble, raw_text, on_forward_click)
+
+    container.append(bubble)
+    return container
 
 
 class ChatRenderHandler:
@@ -95,7 +186,57 @@ class ChatRenderHandler:
         # Phase 5: MainContent reference for self-contained scroll operations
         self._main_content = None
 
+    # ── Thread pool for off-main-thread processing ──────────────────
+    _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="crabcakes-render")
+
     # ── Async (thread-safe) ──────────────────────────────────────────────
+
+    def render_async(self, role: str, text: str, session_key: str, on_bubble_ready, on_forward_click=None, on_error=None, agent_name: str = None):
+        """
+        Process text on a background thread, assemble GTK widgets on main thread.
+
+        Heavy text processing (extract_blocks, escape, markdown, highlight) runs
+        on a worker thread. GTK widget assembly is dispatched to the main thread.
+        This keeps the UI responsive for large messages.
+
+        Args:
+            role:           "You" or "Agent"
+            text:           Raw message text
+            session_key:    For reentrancy guarding — concurrent renders for same key are skipped
+            on_bubble_ready: callback(widget) — called on main thread with finished bubble
+            on_forward_click: optional callback for forward button
+            on_error:       optional callback(error_msg) — called on main thread
+            agent_name:     Optional display name for the agent header
+        """
+        if not self._reentrancy.add(session_key):
+            return  # render already in flight
+
+        def _process_off_thread():
+            try:
+                # Heavy pure-Python work — no GTK calls
+                processed = process_segments(text)
+
+                def _assemble_on_main():
+                    try:
+                        bubble = _assemble_from_processed(
+                            role, text, processed,
+                            on_forward_click=on_forward_click,
+                            agent_name=agent_name,
+                        )
+                        self._reentrancy.remove(session_key)
+                        on_bubble_ready(bubble)
+                    except Exception as exc:
+                        self._reentrancy.remove(session_key)
+                        if on_error:
+                            on_error(str(exc))
+
+                self._dispatch(_assemble_on_main)
+            except Exception as exc:
+                self._reentrancy.remove(session_key)
+                if on_error:
+                    self._dispatch(lambda: on_error(str(exc)))
+
+        self._pool.submit(_process_off_thread)
 
     def render(self, role: str, text: str, session_key: str, on_bubble_ready, on_forward_click=None, on_error=None):
         """

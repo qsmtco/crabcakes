@@ -141,17 +141,19 @@ class ChatHandler:
             def _show_and_route_to_agent():
                 chat_box = self._mc.get_chat_box()
                 if chat_box is not None:
+                    if hasattr(chat_box, "record"):
+                        chat_box.record("You", text)
                     if self._chat_render_handler is not None:
-                        bubble = self._chat_render_handler.render_sync(
+                        def _on_bubble(bubble):
+                            if bubble is not None:
+                                chat_box.append(bubble)
+                            self._mc.scroll_chat_to_bottom()
+                        self._chat_render_handler.render_async(
                             "You", text, session_key,
+                            on_bubble_ready=_on_bubble,
                             on_forward_click=self._on_forward_message,
                             agent_name="You",
                         )
-                        if bubble is not None:
-                            chat_box.append(bubble)
-                    self._mc.scroll_chat_to_bottom()
-                    if hasattr(chat_box, "record"):
-                        chat_box.record("You", text)
                 self._agent_runtime_handler.send_to_special_agent(session_key, text)
             self._dispatch(_show_and_route_to_agent)
             buf.set_text("")
@@ -175,17 +177,19 @@ class ChatHandler:
                     def _show_echo_and_forward():
                         chat_box = self._mc.get_chat_box()
                         if chat_box is not None:
-                            if self._chat_render_handler is not None:
-                                bubble = self._chat_render_handler.render_sync(
-                                    "You", echo_text, session_key,
-                                    on_forward_click=self._on_forward_message,
-                                    agent_name="You"
-                                )
-                                if bubble is not None:
-                                    chat_box.append(bubble)
-                            self._mc.scroll_chat_to_bottom()
                             if hasattr(chat_box, 'record'):
                                 chat_box.record("You", echo_text)
+                            if self._chat_render_handler is not None:
+                                def _on_bubble(bubble):
+                                    if bubble is not None:
+                                        chat_box.append(bubble)
+                                    self._mc.scroll_chat_to_bottom()
+                                self._chat_render_handler.render_async(
+                                    "You", echo_text, session_key,
+                                    on_bubble_ready=_on_bubble,
+                                    on_forward_click=self._on_forward_message,
+                                    agent_name="You",
+                                )
                         if self._gw is not None and self._gw.is_connected():
                             self._gw.send_message(result.forward_to, result.forward_text)
                     self._dispatch(_show_echo_and_forward)
@@ -195,17 +199,19 @@ class ChatHandler:
                     def _show_broadcast_and_forward():
                         chat_box = self._mc.get_chat_box()
                         if chat_box is not None:
-                            if self._chat_render_handler is not None:
-                                bubble = self._chat_render_handler.render_sync(
-                                    "You", echo_text, session_key,
-                                    on_forward_click=self._on_forward_message,
-                                    agent_name="You"
-                                )
-                                if bubble is not None:
-                                    chat_box.append(bubble)
-                            self._mc.scroll_chat_to_bottom()
                             if hasattr(chat_box, 'record'):
                                 chat_box.record("You", echo_text)
+                            if self._chat_render_handler is not None:
+                                def _on_bubble(bubble):
+                                    if bubble is not None:
+                                        chat_box.append(bubble)
+                                    self._mc.scroll_chat_to_bottom()
+                                self._chat_render_handler.render_async(
+                                    "You", echo_text, session_key,
+                                    on_bubble_ready=_on_bubble,
+                                    on_forward_click=self._on_forward_message,
+                                    agent_name="You",
+                                )
                         if self._gw is not None and self._gw.is_connected():
                             for target in result.broadcast_targets:
                                 self._gw.send_message(target, result.forward_text)
@@ -220,14 +226,19 @@ class ChatHandler:
         def _show_and_send():
             chat_box = self._mc.get_chat_box()
             if chat_box is not None:
-                if self._chat_render_handler is not None:
-                    bubble = self._chat_render_handler.render_sync("You", text, session_key, on_forward_click=self._on_forward_message, agent_name="You")
-                    if bubble is not None:
-                        chat_box.append(bubble)
-                self._mc.scroll_chat_to_bottom()
-                # Record for test assertions (FakeChatBox.record also called by append if supported)
                 if hasattr(chat_box, 'record'):
                     chat_box.record("You", text)
+                if self._chat_render_handler is not None:
+                    def _on_bubble(bubble):
+                        if bubble is not None:
+                            chat_box.append(bubble)
+                        self._mc.scroll_chat_to_bottom()
+                    self._chat_render_handler.render_async(
+                        "You", text, session_key,
+                        on_bubble_ready=_on_bubble,
+                        on_forward_click=self._on_forward_message,
+                        agent_name="You",
+                    )
             if session_key.startswith("project:"):
                 project_name = session_key.split(":", 1)[1]
                 # Check for solo DM target (set by right-click → "Member name" menu)
@@ -319,6 +330,10 @@ class ChatHandler:
             if chat_box is not None:
                 self._chat_render_handler.start_streaming(session_key, chat_box, "Agent")
         self._chat_render_handler.update_streaming(session_key, delta_text)
+        # If this tab is not currently visible, show unread indicator.
+        current_sk = self._mc.get_current_session_key()
+        if target_tab != current_sk:
+            self._mc.increment_unread(target_tab)
 
     def _handle_final_response(self, tab: str, session_key: str, final_text: str):
         """
@@ -327,11 +342,25 @@ class ChatHandler:
         When STREAMING_ENABLED is False, no streaming bubble is ever started,
         so end_streaming() is a no-op. In that case we fall back to render_sync()
         to create the final bubble directly.
+
+        Note: tab switching removed — user stays in their current tab. A unread
+        indicator on the tab label signals that another tab has new messages.
         """
-        self.switch_to_tab(tab)
-        chat_box = self._mc.get_chat_box()
-        if hasattr(chat_box, 'record'):
-            chat_box.record("Agent", final_text)
+        current_sk = self._mc.get_current_session_key()
+        print(f"[DEBUG _handle_final_response] tab={tab!r} session_key={session_key!r} "
+              f"current_tab={current_sk!r} text_len={len(final_text)}")
+        chat_box = self._mc.get_chat_box_for_session(tab)
+        print(f"[DEBUG] get_chat_box_for_session({tab!r}) = {chat_box}")
+        # Always record the message in the chat box (data plane), regardless of
+        # render handler state. render_sync / end_streaming are presentation.
+        if chat_box is not None and hasattr(chat_box, 'record'):
+            chat_box.record('Agent', final_text)
+        # If this tab is not currently visible, increment unread count so the
+        # tab label dot turns yellow to signal pending messages.
+        current_sk = self._mc.get_current_session_key()
+        if tab != current_sk:
+            self._mc.increment_unread(tab)
+
         if self._chat_render_handler is None:
             return
         if self._chat_render_handler.is_streaming(session_key):
@@ -343,6 +372,8 @@ class ChatHandler:
             if bubble is not None and chat_box is not None:
                 chat_box.append(bubble)
                 self._mc.scroll_chat_to_bottom()
+        if chat_box is not None and hasattr(chat_box, 'record'):
+            chat_box.record("Agent", final_text)
 
     def _extract_text(self, msg_obj) -> str:
         """Extract plain text from a gateway message object.
@@ -371,15 +402,14 @@ class ChatHandler:
 
     def _show_agent_response(self, tab, final_text):
         """Render and display an agent response bubble in the correct tab."""
-        self.switch_to_tab(tab)
-        chat_box = self._mc.get_chat_box()
+        chat_box = self._mc.get_chat_box_for_session(tab)
         if chat_box is not None:
             if self._chat_render_handler is not None:
                 bubble = self._chat_render_handler.render_sync("Agent", final_text, tab)
                 if bubble is not None:
                     chat_box.append(bubble)
-            self._mc.scroll_chat_to_bottom()
-            # Record for test assertions (always called when chat_box supports it)
+            tab_idx = self._mc._find_page_by_session(tab)
+            self._mc.scroll_chat_to_bottom(tab_idx)
             if hasattr(chat_box, 'record'):
                 chat_box.record("Agent", final_text)
 
@@ -393,7 +423,6 @@ class ChatHandler:
             target_tab:  Tab name for UI switching
             payload:     Full event payload dict
         """
-        self.switch_to_tab(target_tab)
         chat_box = self._mc.get_chat_box_for_session(target_tab)
         if chat_box is None or self._chat_render_handler is None:
             return
