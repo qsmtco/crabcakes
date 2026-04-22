@@ -250,9 +250,11 @@ class MainContent(Gtk.Box):
         chat_box.set_valign(Gtk.Align.END)
         chat_scroll.set_child(chat_box)
 
-        # Tab label = [dot] [agent name] [close button]
+        # Tab label = [dot] [agent name bold] [•] [session name] [spacer] [×]
         tab_label_box = Gtk.Box(spacing=4)
         tab_label_box.set_valign(Gtk.Align.CENTER)
+        tab_label_box.set_halign(Gtk.Align.START)
+        tab_label_box.set_margin_start(8)
 
         # Status dot — green (idle) by default, yellow when unread
         tab_dot = Gtk.Box()
@@ -260,9 +262,22 @@ class MainContent(Gtk.Box):
         tab_dot.add_css_class("tab-dot-idle")
         tab_dot.set_valign(Gtk.Align.CENTER)
 
-        tab_label = Gtk.Label(label=agent_name)
-        tab_label.set_valign(Gtk.Align.CENTER)
-        tab_label.set_hexpand(True)  # ensure label gets space over button
+        # Agent name (bold)
+        tab_name = Gtk.Label()
+        tab_name.set_markup(f"<b>{GLib.markup_escape_text(agent_name)}</b>")
+        tab_name.set_valign(Gtk.Align.CENTER)
+        tab_name.add_css_class("tab-label-name")
+
+        # Bullet separator
+        tab_sep = Gtk.Label(label="•")
+        tab_sep.set_valign(Gtk.Align.CENTER)
+        tab_sep.add_css_class("tab-label-separator")
+
+        # Session/channel name
+        session_display = self._extract_session_display_name(session_key)
+        tab_session = Gtk.Label(label=session_display)
+        tab_session.set_valign(Gtk.Align.CENTER)
+        tab_session.add_css_class("tab-label-session")
 
         close_btn = Gtk.Button(label="×")
         close_btn.set_valign(Gtk.Align.CENTER)
@@ -272,7 +287,9 @@ class MainContent(Gtk.Box):
         close_btn.set_hexpand(False)
 
         tab_label_box.append(tab_dot)
-        tab_label_box.append(tab_label)
+        tab_label_box.append(tab_name)
+        tab_label_box.append(tab_sep)
+        tab_label_box.append(tab_session)
         tab_label_box.append(close_btn)
 
         # Append the new tab FIRST to get page_idx, then wire handlers
@@ -316,6 +333,25 @@ class MainContent(Gtk.Box):
             self.clear_unread(tab_label._session_key)
 
     # ── Unread dot management ──────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_session_display_name(session_key: str) -> str:
+        """Parse a session key like 'agent:qaster:telegram:direct:7478874934'
+        and return a human-readable channel name like 'Telegram'."""
+        parts = session_key.split(":")
+        if len(parts) >= 3:
+            channel = parts[2].lower()
+            channel_map = {
+                "telegram": "Telegram",
+                "discord": "Discord",
+                "signal": "Signal",
+                "whatsapp": "WhatsApp",
+                "slack": "Slack",
+                "cli": "CLI",
+                "web": "Web",
+            }
+            return channel_map.get(channel, channel.title())
+        return session_key
 
     def increment_unread(self, session_key: str) -> None:
         """Mark a tab as having unread messages; update dot to yellow."""

@@ -228,6 +228,18 @@ button.flat:hover {
 .tab-dot-unread {
     background: #facc15;
 }
+/* Tab label typography */
+.tab-label-name {
+    font-weight: bold;
+}
+.tab-label-separator {
+    color: #707088;
+    font-size: 11px;
+}
+.tab-label-session {
+    color: #a0a0b0;
+    font-size: 11px;
+}
 .chat-bubble-header-time {
     font-size: 10px;
     color: #707088;
