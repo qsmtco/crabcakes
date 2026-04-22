@@ -59,6 +59,8 @@ class MainWindow(Gtk.ApplicationWindow):
         self._gateway_handler = None
         # Media handler — owns STT + improve (Phase 4)
         self._media_handler = None
+        # AgentRuntime handler — owns special agent runtimes (Phase 1.4)
+        self._agent_runtime_handler = None
         # Agent-to-project routing table — shared between ProjectHandler (writes) and ChatHandler (reads)
         from models import AgentRoutingTable
         self._agent_to_project = AgentRoutingTable()
@@ -101,9 +103,8 @@ class MainWindow(Gtk.ApplicationWindow):
             GLib_module=GLib,
         )
 
-        # Inject ChatRenderHandler + AgentRuntimeHandler into ChatHandler (window.py is composition root)
+        # Inject ChatRenderHandler into ChatHandler (window.py is composition root)
         self._chat_handler.set_chat_render_handler(self._chat_render_handler)
-        self._chat_handler.set_agent_runtime_handler(self._agent_runtime_handler)
 
         # Wire Send button
         self._main_content.send_button.connect("clicked", self._chat_handler.on_send_clicked)
@@ -123,7 +124,6 @@ class MainWindow(Gtk.ApplicationWindow):
             on_agent_toggle=None,  # left_panel._on_agent_toggle_clicked handles membership directly
         )
         self._left_panel.set_agent_list_handler(self._agent_list_handler)
-        self._left_panel.set_special_agents(self._agent_runtime_handler)
 
         # AgentRuntime handler — owns AgentRuntime instances for special agents (Phase 1.4)
         from ui.handlers.agent_runtime_handler import AgentRuntimeHandler
@@ -131,11 +131,15 @@ class MainWindow(Gtk.ApplicationWindow):
             main_content=self._main_content,
             chat_render_handler=self._chat_render_handler,
             GLib_module=GLib,
-            review_handler=self._review_handler,
+            review_handler=None,  # ReviewHandler created later in _build; Phase 1.5 will wire via setter
         )
 
         # Register built-in special agents
         self._agent_runtime_handler.add_special_agent("Coder", "special/coder")
+
+        # Inject into dependents after _agent_runtime_handler is assigned
+        self._chat_handler.set_agent_runtime_handler(self._agent_runtime_handler)
+        self._left_panel.set_special_agents(self._agent_runtime_handler)
 
 
         # Prompts handler — wired to left_panel after both are created
@@ -235,6 +239,8 @@ class MainWindow(Gtk.ApplicationWindow):
             on_display_card=self._on_command_card,
             on_display_text=self._on_command_text,
         )
+        # Wire ReviewHandler into AgentRuntimeHandler (deferred to avoid circular dep in _build order)
+        self._agent_runtime_handler.set_review_handler(self._review_handler)
         # Wire project lifecycle → ReviewHandler
         self._project_handler.set_on_project_opened(
             lambda n, p: (self._review_handler.on_project_opened(n, p))
@@ -649,7 +655,7 @@ class MainWindow(Gtk.ApplicationWindow):
         if not session_key.startswith("project:"):
             return CommandResult(handled=True, response_text="Open a project tab first.")
         project_name = session_key.split(":", 1)[1]
-        self._review_handler.start_review(project_name)
+        self._review_handler.start_review(project_name, session_key)
         return CommandResult(handled=True, response_text="Starting review...")
 
     def _cmd_check(self, cmd: Command):
@@ -659,7 +665,7 @@ class MainWindow(Gtk.ApplicationWindow):
         if not session_key.startswith("project:"):
             return CommandResult(handled=True, response_text="Open a project tab first.")
         project_name = session_key.split(":", 1)[1]
-        self._review_handler.check_changes(project_name)
+        self._review_handler.check_changes(project_name, session_key)
         return CommandResult(handled=True, response_text="Checking changes...")
 
     def _cmd_accept(self, cmd: Command):
@@ -670,7 +676,7 @@ class MainWindow(Gtk.ApplicationWindow):
             return CommandResult(handled=True, response_text="Open a project tab first.")
         project_name = session_key.split(":", 1)[1]
         body = " ".join(cmd.args) or "approved"
-        self._review_handler.accept_changes(project_name, body)
+        self._review_handler.accept_changes(project_name, body, session_key)
         return CommandResult(handled=True, response_text="Accepting changes...")
 
     def _cmd_reject(self, cmd: Command):
@@ -681,7 +687,7 @@ class MainWindow(Gtk.ApplicationWindow):
             return CommandResult(handled=True, response_text="Open a project tab first.")
         project_name = session_key.split(":", 1)[1]
         reason = cmd.body or "rejected"
-        self._review_handler.reject_changes(project_name, reason)
+        self._review_handler.reject_changes(project_name, reason, session_key)
         return CommandResult(handled=True, response_text="Rejecting changes...")
 
     def _cmd_status(self, cmd: Command):

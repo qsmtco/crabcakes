@@ -556,7 +556,7 @@ button.flat:hover {
     font-size: 0.8em;
 }
 .diff-collapsed .diff-card-body {
-    visibility: hidden;
+    opacity: 0;
 }
 .diff-btn-accept-file {
     background: rgba(16, 185, 129, 0.2);

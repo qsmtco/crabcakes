@@ -60,6 +60,10 @@ class AgentRuntimeHandler:
         # name → AgentRuntime instance (one rt per agent for isolation)
         self._runtimes: dict[str, Any] = {}
 
+    def set_review_handler(self, review_handler) -> None:
+        """Set ReviewHandler after construction (deferred to avoid circular deps with window._build)."""
+        self._review_handler = review_handler
+
     # ── Special agent registration ──────────────────────────────────────────
 
     def add_special_agent(self, name: str, session_key: str) -> None:

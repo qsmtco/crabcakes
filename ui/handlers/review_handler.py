@@ -108,14 +108,15 @@ class ReviewHandler:
 
     # ── Review session lifecycle ────────────────────────────────────────
 
-    def start_review(self, project_name: str) -> None:
+    def start_review(self, project_name: str, session_key: str | None = None) -> None:
         """Start a review session: git add -A && git commit → checkpoint SHA."""
         state = self._states.get(project_name)
         if state is None:
             return
+        sk = session_key or f"project:{project_name}"
 
         if not state.can_checkpoint():
-            self._GLib.idle_add(lambda: self._on_display_text(f"Cannot start review: mode={state.review_mode}, checkpoint={'exists' if state.checkpoint_sha else 'none'}"))
+            self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, f"Cannot start review: mode={state.review_mode}, checkpoint={'exists' if state.checkpoint_sha else 'none'}"))
             return
 
         project_path = state.project_path
@@ -125,24 +126,24 @@ class ReviewHandler:
             if not git_ops.is_repo(project_path):
                 init_result = git_ops.init_repo(project_path)
                 if not init_result.success:
-                    self._GLib.idle_add(lambda: self._on_display_text(f"Failed to init git repo: {init_result.error}"))
+                    self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, f"Failed to init git repo: {init_result.error}"))
                     return
 
             # Stage all
             stage_result = git_ops.stage_all(project_path)
             if not stage_result.success:
-                self._GLib.idle_add(lambda: self._on_display_text(f"Failed to stage files: {stage_result.error}"))
+                self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, f"Failed to stage files: {stage_result.error}"))
                 return
 
             # Commit checkpoint
             commit_result = git_ops.commit(project_path, "[review] checkpoint")
             if not commit_result.success:
-                self._GLib.idle_add(lambda: self._on_display_text(f"Failed to create checkpoint: {commit_result.error}"))
+                self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, f"Failed to create checkpoint: {commit_result.error}"))
                 return
 
             sha = commit_result.sha
 
-            def _update_state():
+            def _update_state(sk=sk):
                 state.checkpoint_sha = sha
                 state.is_dirty = False
                 state.last_check_files = []
@@ -150,20 +151,21 @@ class ReviewHandler:
                 if bar is not None:
                     bar.set_state_reviewing(sha)
                     bar.set_loading(False)
-                self._on_display_text(f"🔍 Review session started — checkpoint {sha[:7]}")
+                self._on_display_text(sk, f"🔍 Review session started — checkpoint {sha[:7]}")
 
             self._GLib.idle_add(_update_state)
 
         threading.Thread(target=_do, daemon=True).start()
 
-    def check_changes(self, project_name: str) -> None:
+    def check_changes(self, project_name: str, session_key: str | None = None) -> None:
         """Check what changed since checkpoint: git diff <sha>."""
         state = self._states.get(project_name)
         if state is None:
             return
+        sk = session_key or f"project:{project_name}"
 
         if not state.is_active():
-            self._GLib.idle_add(lambda: self._on_display_text("No active review session. Use `review` to start one."))
+            self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, "No active review session. Use `review` to start one."))
             return
 
         project_path = state.project_path
@@ -172,16 +174,16 @@ class ReviewHandler:
         def _do():
             diff_result = git_ops.diff_against(project_path, sha)
             if not diff_result.success:
-                self._GLib.idle_add(lambda: self._on_display_text(f"Failed to diff: {diff_result.error}"))
+                self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, f"Failed to diff: {diff_result.error}"))
                 return
 
             parsed = parse_diff(diff_result.stdout)
 
             if not parsed.files:
-                self._GLib.idle_add(lambda: self._on_display_text("No changes detected since checkpoint."))
+                self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, "No changes detected since checkpoint."))
                 return
 
-            def _update_ui():
+            def _update_ui(sk=sk):
                 state.last_check_files = [f.display_path for f in parsed.files]
                 state.is_dirty = True
                 bar = self._mc.get_review_bar()
@@ -189,28 +191,41 @@ class ReviewHandler:
                     bar.set_state_has_changes(len(parsed.files), parsed.total_additions, parsed.total_deletions)
                     bar.set_loading(False)
 
-                # Display summary card
+                # Display summary card with accept/reject-all callbacks
+                def _make_accept_all(pn=project_name, sk=sk):
+                    return lambda _: self.accept_changes(pn, "accepted", sk)
+                def _make_reject_all(pn=project_name, sk=sk):
+                    return lambda _: self.reject_changes(pn, "rejected", sk)
                 self._on_display_card({
                     "type": "diff_summary",
                     "parsed_diff": parsed,
+                    "session_key": sk,
+                    "on_accept_all": _make_accept_all(),
+                    "on_reject_all": _make_reject_all(),
                 })
 
-                # Display per-file diff cards
+                # Display per-file diff cards with per-file reject callback
+                def _make_reject_file(pn=project_name):
+                    return lambda fp: self.reject_file(pn, fp)
+                reject_file_cb = _make_reject_file()
                 for file_diff in parsed.files:
                     self._on_display_card({
                         "type": "diff_file",
                         "file_diff": file_diff,
+                        "session_key": sk,
+                        "on_reject_file": reject_file_cb,
                     })
 
             self._GLib.idle_add(_update_ui)
 
         threading.Thread(target=_do, daemon=True).start()
 
-    def accept_changes(self, project_name: str, message: str) -> None:
+    def accept_changes(self, project_name: str, message: str, session_key: str | None = None) -> None:
         """Accept all changes: git add -A && git commit -m <message>."""
         state = self._states.get(project_name)
         if state is None:
             return
+        sk = session_key or f"project:{project_name}"
 
         project_path = state.project_path
         checkpoint_sha = state.checkpoint_sha
@@ -219,17 +234,17 @@ class ReviewHandler:
             # Stage all
             stage_result = git_ops.stage_all(project_path)
             if not stage_result.success:
-                self._GLib.idle_add(lambda: self._on_display_text(f"Failed to stage: {stage_result.error}"))
+                self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, f"Failed to stage: {stage_result.error}"))
                 return
 
             # Commit
             full_message = f"[review] accepted: {message}"
             commit_result = git_ops.commit(project_path, full_message)
             if not commit_result.success:
-                self._GLib.idle_add(lambda: self._on_display_text(f"Failed to commit: {commit_result.error}"))
+                self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, f"Failed to commit: {commit_result.error}"))
                 return
 
-            def _update_state():
+            def _update_state(sk=sk):
                 state.checkpoint_sha = None
                 state.is_dirty = False
                 state.last_check_files = []
@@ -238,20 +253,21 @@ class ReviewHandler:
                     bar.set_state_idle()
                     bar.set_loading(False)
                 self._on_review_ended(project_name)
-                self._on_display_text(f"✅ Changes accepted and committed as: {message}")
+                self._on_display_text(sk, f"✅ Changes accepted and committed as: {message}")
 
             self._GLib.idle_add(_update_state)
 
         threading.Thread(target=_do, daemon=True).start()
 
-    def reject_changes(self, project_name: str, reason: str) -> None:
+    def reject_changes(self, project_name: str, reason: str, session_key: str | None = None) -> None:
         """Reject all changes: git checkout <sha> -- ."""
         state = self._states.get(project_name)
         if state is None:
             return
+        sk = session_key or f"project:{project_name}"
 
         if not state.is_active():
-            self._GLib.idle_add(lambda: self._on_display_text("No active review session to reject."))
+            self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, "No active review session to reject."))
             return
 
         project_path = state.project_path
@@ -261,13 +277,13 @@ class ReviewHandler:
             # Revert all files to checkpoint
             result = git_ops.checkout_paths(project_path, sha, ["."])
             if not result.success:
-                self._GLib.idle_add(lambda: self._on_display_text(f"Failed to revert: {result.error}"))
+                self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, f"Failed to revert: {result.error}"))
                 return
 
             # Send rejection message to all project members
             self._send_rejection_messages(project_name, reason, sha)
 
-            def _update_state():
+            def _update_state(sk=sk):
                 state.checkpoint_sha = None
                 state.is_dirty = False
                 state.last_check_files = []
@@ -276,7 +292,7 @@ class ReviewHandler:
                     bar.set_state_idle()
                     bar.set_loading(False)
                 self._on_review_ended(project_name)
-                self._on_display_text(f"❌ Changes rejected — files reverted to checkpoint {sha[:7]}")
+                self._on_display_text(sk, f"❌ Changes rejected — files reverted to checkpoint {sha[:7]}")
 
             self._GLib.idle_add(_update_state)
 
@@ -291,13 +307,14 @@ class ReviewHandler:
         project_path = state.project_path
         sha = state.checkpoint_sha
 
+        session_key = f"project:{project_name}"
         def _do():
             result = git_ops.checkout_paths(project_path, sha, [file_path])
             if not result.success:
-                self._GLib.idle_add(lambda: self._on_display_text(f"Failed to revert {file_path}: {result.error}"))
+                self._GLib.idle_add(lambda sk=session_key: self._on_display_text(sk, f"Failed to revert {file_path}: {result.error}"))
                 return
 
-            self._GLib.idle_add(lambda: self._on_display_text(f"↩ {file_path} reverted to checkpoint"))
+            self._GLib.idle_add(lambda sk=session_key: self._on_display_text(sk, f"↩ {file_path} reverted to checkpoint"))
 
         threading.Thread(target=_do, daemon=True).start()
 

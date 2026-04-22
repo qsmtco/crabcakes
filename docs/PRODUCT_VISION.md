@@ -101,6 +101,24 @@ These make CrabCakes *more powerful*. But they're not needed to ship.
 
 ---
 
+## Project Tab — Agent Cognition Interface
+
+The Project tab's FileTree is reimagined as a live oversight layer, not a file browser. Three features form the core:
+
+**Live Attention** — files light up in real-time as the agent reads them during a session. A dim glow indicates exploratory reads; brighter indicators signal active engagement. The PM watches the agent's focus unfold live, not as a post-hoc log.
+
+
+**Breadcrumb Trail** — each file node carries a conversation link. Click it and the chat scrolls to every message where that file was mentioned or acted on. The PM sees the discussion context behind each file change before reviewing the diff.
+
+
+**One-Click Diff** — click any modified file in the tree → immediately see its diff in the review layer. The action layer of the oversight loop.
+
+
+These three form a complete loop: *see* (attention) → *understand* (breadcrumbs) → *act* (diff + accept/reject). They build from existing data — conversation history is already persisted, file ↔ message linkage is an indexing problem, diff already exists in the review layer. No new infrastructure required beyond the tree UI.
+
+
+---
+
 ## The Philosophy
 
 The jump from "doesn't exist" to "single-agent coding assistant with review and task management" is the big one. Everything after that is iterative. The ship is never really done — you just keep adding rooms.
