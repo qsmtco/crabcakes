@@ -175,6 +175,8 @@ class ChatRenderHandler:
         GLib_module: gi.repository.GLib or None — for thread-safe GTK calls
     """
 
+    PLAIN_TEXT_THRESHOLD = 2000  # chars — skip fancy formatting above this
+
     def __init__(self, GLib_module=None):
         self._GLib = GLib_module
         self._reentrancy = _ReentrancySet()
@@ -213,6 +215,24 @@ class ChatRenderHandler:
         """
         if not self._reentrancy.add(session_key):
             return  # render already in flight
+
+        # Fast path: skip fancy formatting for large messages
+        if len(text) > self.PLAIN_TEXT_THRESHOLD:
+            def _plain_on_main():
+                try:
+                    bubble = self._render_plain_text(
+                        role, text,
+                        on_forward_click=on_forward_click,
+                        agent_name=agent_name,
+                    )
+                    self._reentrancy.remove(session_key)
+                    on_bubble_ready(bubble)
+                except Exception as exc:
+                    self._reentrancy.remove(session_key)
+                    if on_error:
+                        on_error(str(exc))
+            self._dispatch(_plain_on_main)
+            return
 
         def _process_off_thread():
             try:
@@ -392,6 +412,73 @@ class ChatRenderHandler:
             sb.label.set_markup(escaped + "<tt>▍</tt>")
 
         self._dispatch(_update)
+
+    def _render_plain_text(self, role: str, text: str, on_forward_click=None, agent_name: str = None):
+        """
+        Fast-path bubble for large messages: single Gtk.Label, no fancy formatting.
+        Creates the bubble on the main thread — call from _dispatch or directly.
+
+        Follows same container > bubble structure as _assemble_from_processed(),
+        but skips extract_blocks/process_segments entirely.
+        """
+        from gi.repository import Pango
+        from datetime import datetime
+        from ui.views.chat_bubble import _add_action_buttons
+
+        container = Gtk.Box()
+        container.set_halign(Gtk.Align.END if role == "You" else Gtk.Align.START)
+
+        bubble = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            css_classes=["chat-bubble-you" if role == "You" else "chat-bubble-agent"],
+        )
+        bubble.set_margin_top(4)
+        bubble.set_margin_bottom(4)
+
+        # Header (same as _assemble_from_processed)
+        if agent_name or role == "You":
+            timestamp = datetime.now().strftime("%H:%M")
+            header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            header.add_css_class("chat-bubble-header")
+            header.set_spacing(4)
+            header.set_margin_bottom(2)
+            header.set_hexpand(role == "You")
+            header.set_halign(Gtk.Align.END if role == "You" else Gtk.Align.START)
+
+            display_name = agent_name if agent_name else "You"
+            name_label = Gtk.Label(label=display_name)
+            name_label.add_css_class("chat-bubble-header-name")
+            name_label.set_halign(Gtk.Align.START)
+
+            dot = Gtk.Box()
+            dot.set_size_request(6, 6)
+            dot.add_css_class("chat-bubble-header-dot")
+            dot.set_valign(Gtk.Align.CENTER)
+
+            time_label = Gtk.Label(label=timestamp)
+            time_label.add_css_class("chat-bubble-header-time")
+            time_label.set_halign(Gtk.Align.START)
+
+            header.append(name_label)
+            header.append(dot)
+            header.append(time_label)
+            bubble.append(header)
+
+        # Single plain text label — the fast path
+        label = Gtk.Label(label=text)
+        label.set_xalign(0)
+        label.set_wrap(True)
+        label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        label.set_can_focus(False)
+        label.set_selectable(True)
+        label.add_css_class("chat-msg-label")
+        bubble.append(label)
+
+        # Action buttons (forward, copy)
+        _add_action_buttons(bubble, text, on_forward_click)
+
+        container.append(bubble)
+        return container
 
     def end_streaming(self, session_key: str):
         """
