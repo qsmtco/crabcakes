@@ -145,6 +145,11 @@ class AgentRuntimeHandler:
             return
 
         rt = self._get_runtime(name)
+
+        # Lazy-create conversation if one doesn't exist yet
+        if rt.get_conversation(session_key) is None:
+            rt.create_conversation(agent_name=name, session_key=session_key)
+
         rt.send_message(session_key, text)
 
     def stop_all(self) -> None:
