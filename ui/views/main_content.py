@@ -59,6 +59,8 @@ class MainContent(Gtk.Box):
         self._project_handler = None   # injected via set_project_handler()
         # Bulk-close guard: skip reindex until all removals are done
         self._bulk_closing = False
+        # Unread tab tracking — session_keys with unseen messages
+        self._unread_tabs: set[str] = set()
 
         self._control_bar = ChatControlBar()
 
@@ -248,9 +250,15 @@ class MainContent(Gtk.Box):
         chat_box.set_valign(Gtk.Align.END)
         chat_scroll.set_child(chat_box)
 
-        # Tab label = agent name + close button
+        # Tab label = [dot] [agent name] [close button]
         tab_label_box = Gtk.Box(spacing=4)
         tab_label_box.set_valign(Gtk.Align.CENTER)
+
+        # Status dot — green (idle) by default, yellow when unread
+        tab_dot = Gtk.Box()
+        tab_dot.add_css_class("tab-dot")
+        tab_dot.add_css_class("tab-dot-idle")
+        tab_dot.set_valign(Gtk.Align.CENTER)
 
         tab_label = Gtk.Label(label=agent_name)
         tab_label.set_valign(Gtk.Align.CENTER)
@@ -263,6 +271,7 @@ class MainContent(Gtk.Box):
         close_btn.set_size_request(20, -1)
         close_btn.set_hexpand(False)
 
+        tab_label_box.append(tab_dot)
         tab_label_box.append(tab_label)
         tab_label_box.append(close_btn)
 
@@ -299,8 +308,42 @@ class MainContent(Gtk.Box):
         return page_idx
 
     def _on_notebook_switch_page(self, notebook, _page, page_num):
-        """Scroll to bottom when user switches to a tab."""
+        """Handle tab switch: scroll to bottom and clear unread indicator."""
         self.scroll_chat_to_bottom(page_num)
+        # Clear unread state for the tab being switched to
+        tab_label = self._chat_notebook.get_tab_label(notebook.get_nth_page(page_num))
+        if tab_label and hasattr(tab_label, '_session_key'):
+            self.clear_unread(tab_label._session_key)
+
+    # ── Unread dot management ──────────────────────────────────────────────
+
+    def increment_unread(self, session_key: str) -> None:
+        """Mark a tab as having unread messages; update dot to yellow."""
+        self._unread_tabs.add(session_key)
+        self._update_tab_dot(session_key)
+
+    def clear_unread(self, session_key: str) -> None:
+        """Clear unread state when user switches to a tab; update dot to green."""
+        self._unread_tabs.discard(session_key)
+        self._update_tab_dot(session_key)
+
+    def _update_tab_dot(self, session_key: str) -> None:
+        """Update the dot color on a tab label based on unread state."""
+        page_idx = self._find_page_by_session(session_key)
+        if page_idx is None:
+            return
+        tab_label_box = self._chat_notebook.get_tab_label(
+            self._chat_notebook.get_nth_page(page_idx)
+        )
+        if tab_label_box is None:
+            return
+        # The dot is the first child of the tab_label_box
+        dot = tab_label_box.get_first_child()
+        if dot is None:
+            return
+        has_unread = session_key in self._unread_tabs
+        dot.remove_css_class("tab-dot-unread" if has_unread else "tab-dot-idle")
+        dot.add_css_class("tab-dot-unread" if has_unread else "tab-dot-idle")
 
     def _find_page_by_session(self, session_key):
         """Return the current page index for a session_key by scanning notebook tab labels.

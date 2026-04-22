@@ -214,6 +214,20 @@ button.flat:hover {
     min-height: 6px;
     margin: 0 2px;
 }
+
+/* Tab dot — shows agent status in the chat tab label */
+.tab-dot {
+    min-width: 8px;
+    min-height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+}
+.tab-dot-idle {
+    background: #4ade80;
+}
+.tab-dot-unread {
+    background: #facc15;
+}
 .chat-bubble-header-time {
     font-size: 10px;
     color: #707088;
