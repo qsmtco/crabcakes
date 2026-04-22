@@ -185,6 +185,9 @@ class ChatRenderHandler:
         self._on_forward_message = None   # set via set_on_forward_message()
         # Phase 5: MainContent reference for self-contained scroll operations
         self._main_content = None
+        # Streaming throttle: avoid redundant escape+set_markup on every delta
+        self._last_stream_update: dict[str, float] = {}  # session_key → monotonic timestamp
+        self._stream_throttle_sec = 0.15  # min 150ms between UI updates
 
     # ── Thread pool for off-main-thread processing ──────────────────
     _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="crabcakes-render")
@@ -359,6 +362,10 @@ class ChatRenderHandler:
         all text accumulated so far). Use delta_text directly — do NOT append
         to the stored plain text, as that would double-accumulate.
 
+        Throttled: UI updates are limited to every 150ms to avoid freezing the
+        main thread with escape_for_pango + set_markup on every delta. The latest
+        text is always stored so the final update is never lost.
+
         Safe to call from any thread.
         """
         if session_key not in self._streaming_bubbles:
@@ -367,12 +374,21 @@ class ChatRenderHandler:
 
         sb = self._streaming_bubbles[session_key]
 
+        # Always store latest text (even if throttled) so final render is correct
+        sb.plain_text = delta_text
+
+        # Throttle: skip UI update if less than 150ms since last one
+        import time
+        now = time.monotonic()
+        last = self._last_stream_update.get(session_key, 0)
+        if now - last < self._stream_throttle_sec:
+            return
+        self._last_stream_update[session_key] = now
+
         def _update():
             from utils.escaping import escape_for_pango
-            # CRITICAL: delta_text is the FULL cumulative text from gateway.
-            # Mutate sb.plain_text in-place — do NOT append, that would double-accumulate.
-            sb.plain_text = delta_text
-            escaped = escape_for_pango(delta_text)
+            # Use sb.plain_text (always latest) not the delta_text arg
+            escaped = escape_for_pango(sb.plain_text)
             sb.label.set_markup(escaped + "<tt>▍</tt>")
 
         self._dispatch(_update)
@@ -385,6 +401,9 @@ class ChatRenderHandler:
         """
         if session_key not in self._streaming_bubbles:
             return
+
+        # Clean up throttle state
+        self._last_stream_update.pop(session_key, None)
 
         sb = self._streaming_bubbles.pop(session_key)
 
