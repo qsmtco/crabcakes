@@ -5,11 +5,12 @@
 # Events and content updates come from ActivityHandler via the public API below.
 #
 # Public API (used by ActivityHandler):
-#   feedbar.set_status_text(markup)          — update the state label
-#   feedbar.set_progress_fraction(fraction)    — set 0.0..1.0 bar fill
-#   feedbar.set_progress_hidden(hidden)       — show/hide the progress bar
-#   feedbar.set_progress_pulse(enable)         — start/stop pulse animation
-#   feedbar.pulse_progress()                  — single pulse tick
+#   feedbar.set_status_text(markup)          — update the state label (Pango markup)
+#   feedbar.set_progress_fraction(fraction)    — set 0.0..1.0 bar fill; stops any active pulse
+#   feedbar.set_progress_hidden(hidden)       — show/hide the progress bar (opacity 0 or 1)
+#   feedbar.set_progress_pulse(enable)       — start/stop GTK pulse animation
+#   feedbar.pulse_progress()                  — advance the pulse by one step (call every ~100ms)
+#   feedbar.set_progress_opacity(opacity)     — set bar opacity 0.0..1.0 (for subtle idle pulse)
 
 import gi
 gi.require_version('Gtk', '4.0')

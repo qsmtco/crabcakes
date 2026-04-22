@@ -42,6 +42,8 @@ Crabcakes is a GTK4 desktop application that connects to an OpenClaw gateway via
 - Project browser: browse directories from `CRABCAKES_PROJECTS_DIR` via TreeView
 - **Project group chat**: open a project → fan-out message to all project members → responses routed back to the project tab
 - **Membership toggles**: +/− buttons in the Agents tab add/remove agents from the active project
+- **Crabcake Special Agents**: local agent runtime — Coder and Debugger agents run directly against OpenAI/MiniMax/Anthropic APIs with file/exec tools, no gateway required
+- **Review layer**: git-backed code review for agent writes — checkpoint → diff → accept/reject
 
 **Technology stack:**
 - Python 3, GTK4 (via PyGObject)
@@ -65,7 +67,20 @@ crabcakes/
 │   ├── __init__.py           # Exports: AgentManager, AgentRoutingTable, next_agent_color, reset_color_indices
 │   ├── agents.py              # AgentManager — session_key → name, colors, sessions
 │   ├── colors.py              # Color palettes + round-robin assignment
-│   └── routing.py             # AgentRoutingTable — session_key → project_name routing
+│   ├── routing.py             # AgentRoutingTable — session_key → project_name routing
+│   ├── command.py             # Command + CommandResult + CommandRegistry data models (Phase 7)
+│   ├── conversation.py        # Conversation + Message + ToolCall dataclasses (Agent Runtime Phase 1.1)
+│   ├── streaming.py           # StreamingBubble dataclass — streaming bubble state (Phase 5)
+│   ├── task.py                # Task + TaskStore + status/priority labels (Phase 3)
+│   └── review_state.py        # ReviewState dataclass — per-project review session data (Phase 7)
+│
+├── agent/                     # Local agent runtime — no UI dependencies
+│   ├── __init__.py           # Exports: AgentRuntime
+│   ├── runtime.py            # AgentRuntime — tool loop, LLM API, streaming, cost tracking
+│   ├── tools.py              # Tool definitions + execution (read_file, write_file, exec_command, etc.)
+│   ├── config.py             # LLM provider config (api_key, base_url, model per provider)
+│   ├── context.py            # System prompt + file context builder, .gitignore parsing
+│   └── special_agents.py     # Coder + Debugger agent definitions
 │
 ├── ui/                        # All UI components
 │   ├── __init__.py
@@ -82,12 +97,17 @@ crabcakes/
 │   │   ├── media_handler.py   # MediaHandler — STT + improve
 │   │   ├── project_handler.py  # ProjectHandler — active project + agent-to-project routing
 │   │   ├── activity_handler.py  # ActivityHandler — 6-state activity machine (Phase 6)
+│   │   ├── command_handler.py   # CommandHandler — backtick command parser (Phase 7)
+│   │   ├── review_handler.py    # ReviewHandler — review session lifecycle (Phase 7)
+│   │   ├── agent_runtime_handler.py  # AgentRuntimeHandler — local agent UI bridge (Phase 1.4)
 │   │   └── project_list_handler.py  # ProjectListHandler — project card data + color round-robin
 │   └── views/                 # View widgets
 │       ├── __init__.py
 │       ├── chat_bubble.py      # build_role_bubble() — chat bubble widget factories (Phase 1)
 │       ├── chat_control_bar.py # ChatControlBar — planned stub (update() not wired)
 │       ├── feedbar.py          # FeedBar — Response Status Bar + progress bar + ActivityHandler public API (Phase 6)
+│       ├── diff_card.py         # Diff card widget factories — build_file_diff_card, build_diff_summary_card (Phase 7)
+│       ├── review_bar.py        # ReviewBar widget — review mode dropdown + action buttons (Phase 7)
 │       ├── file_tree.py        # FileTree — Gtk.TreeView directory browser
 │       ├── left_panel.py       # LeftPanel — PAP notebook (Prompts/Agents/Projects)
 │       ├── left_progress.py    # Stub — progress indicator placeholder
@@ -103,6 +123,9 @@ crabcakes/
     ├── favorites.py           # favorites persistence (favorites.json)
     ├── improve.py             # improve_prompt() — MiniMax API for prompt improvement
     ├── stt.py                 # STTEngine — faster-whisper push-to-talk
+    ├── config.py              # Config path helpers — get_config_dir(), get_projects_dir(), COMMAND_PREFIX (Phase 7)
+    ├── diff_parser.py         # parse_diff() — unified diff → FileDiff/ParsedDiff data (Phase 7)
+    ├── git_ops.py              # GitPython wrapper — git add/commit/diff/checkout via GitResult (Phase 7)
     └── icons.py               # Gdk.Texture SVG rendering (agent avatars + folder icons)
 ```
 
@@ -181,6 +204,11 @@ client.send_message(session_key, text, on_sent=cb)
 |-------|------|---------------|
 | `AgentManager` | `agents.py` | Tracks session_key → name, colors, sessions |
 | `AgentRoutingTable` | `routing.py` | Maps session_key → project_name; shared between ProjectHandler and ChatHandler |
+| `Command`, `CommandResult` | `command.py` | Parsed command input + result of command processing |
+| `CommandRegistry` | `command.py` | Maps command names to handlers; extensible |
+| `StreamingBubble` | `streaming.py` | Dataclass for streaming bubble state (Phase 5) |
+| `Task`, `TaskStore` | `task.py` | Task data model + in-memory store (Phase 3) |
+| `ReviewState` | `review_state.py` | Per-project review session data (Phase 7) |
 
 ### 3.3a `models/routing.py` — Agent Routing Table
 
@@ -210,6 +238,69 @@ class AgentRoutingTable:
 - Models know nothing about GTK widgets.
 - Models do not emit signals or have callbacks — they're plain data containers.
 - UI code reads from models and responds to changes via callbacks.
+
+### 3.3b `models/agents.py` — Agent Manager
+
+**Public API:**
+```python
+class AgentManager:
+    def register(session_key, agent_name) -> None    # register new agent session
+    def get_name(session_key) -> str                  # get display name for session key
+    def get_names_ref() -> dict[str, str]             # {session_key → name} for UI panels
+    def get_sessions(agent_name) -> list[str]         # all session keys for an agent name
+    def get_color(agent_name) -> str | None           # hex color for agent name
+    def clear() -> None                              # clear all sessions (preserves colors)
+```
+
+### 3.3c `models/command.py` — Command Data Models
+
+**Public API:**
+```python
+@dataclass Command:
+    name, args, flags, raw_text, body, source_session_key, target_session_key
+    is_broadcast, broadcast_targets
+
+@dataclass CommandResult:
+    handled, response_text, response_card, forward_to, forward_text, broadcast_targets
+
+class CommandRegistry:
+    def register(name, handler, aliases=None, help_text="") -> None
+    def get(name) -> Callable | None
+    def list_commands() -> list[str]
+    def list_aliases() -> dict[str, str]
+    def get_help(name) -> str | None
+```
+
+### 3.3d `models/task.py` — Task Data Model
+
+**Public API:**
+```python
+@dataclass Task: id, title, description, assigned_to, created_by, status, priority,
+                created_at, updated_at, blocked_reason
+
+class TaskStore:
+    def generate_id() -> str          # sequential 8-char zero-padded ID
+    def create(task) -> Task
+    def get(task_id) -> Task | None
+    def update(task) -> Task
+    def list_all() -> list[Task]
+    def list_by_agent(session_key) -> list[Task]
+    def delete(task_id) -> bool
+```
+
+### 3.3e `models/review_state.py` — Review State
+
+```python
+@dataclass ReviewState:
+    project_path: str
+    review_mode: str        # "off" | "review"
+    checkpoint_sha: str | None
+    is_dirty: bool
+    last_check_files: list[str]
+
+    def is_active() -> bool      # checkpoint exists and not resolved
+    def can_checkpoint() -> bool   # review mode on, no active session
+```
 
 ### 3.4 `ui/toolbar.py` — Top Bar
 
@@ -315,8 +406,11 @@ content.send_button             # property → Gtk.Button
 content.notebook                # property → Gtk.Notebook (chat tabs)
 content.create_chat_tab(session_key, agent_name)   # creates/returns to existing tab
 content.get_chat_box(page_index=None)  # get the chat box for a tab (used by ChatHandler)
+content.get_current_session_key()  # session_key of active tab, or None (used by ActivityHandler)
 content.set_chat_render_handler(handler)  # inject ChatRenderHandler (called by window.py)
 content.set_feed_bar_text(text)  # update the project feed bar
+content.set_review_bar(bar)     # add/remove ReviewBar widget above chat (used by ReviewHandler)
+content.get_review_bar()      # get current ReviewBar or None (Phase 7)
 content.set_agent_manager(agent_mgr)  # set AgentManager for session switch lookup
 content.close_tabs(page_indices)       # close multiple tabs, reindex once
 content.set_on_stt_click(cb)     # STT button clicked
@@ -327,6 +421,8 @@ content.update_stt_state(state) # "idle" | "recording" — button label/style
 ```
 
 **Tab close:** Each tab has an × button (top-right of tab label) and responds to middle-click. Both call `_close_tab(page_idx)` which removes the page and re-indexes tracking dicts.
+
+**Review bar integration (Phase 7):** ReviewHandler calls `set_review_bar(bar)` to insert a `ReviewBar` widget above the notebook, and `get_review_bar()` to retrieve the current bar for state updates without accessing MainContent internal state.
 
 ### 3.10 `utils/favorites.py` — Favorites Persistence
 
@@ -754,7 +850,272 @@ class ProjectListHandler:
 **Public API:**
 ```python
 show_session_menu(parent, agent_name, sessions, on_select)
+show_project_menu(parent, project_name, member_names, current_solo, on_select)
 ```
+
+### 3.21a `ui/handlers/command_handler.py` — Backtick Command Parser (Phase 7)
+
+**Responsibility:** Parse backtick commands, resolve `@mentions`, dispatch to command handlers.
+
+**Owns:** CommandRegistry, command prefix, `@mention` resolution.
+
+**Public API:**
+```python
+CommandHandler(gateway_client, agent_manager, project_handler, GLib_module, on_display_card, on_display_text)
+
+def process_input(session_key, text) -> CommandResult    # parse + execute command
+def set_gateway_client(gw) -> None
+def set_agent_manager(agent_mgr) -> None
+def register_command(name, handler, aliases=None, help_text="") -> None
+def set_prefix(char) -> None
+def get_help(name) -> str | None
+```
+
+**Thread safety:** All GTK via `GLib.idle_add()`.
+
+### 3.21b `ui/handlers/review_handler.py` — Review Session Handler (Phase 7)
+
+**Responsibility:** Review session lifecycle — checkpoint, check changes, accept, reject. Coordinates git_ops, diff_parser, and GTK views.
+
+**Owns:** Per-project `ReviewState` dict.
+
+**Public API:**
+```python
+ReviewHandler(GLib, main_content, project_handler, on_review_started, on_review_ended, on_display_card, on_display_text)
+
+def set_review_mode(project_name, mode)        # "off" | "review"
+def get_review_mode(project_name) -> str
+def start_review(project_name)                   # git add -A && git commit → checkpoint SHA
+def check_changes(project_name)                  # git diff <sha> → display diff cards
+def accept_changes(project_name, message)       # git add -A && git commit
+def reject_changes(project_name, reason)        # git checkout <sha> -- .
+def reject_file(project_name, file_path)
+def get_state(project_name) -> ReviewState | None
+def on_project_opened(project_name, project_path)
+def on_project_closed(project_name)
+def set_chat_handler(chat_handler)
+def set_gateway_client(gw)
+```
+
+**Thread safety:** All GTK via `GLib.idle_add()`. All git calls in background threads.
+
+### 3.21c `ui/views/review_bar.py` — Review Bar Widget (Phase 7)
+
+**Responsibility:** GTK widget for review mode controls — dropdown, status, action buttons.
+
+**Public API:**
+```python
+ReviewBar(on_mode_changed, on_start_clicked, on_check_clicked)
+
+def set_review_mode(mode)              # update dropdown without firing callback
+def set_status(text)
+def set_state_idle()
+def set_state_reviewing(checkpoint_sha)
+def set_state_has_changes(file_count, additions, deletions)
+def set_loading(loading)
+def set_accept_callback(cb)
+def set_reject_callback(cb)
+```
+
+### 3.21d `ui/views/diff_card.py` — Diff Card Widget Factories (Phase 7)
+
+**Responsibility:** GTK widget factories for diff display in project chat tabs.
+
+
+**Public API:**
+```python
+build_file_diff_card(file_diff, on_accept_file=None, on_reject_file=None) -> Gtk.Widget
+build_diff_summary_card(parsed_diff, on_accept_all=None, on_reject_all=None) -> Gtk.Widget
+```
+
+### 3.21e `utils/diff_parser.py` — Diff Parser (Phase 7)
+
+**Public API:**
+```python
+parse_diff(diff_text) -> ParsedDiff        # unified diff → FileDiff/ParsedDiff
+parse_diff_stat(stat_text) -> list[(file_path, additions, deletions)]
+
+@dataclass DiffLine: type, content, old_line_no, new_line_no
+@dataclass DiffHunk: header, old_start, new_start, lines[DiffLine]
+@dataclass FileDiff: old_path, new_path, display_path, is_binary, is_new, is_deleted, is_renamed, hunks, additions, deletions
+@dataclass ParsedDiff: files, total_additions, total_deletions, summary
+```
+
+### 3.21f `utils/git_ops.py` — Git Operations (Phase 7)
+
+**Public API:**
+```python
+is_repo(project_path) -> bool
+init_repo(project_path) -> GitResult
+get_head_sha(project_path) -> GitResult
+stage_all(project_path) -> GitResult
+commit(project_path, message) -> GitResult
+diff_against(project_path, sha) -> GitResult
+diff_stat_against(project_path, sha) -> GitResult
+diff_file_against(project_path, sha, file_path) -> GitResult
+checkout_paths(project_path, sha, paths) -> GitResult
+log(project_path, count=10) -> GitResult
+push(project_path, remote="origin", branch="main") -> GitResult
+status(project_path) -> GitResult
+
+@dataclass GitResult: success, stdout, error, sha
+```
+
+### 3.21g `utils/config.py` — Config Path Helpers (Phase 7)
+
+**Public API:**
+```python
+get_config_dir() -> str                         # ~/.config/crabcakes (or $XDG_CONFIG_HOME)
+get_config_file() -> str                       # config.json path
+get_projects_config_dir() -> str               # ~/.config/crabcakes/projects
+get_projects_dir() -> str                      # ~/projects (or $CRABCAKES_PROJECTS_DIR)
+get_gateway_url() -> str                        # ws://localhost:18789 (or $CRABCAKES_GATEWAY_URL)
+get_identity_dir() -> str                       # ~/.openclaw/identity/
+
+COMMAND_PREFIX = "`"                            # backtick command trigger
+```
+
+### 3.3f `models/conversation.py` — Conversation Data Models (Agent Runtime Phase 1.1)
+
+**Responsibility:** Dataclasses for agent conversation state. Pure data — no GTK, no network, no LLM calls.
+
+**Public API:**
+```python
+class MessageRole(str, Enum): SYSTEM = "system" | USER = "user" | ASSISTANT = "assistant" | TOOL_RESULT = "tool"
+class ToolCallStatus(str, Enum): PENDING = "pending" | EXECUTING = "executing" | COMPLETED = "completed" | FAILED = "failed"
+
+@dataclass ToolCall: call_id, tool_name, arguments, result, status, started_at, completed_at
+@dataclass Message: role, content, tool_calls, tool_call_id, timestamp, tokens_used
+@dataclass Conversation: agent_name, project_path, system_prompt, messages, model, created_at, total_tokens, total_cost, step_count
+
+    def add_user_message(content) -> Message
+    def add_assistant_message(content, tool_calls) -> Message
+    def add_tool_result(call_id, result) -> Message
+    def to_api_messages() -> list[dict]
+    def get_token_estimate() -> int
+    def trim_to_token_limit(max_tokens)
+```
+
+**Rules:** No imports from `ui/`, `agent/`, `gateway/`, `subprocess`.
+
+### 3.21h `agent/runtime.py` — Agent Runtime (Phase 1.3a)
+
+**Responsibility:** Core agent loop — conversation management, LLM API calls, tool execution, streaming SSE responses, cost tracking, conversation persistence.
+
+**Owns:** `AgentConfig`, provider adapters (OpenAI/MiniMax/Anthropic), conversation store, tool loop.
+
+**Public API:**
+```python
+class AgentRuntime:
+    def __init__(config, GLib, on_text_delta, on_tool_call_start, on_tool_call_result,
+                 on_tool_call_approval_needed, on_response_complete, on_error, on_token_usage)
+    def start() / def stop()
+    def create_conversation(agent_name, session_key, project_path, model) -> str
+    def send_message(session_key, text)         # tool loop: user msg → LLM → tool calls → results → LLM → response
+    def cancel(session_key)
+    def get_conversation(session_key) -> Conversation | None
+    def save_conversation(session_key) -> str    # → <config_dir>/conversations/<session_key>.json
+    def load_conversation(session_key) -> bool
+    def list_conversations() -> list[(session_key, agent_name)]
+```
+
+**Tool loop:** Append user message → build API messages → call LLM → if tool calls: execute each tool → append results → call LLM again → if text: append assistant message → fire callbacks → check cost/step limits.
+
+**Providers:** OpenAI (`openai/*`), MiniMax (`minimax/*`), Anthropic (`anthropic/*`) — selected by model prefix. Tool calls normalized to internal `ToolCall` format regardless of provider.
+
+**Streaming:** SSE for supported providers. `on_text_delta` fires incrementally. `on_tool_call_start` fires when complete call is received.
+
+**Cost tracking:** Provider-specific pricing tables. Fires `on_token_usage(session_key, tokens, cost)` after each LLM call. Stops loop if `cost_limit` exceeded.
+
+**Thread safety:** All callbacks dispatched via `GLib.idle_add()`.
+
+### 3.21i `agent/tools.py` — Tool Definitions + Execution (Phase 1.1)
+
+**Responsibility:** 8 tools for local file/exec/web operations, sandboxed to `project_path`, with PM approval gating for `exec_command`.
+
+
+**Public API:**
+```python
+@dataclass ToolDefinition: name, description, parameters, requires_approval
+@dataclass ToolResult: success, output, error, duration_ms
+
+def get_all_tools() -> list[ToolDefinition]
+def get_tool_definitions_for_api() -> list[dict]    # OpenAI function-calling format
+def execute_tool(name, arguments, project_path) -> ToolResult
+def set_approval_callback(cb) -> None              # cb(session_key, tool_name, args) → bool
+```
+
+**Available tools:**
+
+| Tool | Approval | Description |
+|------|----------|-------------|
+| `read_file` | No | Read file (max 50KB, binary → error) |
+| `write_file` | No | Write file (sandboxed to project path) |
+| `exec_command` | **Yes** | Run shell command (PM must approve; hardcoded blocklist rejects catastrophic calls first) |
+| `list_files` | No | List directory contents |
+| `search_files` | No | Grep/ripgrep for pattern |
+| `web_search` | No | Brave Search API |
+| `web_fetch` | No | Fetch URL as text |
+
+**Sandbox:** All paths resolved relative to `project_path`. Escape attempt (`realpath` outside `project_path`) rejected with error result.
+
+**Blocklist:** `rm -rf /`, `mkfs`, `dd if=/dev/zero of=/dev/sda` — always denied before approval callback fires.
+
+### 3.21j `agent/config.py` — LLM Provider Config (Phase 1.1)
+
+**Public API:**
+```python
+@dataclass LLMProviderConfig: name, base_url, api_key, default_model, supports_tools, supports_streaming, max_tokens
+@dataclass AgentConfig: providers, default_provider, default_model, max_tool_iterations, tool_timeout_seconds, auto_save_conversations, cost_limit, step_limit
+
+def load_agent_config() -> AgentConfig      # reads <config_dir>/agent.json; checks chmod >600
+def get_api_key(provider_name) -> str | None
+```
+
+### 3.21k `agent/context.py` — System Prompt + File Context Builder (Phase 1.2)
+
+**Public API:**
+```python
+def build_system_prompt(agent_name, project_path, tools, review_mode) -> str
+def build_file_context(project_path, query=None) -> str    # respects .gitignore, capped ~50K chars
+def load_custom_system_prompt(project_path) -> str | None  # .crabcakes/agent-system-prompt.md → AGENTS.md → None
+```
+
+### 3.21l `agent/special_agents.py` — Special Agent Definitions (Phase 1.4)
+
+**Public API:**
+```python
+@dataclass SpecialAgentDef: conv_id_prefix, display_name, emoji, color, tools, system_prompt_template, can_write
+
+SPECIAL_AGENTS: dict[str, SpecialAgentDef]     # "special:coder", "special:debugger"
+def get_special_agents() -> list[SpecialAgentDef]
+def get_special_agent(prefix) -> SpecialAgentDef | None
+```
+
+**Coder:** tools=`[read_file, write_file, exec_command, list_files, search_files, web_search, web_fetch]`, `can_write=True`
+**Debugger:** tools=`[read_file, exec_command, list_files, search_files, web_search, web_fetch]`, `can_write=False`
+
+### 3.21m `ui/handlers/agent_runtime_handler.py` — Agent Runtime UI Bridge (Phase 1.4)
+
+**Responsibility:** Bridge between CrabCakes UI and `AgentRuntime`. Creates conversations, routes messages, renders streamed responses in chat tabs.
+
+
+**Public API:**
+```python
+class AgentRuntimeHandler:
+    def __init__(GLib, main_content, chat_handler, project_handler)
+    def start() / def stop()
+    def is_running() -> bool
+    def create_agent_tab(agent_name, model=None) -> str      # creates conversation + chat tab
+    def send_message(session_key, text)
+    def cancel(session_key)
+    def approve_exec(session_key, tool_name, args, approved)  # PM Allow/Deny callback
+    def on_project_opened(project_name, project_path)        # bind special agent conversations
+    def on_project_closed(project_name)
+    def restore_conversations()                                # reload saved from disk on startup
+```
+
+**Callback wiring:** All callbacks dispatch to GTK via `GLib.idle_add()`. `_on_tool_call_approval_needed` currently logs the approval request — the Allow/Deny card UI is not yet wired to a PM-clickable action.
 
 ### 3.22 `ui/views/feedbar.py` — Response Status Bar (Phase 6)
 
@@ -788,19 +1149,32 @@ set_progress_opacity(opacity)      # Set bar opacity 0.0..1.0 (for subtle idle p
 
 **Does NOT own:** FeedBar or MainContent — received as constructor dependencies.
 
+**Constructor dependencies:**
+- `feedbar`: FeedBar instance — updated via public API
+- `main_content`: MainContent instance — used via `main_content.get_review_bar()` to read current ReviewBar state
+- `GLib_module`: optional GLib reference for thread dispatch
+
 **Thread safety:** All GTK calls via `GLib.idle_add()` / `timeout_add()`. Entry points are called from GTK main thread only.
 
 **States:** idle | sending | reasoning | streaming | tool_use | done
 
 **Public API (entry points — called from `window._on_ws_event`):**
 ```python
-on_agent_start(session_key, data=None)            # agent phase=start → reasoning
-on_agent_end(session_key, data=None)             # agent phase=end → done (+ 5s idle timer)
-on_agent_error(session_key, data=None)           # agent phase=error → idle
+on_agent_start(session_key, data=None)           # agent phase=start → reasoning
+on_agent_end(session_key, data=None)            # agent phase=end → done (+ 5s idle timer)
+on_agent_error(session_key, data=None)          # agent phase=error → idle
 on_tool_use(tool_name, session_key, data=None)  # tool_call event → tool_use
-on_chat_delta(delta_text, session_key)          # first delta → streaming
+on_chat_delta(delta_text, session_key)           # first delta → streaming
 on_agent_message_received(session_key)           # pre-flight → sending
+on_send_initiated(session_key)                    # send button pressed → sending + 30s pre-flight timeout
+on_res_confirmed(session_key)                     # gateway res confirmed → reasoning (phase 2 begins)
+on_gateway_event(event, payload)                 # universal entry — routes agent/chat/tool_call/res events
+on_chat_final(session_key)                       # chat final (no-op; on_agent_end handles completion)
 ```
+
+**Two-phase progress tracking:**
+- Phase 1 (send-initiated): Time-driven progress bar — on_send_initiated starts 30s timer
+- Phase 2 (event-driven): Event-driven hop counting — on_res_confirmed transitions to phase 2
 
 **State transitions:**
 - `agent phase=start` → `reasoning`
@@ -975,15 +1349,42 @@ User clicks +/− button on agent row
 
 ```
 Gateway events → window._on_ws_event() → ActivityHandler methods
+```
 
-  agent phase=start    → on_agent_start()   → set_reasoning
-  agent phase=end      → on_agent_end()     → set_done + 5s idle timer
-  agent phase=error    → on_agent_error()  → set_idle
-  tool_call event      → on_tool_use()      → set_tool_use
-  chat delta           → on_chat_delta()    → first delta: set_streaming
-  agent message        → on_agent_message_received() → set_sending (pre-flight)
+**Phase routing logic (two distinct gateway event structures):**
 
-ActivityHandler → FeedBar public API:
+Lifecycle events (`payload.stream == "lifecycle"`) — phase at `payload.data.phase`:
+```json
+{"type":"event","event":"agent","payload":{"stream":"lifecycle","data":{"phase":"end","livenessState":"working"}}}
+```
+
+Item-level events (`payload.stream == "item"`) — phase at `payload.phase`:
+```json
+{"type":"event","event":"agent","payload":{"stream":"item","data":{"itemId":"tool:call_function_...","phase":"end","kind":"tool"}}}
+```
+
+**Routing table in `window._on_ws_event`:**
+
+| `event` | `payload.stream` | phase location | Handler method |
+|---------|-----------------|----------------|---------------|
+| `chat` | — | `payload.state` | ChatHandler routing |
+| `chat` | — | `payload.state=delta` | streaming delta handler |
+| `agent` | `lifecycle` | `payload.data.phase=start` | `on_agent_start()` |
+| `agent` | `lifecycle` | `payload.data.phase=end` | `on_agent_end()` |
+| `agent` | `lifecycle` | `payload.data.phase=error` | `on_agent_error()` |
+| `agent` | `item` | `payload.phase` (kind=tool) | `on_tool_use()` |
+| `agent` | `item` | `payload.phase` (kind=message) | streaming handler |
+
+
+**State transitions:**
+- `agent phase=start` → `reasoning`
+- `agent phase=end` → `done` (auto → `idle` after 5s)
+- `agent phase=error` → `idle`
+- `tool_call` event → `tool_use`
+- First chat delta → `streaming`
+- Agent message in history → `sending` (pre-flight)
+
+**ActivityHandler → FeedBar public API:**
   set_status_text(markup)              → updates state label
   set_progress_fraction(fraction)       → 0.0..1.0 bar fill (stops pulse)
   set_progress_hidden(hidden)          → show/hide bar
@@ -1335,13 +1736,38 @@ Agent and project avatars use a 10-color round-robin palette defined in `models/
 
 **Events arrive as `(event_name, payload_dict)` tuples via `on_event` callback in `GatewayClient`.**
 
-`window._on_ws_event` handles:
+`window._on_ws_event` handles two distinct event structures:
 
-| event | payload state | Meaning |
-|-------|---------------|---------|
-| `"chat"` | `"final"` | Complete agent response — `payload["sessionKey"]`, `payload["message"]["content"]` |
+**Lifecycle events** (`payload.stream == "lifecycle"`) — phase at `payload.data.phase`:
+```json
+{"type":"event","event":"agent","payload":{"stream":"lifecycle","data":{"phase":"end","livenessState":"working","endedAt":1776790638851}}}
+```
 
-**Other event types** arrive at `on_event` but are not yet handled (tool calls, approvals). Streaming and typing handled in Phase 3.
+**Item-level events** (`payload.stream == "item"`) — phase at `payload.phase`:
+```json
+{"type":"event","event":"agent","payload":{"stream":"item","data":{"itemId":"tool:call_function_...","phase":"end","kind":"tool"}}}
+```
+
+**Routing table:**
+
+| event | stream | phase location | Meaning |
+|-------|---------|----------------|---------|
+| `"chat"` | — | `payload.state=final` | Complete response — route to ChatHandler |
+| `"chat"` | — | `payload.state=delta` | Streaming delta — accumulate in bubble |
+| `"agent"` | `"lifecycle"` | `payload.data.phase=start` | Agent started reasoning |
+| `"agent"` | `"lifecycle"` | `payload.data.phase=end` | Agent finished — trigger idle |
+| `"agent"` | `"lifecycle"` | `payload.data.phase=error` | Agent error — reset |
+| `"agent"` | `"item"` | `payload.phase` (kind=`tool`) | Tool call complete |
+| `"agent"` | `"item"` | `payload.phase` (kind=`message`) | Message delta |
+
+**Phase routing logic:**
+```python
+stream = payload.get("stream", "")
+if stream == "lifecycle":
+    phase = payload.get("data", {}).get("phase", "")
+else:
+    phase = payload.get("phase", "")
+```
 
 **Snapshot structure (`get_snapshot()`):**
 ```python
@@ -1373,71 +1799,123 @@ Agent and project avatars use a 10-color round-robin palette defined in `models/
 
 ```
 crabcakes/
-├── main.py                     # 44 lines — bootstrap only
-├── ARCHITECTURE.md             # This document
+├── main.py                         # 44 lines — bootstrap only
 │
 ├── gateway/
-│   ├── __init__.py            # 6 lines — exports GatewayClient only
-│   └── client.py              # 418 lines — GatewayClient (threaded WebSocket + v3 device auth)
+│   ├── __init__.py                # 6 lines — exports GatewayClient only
+│   └── client.py                 # 481 lines — GatewayClient (threaded WebSocket + v3 device auth)
 │
 ├── models/
-│   ├── __init__.py            # 15 lines — exports AgentManager, AgentRoutingTable, next_agent_color, reset_color_indices
-│   ├── agents.py              # 49 lines — AgentManager
-│   ├── colors.py              # 45 lines — agent + project color palette (round-robin)
-│   └── routing.py             # 38 lines — AgentRoutingTable (session_key → project_name)
+│   ├── __init__.py               # 24 lines — exports AgentManager, AgentRoutingTable, Command, StreamingBubble, Task, TaskStore, next_agent_color, reset_color_indices
+│   ├── agents.py                 # 49 lines — AgentManager (session_key → name, color, sessions)
+│   ├── colors.py                 # 50 lines — AGENT_COLORS palette + round-robin next_agent_color() / reset_color_indices()
+│   ├── command.py                # 149 lines — Command, CommandResult, CommandRegistry (Phase 7)
+│   ├── conversation.py           # 244 lines — MessageRole, ToolCall, Message, Conversation (Phase 1.1)
+│   ├── review_state.py           # 26 lines — ReviewState dataclass (Phase 7)
+│   ├── routing.py                # 41 lines — AgentRoutingTable (session_key → project_name)
+│   ├── streaming.py              # 30 lines — StreamingBubble dataclass (Phase 5)
+│   └── task.py                  # 104 lines — Task + TaskStore + labels (Phase 3)
+│
+├── agent/                        # Agent runtime (Phase 1.1–1.5)
+│   ├── __init__.py               # 15 lines — package marker
+│   ├── config.py                 # 197 lines — AgentConfig, LLMProviderConfig, load_agent_config() with chmod check
+│   ├── context.py                # 441 lines — build_system_prompt, build_file_context, load_custom_system_prompt (Phase 1.2)
+│   └── tools.py                  # 661 lines — 7 tools: read_file, write_file, exec_command, list_files, search_files, web_search, web_fetch
 │
 ├── ui/
-│   ├── __init__.py            # 1 line
-│   ├── toolbar.py             # 106 lines — Toolbar widget
-│   ├── styles.py              # 426 lines — APP_CSS constant + apply_styles() (Phase 1 + 2 block CSS)
-│   ├── window.py              # 372 lines — MainWindow + handler wiring
+│   ├── __init__.py              # 1 line
+│   ├── toolbar.py                # 106 lines — Toolbar widget (connect button + status label)
+│   ├── styles.py                # 618 lines — APP_CSS constant + apply_styles() (Phase 1–7 CSS)
+│   ├── window.py                 # 926 lines — MainWindow + all handler wiring
 │   ├── handlers/
-│   │   ├── __init__.py        # 0 lines — package marker
-│   │   ├── project_list_handler.py  # 60 lines — project card data + color round-robin
-│   │   ├── prompts_handler.py  # 187 lines — favorites, search, last-used, on_prompt_activated
-│   │   ├── agent_list_handler.py  # 107 lines — agent card data (initials, colors, sorting)
-│   │   ├── chat_handler.py     # 325 lines — send, fan-out, routing
-│   │   ├── chat_render_handler.py  # 340 lines — escape + markdown + bubble pipeline (Phase 1)
-│   │   ├── gateway_handler.py  # 188 lines — connect, agents, lifecycle (Phase 2)
-│   │   ├── media_handler.py   # 89 lines — STT + improve (Phase 4)
-│   │   ├── project_handler.py  # 181 lines — active project + agent-to-project routing (Phase 3)
-│   │   ├── activity_handler.py  # 281 lines — 6-state activity machine (Phase 6)
-│   │   └── project_list_handler.py  # 60 lines — project card data + color round-robin
+│   │   ├── __init__.py          # 0 lines — package marker
+│   │   ├── activity_handler.py  # 408 lines — 6-state activity machine + two-phase progress (Phase 6)
+│   │   ├── agent_list_handler.py # 118 lines — agent card data (initials, colors, sorting)
+│   │   ├── chat_handler.py       # 430 lines — send, fan-out, routing, tab switching (Phase 1)
+│   │   ├── chat_render_handler.py # 421 lines — escape + markdown + highlight + bubble pipeline
+│   │   ├── command_handler.py   # 340 lines — backtick command parser + @mention resolution (Phase 7)
+│   │   ├── gateway_handler.py    # 228 lines — connect, agents, lifecycle (Phase 2)
+│   │   ├── media_handler.py      # 89 lines — STT + improve (Phase 4)
+│   │   ├── project_handler.py    # 207 lines — active project + agent-to-project routing (Phase 3)
+│   │   ├── project_list_handler.py # 61 lines — project card data + color round-robin
+│   │   ├── prompts_handler.py    # 187 lines — favorites, search, last-used, load_prompt()
+│   │   └── review_handler.py    # 340 lines — review session lifecycle: checkpoint/check/accept/reject (Phase 7)
 │   └── views/
-│       ├── __init__.py        # 1 line
-│       ├── chat_control_bar.py # 34 lines — ChatControlBar (stub: update() not wired)
-│       ├── feedbar.py          # 105 lines — FeedBar + progress bar + ActivityHandler public API (Phase 6)
-│       ├── file_tree.py        # 313 lines — FileTree (TreeView directory browser + project card picker)
-│       ├── left_panel.py       # 442 lines — LeftPanel (Prompts/Agents/Projects notebook)
-│       ├── left_progress.py    # 0 lines — stub placeholder
-│       ├── chat_bubble.py      # 608 lines — build_role_bubble() widget factory (Phase 1 + 2 block-level rendering)
-│       ├── main_content.py     # 566 lines — MainContent (tabs + input + STT/Improve/feed bar + tab close + bulk close)
-│       └── session_menu.py     # 98 lines — right-click session switcher popover
+│       ├── __init__.py          # 1 line
+│       ├── chat_bubble.py        # 641 lines — build_role_bubble() factory (Phase 1 + 2 block-level)
+│       ├── chat_control_bar.py   # 34 lines — ChatControlBar (stub — update() not wired)
+│       ├── diff_card.py          # 355 lines — build_file_diff_card(), build_diff_summary_card() (Phase 7)
+│       ├── feedbar.py            # 106 lines — FeedBar + progress bar (Phase 6)
+│       ├── file_tree.py          # 313 lines — FileTree (TreeView directory browser)
+│       ├── left_panel.py         # 466 lines — LeftPanel (Prompts/Agents/Projects notebook)
+│       ├── left_progress.py      # 0 lines — stub placeholder
+│       ├── main_content.py       # 652 lines — MainContent (tabs + input + review bar integration)
+│       ├── review_bar.py         # 166 lines — ReviewBar widget: dropdown + action buttons (Phase 7)
+│       └── session_menu.py       # 204 lines — right-click session/project switcher popover
 │
 └── utils/
-    ├── __init__.py            # 1 line
-    ├── prompts.py             # 25 lines — load_prompts()
-    ├── projects.py            # 75 lines — load_projects, scan_directory, load/save_members
-    ├── favorites.py           # 59 lines — favorites persistence (favorites.json)
-    ├── escaping.py             # 182 lines — escape_for_pango(), xml_escape_text() — Pango-aware escape (Phase 1)
-    ├── markdown.py             # 220 lines — format_markdown() — inline markdown → Pango (Phase 1)
-    ├── block_parser.py          # 158 lines — extract_blocks() — block segment extraction (Phase 2)
-    ├── syntax_highlight.py      # 164 lines — highlight() — Pygments → Pango markup (Phase 2)
-    ├── improve.py             # 141 lines — improve_prompt (MiniMax API)
-    ├── stt.py                 # 182 lines — STTEngine (faster-whisper push-to-talk, stop_async pattern)
-    └── icons.py               # 165 lines — Gdk.Texture SVG rendering (agent avatars + folder icons)
+    ├── __init__.py              # 1 line
+    ├── block_parser.py           # 158 lines — extract_blocks() — block segment extraction (Phase 2)
+    ├── config.py                 # 72 lines — config path helpers (Phase 7)
+    ├── diff_parser.py           # 321 lines — parse_diff() → FileDiff/ParsedDiff (Phase 7)
+    ├── escaping.py              # 182 lines — escape_for_pango(), xml_escape_text() (Phase 1)
+    ├── favorites.py             # 60 lines — favorites persistence (favorites.json)
+    ├── git_ops.py               # 147 lines — GitPython wrapper: stage/commit/diff/checkout (Phase 7)
+    ├── icons.py                 # 165 lines — Gdk.Texture SVG rendering (avatars + folder icons)
+    ├── improve.py               # 143 lines — improve_prompt() MiniMax API
+    ├── markdown.py              # 220 lines — format_markdown() — inline markdown → Pango (Phase 1)
+    ├── projects.py              # 77 lines — load_projects(), scan_directory(), load/save_members()
+    ├── prompts.py               # 25 lines — load_prompts() — reads .md from prompts/
+    ├── stt.py                   # 182 lines — STTEngine (faster-whisper push-to-talk, Phase 4)
+    └── syntax_highlight.py      # 164 lines — highlight() — Pygments → Pango markup (Phase 2)
 
 tests/
-    ├── test_block_parser.py     # 158 lines — extract_blocks() unit tests (Phase 2)
-    ├── test_syntax_highlight.py # 67 lines — highlight() unit tests (Phase 2)
-    ├── test_escaping.py         # 169 lines — escape_for_pango() tests
-    ├── test_markdown.py         # 137 lines — format_markdown() tests
-    ├── test_chat_handler.py     # ChatHandler tests
-    ├── test_chat_render_handler.py  # ChatRenderHandler tests
-    └── ...                      # other test files
-```
+    ├── conftest.py              # pytest fixtures
+    ├── test_agents.py
+    ├── test_architecture.py     # architecture compliance tests
+    ├── test_block_parser.py
+    ├── test_chat_handler.py
+    ├── test_chat_render_handler.py
+    ├── test_command_handler.py
+    ├── test_command_models.py
+    ├── test_conversation.py     # 299 lines — Conversation, Message, ToolCall models (Phase 1.1)
+    ├── test_config.py
+    ├── test_context.py           # 329 lines — system prompt, file context, gitignore (Phase 1.2)
+    ├── test_convergence.py
+    ├── test_diff_parser.py
+    ├── test_escaping.py
+    ├── test_favorites.py
+    ├── test_gateway_handler.py
+    ├── test_git_ops.py
+    ├── test_icons.py
+    ├── test_improve.py
+    ├── test_markdown.py
+    ├── test_media_handler.py
+    ├── test_project_handler.py
+    ├── test_project_list_handler.py
+    ├── test_prompts_handler.py
+    ├── test_review_state.py
+    ├── test_routing.py
+    ├── test_streaming.py
+    ├── test_syntax_highlight.py
+    ├── test_tasks.py
+    └── test_tools.py             # 334 lines — sandbox, approval, truncation tests (Phase 1.1)
+agent/
+    ├── __init__.py            # 1 line — exports AgentRuntime
+    ├── runtime.py             # ~500 lines — AgentRuntime: tool loop, providers, streaming, cost (Phase 1.3a)
+    ├── tools.py                # ~380 lines — 8 tools: read/write/exec/list/search/web (Phase 1.1)
+    ├── config.py              # ~100 lines — LLM provider config + chmod check (Phase 1.1)
+    ├── context.py             # ~200 lines — build_system_prompt, build_file_context (Phase 1.2)
+    └── special_agents.py     # ~150 lines — Coder + Debugger definitions + prompt templates (Phase 1.4)
 
+converge/
+    ├── __init__.py
+    ├── converge.py            # Random Forest classifier for convergence detection
+    ├── run_tests.py
+    └── test_stoplight.py
+    # … Dead code — nothing in CrabCakes imports converge/. Kept for future collaboration.
 
+**Test count:** 37 test files (~1112 passing, 6 failing — 5 convergence + 1 registry bug).
 
 ---
 

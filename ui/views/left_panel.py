@@ -91,6 +91,18 @@ class LeftPanel(Gtk.Box):
         if self._agent_names:
             self._refresh_agents_list()
 
+    def set_special_agents(self, handler):
+        """
+        Set the AgentRuntimeHandler for special agent cards.
+
+
+        Special agents (e.g. "Coder") are shown in the agents list
+        without requiring a gateway connection.
+        Called by window.py._build() after AgentRuntimeHandler is created.
+        """
+        self._agent_runtime_handler = handler
+        self._refresh_agents_list()
+
     def set_agents(self, agent_names, on_agent_selected):
         """
         Populate the agents tab and register the selection callback.
@@ -173,6 +185,10 @@ class LeftPanel(Gtk.Box):
                 if ":main" in session_key:
                     agents[name] = session_key
             sorted_agents = [(sk, name, sk in project_members) for name, sk in agents.items()]
+        # Append special agents (Phase 1.4) — shown even without gateway connection
+        if getattr(self, '_agent_runtime_handler', None):
+            for sk, name in self._agent_runtime_handler.get_special_agents().items():
+                sorted_agents.append((sk, name, False))
 
         if not sorted_agents:
             placeholder = Gtk.Label()

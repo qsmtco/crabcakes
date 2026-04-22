@@ -1,0 +1,299 @@
+# tests/test_conversation.py
+# Unit tests for models/conversation.py
+#
+# Tests the contract — each public method's documented behavior.
+# Edge cases that could break callers (AgentRuntime, context.py) are covered.
+
+import pytest
+from models.conversation import (
+    Conversation,
+    Message,
+    ToolCall,
+    MessageRole,
+    ToolCallStatus,
+)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  ToolCall dataclass
+# ═══════════════════════════════════════════════════════════════════
+
+class TestToolCallDefaults:
+    def test_default_status_is_pending(self):
+        tc = ToolCall(call_id="call_1", tool_name="read_file", arguments={"path": "a.py"})
+        assert tc.status == ToolCallStatus.PENDING
+        assert tc.result is None
+        assert tc.started_at is None
+        assert tc.completed_at is None
+
+    def test_mark_executing_sets_status_and_time(self):
+        tc = ToolCall(call_id="call_1", tool_name="read_file", arguments={})
+        tc.mark_executing()
+        assert tc.status == ToolCallStatus.EXECUTING
+        assert tc.started_at is not None
+
+    def test_mark_completed_sets_result_and_time(self):
+        tc = ToolCall(call_id="call_1", tool_name="read_file", arguments={})
+        tc.mark_completed("file contents")
+        assert tc.status == ToolCallStatus.COMPLETED
+        assert tc.result == "file contents"
+        assert tc.completed_at is not None
+
+    def test_mark_failed_sets_error(self):
+        tc = ToolCall(call_id="call_1", tool_name="read_file", arguments={})
+        tc.mark_failed("Permission denied")
+        assert tc.status == ToolCallStatus.FAILED
+        assert tc.result == "Permission denied"
+        assert tc.completed_at is not None
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Message dataclass
+# ═══════════════════════════════════════════════════════════════════
+
+class TestMessageDefaults:
+    def test_default_timestamp_is_set(self):
+        msg = Message(role=MessageRole.USER, content="hello")
+        assert msg.timestamp is not None
+
+    def test_default_tokens_used_is_zero(self):
+        msg = Message(role=MessageRole.USER, content="hello")
+        assert msg.tokens_used == 0
+
+    def test_default_tool_calls_is_empty_list(self):
+        msg = Message(role=MessageRole.USER, content="hello")
+        assert msg.tool_calls == []
+        assert isinstance(msg.tool_calls, list)
+
+    def test_is_tool_call_true_for_assistant_with_tools(self):
+        tc = ToolCall(call_id="c1", tool_name="read", arguments={})
+        msg = Message(role=MessageRole.ASSISTANT, content="", tool_calls=[tc])
+        assert msg.is_tool_call is True
+
+    def test_is_tool_call_false_for_assistant_without_tools(self):
+        msg = Message(role=MessageRole.ASSISTANT, content="hello", tool_calls=[])
+        assert msg.is_tool_call is False
+
+    def test_is_tool_result_true_for_tool_result_role(self):
+        msg = Message(role=MessageRole.TOOL_RESULT, content="result", tool_call_id="c1")
+        assert msg.is_tool_result is True
+
+    def test_is_tool_result_false_for_other_roles(self):
+        msg = Message(role=MessageRole.USER, content="hello")
+        assert msg.is_tool_result is False
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Conversation dataclass
+# ═══════════════════════════════════════════════════════════════════
+
+class TestConversationDefaults:
+    def test_project_path_defaults_to_none(self):
+        c = Conversation(agent_name="Coder")
+        assert c.project_path is None
+
+    def test_system_prompt_defaults_to_empty(self):
+        c = Conversation(agent_name="Coder")
+        assert c.system_prompt == ""
+
+    def test_messages_defaults_to_empty_list(self):
+        c = Conversation(agent_name="Coder")
+        assert c.messages == []
+        assert isinstance(c.messages, list)
+
+    def test_model_defaults_to_empty_string(self):
+        c = Conversation(agent_name="Coder")
+        assert c.model == ""
+
+    def test_total_cost_defaults_to_zero(self):
+        c = Conversation(agent_name="Coder")
+        assert c.total_cost == 0.0
+
+    def test_step_count_defaults_to_zero(self):
+        c = Conversation(agent_name="Coder")
+        assert c.step_count == 0
+
+    def test_created_at_is_set(self):
+        c = Conversation(agent_name="Coder")
+        assert c.created_at is not None
+
+
+class TestConversationMessageHelpers:
+    def test_add_user_message_returns_message(self):
+        c = Conversation(agent_name="Coder")
+        msg = c.add_user_message("hello")
+        assert msg.role == MessageRole.USER
+        assert msg.content == "hello"
+        assert len(c.messages) == 1
+
+    def test_add_assistant_message_returns_message(self):
+        c = Conversation(agent_name="Coder")
+        msg = c.add_assistant_message("thinking...", [])
+        assert msg.role == MessageRole.ASSISTANT
+        assert msg.content == "thinking..."
+        assert len(c.messages) == 1
+
+    def test_add_assistant_message_increments_step_count(self):
+        c = Conversation(agent_name="Coder")
+        assert c.step_count == 0
+        c.add_assistant_message("turn 1", [])
+        assert c.step_count == 1
+        c.add_assistant_message("turn 2", [])
+        assert c.step_count == 2
+
+    def test_add_assistant_message_with_tool_calls(self):
+        c = Conversation(agent_name="Coder")
+        tc = ToolCall(call_id="c1", tool_name="read_file", arguments={"path": "a.py"})
+        msg = c.add_assistant_message("", [tc])
+        assert msg.tool_calls == [tc]
+        assert msg.is_tool_call is True
+
+    def test_add_tool_result_returns_message(self):
+        c = Conversation(agent_name="Coder")
+        msg = c.add_tool_result("c1", "file contents here")
+        assert msg.role == MessageRole.TOOL_RESULT
+        assert msg.content == "file contents here"
+        assert msg.tool_call_id == "c1"
+
+    def test_tool_result_does_not_increment_step_count(self):
+        c = Conversation(agent_name="Coder")
+        c.add_assistant_message("I will read the file", [])
+        assert c.step_count == 1
+        c.add_tool_result("c1", "file contents")
+        assert c.step_count == 1  # still 1
+
+
+class TestConversationToApiMessages:
+    def test_empty_conversation_returns_nothing(self):
+        c = Conversation(agent_name="Coder")
+        assert c.to_api_messages() == []
+
+    def test_system_prompt_becomes_first_system_message(self):
+        c = Conversation(agent_name="Coder", system_prompt="You are helpful.")
+        msgs = c.to_api_messages()
+        assert msgs[0] == {"role": "system", "content": "You are helpful."}
+
+    def test_user_message_format(self):
+        c = Conversation(agent_name="Coder")
+        c.add_user_message("hello world")
+        msgs = c.to_api_messages()
+        assert msgs[0] == {"role": "user", "content": "hello world"}
+
+    def test_assistant_message_with_text(self):
+        c = Conversation(agent_name="Coder")
+        c.add_assistant_message("Here is the answer", [])
+        msgs = c.to_api_messages()
+        assert msgs[0] == {"role": "assistant", "content": "Here is the answer"}
+
+    def test_assistant_message_with_tool_calls(self):
+        c = Conversation(agent_name="Coder")
+        tc = ToolCall(call_id="call_abc", tool_name="read_file", arguments={"path": "a.py"})
+        c.add_assistant_message("", [tc])
+        msgs = c.to_api_messages()
+        assert msgs[0]["role"] == "assistant"
+        assert msgs[0]["tool_calls"][0]["id"] == "call_abc"
+        assert msgs[0]["tool_calls"][0]["function"]["name"] == "read_file"
+        assert msgs[0]["tool_calls"][0]["function"]["arguments"] == '{"path": "a.py"}'
+
+    def test_tool_result_format(self):
+        c = Conversation(agent_name="Coder")
+        c.add_tool_result("call_abc", "file contents")
+        msgs = c.to_api_messages()
+        assert msgs[0] == {
+            "role": "tool",
+            "tool_call_id": "call_abc",
+            "content": "file contents",
+        }
+
+    def test_full_conversation_sequence(self):
+        c = Conversation(agent_name="Coder", system_prompt="You are Coder.")
+        c.add_user_message("Implement auth")
+        tc = ToolCall(call_id="c1", tool_name="write_file", arguments={"path": "auth.py", "content": ""})
+        c.add_assistant_message("", [tc])
+        c.add_tool_result("c1", "OK — wrote 100 bytes")
+        c.add_assistant_message("Done.", [])
+        msgs = c.to_api_messages()
+        assert len(msgs) == 5  # system, user, assistant+tool, tool-result, assistant
+        assert msgs[0] == {"role": "system", "content": "You are Coder."}
+        assert msgs[1]["role"] == "user"
+        assert msgs[2]["role"] == "assistant"
+        assert msgs[2]["tool_calls"][0]["function"]["name"] == "write_file"
+        assert msgs[3]["role"] == "tool"
+        assert msgs[4]["role"] == "assistant"
+
+
+class TestConversationTokenEstimate:
+    def test_empty_conversation_is_zero(self):
+        c = Conversation(agent_name="Coder")
+        assert c.get_token_estimate() == 0
+
+    def test_system_prompt_counted(self):
+        c = Conversation(agent_name="Coder", system_prompt="x" * 40)  # 10 tokens at 4 chars/token
+        assert c.get_token_estimate() == 10
+
+    def test_messages_counted(self):
+        c = Conversation(agent_name="Coder")
+        c.add_user_message("hello world")  # 11 chars
+        assert c.get_token_estimate() == 11 // 4  # ~2 tokens
+
+    def test_tool_call_args_and_result_counted(self):
+        c = Conversation(agent_name="Coder")
+        tc = ToolCall(call_id="c1", tool_name="read_file", arguments={"path": "a.py", "content": "xyzt"})
+        c.add_tool_result("c1", "result here")
+        # tokens counted from tool_calls arguments + result
+        estimate = c.get_token_estimate()
+        assert estimate > 0
+
+
+class TestConversationTrim:
+    def test_trim_does_nothing_when_under_limit(self):
+        c = Conversation(agent_name="Coder")
+        c.add_user_message("hi")
+        c.add_assistant_message("hello", [])
+        c.trim_to_token_limit(max_tokens=100)
+        assert len(c.messages) == 2
+
+    def test_trim_removes_oldest_messages(self):
+        c = Conversation(agent_name="Coder")
+        for i in range(10):
+            c.add_user_message("x" * 200)  # ~50 tokens each
+        c.add_assistant_message("done", [])
+        initial = len(c.messages)
+        c.trim_to_token_limit(max_tokens=20)
+        assert len(c.messages) < initial
+
+    def test_trim_never_removes_most_recent_user_message(self):
+        c = Conversation(agent_name="Coder")
+        for i in range(5):
+            c.add_user_message("x" * 200)
+        most_recent = c.messages[-1]
+        c.trim_to_token_limit(max_tokens=10)
+        assert c.messages[-1] == most_recent
+
+    def test_trim_keeps_system_prompt(self):
+        c = Conversation(agent_name="Coder", system_prompt="x" * 400)
+        c.add_user_message("x" * 400)
+        c.trim_to_token_limit(max_tokens=50)
+        assert c.system_prompt == "x" * 400  # never removed
+
+
+class TestConversationCostTracking:
+    def test_record_usage_updates_totals(self):
+        c = Conversation(agent_name="Coder")
+        c.record_usage(tokens=1000, cost=0.02)
+        assert c.total_tokens == 1000
+        assert c.total_cost == 0.02
+
+    def test_record_usage_is_cumulative(self):
+        c = Conversation(agent_name="Coder")
+        c.record_usage(tokens=1000, cost=0.02)
+        c.record_usage(tokens=500, cost=0.01)
+        assert c.total_tokens == 1500
+        assert c.total_cost == 0.03
+
+    def test_record_usage_sets_last_message_tokens(self):
+        c = Conversation(agent_name="Coder")
+        c.add_user_message("hi")
+        c.add_assistant_message("hello", [])
+        c.record_usage(tokens=200, cost=0.004)
+        assert c.messages[-1].tokens_used == 200

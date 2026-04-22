@@ -1,0 +1,31 @@
+    # f20: last response contains a question mark anywhere
+    has_question_mark = 1.0 if '?' in last_text else 0.0
+
+    # f21: first sentence is standalone politeness
+    first_sent_polite_only = 1.0 if sentences and is_politeness_only(sentences[0]) else 0.0
+
+    # f22: last sentence starts with a concluding phrase
+    concluding_phrases = [
+        "at the very", "in summary", "to summarize", "in conclusion",
+        "to conclude", "ultimately", "in short", "to sum up",
+        "finally", "that concludes",
+    ]
+    last_sent_lower = sentences[-1].lower() if sentences else ""
+    concluding_phrase = 1.0 if any(last_sent_lower.startswith(p) for p in concluding_phrases) else 0.0
+
+    # f23: fraction of short responses in last-3 turns
+    recent = responses[-3:]
+    short_turn_frac = sum(1 for r in recent if len(r["text"]) < 60) / max(len(recent), 1)
+
+    return [
+        rld, sn, ppl_proxy, ent_score, qd,
+        politeness_only_last, politeness_rel_last,
+        politeness_hist, politeness_last3,
+        politeness_word_frac, politeness_hist_count, n_norm,
+        content_ratio, continuation, avg_diversity,
+        prev_sim, ends_period, ends_question,
+        last_sent_frac, last_sent_norm,
+        has_question_mark, first_sent_polite_only,
+        concluding_phrase, short_turn_frac,
+        tfidf_prev_sim, tfidf_hist_sim,
+    ]

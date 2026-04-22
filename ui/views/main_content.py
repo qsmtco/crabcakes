@@ -641,3 +641,12 @@ class MainContent(Gtk.Box):
         # Insert at the very top of top_box (position 0 = above notebook)
         top_box.pack_start(bar, 0, 0, 0)
         bar.show()
+
+    def get_review_bar(self) -> Gtk.Widget | None:
+        """Return the current review bar widget, or None.
+
+
+        Used by ReviewHandler and ActivityHandler to read the current bar
+        without accessing MainContent internal state.
+        """
+        return getattr(self, '_review_bar', None)

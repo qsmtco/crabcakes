@@ -56,10 +56,15 @@ class ChatHandler:
         self._on_send_initiated = None    # injected via set_on_send_initiated()
         self._pending_req_id: str | None = None  # tracks last sent req_id for res correlation
         self._on_res_confirmed: Callable[[str], None] | None = None  # pre-flight confirm via res
+        self._agent_runtime_handler = None  # injected via set_agent_runtime_handler()
 
     def set_chat_render_handler(self, handler):
-        """Inject ChatRenderHandler. Called by window.py._build()."""
+        """"Inject ChatRenderHandler. Called by window.py._build()."""
         self._chat_render_handler = handler
+
+    def set_agent_runtime_handler(self, handler):
+        """Inject AgentRuntimeHandler. Called by window.py._build()."""
+        self._agent_runtime_handler = handler
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -121,9 +126,6 @@ class ChatHandler:
         If input starts with the command prefix and CommandHandler is wired, the
         command is parsed and executed — gateway send is skipped.
         """
-        if self._gw is None or not self._gw.is_connected():
-            return
-
         session_key = self._mc.get_current_session_key()
         if session_key is None:
             return
@@ -131,6 +133,34 @@ class ChatHandler:
         buf = self._mc.user_input.get_buffer()
         text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True).strip()
         if not text:
+            return
+
+        # ── Special agent check (Phase 1.4) ─────────────────────────────────────
+        if (self._agent_runtime_handler is not None
+                and session_key in self._agent_runtime_handler.get_special_agents()):
+            def _show_and_route_to_agent():
+                chat_box = self._mc.get_chat_box()
+                if chat_box is not None:
+                    if self._chat_render_handler is not None:
+                        bubble = self._chat_render_handler.render_sync(
+                            "You", text, session_key,
+                            on_forward_click=self._on_forward_message,
+                            agent_name="You",
+                        )
+                        if bubble is not None:
+                            chat_box.append(bubble)
+                    self._mc.scroll_chat_to_bottom()
+                    if hasattr(chat_box, "record"):
+                        chat_box.record("You", text)
+                self._agent_runtime_handler.send_to_special_agent(session_key, text)
+            self._dispatch(_show_and_route_to_agent)
+            buf.set_text("")
+            if self._on_send_initiated:
+                self._on_send_initiated(session_key)
+            return
+
+        # ── Gateway guard ────────────────────────────────────────────────────────
+        if self._gw is None or not self._gw.is_connected():
             return
 
         # ── Command handler check ────────────────────────────────────────────────

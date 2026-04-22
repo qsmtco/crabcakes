@@ -101,8 +101,9 @@ class MainWindow(Gtk.ApplicationWindow):
             GLib_module=GLib,
         )
 
-        # Inject ChatRenderHandler into ChatHandler (window.py is composition root)
+        # Inject ChatRenderHandler + AgentRuntimeHandler into ChatHandler (window.py is composition root)
         self._chat_handler.set_chat_render_handler(self._chat_render_handler)
+        self._chat_handler.set_agent_runtime_handler(self._agent_runtime_handler)
 
         # Wire Send button
         self._main_content.send_button.connect("clicked", self._chat_handler.on_send_clicked)
@@ -122,6 +123,20 @@ class MainWindow(Gtk.ApplicationWindow):
             on_agent_toggle=None,  # left_panel._on_agent_toggle_clicked handles membership directly
         )
         self._left_panel.set_agent_list_handler(self._agent_list_handler)
+        self._left_panel.set_special_agents(self._agent_runtime_handler)
+
+        # AgentRuntime handler — owns AgentRuntime instances for special agents (Phase 1.4)
+        from ui.handlers.agent_runtime_handler import AgentRuntimeHandler
+        self._agent_runtime_handler = AgentRuntimeHandler(
+            main_content=self._main_content,
+            chat_render_handler=self._chat_render_handler,
+            GLib_module=GLib,
+            review_handler=self._review_handler,
+        )
+
+        # Register built-in special agents
+        self._agent_runtime_handler.add_special_agent("Coder", "special/coder")
+
 
         # Prompts handler — wired to left_panel after both are created
         from ui.handlers.prompts_handler import PromptsHandler

@@ -1,6 +1,6 @@
 # CrabCakes — Project Status
 
-**Last updated:** 2026-04-11
+**Last updated:** 2026-04-21
 
 ---
 
@@ -35,15 +35,30 @@
 
 ## In Progress
 
-### Phase 3 — Handler Extraction (Remaining)
-- Still some logic in `window.py` that could be extracted
-- See `docs/HANDLER_EXTRACTION_PLAN.md`
+### Agent Runtime ✅ (2026-04-21)
+- `agent/runtime.py` — tool loop, 3 providers (OpenAI/MiniMax/Anthropic), streaming SSE, cost tracking, conversation persistence
+- `agent/tools.py` — 8 tools (read_file, write_file, exec_command, list_files, search_files, web_search, web_fetch)
+- `agent/config.py` — LLM provider config with chmod security check
+- `agent/context.py` — system prompt + file context builder, .gitignore parsing
+- `agent/special_agents.py` — Coder + Debugger agent definitions
+- `agent/__init__.py` — exports AgentRuntime
+- `models/conversation.py` — Conversation, Message, ToolCall dataclasses
+- `ui/handlers/agent_runtime_handler.py` — UI bridge, all callbacks via GLib.idle_add
+- Phase 1.1–1.5 all implemented per `docs/agent-runtime.md`
+- 21 bugs found + fixed in adversarial audit (`docs/ADVERSARIAL_AUDIT_AGENT_RUNTIME.md`)
+- **Gap:** exec approval UI (Allow/Deny card) is logged but not rendered in chat tab
 
 ---
 
 ## Planned (Not Started)
 
-### CSS Migration
+### Review Layer ✅ (2026-04-21)
+- `utils/git_ops.py` — GitPython wrapper (add, commit, diff, checkout, checkpoint)
+- `utils/diff_parser.py` — unified diff → FileDiff/ParsedDiff data
+- `ui/handlers/review_handler.py` — checkpoint, check changes, accept, reject
+- `ui/views/review_bar.py` — mode dropdown + status + action buttons
+- `ui/views/diff_card.py` — per-file collapsible diff cards with syntax highlighting
+- Spec: `docs/review-layer.md`
 - Create `ui/styles.py` with all CSS in one place
 - Remove inline CSS from `main_content.py` and `left_panel.py`
 - ARCHITECTURE.md Section 9 already documents the target pattern
@@ -75,8 +90,14 @@
 
 ## Test Status
 
-- **116 tests**, all passing
+- **1112 tests passing**, 6 failing
 - Run: `cd /home/q/projects/crabcakes && pytest`
+
+**Failing tests:**
+- `test_convergence.py` — 5 parametrized cases (quick-close + edge cases) — convergence detection is **dead code**, nothing imports it
+- `test_command_models.py::TestRegistryGetHelp::test_alias_resolves_to_canonical_help` — help text registry issue
+
+**Note:** "116 tests" was from before the agent runtime test suite was added. Current count reflects all tests.
 
 ---
 

@@ -146,7 +146,7 @@ class ReviewHandler:
                 state.checkpoint_sha = sha
                 state.is_dirty = False
                 state.last_check_files = []
-                bar = self._mc._review_bar if hasattr(self._mc, '_review_bar') and self._mc._review_bar else None
+                bar = self._mc.get_review_bar()
                 if bar is not None:
                     bar.set_state_reviewing(sha)
                     bar.set_loading(False)
@@ -184,7 +184,7 @@ class ReviewHandler:
             def _update_ui():
                 state.last_check_files = [f.display_path for f in parsed.files]
                 state.is_dirty = True
-                bar = self._mc._review_bar if hasattr(self._mc, '_review_bar') and self._mc._review_bar else None
+                bar = self._mc.get_review_bar()
                 if bar:
                     bar.set_state_has_changes(len(parsed.files), parsed.total_additions, parsed.total_deletions)
                     bar.set_loading(False)
@@ -233,7 +233,7 @@ class ReviewHandler:
                 state.checkpoint_sha = None
                 state.is_dirty = False
                 state.last_check_files = []
-                bar = self._mc._review_bar if hasattr(self._mc, '_review_bar') and self._mc._review_bar else None
+                bar = self._mc.get_review_bar()
                 if bar:
                     bar.set_state_idle()
                     bar.set_loading(False)
@@ -271,7 +271,7 @@ class ReviewHandler:
                 state.checkpoint_sha = None
                 state.is_dirty = False
                 state.last_check_files = []
-                bar = self._mc._review_bar if hasattr(self._mc, '_review_bar') and self._mc._review_bar else None
+                bar = self._mc.get_review_bar()
                 if bar:
                     bar.set_state_idle()
                     bar.set_loading(False)

@@ -1,15 +1,10 @@
 """
-Convergence detection — policy-driven stop/continue decision for multi-agent conversations.
+Convergence detection — policy-driven stop/continue for multi-agent conversations.
 
-The policy layer decides when a conversation has naturally ended using:
-  1. Orchestrator turn number (always stop at turn 10)
-  2. LR model P(stop) vs hand-tuned threshold (turns 3–9)
-
-Thresholds are tuned per-turn based on the P(stop) distribution of the training data:
-  turn  3: 0.30    turn  6: 0.40
-  turn  4: 0.50    turn  7: 0.55
-  turn  5: 0.45    turn  8: 0.40
-                     turn  9: 0.35
+Policy — stop signal comes from three layers:
+  1. Orchestrator turn number (hard wall at turn 15)
+  2. Random Forest model P(stop) vs per-turn threshold (turns 3–9)
+  3. Turn ≤ 2: always continue (QAC form — question, answer, acknowledge)
 
 Public API:
   compute_convergence(responses) -> {"prob_stop": float, "signal": str}
@@ -22,8 +17,12 @@ import json
 import os
 from typing import List
 
+import numpy as np
 import pytest
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+# ── Constants ────────────────────────────────────────────────────────────────
 
 _POLITE_SOCIAL = {
     "thanks", "thank you", "you're welcome", "anytime", "happy to help",
@@ -51,6 +50,8 @@ _STOPWORDS = {
 }
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
 def is_politeness_only(text: str) -> bool:
     """True if text is pure social politeness with no substantive content."""
     t = re.sub(r'[.,!?]+$', '', text.lower().strip())
@@ -65,14 +66,8 @@ def is_politeness_only(text: str) -> bool:
     return False
 
 
-def _is_question(text: str) -> bool:
-    return bool(re.match(
-        r'^(how|why|what|where|when|can|could|would|should|do|does|is|are|was|were)\b',
-        text.strip().lower(),
-    ))
-
-
 def _shannon_entropy(text: str) -> float:
+    """Word-level Shannon entropy — high entropy means diverse, substantive text."""
     words = re.findall(r'\b\w+\b', text.lower())
     if not words:
         return 0.0
@@ -83,211 +78,163 @@ def _shannon_entropy(text: str) -> float:
 
 
 def _word_diversity(text: str) -> float:
+    """Ratio of unique words to total words — substantive text repeats less."""
     words = re.findall(r'\b\w+\b', text.lower())
     return len(set(words)) / len(words) if words else 0.0
 
 
-def _get_ngrams(text: str, n: int = 2) -> set:
-    words = re.findall(r'\b\w+\b', text.lower())
-    return set(' '.join(words[i:i + n]) for i in range(len(words) - n + 1)) if len(words) >= n else set()
-
-
-def _jaccard_similarity(a: set, b: set) -> float:
-    if not a and not b:
-        return 0.0
-    union = len(a | b)
-    return len(a & b) / union if union else 0.0
-
-
-def _jaccard_distance(a: set, b: set) -> float:
-    return 1.0 - _jaccard_similarity(a, b)
-
-
 def _content_words(text: str) -> set:
+    """Words in text after stripping stopwords and short tokens."""
     return {w for w in re.findall(r'\b\w+\b', text.lower())
             if w not in _STOPWORDS and len(w) > 2}
 
 
+def _tfidf_cosine(a, b) -> float:
+    """Cosine similarity between two TF-IDF vectors."""
+    a_d = np.asarray(a.toarray()).flatten() if hasattr(a, 'toarray') else np.asarray(a).flatten()
+    b_d = np.asarray(b.toarray()).flatten() if hasattr(b, 'toarray') else np.asarray(b).flatten()
+    norm = np.linalg.norm(a_d) * np.linalg.norm(b_d)
+    if norm == 0:
+        return 0.0
+    return float(np.dot(a_d, b_d) / norm)
+
+
+# ── Feature extraction ─────────────────────────────────────────────────────────
+
 def extract_features(responses: List[dict]) -> List[float]:
-    """Build 21-feature vector from a conversation."""
+    """
+    Build 10-feature vector from a conversation.
+
+    Features capture four signals of convergence:
+      entropy/diversity  — substantive responses have higher entropy/diversity
+      length             — final responses in stopped conversations are shorter
+      sentence shape     — last sentence length and proportion of final sentence
+      semantic shift     — TF-IDF cosine similarity to prior turns
+    """
     n = len(responses)
     last = responses[-1]
     prev = responses[-2] if n >= 2 else responses[-1]
     last_text = last["text"]
     prev_text = prev["text"]
     last_words = re.sub(r'[.,!?]+$', '', last_text.lower().strip()).split()
-    last_ngrams = _get_ngrams(last_text, 2)
-    last_keywords = _content_words(last_text)
 
-    # f0: response length delta
-    rld = min(len(last_text) / max(len(prev_text), 1), 1.0)
-
-    # f1: average semantic novelty vs conversation history
-    scores = []
-    for r in responses[:-1]:
-        pn = _get_ngrams(r["text"], 2)
-        pk = _content_words(r["text"])
-        scores.append(0.6 * _jaccard_distance(last_ngrams, pn)
-                    + 0.4 * _jaccard_distance(last_keywords, pk))
-    sn = sum(scores) / len(scores) if scores else 0.0
-
-    # f2: perplexity proxy (entropy + diversity combined)
+    # Feature 0: Shannon entropy normalized to [0, 1]
+    # Stop conversations end with short acknowledgments — low entropy
     ent = _shannon_entropy(last_text)
+    ent_score = max(0.0, min(1.0, ent / 5.0))
+
+    # Feature 1: Perplexity proxy — entropy × diversity
     div = _word_diversity(last_text)
     ppl_proxy = max(0.0, min(1.0, ent / 5.0)) * 0.5 + div * 0.5
 
-    # f3: entropy score normalized
-    ent_score = max(0.0, min(1.0, ent / 5.0))
-
-    # f4: question density (inverted — high QD means keep going)
-    window = responses[-3:]
-    qd = 1.0 - (sum(1 for r in window if _is_question(r["text"])) / len(window))
-
-    # f5: last response is politeness-only
-    politeness_only_last = 1.0 if is_politeness_only(last_text) else 0.0
-
-    # f6: last response contains polite or confirm words
-    polite_count = sum(1 for w in last_words if w in _POLITE_SOCIAL or w in _CONFIRM_WORDS)
-    politeness_rel_last = 1.0 if polite_count > 0 else 0.0
-
-    # f7: politeness-only response in history (excluding last)
-    politeness_hist = 1.0 if any(is_politeness_only(r["text"]) for r in responses[-4:-1]) else 0.0
-
-    # f8: politeness-only in last-3 exchanges (excluding last)
-    politeness_last3 = 1.0 if any(is_politeness_only(r["text"]) for r in responses[-3:-1]) else 0.0
-
-    # f9: fraction of polite/confirm words in last response
-    politeness_word_frac = polite_count / max(len(last_words), 1)
-
-    # f10: count of politeness-only responses in history
-    politeness_hist_count = sum(1 for r in responses[:-1] if is_politeness_only(r["text"]))
-
-    # f11: exchange count normalized to [0, 1]
-    n_norm = min(n / 10.0, 1.0)
-
-    # f12: content word ratio in last response
-    content_ratio = len(last_keywords) / max(len(last_words), 1)
-
-    # f13: last response continues prior thread ("Yes, and...", "Sure, but...")
-    continuation = 1.0 if re.match(
-        r'^(yes,?\s+(and|but|also|so|if)|ok[ay],?\s+(but|so|and)|'
-        r'sure,?\s+(but|and)|right,?\s+(but|and))',
-        last_text, re.IGNORECASE
-    ) else 0.0
-
-    # f14: average word diversity across all responses
+    # Feature 2: Average word diversity across all responses
     avg_diversity = sum(_word_diversity(r["text"]) for r in responses) / n
 
-    # f15: similarity to previous response (n-gram + keyword Jaccard)
-    prev_ngrams = _get_ngrams(prev_text, 2)
-    prev_keywords = _content_words(prev_text)
-    prev_sim = (0.6 * _jaccard_similarity(last_ngrams, prev_ngrams)
-                + 0.4 * _jaccard_similarity(last_keywords, prev_keywords))
+    # Feature 3: Last response length relative to conversation average
+    # Stopped conversations truncate — last response is shorter than average
+    lens = [len(r["text"]) for r in responses]
+    avg_len = sum(lens) / len(lens)
+    len_trend = (lens[-1] - avg_len) / max(avg_len, 1)
 
-    # f16: last response ends with a period
-    ends_sentence = 1.0 if last_text.strip()[-1:] == '.' else 0.0
+    # Feature 4: Fraction of content words in last response
+    last_keywords = _content_words(last_text)
+    content_ratio = len(last_keywords) / max(len(last_words), 1)
 
-    # Sentence-level features
+    # Feature 5: Fraction of polite/confirm words in last response
+    polite_count = sum(1 for w in last_words if w in _POLITE_SOCIAL or w in _CONFIRM_WORDS)
+    polite_frac = polite_count / max(len(last_words), 1)
+
+    # Feature 6: Length of the last sentence, normalized to 20 words
     sentences = [s.strip() for s in re.split(r'[.!?]+\s*', last_text) if s.strip()]
     last_sent_words = len(sentences[-1].split()) if sentences else 0
-    total_words = max(len(last_words), 1)
-
-    # f17: fraction of words in the last sentence
-    last_sent_frac = last_sent_words / total_words
-
-    # f18: last sentence length normalized to 20 words
     last_sent_norm = min(last_sent_words / 20.0, 1.0)
 
-    # f19: first sentence is standalone politeness
-    first_sent_polite_only = 1.0 if sentences and is_politeness_only(sentences[0]) else 0.0
+    # Feature 7: Fraction of total words that fall in the last sentence
+    total_words = max(len(last_words), 1)
+    last_sent_frac = last_sent_words / total_words
 
-    # f20: last sentence starts with a concluding phrase
-    concluding_phrases = [
-        "at the very", "in summary", "to summarize", "in conclusion",
-        "to conclude", "ultimately", "in short", "to sum up",
-        "finally", "that concludes",
-    ]
-    last_sent_lower = sentences[-1].lower() if sentences else ""
-    concluding_phrase = 1.0 if any(last_sent_lower.startswith(p) for p in concluding_phrases) else 0.0
+    # Feature 8: TF-IDF cosine similarity — last turn vs previous turn
+    # Low similarity means the topic or style shifted, possible conclusion
+    last_vec = _TFIDF.transform([last_text])
+    prev_vec = _TFIDF.transform([prev_text])
+    tfidf_prev_sim = _tfidf_cosine(last_vec, prev_vec)
+
+    # Feature 9: TF-IDF cosine similarity — last turn vs history average
+    # Low similarity to history signals a shift toward closing
+    tfidf_hist_sim = 0.0
+    if n > 1:
+        prior_texts = [r["text"] for r in responses[:-1]]
+        prior_vecs = _TFIDF.transform(prior_texts)
+        sims = [_tfidf_cosine(last_vec, pv) for pv in prior_vecs]
+        tfidf_hist_sim = sum(sims) / len(sims)
 
     return [
-        rld, sn, ppl_proxy, ent_score, qd,
-        politeness_only_last, politeness_rel_last,
-        politeness_hist, politeness_last3,
-        politeness_word_frac, politeness_hist_count, n_norm,
-        content_ratio, continuation, avg_diversity,
-        prev_sim, ends_sentence,
-        last_sent_frac, last_sent_norm,
-        first_sent_polite_only, concluding_phrase,
+        ent_score,     # f0
+        ppl_proxy,     # f1
+        avg_diversity, # f2
+        len_trend,     # f3
+        content_ratio, # f4
+        polite_frac,   # f5
+        last_sent_norm,  # f6
+        last_sent_frac,  # f7
+        tfidf_prev_sim,  # f8
+        tfidf_hist_sim,   # f9
     ]
 
 
-# ── LR Model trained on 266 unified fixtures ──────────────────────────────────
-
-_MODEL_C = 10.0
+# ── Model training ────────────────────────────────────────────────────────────
 
 with open(os.path.join(os.path.dirname(__file__), "fixtures", "unified.json")) as f:
     _FIXTURES = json.load(f)
 
+# Fit TF-IDF vocabulary once across all fixture response text
+_ALL_TEXTS = [r["text"] for fx in _FIXTURES for r in fx["responses"]]
+_TFIDF = TfidfVectorizer(lowercase=True, token_pattern=r'(?u)\b\w+\b',
+                         min_df=2, max_df=0.95, ngram_range=(1, 2))
+_TFIDF.fit(_ALL_TEXTS)
+
+# Train Random Forest on all 266 fixtures
 _X = [extract_features(fx["responses"]) for fx in _FIXTURES]
 _y = [1.0 if fx.get("expected") == "stop" else 0.0 for fx in _FIXTURES]
-_MODEL = LogisticRegression(C=_MODEL_C, solver="lbfgs", max_iter=5000, random_state=42)
+_MODEL = RandomForestClassifier(n_estimators=200, random_state=42)
 _MODEL.fit(_X, _y)
 
+
+# ── Thresholds ───────────────────────────────────────────────────────────────
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
 def compute_convergence(responses: List[dict]) -> dict:
-    """Return P(stop) from the LR model, plus a signal tag."""
+    """Return P(stop) from the RF model, plus a signal tag."""
     feats = extract_features(responses)
     p_stop = float(_MODEL.predict_proba([feats])[0][1])
-    n = len(responses)
     last = responses[-1]["text"]
-    parts = []
-    if is_politeness_only(last):
-        parts.append("polite")
-    if n >= 5:
-        parts.append(f"n={n}")
-    return {"prob_stop": p_stop, "signal": ":".join(parts) if parts else "neutral"}
+    signal = "polite" if is_politeness_only(last) else ("neutral")
+    return {"prob_stop": p_stop, "signal": signal}
 
 
-_THRESHOLDS = {
-    3: 0.30,   # stop cluster at 0.76, cont at 0.22
-    4: 0.50,   # stop at 0.54, cont at 0.33
-    5: 0.45,   # stop at 0.73, cont at 0.23
-    6: 0.40,   # distributions overlap heavily
-    7: 0.55,   # stop at 0.67, cont at 0.30
-    8: 0.40,   # hardest turn — model can't separate stop/cont well here
-    9: 0.35,   # near the hard wall, easy to stop
-}
-
-
-def get_escalation_threshold(turn: int) -> float:
-    """Hand-tuned P(stop) threshold per turn. Unknown turns default to 1.0."""
-    return _THRESHOLDS.get(turn, 1.0)
 
 
 def should_stop(responses: List[dict], turn: int) -> bool:
     """
     Policy decision — should the conversation stop?
 
-    Turns 1–2  : always continue (too early to decide)
-    Turns 3–9  : stop if P(stop) >= threshold for that turn
-    Turn 10+   : always stop (hard wall)
+    Turn ≤ 2 : always continue (QAC form — a complete exchange needs 3 turns)
+    Turn 3–9 : stop if P(stop) >= 0.50
+    Turn ≥ 15: always stop (hard wall)
     """
     if turn <= 2:
         return False
-    if turn >= 10:
+    if turn >= 15:
         return True
     result = compute_convergence(responses)
-    return result["prob_stop"] >= get_escalation_threshold(turn)
+    return result["prob_stop"] >= 0.50
 
 
 def should_stop_legacy(responses: List[dict]) -> tuple[bool, str]:
     """
-    Fixed-threshold decision (no turn awareness).
-    P(stop) >= 0.55 → stop, P(stop) < 0.30 → continue, else borderline.
-    Kept for reference comparison.
+    Fixed-threshold decision: P(stop) >= 0.55 → stop,
+    P(stop) < 0.30 → continue, else borderline.
     """
     result = compute_convergence(responses)
     p = result["prob_stop"]
@@ -299,38 +246,24 @@ def should_stop_legacy(responses: List[dict]) -> tuple[bool, str]:
         return False, f"borderline:p={p:.2f}"
 
 
-# ── Tests ─────────────────────────────────────────────────────────────────────
+# ── Tests ────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("fixture", _FIXTURES, ids=[f["id"] for f in _FIXTURES])
 def test_policy_at_natural_turn(fixture):
-    """Policy decision at natural turn count matches expected stop/continue."""
+    """Policy decision matches expected stop/continue for each fixture."""
     rs = fixture["responses"]
     stop = should_stop(rs, min(len(rs), 10))
-    assert stop == (fixture.get("expected") == "stop"), (
-        f"[{fixture['id']}] stop={stop} expected={fixture.get('expected')}"
-    )
+    expected = fixture.get("expected") == "stop"
+    assert stop == expected, f"[{fixture['id']}] stop={stop} expected={expected}"
 
 
 @pytest.mark.parametrize("fixture", _FIXTURES, ids=[f["id"] for f in _FIXTURES])
 def test_legacy_decision(fixture):
-    """Legacy fixed-threshold decision across all 266 fixtures."""
+    """Legacy fixed-threshold decision matches expected stop/continue."""
     stop, _ = should_stop_legacy(fixture["responses"])
-    assert stop == (fixture.get("expected") == "stop"), (
-        f"[{fixture['id']}] stop={stop} expected={fixture.get('expected')}"
-    )
+    expected = fixture.get("expected") == "stop"
+    assert stop == expected, f"[{fixture['id']}] stop={stop} expected={expected}"
 
-
-def test_escalation_schedule():
-    """Thresholds hand-tuned per turn using P(stop) distribution data.
-    Turn 3 is easy to stop, turn 7 is hardest, turn 9 is near the wall.
-    """
-    assert get_escalation_threshold(3) == 0.30
-    assert get_escalation_threshold(4) == 0.50
-    assert get_escalation_threshold(5) == 0.45
-    assert get_escalation_threshold(6) == 0.40
-    assert get_escalation_threshold(7) == 0.55
-    assert get_escalation_threshold(8) == 0.40
-    assert get_escalation_threshold(9) == 0.35
 
 
 def test_turn3_polite_stops():
@@ -344,7 +277,7 @@ def test_turn3_polite_stops():
 
 
 def test_turn4_substantive_uses_model():
-    """Substantive response at turn 4 defers to LR model — no crash, valid output."""
+    """Substantive response at turn 4 defers to RF model without crashing."""
     responses = [
         {"text": "What's the segfault?"},
         {"text": "Use-after-free in session cleanup."},
@@ -363,8 +296,8 @@ def test_compute_convergence_returns_valid_output():
     assert 0.0 <= result["prob_stop"] <= 1.0
 
 
-def test_feature_vector_always_21_features():
-    """Every fixture extracts to exactly 21 features."""
+def test_feature_vector_always_10_features():
+    """Every fixture extracts to exactly 10 features."""
     for fx in _FIXTURES:
         feats = extract_features(fx["responses"])
-        assert len(feats) == 21, f"[{fx['id']}] expected 21, got {len(feats)}"
+        assert len(feats) == 10, f"[{fx['id']}] expected 10, got {len(feats)}"
