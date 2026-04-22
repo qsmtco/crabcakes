@@ -134,8 +134,10 @@ class MainWindow(Gtk.ApplicationWindow):
             review_handler=None,  # ReviewHandler created later in _build; Phase 1.5 will wire via setter
         )
 
-        # Register built-in special agents
-        self._agent_runtime_handler.add_special_agent("Coder", "special/coder")
+        # Register built-in special agents from the registry
+        from agent.special_agents import get_special_agents
+        for agent_def in get_special_agents():
+            self._agent_runtime_handler.add_special_agent(agent_def.display_name, agent_def.conv_id_prefix)
 
         # Inject into dependents after _agent_runtime_handler is assigned
         self._chat_handler.set_agent_runtime_handler(self._agent_runtime_handler)
