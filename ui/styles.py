@@ -240,6 +240,11 @@ button.flat:hover {
     color: #a0a0b0;
     font-size: 11px;
 }
+/* Compact tabs — shrink-to-fit content instead of expanding to fill width */
+notebook > header > tabs > tab {
+    min-width: 0;
+    padding: 4px 8px;
+}
 .chat-bubble-header-time {
     font-size: 10px;
     color: #707088;
