@@ -3,7 +3,17 @@
 # Application entry point — creates and runs the CrabcakesApp
 
 import sys
+import os
 import gi
+import logging
+
+# Configure logging early — before any module imports that might use logging
+_log_level = logging.DEBUG if os.environ.get("CRABCAKES_DEBUG") else logging.WARNING
+logging.basicConfig(
+    level=_log_level,
+    format="%(name)s %(levelname)s %(message)s",
+    stream=sys.stderr,
+)
 # Require GTK 4.0 — must be called before importing Gtk
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk

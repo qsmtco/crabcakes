@@ -13,6 +13,10 @@
 # when the caller is already on the main thread.
 
 from typing import Callable
+import logging
+
+_logger = logging.getLogger(__name__)
+
 
 # ── Feature flags ──────────────────────────────────────────────────────────────
 STREAMING_ENABLED = False  # True = show live updates as agent types; False = final only
@@ -302,6 +306,7 @@ class ChatHandler:
             delta_text = self._extract_text(msg_obj)
             if not delta_text:
                 return
+            _logger.debug("[tab-dot] on_chat_event (delta): session_key=%r, target_tab=%r, state=delta", session_key, target_tab)
             self._dispatch(lambda sk=session_key, tt=target_tab, txt=delta_text: (
                 self._handle_streaming_delta(sk, tt, txt)
             ))
@@ -310,6 +315,7 @@ class ChatHandler:
             if not final_text:
                 return
             # session_key: bubble teardown key; target_tab: UI switch + chat box
+            _logger.debug("[tab-dot] on_chat_event (final): session_key=%r, target_tab=%r", session_key, target_tab)
             self._dispatch(lambda t=target_tab, sk=session_key, txt=final_text: (
                 self._handle_final_response(t, sk, txt)
             ))
@@ -332,6 +338,7 @@ class ChatHandler:
         self._chat_render_handler.update_streaming(session_key, delta_text)
         # If this tab is not currently visible, show unread indicator.
         current_sk = self._mc.get_current_session_key()
+        _logger.debug("[tab-dot] _handle_streaming_delta: session_key=%r, target_tab=%r, current=%r, will_increment=%r", session_key, target_tab, current_sk, target_tab != current_sk)
         if target_tab != current_sk:
             self._mc.increment_unread(target_tab)
 
@@ -355,6 +362,7 @@ class ChatHandler:
         # If this tab is not currently visible, increment unread count so the
         # tab label dot turns yellow to signal pending messages.
         current_sk = self._mc.get_current_session_key()
+        _logger.debug("[tab-dot] _handle_final_response: tab=%r, current_sk=%r, tab!=current_sk=%r", tab, current_sk, tab != current_sk)
         if tab != current_sk:
             self._mc.increment_unread(tab)
 

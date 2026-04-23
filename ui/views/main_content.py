@@ -6,7 +6,12 @@
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gdk, GLib
+import logging
 from typing import Callable
+
+_logger = logging.getLogger(__name__)
+
+# ── Constants ────────────────────────────────────────────────────────────────
 
 from ui.views.chat_control_bar import ChatControlBar
 from ui.views.session_menu import show_session_menu, show_project_menu
@@ -356,18 +361,23 @@ class MainContent(Gtk.Box):
 
     def increment_unread(self, session_key: str) -> None:
         """Mark a tab as having unread messages; update dot to yellow."""
+        _logger.debug("[tab-dot] increment_unread(%r), currently unread=%r", session_key, self._unread_tabs)
         self._unread_tabs.add(session_key)
         self._update_tab_dot(session_key)
 
     def clear_unread(self, session_key: str) -> None:
         """Clear unread state when user switches to a tab; update dot to green."""
+        _logger.debug("[tab-dot] clear_unread(%r), currently unread=%r", session_key, self._unread_tabs)
         self._unread_tabs.discard(session_key)
         self._update_tab_dot(session_key)
 
     def _update_tab_dot(self, session_key: str) -> None:
         """Update the dot color on a tab label based on unread state."""
+        _logger.debug("[tab-dot] _update_tab_dot called with session_key=%r, _unread_tabs=%r", session_key, self._unread_tabs)
         page_idx = self._find_page_by_session(session_key)
+        _logger.debug("[tab-dot] _find_page_by_session(%r) -> page_idx=%r", session_key, page_idx)
         if page_idx is None:
+            _logger.warning("[tab-dot] No tab found for session_key=%r — cannot update dot", session_key)
             return
         tab_label_box = self._chat_notebook.get_tab_label(
             self._chat_notebook.get_nth_page(page_idx)
@@ -417,11 +427,16 @@ class MainContent(Gtk.Box):
         not the page widget. Use get_tab_label() to access it.
         """
         n_pages = self._chat_notebook.get_n_pages()
+        _logger.debug("[tab-dot] _find_page_by_session scanning %d tabs for session_key=%r", n_pages, session_key)
         for idx in range(n_pages):
             page_widget = self._chat_notebook.get_nth_page(idx)
             tab_label = self._chat_notebook.get_tab_label(page_widget)
-            if tab_label and getattr(tab_label, "_session_key", None) == session_key:
+            tab_sk = getattr(tab_label, '_session_key', None) if tab_label else None
+            _logger.debug("[tab-dot]   tab[%d]._session_key=%r (looking for %r)", idx, tab_sk, session_key)
+            if tab_label and getattr(tab_label, '_session_key', None) == session_key:
+                _logger.debug("[tab-dot]   MATCH at index %d", idx)
                 return idx
+        _logger.debug("[tab-dot]   no match found")
         return None
 
     def _close_tab(self, page_idx):
@@ -579,9 +594,20 @@ class MainContent(Gtk.Box):
         Note: this only updates _tab_sessions — it does NOT create a new tab,
         switch to it, or change the visible label. The tab keeps showing its
         original agent_name. The session_key used for routing incoming messages
-        is what changes. Designed for switching between sessions of the same agent."""
+        is what changes. Designed for switching between sessions of the same agent.
+
+        The tab label box._session_key is also kept in sync so that
+        _find_page_by_session (which reads the widget attribute) finds the
+        correct tab on subsequent gateway events."""
         self._tab_sessions[page_idx] = new_session_key
         self._update_tab_session_label(page_idx, new_session_key)
+        # Keep tab_label_box._session_key in sync so _find_page_by_session
+        # (which reads the widget attribute) finds this tab on subsequent events.
+        page = self._chat_notebook.get_nth_page(page_idx)
+        if page is not None:
+            tab_label_box = self._chat_notebook.get_tab_label(page)
+            if tab_label_box is not None:
+                tab_label_box._session_key = new_session_key
 
     def get_current_session_key(self):
         """Return the session_key for the currently active tab, or None."""

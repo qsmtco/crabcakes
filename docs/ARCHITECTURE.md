@@ -422,6 +422,8 @@ content.update_stt_state(state) # "idle" | "recording" — button label/style
 
 **Tab close:** Each tab has an × button (top-right of tab label) and responds to middle-click. Both call `_close_tab(page_idx)` which removes the page and re-indexes tracking dicts.
 
+**Tab session switch:** Right-click → session switcher menu calls `_switch_tab_session(page_idx, new_session_key)`. This updates both `_tab_sessions[page_idx]` (the internal lookup dict) **and** `tab_label_box._session_key` (the GTK widget attribute). The widget attribute must stay in sync because `_find_page_by_session` reads it — a split-brain causes `_update_tab_dot` to miss the tab, breaking the unread dot indicator.
+
 **Review bar integration (Phase 7):** ReviewHandler calls `set_review_bar(bar)` to insert a `ReviewBar` widget above the notebook, and `get_review_bar()` to retrieve the current bar for state updates without accessing MainContent internal state.
 
 ### 3.10 `utils/favorites.py` — Favorites Persistence
