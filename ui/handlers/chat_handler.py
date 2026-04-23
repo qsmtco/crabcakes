@@ -347,10 +347,7 @@ class ChatHandler:
         indicator on the tab label signals that another tab has new messages.
         """
         current_sk = self._mc.get_current_session_key()
-        print(f"[DEBUG _handle_final_response] tab={tab!r} session_key={session_key!r} "
-              f"current_tab={current_sk!r} text_len={len(final_text)}")
         chat_box = self._mc.get_chat_box_for_session(tab)
-        print(f"[DEBUG] get_chat_box_for_session({tab!r}) = {chat_box}")
         # Always record the message in the chat box (data plane), regardless of
         # render handler state. render_sync / end_streaming are presentation.
         if chat_box is not None and hasattr(chat_box, 'record'):
