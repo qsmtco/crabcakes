@@ -16,6 +16,14 @@ from utils.config import get_config_file
 
 DEFAULT_BASE_URL = "https://api.minimax.io/v1/text/chatcompletion_v2"
 DEFAULT_MODEL = "MiniMax-M2.5-Lightning"
+
+# Template marker — replaced with user input text before sending to the API.
+# Placed in improve-system-prompt.md to control where the user's text lands
+# in the assembled prompt. Code searches for this marker; if found, the
+# entire template is sent as a single user message. If not found, falls
+# back to legacy two-message split (system + user).
+USER_INPUT_MARKER = "{{USER_INPUT}}"
+
 DEFAULT_SYSTEM_PROMPT = """You are an expert technical editor. Rewrite all input text to be maximally clear, detailed, and precise.
 
 Specifically:
@@ -29,7 +37,12 @@ Specifically:
 Output format:
 • Return ONLY the improved text — no preamble, no explanation, no quotes, no labels, no commentary
 • Preserve all original meaning and intent
-• Be maximally verbose — completeness and precision always outweigh brevity"""
+• Be maximally verbose — completeness and precision always outweigh brevity
+
+**Input:**
+{{USER_INPUT}}
+
+**Output:** Return the improved version with all linguistic issues resolved, maintaining the original meaning and intent."""
 
 _config = None
 _config_lock = threading.Lock()
@@ -85,12 +98,23 @@ def improve_prompt(raw_text, callback, GLib=None):
         except (IOError, OSError):
             pass
 
-    payload = json.dumps({
-        "model": model,
-        "messages": [
+    # Build messages — template mode or legacy split
+    if USER_INPUT_MARKER in system_prompt:
+        # Template mode: inject user text at the marker, send as single user message.
+        # The prompt file controls structure and placement of the user's text.
+        assembled = system_prompt.replace(USER_INPUT_MARKER, raw_text)
+        messages = [{"role": "user", "content": assembled}]
+    else:
+        # Legacy mode: system prompt + user text as separate messages.
+        # Backward compatible with prompt files that don't use the marker.
+        messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": raw_text},
-        ],
+        ]
+
+    payload = json.dumps({
+        "model": model,
+        "messages": messages,
         "temperature": 0.3,
     }).encode()
 

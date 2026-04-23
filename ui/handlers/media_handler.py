@@ -70,7 +70,12 @@ class MediaHandler:
         text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True).strip()
         if not text:
             return
-        self._mc._improve_button.set_sensitive(False)
+        # Visual feedback — swap to "Improving..." + pulsing CSS
+        btn = self._mc._improve_button
+        btn.set_label("Improving…")
+        btn.remove_css_class("btn-improve")
+        btn.add_css_class("btn-improving")
+        btn.set_sensitive(False)
         improve_prompt = self._improve.improve_prompt if self._improve else None
         if improve_prompt is None:
             return
@@ -80,7 +85,12 @@ class MediaHandler:
 
     def _on_improve_result(self, improved_text, error):
         """Handle improve API result — replace input with improved text."""
-        self._mc._improve_button.set_sensitive(True)
+        btn = self._mc._improve_button
+        # Restore original label + CSS
+        btn.set_label("Improve ✦")
+        btn.remove_css_class("btn-improving")
+        btn.add_css_class("btn-improve")
+        btn.set_sensitive(True)
         if error:
             import logging
             logging.warning("[improve] error: %s", error)

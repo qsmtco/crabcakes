@@ -57,6 +57,19 @@ button.btn-improve:hover {
     color: #c7d2fe;
 }
 
+button.btn-improving {
+    background: rgba(79, 70, 229, 0.45);
+    color: #c7d2fe;
+    border-radius: 6px;
+    border: none;
+    box-shadow: none;
+    animation: improve-pulse 1.2s ease-in-out infinite;
+}
+@keyframes improve-pulse {
+    0%, 100% { background: rgba(79, 70, 229, 0.35); }
+    50% { background: rgba(79, 70, 229, 0.55); }
+}
+
 button.flat {
     background: transparent;
     color: #6b6b7a;

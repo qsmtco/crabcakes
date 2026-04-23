@@ -121,7 +121,7 @@ crabcakes/
     ├── prompts.py             # load_prompts() — reads .md from prompts/
     ├── projects.py             # load_projects(), scan_directory(), load_members(), save_members()
     ├── favorites.py           # favorites persistence (favorites.json)
-    ├── improve.py             # improve_prompt() — MiniMax API for prompt improvement
+    ├── improve.py             # improve_prompt() — MiniMax API for prompt improvement (template mode with {{USER_INPUT}} marker)
     ├── stt.py                 # STTEngine — faster-whisper push-to-talk
     ├── config.py              # Config path helpers — get_config_dir(), get_projects_dir(), COMMAND_PREFIX (Phase 7)
     ├── diff_parser.py         # parse_diff() — unified diff → FileDiff/ParsedDiff data (Phase 7)
@@ -449,7 +449,7 @@ toggle_favorite(filepath) -> bool   # True if now favorited
 | `scan_directory(path)` | `projects.py` | Returns `[(name, full_path, is_dir), ...]` for one level, filtered (skips `__pycache__`, `.git`, etc.) |
 | `load_members(project_name)` | `projects.py` | Returns `[{session_key}, ...]` from `~/.config/crabcakes/projects/<name>/members.json` |
 | `save_members(project_name, members)` | `projects.py` | Writes members list to `members.json`, creates dir if needed |
-| `improve_prompt(text, callback, GLib)` | `improve.py` | Sends text to MiniMax API, calls `callback(improved, error)` with GLib dispatch |
+| `improve_prompt(text, callback, GLib)` | `improve.py` | Loads template from `prompts/improve-system-prompt.md`, injects user text at `{{USER_INPUT}}` marker (or legacy split), sends to MiniMax API, calls `callback(improved, error)` with GLib dispatch |
 | `STTEngine` class | `stt.py` | Push-to-talk STT via faster-whisper — arecord → PCM buffer → faster-whisper (tiny.en model) → stop_async callback |
 | `show_session_menu(parent, agent_name, sessions, on_select)` | `session_menu.py` | GTK popover menu listing sessions; clicking fires `on_select(session_key)` |
 
@@ -778,6 +778,25 @@ def render_agent_icon(color_hex: str, initials: str, size: int = 44) -> Gdk.Text
 def render_folder_icon(color_hex: str, letter: str, size: int = 44) -> Gdk.Texture | None:
     """Colored folder SVG with tab notch + white letter. Returns None on error."""
 ```
+
+### 3.17a `utils/improve.py` — Prompt Improvement (Template Mode)
+
+**Responsibility:** Improve user prompt text via MiniMax API. Loads a system prompt template from `prompts/improve-system-prompt.md`, injects the user's input text at the `{{USER_INPUT}}` marker, and sends the assembled prompt to the API.
+
+**Template mode:** If `{{USER_INPUT}}` is found in the loaded prompt file, the marker is replaced with the user's text and sent as a single `user` message. This gives the prompt file full control over structure and placement.
+
+**Legacy mode:** If `{{USER_INPUT}}` is not found, falls back to two-message split (`system` + `user`). Backward compatible with prompt files that don't use the marker.
+
+**Public API:**
+```python
+USER_INPUT_MARKER = "{{USER_INPUT}}"
+
+def improve_prompt(raw_text, callback, GLib=None)
+    # raw_text: user input box text
+    # callback(improved_text, error) — GLib.idle_add dispatched if GLib provided
+```
+
+**Config:** Reads `apiKey`, `baseUrl`, `model` from `~/.config/crabcakes/config.json`. Defaults: MiniMax API, `MiniMax-M2.5-Lightning`.
 
 ### 3.18 `models/colors.py` — Color Palette
 
@@ -1862,7 +1881,7 @@ crabcakes/
     ├── favorites.py             # 60 lines — favorites persistence (favorites.json)
     ├── git_ops.py               # 147 lines — GitPython wrapper: stage/commit/diff/checkout (Phase 7)
     ├── icons.py                 # 165 lines — Gdk.Texture SVG rendering (avatars + folder icons)
-    ├── improve.py               # 143 lines — improve_prompt() MiniMax API
+    ├── improve.py               # ~160 lines — improve_prompt() MiniMax API (template mode + {{USER_INPUT}} marker)
     ├── markdown.py              # 220 lines — format_markdown() — inline markdown → Pango (Phase 1)
     ├── projects.py              # 77 lines — load_projects(), scan_directory(), load/save_members()
     ├── prompts.py               # 25 lines — load_prompts() — reads .md from prompts/
