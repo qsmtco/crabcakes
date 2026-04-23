@@ -381,6 +381,28 @@ class MainContent(Gtk.Box):
         dot.remove_css_class("tab-dot-unread" if has_unread else "tab-dot-idle")
         dot.add_css_class("tab-dot-unread" if has_unread else "tab-dot-idle")
 
+    def _update_tab_session_label(self, page_idx: int, new_session_key: str) -> None:
+        """Update the session/channel label in the tab for a given page.
+
+        Traversal: dot(0) → name(1) → sep(2) → session_label(3).
+        Called from _switch_tab_session() after updating _tab_sessions.
+        """
+        page = self._chat_notebook.get_nth_page(page_idx)
+        if page is None:
+            return
+        tab_label_box = self._chat_notebook.get_tab_label(page)
+        if tab_label_box is None:
+            return
+        dot = tab_label_box.get_first_child()
+        if dot is None:
+            return
+        name = dot.get_next_sibling()
+        sep = name.get_next_sibling() if name else None
+        session_label = sep.get_next_sibling() if sep else None
+        if session_label is None:
+            return
+        session_label.set_label(self._extract_session_display_name(new_session_key))
+
     def _find_page_by_session(self, session_key):
         """Return the current page index for a session_key by scanning notebook tab labels.
 
@@ -552,6 +574,7 @@ class MainContent(Gtk.Box):
         original agent_name. The session_key used for routing incoming messages
         is what changes. Designed for switching between sessions of the same agent."""
         self._tab_sessions[page_idx] = new_session_key
+        self._update_tab_session_label(page_idx, new_session_key)
 
     def get_current_session_key(self):
         """Return the session_key for the currently active tab, or None."""
