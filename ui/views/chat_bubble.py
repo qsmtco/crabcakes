@@ -220,23 +220,20 @@ def _build_code_from_markup(lang: str, code_markup: str, raw_content: str) -> Gt
     )
     outer.append(header)
 
-    scroll = Gtk.ScrolledWindow()
-    scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-    scroll.set_max_content_height(400)
-    scroll.set_propagate_natural_height(True)
+    # Content box — expands to natural height, no scroll cap
+    content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    content.add_css_class("code-block-content")
 
     code_label = Gtk.Label()
     code_label.set_markup(code_markup)
     code_label.set_xalign(0)
     code_label.set_selectable(True)
-    code_label.add_css_class("code-content")
-    code_label.set_wrap(False)
-    code_label.set_hexpand(True)
+    code_label.set_can_focus(False)
+    code_label.set_wrap(True)
+    code_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
 
-    code_box = Gtk.Box()
-    code_box.append(code_label)
-    scroll.set_child(code_box)
-    outer.append(scroll)
+    content.append(code_label)
+    outer.append(content)
     return outer
 
 
@@ -296,8 +293,6 @@ def _build_segment_widget(seg: dict) -> Gtk.Widget | None:
 
     if seg_type == "text":
         return _build_text_segment(seg)
-    elif seg_type == "code":
-        return _build_code_segment(seg)
     elif seg_type == "quote":
         return _build_quote_segment(seg)
     elif seg_type == "terminal":
@@ -374,49 +369,8 @@ def _make_block_header(
 
 # ── Segment widget factories ──────────────────────────────────────────────────
 
-def _build_code_segment(seg: dict) -> Gtk.Widget:
-    """
-    Render a code block with syntax highlighting, language label, and copy button.
-
-    Structure:
-      code-block (css class with lang variant)
-      ├── header: [lang-label] [Copy]  ← via _make_block_header
-      └── content: syntax-highlighted monospace label
-    """
-    lang = seg.get("lang", "").lower().strip()
-    code = seg.get("content", "")
-
-    # ── Outer block box ───────────────────────────────────────────────
-    block = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-    block.add_css_class("code-block")
-    if lang:
-        block.add_css_class(f"lang-{lang}")
-
-    # ── Header bar ────────────────────────────────────────────────────
-    header, _copy_btn = _make_block_header(
-        label_text=lang or "code",
-        content_for_copy=code,
-        header_css="code-block-header",
-    )
-    block.append(header)
-
-    # ── Content: syntax-highlighted code ──────────────────────────────
-    content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-    content.add_css_class("code-block-content")
-
-    highlighted = highlight(code, lang) if code.strip() else html_escape(code)
-    code_label = Gtk.Label()
-    code_label.set_markup(highlighted)
-    code_label.set_xalign(0)
-    code_label.set_wrap(True)
-    code_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-    code_label.set_can_focus(False)
-    code_label.set_selectable(True)
-
-    content.append(code_label)
-    block.append(content)
-
-    return block
+# _build_code_segment removed — code blocks now rendered via _build_code_from_markup()
+# in the process_segments() → build_role_bubble() pipeline (commit 37bc5cc refactor).
 
 
 def _build_quote_segment(seg: dict) -> Gtk.Widget:
