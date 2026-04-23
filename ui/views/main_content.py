@@ -287,6 +287,7 @@ class MainContent(Gtk.Box):
         close_btn.set_hexpand(False)
 
         tab_label_box.append(tab_dot)
+        tab_label_box._dot = tab_dot  # explicit reference avoids GTK4 get_first_child() ordering issue
         tab_label_box.append(tab_name)
         tab_label_box.append(tab_sep)
         tab_label_box.append(tab_session)
@@ -373,13 +374,19 @@ class MainContent(Gtk.Box):
         )
         if tab_label_box is None:
             return
-        # The dot is the first child of the tab_label_box
-        dot = tab_label_box.get_first_child()
+        # Dot stored directly on tab_label_box at creation time — avoids GTK4
+        # get_first_child() ordering ambiguity (TabLabelBox children may not be
+        # in insertion order after layout).
+        dot = getattr(tab_label_box, '_dot', None)
         if dot is None:
             return
         has_unread = session_key in self._unread_tabs
-        dot.remove_css_class("tab-dot-unread" if has_unread else "tab-dot-idle")
-        dot.add_css_class("tab-dot-unread" if has_unread else "tab-dot-idle")
+        if has_unread:
+            dot.remove_css_class("tab-dot-idle")
+            dot.add_css_class("tab-dot-unread")
+        else:
+            dot.remove_css_class("tab-dot-unread")
+            dot.add_css_class("tab-dot-idle")
 
     def _update_tab_session_label(self, page_idx: int, new_session_key: str) -> None:
         """Update the session/channel label in the tab for a given page.
@@ -393,7 +400,7 @@ class MainContent(Gtk.Box):
         tab_label_box = self._chat_notebook.get_tab_label(page)
         if tab_label_box is None:
             return
-        dot = tab_label_box.get_first_child()
+        dot = getattr(tab_label_box, '_dot', None)
         if dot is None:
             return
         name = dot.get_next_sibling()
