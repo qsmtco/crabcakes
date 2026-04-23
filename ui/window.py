@@ -115,6 +115,7 @@ class MainWindow(Gtk.ApplicationWindow):
             on_project_selected=self._on_project_selected,
         )
         self._left_panel = left_panel
+        self._left_panel.set_main_content(self._main_content)
 
         # Agent card handler — agent_mgr set in _sync_gateway_to_chat_handler after connect
         from ui.handlers.agent_list_handler import AgentListHandler

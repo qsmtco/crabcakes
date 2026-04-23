@@ -534,6 +534,7 @@ class MainContent(Gtk.Box):
             agent_name,
             sessions,
             lambda sk: self._switch_tab_session(page_idx, sk),
+            current_session_key=self._tab_sessions.get(page_idx, session_key),
         )
 
     def _on_project_solo_selected(self, session_key, project_name, target_sk):

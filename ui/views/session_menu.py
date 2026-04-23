@@ -24,16 +24,17 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
 
 
-def show_session_menu(parent, agent_name, sessions, on_select):
+def show_session_menu(parent, agent_name, sessions, on_select, current_session_key=None):
     """
     Build and popup a right-click menu listing all sessions for an agent.
     Clicking a session item calls on_select(session_key).
 
     Args:
-        parent:       Any visible GTK widget — used for positioning the popup.
-        agent_name:   Display name for the agent (shown as menu header).
-        sessions:     List of session key strings.
-        on_select:    Callable(session_key: str) — called with the selected session.
+        parent:               Any visible GTK widget — used for positioning the popup.
+        agent_name:           Display name for the agent (shown as menu header).
+        sessions:             List of session key strings.
+        on_select:            Callable(session_key: str) — called with the selected session.
+        current_session_key:  Session key to mark with a check mark (active session).
     """
     popover = Gtk.Popover()
 
@@ -67,11 +68,18 @@ def show_session_menu(parent, agent_name, sessions, on_select):
             row.set_activatable(True)
             row.set_selectable(False)
 
-            label = Gtk.Label(label=_shorten_session_key(sk), xalign=0)
+            label = Gtk.Label(xalign=0)
             label.set_margin_top(4)
             label.set_margin_bottom(4)
             label.set_margin_start(8)
             label.set_margin_end(8)
+
+            display = _shorten_session_key(sk)
+            if sk == current_session_key:
+                label.set_markup(f"✓ {display}")
+            else:
+                label.set_text(display)
+
             row.set_child(label)
             row._session_key = sk
             list_box.append(row)

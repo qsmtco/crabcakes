@@ -139,7 +139,13 @@ class ActivityHandler:
         # Phase 2: every event hops the bar (skip idle/done — round is over)
         if self._phase.get(sk, 1) == 2 and self._state not in ("idle", "done"):
             self._event_hop_count[sk] = self._event_hop_count.get(sk, 0) + 1
-            self._update_feedbar()
+            # TEMPORARILY DISABLED 2026-04-22: Investigating UI freeze on large pastes.
+            # Hypothesis: 100+ gateway events during agent response each call
+            # _update_feedbar(), queuing too many GLib.idle_add callbacks and
+            # starving GTK's render/input loop. If disabling this fixes the freeze,
+            # the fix is to throttle _update_feedbar() to e.g. max once per 200ms.
+            # TODO: Uncomment the line below once throttling is implemented.
+            # self._update_feedbar()
 
         # Route to state-transition handlers
         if event == "agent":

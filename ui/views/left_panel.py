@@ -84,6 +84,10 @@ class LeftPanel(Gtk.Box):
 
     # ── Agents tab ──────────────────────────────────────────────────────────
 
+    def set_main_content(self, main_content):
+        """Set main_content reference for accessing active session key in menus."""
+        self._main_content = main_content
+
     def set_agent_list_handler(self, handler):
         """Set the AgentListHandler for avatar card rendering."""
         self._agent_list_handler = handler
@@ -300,13 +304,18 @@ class LeftPanel(Gtk.Box):
         sessions = self._agent_list_handler.get_all_sessions_for_agent(name)
         if len(sessions) <= 1:
             return  # nothing to switch between
-        # Use the row's root widget as parent for the popover
         row_widget = gesture.get_widget()
+        current_active = (
+            self._main_content.get_current_session_key()
+            if hasattr(self, "_main_content") and self._main_content
+            else None
+        )
         show_session_menu(
             parent=row_widget,
             agent_name=name,
             sessions=sessions,
             on_select=lambda sk: self._on_agent_selected(sk, name),
+            current_session_key=current_active,
         )
 
     def _on_agent_toggle_clicked(self, button):
