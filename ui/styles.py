@@ -66,7 +66,8 @@ button.btn-improving {
     animation: improve-pulse 1.2s ease-in-out infinite;
 }
 @keyframes improve-pulse {
-    0%, 100% { background: rgba(79, 70, 229, 0.35); }
+    0% { background: rgba(79, 70, 229, 0.35); }
+    100% { background: rgba(79, 70, 229, 0.35); }
     50% { background: rgba(79, 70, 229, 0.55); }
 }
 
