@@ -96,6 +96,64 @@ class CommandHandler:
         """Return help text for a command, or None if not registered."""
         return self._registry.get_help(name)
 
+    def resolve_inline_mention(self, text: str, session_key: str = "") -> "MentionResolution":
+        """Resolve @mentions from plain text (no backtick prefix required).
+
+        This is the public API used by ChatHandler for inline @ routing in
+        project tabs. Reuses the same parsing and resolution logic as the
+        backtick command path but without requiring a command prefix.
+
+        Args:
+            text:         Raw input text from the user.
+            session_key:  Source session key for project context resolution.
+
+        Returns:
+            MentionResolution with target info and cleaned text.
+        """
+        from models.command import MentionResolution
+
+        if not isinstance(text, str) or not text.strip():
+            return MentionResolution(clean_text=text)
+
+        tokens = text.split()
+        mentions, remaining = self._parse_mentions(tokens)
+
+        if not mentions:
+            # No @mention found — not our concern, return clean
+            return MentionResolution(clean_text=text)
+
+        if len(mentions) > 1:
+            return MentionResolution(
+                clean_text=text,
+                error=f"Only one @mention allowed. Found: {', '.join(mentions)}",
+            )
+
+        # Resolve the single mention
+        resolved = self._resolve_mention(mentions[0], session_key)
+
+        if isinstance(resolved, CommandResult):
+            # Error from resolution
+            return MentionResolution(
+                clean_text=" ".join(remaining),
+                error=resolved.response_text,
+            )
+        elif isinstance(resolved, list):
+            # Broadcast (@ alone → all project members)
+            return MentionResolution(
+                broadcast_targets=resolved,
+                clean_text=" ".join(remaining),
+                is_broadcast=True,
+            )
+        elif isinstance(resolved, str):
+            # Single agent target
+            return MentionResolution(
+                target_session_key=resolved,
+                clean_text=" ".join(remaining),
+            )
+
+        # Shouldn't reach here, but defensive
+        return MentionResolution(clean_text=text, error="Unexpected resolution result")
+
     def process_input(self, session_key: str, text: str) -> CommandResult:
         """Parse and execute a command from input text.
 
@@ -136,6 +194,12 @@ class CommandHandler:
         cmd_name = tokens[0].lower()
         rest_tokens = tokens[1:]
 
+        # Bug #1 fix: if first token starts with @, treat as implicit "ask" command.
+        # This allows `@Agent message` to work like `ask @Agent — message.
+        if cmd_name.startswith("@"):
+            rest_tokens = [cmd_name] + rest_tokens
+            cmd_name = "ask"
+
         # Look up handler
         handler = self._registry.get(cmd_name)
         if handler is None:
@@ -162,8 +226,14 @@ class CommandHandler:
         # Use 'remaining' as cmd.args after mention resolution.
         pre_body_mentions, post_mention_args = self._parse_mentions(rest_tokens)
         cmd.args = post_mention_args
+        if len(pre_body_mentions) > 1:
+            # Bug #3 fix: reject multiple @mentions explicitly
+            return CommandResult(
+                handled=True,
+                response_text=f"Only one @mention allowed. Found: {', '.join(pre_body_mentions)}",
+            )
         if pre_body_mentions:
-            resolved = self._resolve_mention(pre_body_mentions[0])
+            resolved = self._resolve_mention(pre_body_mentions[0], session_key)
             if isinstance(resolved, str):
                 cmd.target_session_key = resolved
             elif isinstance(resolved, list):
@@ -179,8 +249,13 @@ class CommandHandler:
         # Body-position @mentions (after — separator) only if no pre-body mentions.
         if body and not pre_body_mentions:
             body_mentions, _ = self._parse_mentions(body.split())
+            if len(body_mentions) > 1:
+                return CommandResult(
+                    handled=True,
+                    response_text=f"Only one @mention allowed. Found: {', '.join(body_mentions)}",
+                )
             if body_mentions:
-                resolved = self._resolve_mention(body_mentions[0])
+                resolved = self._resolve_mention(body_mentions[0], session_key)
                 if isinstance(resolved, str):
                     cmd.target_session_key = resolved
                 elif isinstance(resolved, list):
@@ -189,7 +264,12 @@ class CommandHandler:
                 else:
                     return resolved
 
-        # Execute handler — BUG #3 fix: guard against non-CommandResult returns
+        # Bug #2 fix: if no em-dash body was extracted but args remain after
+        # @mention stripping, use them as the body text.
+        if not cmd.body and cmd.args:
+            cmd.body = " ".join(cmd.args)
+
+        # Execute handler — guard against non-CommandResult returns
         try:
             result = handler(cmd)
         except Exception as exc:
@@ -240,42 +320,63 @@ class CommandHandler:
                 i += 1
         return flags, out
 
+    _EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[a-z]{2,}$', re.IGNORECASE)
+
     def _parse_mentions(self, tokens: list[str]) -> tuple[list[str], list[str]]:
+        """Extract @mentions from tokens, returning (mentions, remaining_args).
+
+        Finds the first contiguous run of @tokens. All other tokens (before,
+        between, and after) are preserved in remaining in original order.
+        Only the first run is collected; subsequent @tokens after a break
+        are treated as regular args.
+
+        Skips tokens that look like email addresses (defensive).
+
+        Returns:
+            mentions:  List of @mention tokens from the first run.
+            remaining: All non-collected tokens in original order.
+        """
         mentions: list[str] = []
         remaining: list[str] = []
-        seen_any_mention = False
+        state = "pre"  # pre | collecting | post
+
         for tok in tokens:
-            if tok.startswith("@"):
+            if tok.startswith("@") and state != "post":
+                # Skip email-like tokens
+                if self._EMAIL_RE.match(tok[1:]):
+                    remaining.append(tok)
+                    state = "post"
+                    continue
                 mentions.append(tok)
-                seen_any_mention = True
-        if not seen_any_mention:
-            return [], list(tokens)
-        # Second pass: collect remaining args (tokens after first non-@ following mentions)
-        seen_mention = False
-        for tok in tokens:
-            if tok.startswith("@"):
-                seen_mention = True
-            elif seen_mention:
+                state = "collecting"
+            else:
                 remaining.append(tok)
+                if state == "collecting":
+                    state = "post"  # non-@ token ends the mention run
+
         return mentions, remaining
 
-    def _resolve_mention(self, mention: str) -> str | list[str] | CommandResult:
+    def _resolve_mention(self, mention: str, session_key: str = "") -> str | list[str] | CommandResult:
         """Resolve @mention to session_key(s).
 
         - @        → all project members (list) OR error if no project_handler
         - @name    → exact or partial name match via AgentManager
         - No match → CommandResult error (handled=True, response_text=error)
+
+        Args:
+            mention:      The @token to resolve (e.g. "@Qaster" or "@")
+            session_key:  Source session key for project context resolution.
+                          Used to determine which project @ broadcast targets.
         """
         name = mention[1:]  # strip leading @
 
         if not name:
             # Empty @ → project broadcast
-            if self._project_handler is not None:
-                proj_name = self._project_handler.get_active_project_name()
-                if proj_name:
-                    members = self._project_handler.get_project_members(proj_name)
-                    if members:
-                        return members
+            proj_name = self._resolve_project_from_session(session_key)
+            if proj_name and self._project_handler is not None:
+                members = self._project_handler.get_project_members(proj_name)
+                if members:
+                    return members
             return CommandResult(
                 handled=True,
                 response_text="No active project for @ broadcast.",
@@ -289,23 +390,44 @@ class CommandHandler:
             for sk, n in names_ref.items():
                 if n.lower() == name.lower():
                     return sk
-            # Try partial match (first contains)
-            matches = [sk for sk, n in names_ref.items() if name.lower() in n.lower()]
-            if len(matches) == 1:
-                return matches[0]
-            if len(matches) > 1:
-                # BUG #7 fix: use getattr to avoid crash if agent_mgr lacks get_name()
-                get_name = getattr(self._agent_mgr, 'get_name', lambda sk: sk)
-                names = [get_name(sk) for sk in matches]
-                return CommandResult(
-                    handled=True,
-                    response_text=f"Multiple agents match @{name}: {', '.join(names)}",
-                )
+            # Try prefix match (starts-with, not contains)
+            if len(name) >= 2:
+                matches = [sk for sk, n in names_ref.items() if n.lower().startswith(name.lower())]
+                if len(matches) == 1:
+                    return matches[0]
+                if len(matches) > 1:
+                    get_name = getattr(self._agent_mgr, 'get_name', lambda sk: sk)
+                    names = [get_name(sk) for sk in matches]
+                    return CommandResult(
+                        handled=True,
+                        response_text=f"Multiple agents match @{name}: {', '.join(names)}",
+                    )
 
         return CommandResult(
             handled=True,
             response_text=f"Unknown agent: @{name}",
         )
+
+    def _resolve_project_from_session(self, session_key: str) -> str | None:
+        """Resolve project name from a session key.
+
+        For project tabs (session_key starts with "project:"), extracts
+        the project name from the key. Falls back to the global active
+        project name for backward compatibility.
+
+        Args:
+            session_key: Source session key to resolve project from.
+
+        Returns:
+            Project name or None.
+        """
+        # Project tab: extract directly from session key
+        if session_key.startswith("project:"):
+            return session_key.split(":", 1)[1]
+        # Fallback: global active project (backward compat)
+        if self._project_handler is not None:
+            return self._project_handler.get_active_project_name()
+        return None
 
     def _dispatch_result(self, result: CommandResult, session_key: str) -> None:
         """Dispatch GTK side effects of a handled CommandResult.

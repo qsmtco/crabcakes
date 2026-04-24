@@ -1,10 +1,12 @@
 # utils/projects.py
-# Loads project directories and project membership
+# Loads project directories.
+#
+# Membership management moved to utils/project_awareness.py (Project Awareness System).
+# Legacy load_members/save_members removed.
 
-import json
 import os
 
-from utils.config import get_projects_dir, get_projects_config_dir
+from utils.config import get_projects_dir
 
 # Allow tests to patch this directly without patching the module-level constant.
 # Wrapped in a list so tests can mutate _PROJECTS_DIR_REF[0] in-place rather than
@@ -45,33 +47,48 @@ def scan_directory(path: str) -> list[tuple[str, str, bool]]:
     return result
 
 
+# Backwards-compatible aliases — delegate to project_awareness.
+# These are thin wrappers so existing code that imports load_members/save_members
+# from utils.projects continues to work during the transition.
+#
+# NOTE: These are DEPRECATED. New code should use project_awareness.load_team()
+# and project_awareness.save_team() directly.
+
 def load_members(project_name: str) -> list[str]:
     """
-    Load member session keys for a project from members.json.
-    Returns [] if not found or unreadable.
+    DEPRECATED: Use project_awareness.load_team() instead.
+    Returns session keys for backward compatibility.
     """
-    path: str = os.path.join(
-        get_projects_config_dir(),
-        project_name,
-        "members.json"
-    )
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return []
+    from utils.project_awareness import load_team as _load_team
+    from utils.projects import load_projects as _load_projects
+    # Find the project path from project name
+    for name, path in _load_projects():
+        if name == project_name:
+            team = _load_team(path)
+            return team.get_session_keys()
+    return []
 
 
 def save_members(project_name: str, members: list[str]) -> None:
     """
-    Save member session keys for a project to members.json.
-    Creates the project directory if needed.
+    DEPRECATED: Use project_awareness.save_team() instead.
+    Saves session keys for backward compatibility.
     """
-    dir_path: str = os.path.join(
-        get_projects_config_dir(),
-        project_name
-    )
-    os.makedirs(dir_path, exist_ok=True)
-    path: str = os.path.join(dir_path, "members.json")
-    with open(path, "w") as f:
-        json.dump(members, f)
+    from utils.project_awareness import load_team as _load_team, save_team as _save_team
+    from utils.projects import load_projects as _load_projects
+    from models.team import TeamMember
+    # Find the project path from project name
+    for name, path in _load_projects():
+        if name == project_name:
+            team = _load_team(path)
+            # Rebuild member list from session keys
+            new_members = []
+            for sk in members:
+                existing = team.get_member(sk)
+                if existing:
+                    new_members.append(existing)
+                else:
+                    new_members.append(TeamMember(session_key=sk, name=""))
+            team.members = new_members
+            _save_team(path, team)
+            return

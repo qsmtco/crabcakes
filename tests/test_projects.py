@@ -103,105 +103,127 @@ class TestScanDirectory:
 
 
 class TestLoadMembers:
-    """load_members reads members.json — must handle corruption and absence."""
+    """load_members reads team.json via project_awareness — must handle absence gracefully."""
 
-    def test_missing_file_returns_empty_list(self, tmp_config_dir):
-        """members.json not found must return [], not raise."""
+    def test_missing_project_returns_empty_list(self, tmp_config_dir):
+        """Project not found must return [], not raise."""
         result = load_members("nonexistent_project")
         assert result == []
 
-    def test_empty_json_array_returns_empty_list(self, tmp_config_dir):
-        """members.json containing [] must return [], not [None] or None."""
-        project_dir = tmp_config_dir / "projects" / "empty_project"
-        project_dir.mkdir(parents=True)
-        (project_dir / "members.json").write_text("[]\n")
-
-        result = load_members("empty_project")
-        assert result == []
-
-    def test_invalid_json_returns_empty_list(self, tmp_config_dir):
-        """Corrupt JSON must not raise — caller gets [] and can handle gracefully."""
-        project_dir = tmp_config_dir / "projects" / "corrupt_project"
-        project_dir.mkdir(parents=True)
-        (project_dir / "members.json").write_text("{ this is not json }")
-
-        result = load_members("corrupt_project")
-        assert result == []
-
-    def test_whitespace_only_json_returns_empty_list(self, tmp_config_dir):
-        """Whitespace-only file must be handled."""
-        project_dir = tmp_config_dir / "projects" / "blank_project"
-        project_dir.mkdir(parents=True)
-        (project_dir / "members.json").write_text("   \n  ")
-
-        result = load_members("blank_project")
-        assert result == []
+    def test_empty_team_returns_empty_list(self, tmp_path, tmp_config_dir, monkeypatch):
+        """team.json with no members must return []."""
+        import utils.projects as proj_mod
+        projects_dir = tmp_path / "projects"
+        projects_dir.mkdir()
+        project_dir = projects_dir / "empty_project"
+        project_dir.mkdir()
+        proj_mod._PROJECTS_DIR_REF[0] = str(projects_dir)
+        try:
+            # Initialize .crabcakes with empty team
+            from utils.project_awareness import init_project_config
+            init_project_config(str(project_dir), "empty_project")
+            result = load_members("empty_project")
+            assert result == []
+        finally:
+            proj_mod._PROJECTS_DIR_REF[0] = proj_mod.get_projects_dir()
 
 
 class TestSaveMembers:
-    """save_members writes members.json — must handle directory creation."""
+    """save_members writes team.json via project_awareness."""
 
-    def test_creates_intermediate_directories(self, tmp_config_dir):
-        """Saving members for a new project must create the full directory path."""
-        project_name = "brand_new_project_xyz"
+    def test_creates_crabcakes_dir(self, tmp_path, tmp_config_dir, monkeypatch):
+        """Saving members must create .crabcakes/team.json in the project directory."""
+        import utils.projects as proj_mod
+        projects_dir = tmp_path / "projects"
+        projects_dir.mkdir()
+        project_dir = projects_dir / "brand_new_project_xyz"
+        project_dir.mkdir()
+        proj_mod._PROJECTS_DIR_REF[0] = str(projects_dir)
+        try:
+            from utils.project_awareness import init_project_config
+            init_project_config(str(project_dir), "brand_new_project_xyz")
+            save_members("brand_new_project_xyz", ["sk1", "sk2"])
+            assert (project_dir / ".crabcakes" / "team.json").exists()
+        finally:
+            proj_mod._PROJECTS_DIR_REF[0] = proj_mod.get_projects_dir()
 
-        save_members(project_name, ["sk1", "sk2"])
-
-        project_dir = tmp_config_dir / "projects" / project_name
-        assert project_dir.exists()
-        assert (project_dir / "members.json").exists()
-
-    def test_overwrites_existing_file(self, tmp_config_dir):
+    def test_overwrites_existing_file(self, tmp_path, tmp_config_dir, monkeypatch):
         """Calling save_members twice on same project must overwrite, not append."""
-        project_name = "overwrite_test"
+        import utils.projects as proj_mod
+        projects_dir = tmp_path / "projects"
+        projects_dir.mkdir()
+        project_dir = projects_dir / "overwrite_test"
+        project_dir.mkdir()
+        proj_mod._PROJECTS_DIR_REF[0] = str(projects_dir)
+        try:
+            from utils.project_awareness import init_project_config
+            init_project_config(str(project_dir), "overwrite_test")
+            save_members("overwrite_test", ["sk1"])
+            save_members("overwrite_test", ["sk2", "sk3"])
+            result = load_members("overwrite_test")
+            assert result == ["sk2", "sk3"]
+        finally:
+            proj_mod._PROJECTS_DIR_REF[0] = proj_mod.get_projects_dir()
 
-        save_members(project_name, ["sk1"])
-        save_members(project_name, ["sk2", "sk3"])
+    def _setup_project(self, tmp_path, monkeypatch, project_name):
+        """Helper: create a temp projects dir with one project, patch _PROJECTS_DIR_REF."""
+        import utils.projects as proj_mod
+        projects_dir = tmp_path / "projects"
+        projects_dir.mkdir()
+        project_dir = projects_dir / project_name
+        project_dir.mkdir()
+        proj_mod._PROJECTS_DIR_REF[0] = str(projects_dir)
+        from utils.project_awareness import init_project_config
+        init_project_config(str(project_dir), project_name)
+        return proj_mod, project_dir
 
-        result = load_members(project_name)
-        assert result == ["sk2", "sk3"]
+    def _teardown(self, proj_mod):
+        import utils.projects as pm
+        proj_mod._PROJECTS_DIR_REF[0] = pm.get_projects_dir()
 
-    def test_empty_list_saves_valid_json(self, tmp_config_dir):
-        """Saving empty member list must produce valid JSON [].  """
-        project_name = "empty_members"
+    def test_empty_list_saves_valid_json(self, tmp_path, tmp_config_dir, monkeypatch):
+        """Saving empty member list must produce valid team.json."""
+        proj_mod, project_dir = self._setup_project(tmp_path, monkeypatch, "empty_members")
+        try:
+            save_members("empty_members", [])
+            result = load_members("empty_members")
+            assert result == []
+        finally:
+            self._teardown(proj_mod)
 
-        save_members(project_name, [])
-
-        project_dir = tmp_config_dir / "projects" / project_name
-        content = (project_dir / "members.json").read_text()
-        parsed = json.loads(content)
-        assert parsed == []
-
-    def test_roundtrip_single_member(self, tmp_config_dir):
+    def test_roundtrip_single_member(self, tmp_path, tmp_config_dir, monkeypatch):
         """save then load must return identical data."""
-        project_name = "roundtrip"
-        original = ["agent:qaster:telegram:direct:7478874934"]
+        proj_mod, project_dir = self._setup_project(tmp_path, monkeypatch, "roundtrip")
+        try:
+            original = ["agent:qaster:telegram:direct:7478874934"]
+            save_members("roundtrip", original)
+            result = load_members("roundtrip")
+            assert result == original
+        finally:
+            self._teardown(proj_mod)
 
-        save_members(project_name, original)
-        result = load_members(project_name)
-
-        assert result == original
-
-    def test_roundtrip_multiple_members(self, tmp_config_dir):
+    def test_roundtrip_multiple_members(self, tmp_path, tmp_config_dir, monkeypatch):
         """Multiple members must survive save/load cycle."""
-        project_name = "multi_roundtrip"
-        original = [
-            "agent:qaster:telegram:direct:7478874934",
-            "agent:main:cron:575df3a8:run:e203c5ae",
-            "agent:qtr:telegram:direct:7478874934",
-        ]
+        proj_mod, project_dir = self._setup_project(tmp_path, monkeypatch, "multi_roundtrip")
+        try:
+            original = [
+                "agent:qaster:telegram:direct:7478874934",
+                "agent:main:cron:575df3a8:run:e203c5ae",
+                "agent:qtr:telegram:direct:7478874934",
+            ]
+            save_members("multi_roundtrip", original)
+            result = load_members("multi_roundtrip")
+            assert result == original
+        finally:
+            self._teardown(proj_mod)
 
-        save_members(project_name, original)
-        result = load_members(project_name)
-
-        assert result == original
-
-    def test_special_characters_in_session_keys_preserved(self, tmp_config_dir):
+    def test_special_characters_in_session_keys_preserved(self, tmp_path, tmp_config_dir, monkeypatch):
         """Session keys with colons, dashes, underscores must not be corrupted."""
-        project_name = "special_chars"
-        original = ["agent:qaster:telegram:direct:7478874934:run:abc-123_x"]
-
-        save_members(project_name, original)
-        result = load_members(project_name)
-
-        assert result == original
+        proj_mod, project_dir = self._setup_project(tmp_path, monkeypatch, "special_chars")
+        try:
+            original = ["agent:qaster:telegram:direct:7478874934:run:abc-123_x"]
+            save_members("special_chars", original)
+            result = load_members("special_chars")
+            assert result == original
+        finally:
+            self._teardown(proj_mod)

@@ -425,6 +425,17 @@ def build_system_prompt(
         if file_context:
             file_context = f"\n\n## File context\n\n{file_context}"
 
+    # Project awareness injection
+    awareness_block = ""
+    if project_path:
+        try:
+            from utils.project_awareness import build_awareness_block
+            awareness_block = build_awareness_block(project_path)
+            if awareness_block:
+                awareness_block = f"\n\n## Project Awareness\n\n{awareness_block}"
+        except Exception:
+            pass  # Non-fatal — awareness is a bonus, not a requirement
+
     # Select template
     template = (
         _CODER_SYSTEM_PROMPT
@@ -437,5 +448,5 @@ def build_system_prompt(
         project_path=project_path or "(no project open)",
         review_mode=review_mode,
         tool_list=tool_list,
-        file_context_block=file_context + review_note,
+        file_context_block=file_context + awareness_block + review_note,
     )

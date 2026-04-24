@@ -844,6 +844,15 @@ def get_project_members(project_name: str) -> list[str]:
 def get_active_project_name() -> str | None:
     """Return currently active project name, or None."""
 
+def get_agent_session_in_project(project_name: str, agent_name: str) -> str | None:
+    """Return the session key an agent currently uses in a project."""
+
+def update_agent_session(project_name: str, old_session_key: str, new_session_key: str):
+    """Replace an agent's session key in a project. Updates members.json + routing table."""
+
+def set_agent_manager(agent_mgr) -> None:
+    """Inject AgentManager after gateway connect."""
+
 def set_on_members_changed(cb: Callable): pass
 def set_on_navigate_back(cb: Callable): pass
 def close_project(name: str): pass
@@ -1857,7 +1866,7 @@ crabcakes/
 │   │   ├── command_handler.py   # 340 lines — backtick command parser + @mention resolution (Phase 7)
 │   │   ├── gateway_handler.py    # 228 lines — connect, agents, lifecycle (Phase 2)
 │   │   ├── media_handler.py      # 89 lines — STT + improve (Phase 4)
-│   │   ├── project_handler.py    # 207 lines — active project + agent-to-project routing (Phase 3)
+│   │   ├── project_handler.py    # 281 lines — active project + agent-to-project routing + session switching
 │   │   ├── project_list_handler.py # 61 lines — project card data + color round-robin
 │   │   ├── prompts_handler.py    # 187 lines — favorites, search, last-used, load_prompt()
 │   │   └── review_handler.py    # 340 lines — review session lifecycle: checkpoint/check/accept/reject (Phase 7)

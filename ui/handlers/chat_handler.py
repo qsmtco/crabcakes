@@ -61,6 +61,7 @@ class ChatHandler:
         self._pending_req_id: str | None = None  # tracks last sent req_id for res correlation
         self._on_res_confirmed: Callable[[str], None] | None = None  # pre-flight confirm via res
         self._agent_runtime_handler = None  # injected via set_agent_runtime_handler()
+        self._awareness_sent: set[str] = set()  # track "project:agent" pairs that received awareness
 
     def set_chat_render_handler(self, handler):
         """"Inject ChatRenderHandler. Called by window.py._build()."""
@@ -224,6 +225,82 @@ class ChatHandler:
                 return
             # Not a command (handled=False) — fall through to normal send
 
+        # ── Inline @mention routing (project tabs only) ─────────────────────
+        # After command handler returned handled=False, check for @mentions in
+        # plain text. Only applies to project tabs — non-project tabs skip this.
+        if session_key.startswith("project:") and self._command_handler is not None:
+            from models.command import MentionResolution
+            resolution = self._command_handler.resolve_inline_mention(text, session_key)
+            if resolution.error:
+                # Show error as chat text
+                buf.set_text("")
+                def _show_error():
+                    chat_box = self._mc.get_chat_box()
+                    if chat_box is not None and self._chat_render_handler is not None:
+                        bubble = self._chat_render_handler.render_sync("System", resolution.error, session_key)
+                        if bubble is not None:
+                            chat_box.append(bubble)
+                        self._mc.scroll_chat_to_bottom()
+                self._dispatch(_show_error)
+                return
+            elif resolution.target_session_key:
+                # Solo send to one agent
+                buf.set_text("")
+                forward_text = resolution.clean_text
+                agent_name = resolution.target_session_key.split("/")[-1]
+                echo_text = f"\u2192 @{agent_name}: {forward_text}" if forward_text else f"\u2192 @{agent_name}"
+                def _show_and_route_solo():
+                    chat_box = self._mc.get_chat_box()
+                    if chat_box is not None:
+                        if hasattr(chat_box, 'record'):
+                            chat_box.record("You", echo_text)
+                        if self._chat_render_handler is not None:
+                            def _on_bubble(bubble):
+                                if bubble is not None:
+                                    chat_box.append(bubble)
+                                self._mc.scroll_chat_to_bottom()
+                            self._chat_render_handler.render_async(
+                                "You", echo_text, session_key,
+                                on_bubble_ready=_on_bubble,
+                                on_forward_click=self._on_forward_message,
+                                agent_name="You",
+                            )
+                    if self._gw is not None and self._gw.is_connected():
+                        self._gw.send_message(resolution.target_session_key, forward_text)
+                self._dispatch(_show_and_route_solo)
+                if self._on_send_initiated:
+                    self._on_send_initiated(session_key)
+                return
+            elif resolution.is_broadcast:
+                # @ broadcast to all project members
+                buf.set_text("")
+                forward_text = resolution.clean_text
+                echo_text = f"\u2192 @all: {forward_text}" if forward_text else "\u2192 @all"
+                def _show_and_route_broadcast():
+                    chat_box = self._mc.get_chat_box()
+                    if chat_box is not None:
+                        if hasattr(chat_box, 'record'):
+                            chat_box.record("You", echo_text)
+                        if self._chat_render_handler is not None:
+                            def _on_bubble(bubble):
+                                if bubble is not None:
+                                    chat_box.append(bubble)
+                                self._mc.scroll_chat_to_bottom()
+                            self._chat_render_handler.render_async(
+                                "You", echo_text, session_key,
+                                on_bubble_ready=_on_bubble,
+                                on_forward_click=self._on_forward_message,
+                                agent_name="You",
+                            )
+                    if self._gw is not None and self._gw.is_connected():
+                        for target in resolution.broadcast_targets:
+                            self._gw.send_message(target, forward_text)
+                self._dispatch(_show_and_route_broadcast)
+                if self._on_send_initiated:
+                    self._on_send_initiated(session_key)
+                return
+            # No @mention found in text — fall through to normal send below
+
         # ── Normal send (not a command) ──────────────────────────────────────────
 
         # Display bubble AND send message (both happen in same dispatch)
@@ -250,14 +327,24 @@ class ChatHandler:
                     solo_target = self._project_handler.get_solo_target(project_name)
                 else:
                     solo_target = None
+
+                # Inject project awareness on first message to each agent
+                awareness_prefix = self._build_awareness_prefix(project_name)
+
                 if solo_target:
                     # Solo DM — send only to the selected member
-                    self._gw.send_message(solo_target, text)
+                    key = f"{project_name}:{solo_target}"
+                    prefix = awareness_prefix if key not in self._awareness_sent else ""
+                    self._gw.send_message(solo_target, prefix + text)
+                    self._awareness_sent.add(key)
                 else:
                     # Group broadcast — fan out to all members
-                    members = self._projects.load_members(project_name)
+                    members = self._project_handler.get_project_members(project_name) if self._project_handler else []
                     for member in members:
-                        self._gw.send_message(member, text)
+                        key = f"{project_name}:{member}"
+                        prefix = awareness_prefix if key not in self._awareness_sent else ""
+                        self._gw.send_message(member, prefix + text)
+                        self._awareness_sent.add(key)
             else:
                 self._gw.send_message(session_key, text)
         self._dispatch(_show_and_send)
@@ -482,6 +569,24 @@ class ChatHandler:
                 break
 
     # ── Internal ─────────────────────────────────────────────────────────────
+
+    def _build_awareness_prefix(self, project_name: str) -> str:
+        """Build project awareness prefix for first message to an agent.
+        Returns empty string if already sent or awareness not available.
+        """
+        if not self._project_handler:
+            return ""
+        project_path = self._project_handler.get_active_project_path()
+        if not project_path:
+            return ""
+        try:
+            from utils.project_awareness import build_awareness_block
+            block = build_awareness_block(project_path)
+            if block.strip():
+                return f"[Project Context]\n{block}\n\n[User Message]\n"
+        except Exception:
+            pass
+        return ""
 
     def _dispatch(self, fn: Callable):
         """Call fn on the GTK main thread. Direct call if GLib not available."""

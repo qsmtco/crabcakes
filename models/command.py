@@ -19,6 +19,27 @@ from typing import Callable
 
 
 @dataclass
+class MentionResolution:
+    """Result of resolving @mentions from arbitrary text.
+
+    Returned by CommandHandler.resolve_inline_mention().
+    Used by both the backtick command path and the plain-text send path.
+
+    Fields:
+        target_session_key:  Single agent session key, or None.
+        broadcast_targets:   All project member session keys (when @ alone = broadcast).
+        clean_text:          Original text with @mention tokens removed.
+        error:               Error message if resolution failed, or None.
+        is_broadcast:        True when bare @ resolved to all project members.
+    """
+    target_session_key: str | None = None
+    broadcast_targets: list[str] = field(default_factory=list)
+    clean_text: str = ""
+    error: str | None = None
+    is_broadcast: bool = False
+
+
+@dataclass
 class Command:
     """Parsed command after stripping the prefix and extracting parts.
 

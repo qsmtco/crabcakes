@@ -6,7 +6,7 @@ import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
 
-from utils.projects import load_members, save_members
+from utils.projects import load_members
 from utils.icons import render_agent_icon
 from ui.views.file_tree import FileTree
 from ui.views.session_menu import show_session_menu

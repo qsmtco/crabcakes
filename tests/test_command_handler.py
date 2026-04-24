@@ -207,8 +207,18 @@ class TestMentionResolution:
         assert result.handled is True
         assert "Unknown agent" in result.response_text
 
-    def test_multiple_partial_matches_returns_error(self, configured_handler):
-        result = configured_handler.process_input("agent:1", "`echo @q — hi")
+    def test_multiple_partial_matches_returns_error(self):
+        """Two agents sharing a prefix → error."""
+        agnt = FakeAgentManager({
+            "DebugA": "agent:da:1",
+            "DebugB": "agent:db:2",
+        })
+        h = CommandHandler(
+            gateway_client=None, agent_manager=agnt,
+            project_handler=None, GLib_module=None,
+        )
+        h.register_command("echo", lambda c: CommandResult(handled=True, response_text="ok"))
+        result = h.process_input("agent:1", "`echo @deb — hi")
         assert result.handled is True
         assert "Multiple agents" in result.response_text
 
@@ -309,10 +319,10 @@ class TestParseMentionsInternal:
         assert rest == ["arg1"]
 
     def test_non_mention_breaks_mention_run(self, empty_handler):
-        # Non-@ token ends the mention run; subsequent @ are remaining args
+        # Non-@ token ends the mention run; subsequent @ become regular args
         mentions, rest = empty_handler._parse_mentions(["@a", "stop", "@b"])
-        assert mentions == ["@a", "@b"]
-        assert rest == ["stop"]
+        assert mentions == ["@a"]
+        assert rest == ["stop", "@b"]
 
     def test_no_mentions(self, empty_handler):
         mentions, rest = empty_handler._parse_mentions(["arg1", "arg2"])
@@ -323,3 +333,148 @@ class TestParseMentionsInternal:
         mentions, rest = empty_handler._parse_mentions([])
         assert mentions == []
         assert rest == []
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  resolve_inline_mention (plain-text @ routing, no backtick)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestResolveInlineMention:
+    """Tests for CommandHandler.resolve_inline_mention() — the public API
+    used by ChatHandler for plain-text @ routing in project tabs."""
+
+    def test_no_mention_returns_empty_resolution(self, configured_handler):
+        r = configured_handler.resolve_inline_mention("hello world", "project:testproj")
+        assert r.target_session_key is None
+        assert not r.is_broadcast
+        assert r.clean_text == "hello world"
+        assert r.error is None
+
+    def test_single_agent_resolved(self, configured_handler):
+        r = configured_handler.resolve_inline_mention("@Debugger fix this", "project:testproj")
+        assert r.target_session_key == "agent:debugger:1"
+        assert r.clean_text == "fix this"
+        assert not r.is_broadcast
+        assert r.error is None
+
+    def test_mid_text_mention_resolved(self, configured_handler):
+        r = configured_handler.resolve_inline_mention("hello @Debugger fix this", "project:testproj")
+        assert r.target_session_key == "agent:debugger:1"
+        assert r.clean_text == "hello fix this"
+        assert r.error is None
+
+    def test_broadcast_resolved(self, configured_handler):
+        r = configured_handler.resolve_inline_mention("@ hello team", "project:testproj")
+        assert r.is_broadcast
+        assert len(r.broadcast_targets) == 2  # from FakeProjectHandler
+        assert r.clean_text == "hello team"
+
+    def test_unknown_agent_error(self, configured_handler):
+        r = configured_handler.resolve_inline_mention("@Nobody hello", "project:testproj")
+        assert r.error is not None
+        assert "Unknown" in r.error
+
+    def test_multiple_mentions_error(self, configured_handler):
+        r = configured_handler.resolve_inline_mention("@Debugger @Coder hello", "project:testproj")
+        assert r.error is not None
+        assert "Only one" in r.error
+
+    def test_empty_text_returns_empty(self, configured_handler):
+        r = configured_handler.resolve_inline_mention("", "project:testproj")
+        assert r.target_session_key is None
+        assert r.clean_text == ""
+
+    def test_non_string_returns_empty(self, configured_handler):
+        r = configured_handler.resolve_inline_mention(123, "project:testproj")
+        assert r.target_session_key is None
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Bug fixes — backtick command path
+# ═══════════════════════════════════════════════════════════════════
+
+class TestBugFixes:
+    """Regression tests for bugs found during adversarial audit."""
+
+    def test_bug1_bare_at_mention_implicit_ask(self, configured_handler):
+        """Bug #1: `@Qaster hello treated @Qaster as command name → broadcast.
+        Fix: first token starting with @ triggers implicit 'ask' command."""
+        def fake_ask(cmd: Command) -> CommandResult:
+            return CommandResult(
+                handled=True,
+                forward_to=cmd.target_session_key,
+                forward_text=cmd.body,
+            )
+        configured_handler.register_command("ask", fake_ask)
+        result = configured_handler.process_input("agent:1", "`@Debugger hello")
+        assert result.handled is True
+        assert result.forward_to == "agent:debugger:1"
+        assert result.forward_text == "hello"
+
+    def test_bug2_no_emdash_args_become_body(self, configured_handler):
+        """Bug #2: `ask @Debugger hello (no em-dash) → body was empty.
+        Fix: args after @mention stripping become body when body is empty."""
+        def capture(cmd: Command) -> CommandResult:
+            return CommandResult(
+                handled=True,
+                forward_to=cmd.target_session_key,
+                forward_text=cmd.body,
+            )
+        configured_handler.register_command("capture", capture)
+        result = configured_handler.process_input("agent:1", "`capture @Debugger hello world")
+        assert result.handled is True
+        assert result.forward_text == "hello world"
+
+    def test_bug3_multiple_mentions_rejected(self, configured_handler):
+        """Bug #3: multiple @mentions silently dropped.
+        Fix: explicit error when >1 mention found."""
+        configured_handler.register_command("ask", lambda c: CommandResult(handled=True))
+        result = configured_handler.process_input("agent:1", "`ask @Debugger @Coder — hello")
+        assert result.handled is True
+        assert "Only one" in result.response_text
+
+    def test_bug5_prefix_matching_not_contains(self):
+        """Bug #5: @a matched every agent with 'a' in name.
+        Fix: use startswith instead of contains, min 2 chars for partial."""
+        agnt = FakeAgentManager({
+            "Alpha": "agent:a:1",
+            "Beta": "agent:b:2",
+            "Gamma": "agent:g:3",
+        })
+        h = CommandHandler(None, agnt, None)
+        # 1-char query: exact match only (no partial), so @a with no agent named "a" → unknown
+        resolved = h._resolve_mention("@a")
+        assert isinstance(resolved, CommandResult)
+        assert "Unknown" in resolved.response_text
+        # Exact match still works
+        resolved = h._resolve_mention("@Alpha")
+        assert isinstance(resolved, str) and resolved == "agent:a:1"
+        # 2-char prefix match works
+        resolved = h._resolve_mention("@al")
+        assert isinstance(resolved, str) and resolved == "agent:a:1"
+        # @x has no match
+        resolved = h._resolve_mention("@xy")
+        assert isinstance(resolved, CommandResult)
+        assert "Unknown" in resolved.response_text
+
+    def test_bug6_broadcast_uses_session_key_project(self):
+        """Bug #6: @ broadcast used global active project, not tab context.
+        Fix: _resolve_mention uses session_key to extract project name."""
+        agnt = FakeAgentManager({"A": "agent:a:1"})
+
+        class MultiProjectHandler:
+            def __init__(self):
+                self._active = "wrong-project"
+            def get_active_project_name(self):
+                return self._active
+            def get_project_members(self, p):
+                if p == "right-project":
+                    return ["agent:a:1"]
+                return ["agent:other:99"]
+
+        ph = MultiProjectHandler()
+        h = CommandHandler(None, agnt, ph)
+        # @ broadcast from project:right-project tab should use right-project
+        resolved = h._resolve_mention("@", session_key="project:right-project")
+        assert isinstance(resolved, list)
+        assert resolved == ["agent:a:1"]  # right-project members, not wrong-project

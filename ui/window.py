@@ -185,12 +185,14 @@ class MainWindow(Gtk.ApplicationWindow):
         # Project handler — owns active project state + agent-to-project routing (Phase 3)
         from ui.handlers.project_handler import ProjectHandler
         self._projects = __import__("utils.projects", fromlist=["projects"])
+        self._awareness = __import__("utils.project_awareness", fromlist=["project_awareness"])
         self._project_handler = ProjectHandler(
             main_content=self._main_content,
             left_panel=self._left_panel,
             projects_module=self._projects,
             agent_to_project=self._agent_to_project,  # shared AgentRoutingTable — ProjectHandler writes, ChatHandler reads
             GLib_module=GLib,
+            awareness_module=self._awareness,
         )
         # Wire left_panel project events → ProjectHandler
         # Project list handler — provides project cards with colors and data
@@ -228,7 +230,7 @@ class MainWindow(Gtk.ApplicationWindow):
         # Inject CommandHandler into ChatHandler (ChatHandler calls process_input before send)
         self._chat_handler.set_command_handler(self._command_handler)
 
-        self._project_handler.set_on_project_opened(lambda n, p: self._on_feed_bar_update(n, len(self._projects.load_members(n)) if n else 0))
+        self._project_handler.set_on_project_opened(lambda n, p: self._on_feed_bar_update(n, len(self._project_handler.get_project_members(n)) if n else 0))
         self._project_handler.set_on_members_changed(lambda n, m: self._on_feed_bar_update(n, len(m)))
 
         # Review handler — owns review session lifecycle (Phase 3)
@@ -392,6 +394,8 @@ class MainWindow(Gtk.ApplicationWindow):
         # Utility
         self._command_handler.register_command("help", self._cmd_help, aliases=["?"],
             help_text="List all commands or help for a specific command")
+        self._command_handler.register_command("session", self._cmd_session, aliases=["s"],
+            help_text="Switch agent session in project: `session list @agent | `session <ref> @agent")
 
     def _cmd_help(self, cmd: Command):
         """Handle `help [command] — returns command list card."""
@@ -416,6 +420,141 @@ class MainWindow(Gtk.ApplicationWindow):
             lines.append(f"  `{name}`{alias_str}")
         lines.extend(["", f"Type `help <command> for details."])
         return CommandResult(handled=True, response_text="\n".join(lines))
+
+    def _cmd_session(self, cmd: Command):
+        """`session list @agent — list sessions | `session <ref> @agent — switch session"""
+        from models.command import CommandResult
+
+        sk = cmd.source_session_key
+        if not sk or not sk.startswith("project:"):
+            return CommandResult(handled=True, response_text="Session switching is only available in project tabs.")
+
+        project_name = sk.split(":", 1)[1]
+
+        # Need @agent resolved
+        if not cmd.target_session_key:
+            return CommandResult(
+                handled=True,
+                response_text="Usage: `session list @agent | `session <ref> @agent",
+            )
+
+        agent_mgr = self._gateway_handler.agent_mgr if self._gateway_handler else None
+        if agent_mgr is None:
+            return CommandResult(handled=True, response_text="Not connected to gateway.")
+
+        agent_name = agent_mgr.get_name(cmd.target_session_key)
+        if not agent_name:
+            return CommandResult(handled=True, response_text=f"Unknown agent: {cmd.target_session_key}")
+
+        # Verify agent is a member of this project
+        current_sk = self._project_handler.get_agent_session_in_project(project_name, agent_name)
+        if current_sk is None:
+            return CommandResult(handled=True, response_text=f"@{agent_name} is not a member of this project.")
+
+        # Sub-command dispatch
+        if not cmd.args:
+            return CommandResult(
+                handled=True,
+                response_text="Usage: `session list @agent | `session <ref> @agent",
+            )
+
+        subcmd = cmd.args[0].lower()
+
+        if subcmd == "list":
+            return self._session_list(agent_mgr, agent_name, current_sk)
+        else:
+            return self._session_switch(
+                agent_mgr, project_name, agent_name, current_sk, subcmd,
+            )
+
+    def _session_list(self, agent_mgr, agent_name, current_sk):
+        """Format and return a numbered list of agent sessions."""
+        from models.command import CommandResult
+
+        sessions = agent_mgr.get_sessions(agent_name)
+        if not sessions:
+            return CommandResult(handled=True, response_text=f"No sessions found for @{agent_name}.")
+
+        lines = [f"Sessions for {agent_name}:"]
+        for i, sk in enumerate(sessions, 1):
+            display = self._short_session_key(sk)
+            if sk == current_sk:
+                lines.append(f"  {i}. {display}  ✓ (current)")
+            else:
+                lines.append(f"  {i}. {display}")
+        lines.append("")
+        lines.append("Switch: `session <number> @" + agent_name)
+        return CommandResult(handled=True, response_text="\n".join(lines))
+
+    def _session_switch(self, agent_mgr, project_name, agent_name, old_sk, session_ref):
+        """Switch an agent to a different session in the project."""
+        from models.command import CommandResult
+
+        sessions = agent_mgr.get_sessions(agent_name)
+        if not sessions:
+            return CommandResult(handled=True, response_text=f"No sessions found for @{agent_name}.")
+
+        # Resolve session_ref: numeric index or string match
+        new_sk = None
+
+        # Try numeric index (1-based)
+        try:
+            idx = int(session_ref)
+            if 1 <= idx <= len(sessions):
+                new_sk = sessions[idx - 1]
+        except ValueError:
+            pass
+
+        # Try string match (exact or unique prefix)
+        if new_sk is None:
+            # Exact match
+            for sk in sessions:
+                if sk == session_ref:
+                    new_sk = sk
+                    break
+            # Prefix match
+            if new_sk is None:
+                # Match against the part after "agent:<name>:"
+                prefix = f"agent:{agent_name.lower()}:"
+                matches = [sk for sk in sessions if sk.lower().startswith(prefix + session_ref.lower())]
+                if len(matches) == 1:
+                    new_sk = matches[0]
+                elif len(matches) > 1:
+                    return CommandResult(
+                        handled=True,
+                        response_text=f"Ambiguous session ref '{session_ref}'. Use `session list @{agent_name} to see options.",
+                    )
+
+        if new_sk is None:
+            return CommandResult(
+                handled=True,
+                response_text=f"No matching session '{session_ref}'. Use `session list @{agent_name} to see options.",
+            )
+
+        if new_sk == old_sk:
+            display = self._short_session_key(new_sk)
+            return CommandResult(
+                handled=True,
+                response_text=f"Already on session: {display}",
+            )
+
+        # Perform the switch
+        self._project_handler.update_agent_session(project_name, old_sk, new_sk)
+        display = self._short_session_key(new_sk)
+        return CommandResult(
+            handled=True,
+            response_text=f"✓ Switched @{agent_name} to: {display}",
+        )
+
+    def _short_session_key(self, key: str) -> str:
+        """Shorten a session key for display.
+
+        Strips the 'agent:<name>:' prefix, showing only the session-specific part.
+        """
+        parts = key.split(":")
+        if len(parts) >= 3 and parts[0] == "agent":
+            return ":".join(parts[2:])
+        return key
 
     def _cmd_ask(self, cmd: Command):
         """`ask @agent — question → forward question to agent (or all members if `@`)"""
@@ -702,7 +841,7 @@ class MainWindow(Gtk.ApplicationWindow):
         project_name = session_key.split(":", 1)[1]
 
         # Get project info
-        members = list(self._projects.load_members(project_name))
+        members = self._project_handler.get_project_members(project_name)
         solo_target = self._project_handler.get_solo_target(project_name) if self._project_handler else None
 
         # Get task summary
@@ -740,7 +879,7 @@ class MainWindow(Gtk.ApplicationWindow):
             return CommandResult(handled=True, response_text="Open a project tab to list agents.")
         project_name = session_key.split(":", 1)[1]
 
-        members = list(self._projects.load_members(project_name))
+        members = self._project_handler.get_project_members(project_name)
         solo_target = self._project_handler.get_solo_target(project_name) if self._project_handler else None
 
         lines = [f"Members in {project_name}:", ""]
@@ -758,7 +897,7 @@ class MainWindow(Gtk.ApplicationWindow):
         if not session_key.startswith("project:"):
             return CommandResult(handled=True, response_text="Open a project tab to check cost.")
         project_name = session_key.split(":", 1)[1]
-        members = list(self._projects.load_members(project_name))
+        members = self._project_handler.get_project_members(project_name)
         if not members:
             return CommandResult(handled=True, response_text="No members in this project.")
         # BUG #18 fix: use actual agent names from project members (not hardcoded)
@@ -850,6 +989,8 @@ class MainWindow(Gtk.ApplicationWindow):
         # Wire CommandHandler with live references after connect
         self._command_handler.set_gateway_client(gw)
         self._command_handler.set_agent_manager(self._gateway_handler.agent_mgr)
+        # Wire ProjectHandler with live AgentManager for session lookup
+        self._project_handler.set_agent_manager(self._gateway_handler.agent_mgr)
         # Wire forward button callback
         self._chat_handler.set_on_forward_message(self._on_forward_clicked)
         # Wire send-initiated → ActivityHandler pre-flight state

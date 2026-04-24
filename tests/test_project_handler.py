@@ -169,3 +169,82 @@ class TestRoutingApi:
     def test_get_active_project_name_returns_name_after_open(self, handler):
         handler.open_project("my-proj", "/p")
         assert handler.get_active_project_name() == "my-proj"
+
+
+# ── Session Switching ────────────────────────────────────────────────────────
+
+class FakeAgentManager:
+    """Minimal AgentManager mock for session switching tests."""
+    def __init__(self, sessions_by_name=None):
+        # sessions_by_name: {agent_name: [session_keys]}
+        self._sessions = sessions_by_name or {}
+        self._names = {}  # session_key -> name
+        for name, keys in self._sessions.items():
+            for sk in keys:
+                self._names[sk] = name
+
+    def get_sessions(self, agent_name):
+        return self._sessions.get(agent_name, [])
+
+    def get_name(self, session_key):
+        return self._names.get(session_key, "")
+
+
+class TestGetAgentSessionInProject:
+    def test_returns_matching_session(self, handler, fake_projects):
+        fake_projects.save_members("proj", ["agent:qaster:main"])
+        handler.open_project("proj", "/p")
+        handler.set_agent_manager(FakeAgentManager(
+            sessions_by_name={"qaster": ["agent:qaster:main", "agent:qaster:telegram:123"]}
+        ))
+        result = handler.get_agent_session_in_project("proj", "qaster")
+        assert result == "agent:qaster:main"
+
+    def test_returns_none_if_agent_not_member(self, handler, fake_projects):
+        fake_projects.save_members("proj", ["agent:other:main"])
+        handler.open_project("proj", "/p")
+        handler.set_agent_manager(FakeAgentManager(
+            sessions_by_name={"qaster": ["agent:qaster:main"]}
+        ))
+        result = handler.get_agent_session_in_project("proj", "qaster")
+        assert result is None
+
+    def test_returns_none_if_no_agent_manager(self, handler, fake_projects):
+        fake_projects.save_members("proj", ["agent:qaster:main"])
+        handler.open_project("proj", "/p")
+        # agent_mgr not set
+        result = handler.get_agent_session_in_project("proj", "qaster")
+        assert result is None
+
+
+class TestUpdateAgentSession:
+    def test_replaces_session_in_members(self, handler, fake_projects):
+        fake_projects.save_members("proj", ["agent:qaster:main", "agent:qrusher:main"])
+        handler.open_project("proj", "/p")
+        handler.update_agent_session("proj", "agent:qaster:main", "agent:qaster:telegram:123")
+        members = fake_projects.load_members("proj")
+        assert "agent:qaster:main" not in members
+        assert "agent:qaster:telegram:123" in members
+        assert "agent:qrusher:main" in members
+
+    def test_updates_routing_table(self, handler, fake_projects):
+        fake_projects.save_members("proj", ["agent:qaster:main"])
+        handler.open_project("proj", "/p")
+        handler.update_agent_session("proj", "agent:qaster:main", "agent:qaster:telegram:123")
+        assert handler.is_project_session("agent:qaster:telegram:123")
+        assert not handler.is_project_session("agent:qaster:main")
+
+    def test_migrates_solo_target(self, handler, fake_projects):
+        fake_projects.save_members("proj", ["agent:qaster:main"])
+        handler.open_project("proj", "/p")
+        handler.set_solo_target("proj", "agent:qaster:main")
+        handler.update_agent_session("proj", "agent:qaster:main", "agent:qaster:telegram:123")
+        assert handler.get_solo_target("proj") == "agent:qaster:telegram:123"
+
+    def test_noop_if_old_key_not_member(self, handler, fake_projects):
+        fake_projects.save_members("proj", ["agent:other:main"])
+        handler.open_project("proj", "/p")
+        handler.update_agent_session("proj", "agent:qaster:main", "agent:qaster:telegram:123")
+        # No change
+        members = fake_projects.load_members("proj")
+        assert members == ["agent:other:main"]
