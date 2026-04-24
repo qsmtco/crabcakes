@@ -26,6 +26,7 @@
 #   generate_project_skeleton(project_path, project_name) -> None
 
 import json
+import logging
 import os
 import time
 from typing import TYPE_CHECKING
@@ -35,6 +36,8 @@ if TYPE_CHECKING:
 
 from models.team import ProjectTeam, TeamMember
 from utils.config import get_projects_config_dir
+
+_logger = logging.getLogger(__name__)
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -57,8 +60,15 @@ def get_crabcakes_dir(project_path: str) -> str:
 
 
 def _ensure_crabcakes_dir(project_path: str) -> str:
-    """Create .crabcakes/ directory if it doesn't exist. Returns the path."""
+    """Create .crabcakes/ directory if it doesn't exist. Returns the path.
+    Raises RuntimeError if .crabcakes exists as a file (not a directory).
+    """
     d = get_crabcakes_dir(project_path)
+    if os.path.isfile(d):
+        raise RuntimeError(
+            f"Cannot create .crabcakes/ directory: "
+            f"a file named '.crabcakes' already exists at {project_path}"
+        )
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -82,6 +92,12 @@ def init_project_config(
       4. Otherwise → generate skeleton
     """
     crab_dir = get_crabcakes_dir(project_path)
+    # Guard: .crabcakes must not be a file
+    if os.path.isfile(crab_dir):
+        raise RuntimeError(
+            f"Cannot create .crabcakes/ directory: "
+            f"a file named '.crabcakes' already exists at {project_path}"
+        )
     if os.path.isdir(crab_dir):
         # Already initialized — check team.json exists
         team_path = os.path.join(crab_dir, TEAM_FILENAME)
@@ -242,11 +258,15 @@ def load_team(project_path: str) -> ProjectTeam:
 def save_team(project_path: str, team: ProjectTeam) -> None:
     """
     Write ProjectTeam to .crabcakes/team.json.
+    Logs error instead of raising on I/O failure.
     """
-    _ensure_crabcakes_dir(project_path)
-    path = os.path.join(get_crabcakes_dir(project_path), TEAM_FILENAME)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(team.to_dict(), f, indent=2)
+    try:
+        _ensure_crabcakes_dir(project_path)
+        path = os.path.join(get_crabcakes_dir(project_path), TEAM_FILENAME)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(team.to_dict(), f, indent=2)
+    except OSError as e:
+        _logger.error("save_team: failed to write team.json at %s: %s", project_path, e)
 
 
 # ── Context memory ────────────────────────────────────────────────────────────
@@ -270,16 +290,20 @@ def save_project_context(project_path: str, content: str) -> None:
     """
     Write content to .crabcakes/context.md. Enforces 50KB cap by truncating
     oldest content (from the top) if exceeded.
+    Logs error instead of raising on I/O failure.
     """
-    _ensure_crabcakes_dir(project_path)
-    path = os.path.join(get_crabcakes_dir(project_path), CONTEXT_FILENAME)
+    try:
+        _ensure_crabcakes_dir(project_path)
+        path = os.path.join(get_crabcakes_dir(project_path), CONTEXT_FILENAME)
 
-    # Enforce size cap — trim from top (oldest content)
-    if len(content) > MAX_CONTEXT_SIZE:
-        content = content[len(content) - MAX_CONTEXT_SIZE:]
+        # Enforce size cap — trim from top (oldest content)
+        if len(content) > MAX_CONTEXT_SIZE:
+            content = content[len(content) - MAX_CONTEXT_SIZE:]
 
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+    except OSError as e:
+        _logger.error("save_project_context: failed at %s: %s", project_path, e)
 
 
 def append_project_context(project_path: str, entry: str) -> None:
@@ -327,17 +351,20 @@ def build_awareness_snapshot(
 
 
 def save_awareness_snapshot(project_path: str, snapshot: dict) -> None:
-    """Write awareness.json."""
-    _ensure_crabcakes_dir(project_path)
-    path = os.path.join(get_crabcakes_dir(project_path), AWARENESS_FILENAME)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(snapshot, f, indent=2)
+    """Write awareness.json. Logs error instead of raising on I/O failure."""
+    try:
+        _ensure_crabcakes_dir(project_path)
+        path = os.path.join(get_crabcakes_dir(project_path), AWARENESS_FILENAME)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(snapshot, f, indent=2)
+    except OSError as e:
+        _logger.error("save_awareness_snapshot: failed at %s: %s", project_path, e)
 
 
 def _get_git_info(project_path: str) -> dict:
     """Extract git state for awareness snapshot."""
     try:
-        from utils.git_ops import get_head_sha, log, status
+        from utils.git_ops import get_head_sha, get_branch, log, status
 
         sha_result = get_head_sha(project_path)
         if not sha_result.success:
@@ -357,9 +384,12 @@ def _get_git_info(project_path: str) -> dict:
         status_result = status(project_path)
         dirty = status_result.success and bool(status_result.stdout.strip())
 
+        branch_result = get_branch(project_path)
+        branch = branch_result.stdout.strip() if branch_result.success else "unknown"
+
         return {
             "available": True,
-            "branch": "main",  # simplified — git_ops doesn't expose branch name directly
+            "branch": branch,
             "head_sha": sha_result.sha or "",
             "recent_commits": recent,
             "dirty": dirty,

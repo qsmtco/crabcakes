@@ -137,6 +137,7 @@ class ProjectHandler:
             name:  Project display name (ignored, just clears state)
         """
         self._active_project_name = None
+        self._active_project_path = None
         # Clear routing entries for this project
         self._agent_to_project.remove_project(name)
         self._dispatch(lambda: self._lp.refresh_agents_with_project(None))

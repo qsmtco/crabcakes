@@ -98,6 +98,8 @@ class ChatHandler:
 
     def on_res_confirmed(self, session_key: str):
         """Handle gateway res — notify ActivityHandler to end pre-flight."""
+        if not session_key:
+            return
         if self._on_res_confirmed is not None:
             self._on_res_confirmed(session_key)
 

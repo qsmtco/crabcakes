@@ -50,6 +50,17 @@ def get_head_sha(project_path: str) -> GitResult:
         return GitResult(success=False, stdout="", error=str(e), sha=None)
 
 
+def get_branch(project_path: str) -> GitResult:
+    """Get current git branch name. Returns 'HEAD detached' if detached."""
+    try:
+        repo = gitpython.Repo(project_path)
+        if repo.head.is_detached:
+            return GitResult(success=True, stdout="(detached HEAD)", error="")
+        return GitResult(success=True, stdout=repo.active_branch.name, error="")
+    except Exception as e:
+        return GitResult(success=False, stdout="", error=str(e))
+
+
 def stage_all(project_path: str) -> GitResult:
     """Stage all changes (equivalent to git add -A)."""
     try:
