@@ -188,7 +188,7 @@ class LeftPanel(Gtk.Box):
                     agents[name] = session_key
                 if ":main" in session_key:
                     agents[name] = session_key
-            sorted_agents = [(sk, name, sk in project_members, 1) for name, sk in agents.items()]
+            sorted_agents = [(sk, name, sk in project_members, sum(1 for _, n in self._agent_names.items() if n == name)) for name, sk in agents.items()]
         # Append special agents (Phase 1.4) — shown even without gateway connection
         if getattr(self, '_agent_runtime_handler', None):
             for sk, name in self._agent_runtime_handler.get_special_agents().items():

@@ -175,11 +175,8 @@ button.lib-fav-star {
     font-size: 16px;
 }
 .lib-tag {
-    background: rgba(255, 255, 255, 0.06);
     color: #6b6b7a;
     font-size: 11px;
-    border-radius: 4px;
-    padding: 1px 4px;
 }
 /* Project cards */
 .project-card {

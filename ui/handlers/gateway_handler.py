@@ -169,6 +169,14 @@ class GatewayHandler:
                         if session_key:
                             self._agent_mgr.register(session_key, name)
 
+            # Sync live gateway to ChatHandler (via window's callback)
+            # MUST run before set_agents so AgentListHandler has agent_mgr
+            try:
+                if self._sync_callback is not None:
+                    self._sync_callback(self._gw)
+            except Exception as e:
+                _logger.error("[gateway] _do_connect: sync_callback failed: %s", e)
+
             # Tell window to build the agents list in the sidebar
             try:
                 self._left_panel.set_agents(
@@ -177,13 +185,6 @@ class GatewayHandler:
                 )
             except Exception as e:
                 _logger.error("[gateway] _do_connect: set_agents failed: %s", e)
-
-            # Sync live gateway to ChatHandler (via window's callback)
-            try:
-                if self._sync_callback is not None:
-                    self._sync_callback(self._gw)
-            except Exception as e:
-                _logger.error("[gateway] _do_connect: sync_callback failed: %s", e)
 
             # Wire res correlation callback for pre-flight detection
             try:
