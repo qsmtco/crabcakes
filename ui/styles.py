@@ -103,7 +103,7 @@ button.flat:hover {
 .agent-row {
     background: rgba(255, 255, 255, 0.04);
     border-radius: 6px;
-    border: 1px solid transparent;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     margin: 2px 4px;
 }
 .agent-row:hover {
@@ -120,6 +120,10 @@ button.flat:hover {
 .agent-name-label {
     color: #e8e8ec;
     font-size: 14px;
+}
+.agent-tag-label {
+    color: #6b6b7a;
+    font-size: 11px;
 }
 .agent-add-btn {
     background: rgba(16, 185, 129, 0.2);
@@ -146,9 +150,9 @@ button.flat:hover {
 
 /* -- Prompt library ------------------------------------------------------ */
 .lib-row {
-    background: transparent;
+    background: rgba(255, 255, 255, 0.04);
     border-radius: 6px;
-    border: 1px solid transparent;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     margin: 1px 4px;
     transition: background 0.15s ease, border-color 0.15s ease;
 }
@@ -166,7 +170,7 @@ button.flat:hover {
 .lib-row:selected {
     background: rgba(99, 102, 241, 0.2);
 }
-.lib-fav-star {
+button.lib-fav-star {
     color: #f59e0b;
     font-size: 16px;
 }
@@ -202,6 +206,35 @@ button.flat:hover {
 }
 .project-card-path {
     font-size: 11px;
+    color: #6b6b7a;
+}
+.new-project-card {
+    background: transparent;
+    border: 1px dashed rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    padding: 8px;
+}
+.new-project-card:hover {
+    background: rgba(99, 102, 241, 0.08);
+    border-color: rgba(102, 102, 241, 0.3);
+}
+.new-project-plus {
+    font-size: 20px;
+    font-weight: 300;
+    color: #6b6b7a;
+}
+.new-prompt-row {
+    background: transparent;
+    border: 1px dashed rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+}
+.new-prompt-row:hover {
+    background: rgba(99, 102, 241, 0.08);
+    border-color: rgba(102, 102, 241, 0.3);
+}
+.new-prompt-plus {
+    font-size: 18px;
+    font-weight: 300;
     color: #6b6b7a;
 }
 

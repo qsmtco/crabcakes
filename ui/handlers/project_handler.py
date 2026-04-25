@@ -12,6 +12,7 @@
 # (open_project, toggle_agent) are called from the GTK main thread.
 
 from typing import Callable
+import os
 
 
 class ProjectHandler:
@@ -96,6 +97,47 @@ class ProjectHandler:
         # Notify window (for any external side-effects)
         for cb in self._on_project_opened:
             cb(name, path)
+
+    def create_project(self, name: str, path: str | None = None) -> str | None:
+        """
+        Create a new project directory and open it.
+        Called by FileTree when user fills out the New Project form.
+
+        Args:
+            name:  Project display name (must be non-empty)
+            path:  Optional path override. Defaults to $CRABCAKES_PROJECTS_DIR/<name>
+
+        Returns:
+            The project path on success, or None on failure.
+        """
+        # Validate name
+        if not name or not name.strip():
+            return None
+        name = name.strip()
+
+        # Resolve default path from projects module
+        if not path:
+            projects_dir = self._projects._PROJECTS_DIR_REF[0]
+            path = os.path.join(projects_dir, name)
+
+        # Check if directory already exists
+        if os.path.exists(path):
+            return None
+
+        # Create the directory
+        try:
+            os.makedirs(path, exist_ok=False)
+        except OSError:
+            return None
+
+        # Initialize .crabcakes/ with awareness artifacts
+        if self._awareness:
+            self._awareness.init_project_config(path, name)
+
+        # Open the project (creates tab, refreshes agents, fires callbacks)
+        self.open_project(name, path)
+
+        return path
 
     def toggle_agent(self, session_key: str):
         """

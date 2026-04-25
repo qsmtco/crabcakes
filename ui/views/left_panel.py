@@ -4,7 +4,7 @@
 import gi
 # Require GTK 4.0 — must be called before importing Gtk
 gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk
+from gi.repository import Gtk, Gio, GLib
 
 from utils.projects import load_members
 from utils.icons import render_agent_icon
@@ -188,11 +188,11 @@ class LeftPanel(Gtk.Box):
                     agents[name] = session_key
                 if ":main" in session_key:
                     agents[name] = session_key
-            sorted_agents = [(sk, name, sk in project_members) for name, sk in agents.items()]
+            sorted_agents = [(sk, name, sk in project_members, 1) for name, sk in agents.items()]
         # Append special agents (Phase 1.4) — shown even without gateway connection
         if getattr(self, '_agent_runtime_handler', None):
             for sk, name in self._agent_runtime_handler.get_special_agents().items():
-                sorted_agents.append((sk, name, False))
+                sorted_agents.append((sk, name, False, 1))
 
         if not sorted_agents:
             placeholder = Gtk.Label()
@@ -204,8 +204,8 @@ class LeftPanel(Gtk.Box):
             placeholder.show()
             self._agents_list_box.append(placeholder)
         else:
-            for session_key, name, in_project in sorted_agents:
-                row = self._build_agent_row(session_key, name, in_project)
+            for session_key, name, in_project, session_count in sorted_agents:
+                row = self._build_agent_row(session_key, name, in_project, session_count)
                 self._agents_list_box.append(row)
 
         # Single-click activates (opens chat tab)
@@ -215,12 +215,13 @@ class LeftPanel(Gtk.Box):
         scroll.set_child(self._agents_list_box)
         self._agents_list_box.show()
 
-    def _build_agent_row(self, session_key, name, in_project=False):
+    def _build_agent_row(self, session_key, name, in_project=False, session_count=1):
         """
         Build a single agent avatar card row.
 
-        Layout: [avatar] [name label] [+/−] [Chat]
+        Layout: [avatar] [name + tags column] [+/−] [Chat]
         Avatar uses render_agent_icon via the agent_list_handler (if set).
+        Tags show source (Openclaw/Crabcakes) and session count.
         """
         row = Gtk.ListBoxRow()
         row._session_key = session_key
@@ -250,12 +251,32 @@ class LeftPanel(Gtk.Box):
         avatar_picture.set_valign(Gtk.Align.CENTER)
         avatar_picture.set_paintable(render_agent_icon(color, initials))
 
-        # Name label
+        # Name + tags column (vertical, like project cards)
+        name_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        name_col.set_hexpand(True)
+        name_col.set_halign(Gtk.Align.START)
+        name_col.set_valign(Gtk.Align.CENTER)
+        name_col.set_margin_start(8)
+
         name_lbl = Gtk.Label(label=name)
         name_lbl.set_halign(Gtk.Align.START)
-        name_lbl.set_hexpand(True)
-        name_lbl.set_margin_start(8)
         name_lbl.add_css_class("agent-name-label")
+
+        # Tag line: source + session count
+        is_special = session_key.startswith("special:")
+        source_tag = "Crabcakes" if is_special else "Openclaw"
+        session_word = "Session" if session_count == 1 else "Sessions"
+        tag_text = f"{source_tag}: {session_count} {session_word}"
+        tag_lbl = Gtk.Label(label=tag_text)
+        tag_lbl.set_halign(Gtk.Align.START)
+        tag_lbl.add_css_class("agent-tag-label")
+
+        name_col.append(name_lbl)
+        name_col.append(tag_lbl)
+
+        name_lbl.show()
+        tag_lbl.show()
+        name_col.show()
 
         # Buttons box: +/− toggle (if project active)
         buttons_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -282,11 +303,10 @@ class LeftPanel(Gtk.Box):
         row_box.add_controller(right_click)
 
         avatar_picture.show()
-        name_lbl.show()
 
         buttons_box.append(toggle_btn)
         row_box.append(avatar_picture)
-        row_box.append(name_lbl)
+        row_box.append(name_col)
         row_box.append(buttons_box)
         row.set_child(row_box)
         row.show()
@@ -365,6 +385,7 @@ class LeftPanel(Gtk.Box):
         list_box = Gtk.ListBox()
         list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
         list_box.set_activate_on_single_click(False)
+        list_box.connect("row_activated", self._on_new_prompt_row_activated)
         list_box.connect("row_activated", self._on_prompt_row_activated)
         self._prompts_list_box = list_box
 
@@ -387,6 +408,10 @@ class LeftPanel(Gtk.Box):
 
         if self._prompts_handler is None:
             return
+
+        # Prepend the '+' new prompt card row
+        new_row = self._build_new_prompt_row()
+        list_box.append(new_row)
 
         prompts = self._prompts_handler.load_prompts()
         for prompt in prompts:
@@ -486,6 +511,81 @@ class LeftPanel(Gtk.Box):
 
     def _on_prompt_row_activated(self, list_box, row):
         """Called when a prompt row is double-clicked — load into chat input."""
+        # Skip the "+" row
+        if hasattr(row, '_is_new_prompt_card'):
+            return
         if self._prompts_handler and hasattr(row, '_filepath'):
             self._prompts_handler.on_prompt_activated(row._filepath)
+
+    def _build_new_prompt_row(self) -> Gtk.ListBoxRow:
+        """Build the '+' new prompt card row. Follows the projects tab '+' card pattern."""
+        row = Gtk.ListBoxRow()
+        row._is_new_prompt_card = True
+        row.set_selectable(False)
+        row.set_activatable(True)
+
+        row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        row_box.set_halign(Gtk.Align.FILL)
+        row_box.set_margin_start(4)
+        row_box.set_margin_end(4)
+        row_box.set_margin_top(4)
+        row_box.set_margin_bottom(4)
+        row_box.add_css_class("new-prompt-row")
+
+        plus_lbl = Gtk.Label(label="+")
+        plus_lbl.set_size_request(28, 28)
+        plus_lbl.set_halign(Gtk.Align.CENTER)
+        plus_lbl.set_valign(Gtk.Align.CENTER)
+        plus_lbl.add_css_class("new-prompt-plus")
+
+        text_lbl = Gtk.Label(label="Add Prompt")
+        text_lbl.set_halign(Gtk.Align.START)
+        text_lbl.set_valign(Gtk.Align.CENTER)
+        text_lbl.add_css_class("dim-label")
+
+        row_box.append(plus_lbl)
+        row_box.append(text_lbl)
+        row.set_child(row_box)
+        return row
+
+    def _on_new_prompt_row_activated(self, list_box, row):
+        """Handle activation of the '+' row — open file picker."""
+        if not hasattr(row, '_is_new_prompt_card'):
+            return
+        if self._prompts_handler is None:
+            return
+        self._open_import_dialog()
+
+    def _open_import_dialog(self):
+        """Open a GTK4 FileDialog to select a .md file for import."""
+        dialog = Gtk.FileDialog()
+        dialog.set_title("Select a prompt file")
+
+        # Filter to .md only
+        filter_md = Gtk.FileFilter()
+        filter_md.set_name("Markdown files")
+        filter_md.add_pattern("*.md")
+        filter_list = Gio.ListStore.new(Gtk.FileFilter)
+        filter_list.append(filter_md)
+        dialog.set_filters(filter_list)
+
+        # Get parent window
+        root = self.get_root()
+        if root is None:
+            return
+        dialog.open(root, None, self._on_import_file_selected)
+
+    def _on_import_file_selected(self, dialog, result):
+        """Handle file selection from the import dialog."""
+        try:
+            file = dialog.open_finish(result)
+            if file is None:
+                return
+            source_path = file.get_path()
+            if source_path and self._prompts_handler:
+                new_path = self._prompts_handler.import_prompt(source_path)
+                if new_path:
+                    self.refresh_prompts()
+        except GLib.Error:
+            pass  # User cancelled the dialog
 

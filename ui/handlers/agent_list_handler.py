@@ -69,17 +69,18 @@ class AgentListHandler:
         from models.colors import next_agent_color
         return next_agent_color()
 
-    def get_sorted_agents(self, project_members=None) -> list[tuple[str, str]]:
+    def get_sorted_agents(self, project_members=None) -> list[tuple[str, str, bool, int]]:
         """
-        Return [(session_key, name)] for all agents, grouped by unique name.
+        Return [(session_key, name, in_project, session_count)] for all agents.
 
         One row per UNIQUE agent name (not one per session). When an agent has
         multiple sessions, the :main session is used as the primary key — the
         session switcher (right-click → SessionMenu) handles the other sessions.
         project_members: list of session_keys currently in the project (for +/− state)
+        session_count: number of active sessions for this agent name
 
         Returns:
-            List of (session_key, name) tuples, one per unique agent name.
+            List of (session_key, name, in_project, session_count) tuples.
         """
         if self._agent_mgr is None:
             return []
@@ -94,7 +95,8 @@ class AgentListHandler:
         result = []
         for name, sk in agents.items():
             in_project = bool(project_members) and sk in project_members
-            result.append((sk, name, in_project))
+            session_count = len(self._agent_mgr.get_sessions(name))
+            result.append((sk, name, in_project, session_count))
 
         return result
 

@@ -29,6 +29,8 @@ class FileTree(Gtk.Box):
         self._project_list_handler = None
         # On project opened callback — wired by window via set_on_project_opened()
         self._on_project_opened = None
+        # On create project callback — wired by window via set_on_create_project()
+        self._on_create_project = None
         # Callback when navigate_back is called — window wires this to close project tabs
         self._on_navigate_back = None
 
@@ -63,12 +65,20 @@ class FileTree(Gtk.Box):
 
         self._title_lbl = Gtk.Label()
         self._title_lbl.set_halign(Gtk.Align.START)
-        self._title_lbl.set_hexpand(True)
         self._title_lbl.add_css_class("project-selector-title")
+
+        # Search entry — visible only in picker mode
+        self._search_entry = Gtk.SearchEntry()
+        self._search_entry.set_placeholder_text("Search projects...")
+        self._search_entry.set_hexpand(True)
+        self._search_entry.set_valign(Gtk.Align.CENTER)
+        self._search_entry.connect("search-changed", self._on_search_changed)
+        self._search_entry.set_visible(False)
 
         self._header.append(self._back_btn)
         self._header.append(self._folder_icon)
         self._header.append(self._title_lbl)
+        self._header.append(self._search_entry)
 
         # ── Tree view ──────────────────────────────────────────────────────
         self._scroll = Gtk.ScrolledWindow()
@@ -116,6 +126,10 @@ class FileTree(Gtk.Box):
         self._project_name = None
         self._project_path = None
         self._project_history.clear()
+        # Clear search when returning to picker
+        if self._project_list_handler:
+            self._project_list_handler.clear_search()
+        self._search_entry.set_text("")
         self._show_project_picker()
         if self._on_navigate_back:
             self._on_navigate_back(project_name)
@@ -131,6 +145,10 @@ class FileTree(Gtk.Box):
     def set_on_project_opened(self, cb):
         """Set callback for when a project is opened (name, path)."""
         self._on_project_opened = cb
+
+    def set_on_create_project(self, cb):
+        """Set callback for creating a new project. cb(name) -> path | None."""
+        self._on_create_project = cb
 
     def set_project_list_handler(self, handler):
         """Set the ProjectListHandler — provides project data and colors for cards."""
@@ -148,6 +166,9 @@ class FileTree(Gtk.Box):
         self._title_lbl.set_markup(
             '<span foreground="#6b6b7a" font_desc="Sans 11">Projects</span>'
         )
+        self._search_entry.set_visible(True)
+        # Rebuild title to not expand so search entry gets space
+        self._title_lbl.set_hexpand(False)
 
         # Build card grid
         card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -160,9 +181,18 @@ class FileTree(Gtk.Box):
             # No handler wired — show nothing (degraded but non-crashing)
             pass
         else:
-            projects = self._project_list_handler.get_projects()
+            # New project card (always first)
+            new_card = self._make_new_project_card()
+            card_box.append(new_card)
+
+            # Use filtered results (respects current search query)
+            projects = self._project_list_handler._filtered_projects()
             if not projects:
-                empty_lbl = Gtk.Label(label="No projects found")
+                query = self._project_list_handler._search_query
+                if query:
+                    empty_lbl = Gtk.Label(label=f"No projects matching \"{query}\"")
+                else:
+                    empty_lbl = Gtk.Label(label="No projects found")
                 empty_lbl.add_css_class("dim-label")
                 card_box.append(empty_lbl)
             else:
@@ -230,6 +260,81 @@ class FileTree(Gtk.Box):
 
         return card
 
+    def _make_new_project_card(self) -> Gtk.Widget:
+        """Build the '+' new project card with dashed border."""
+        card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        card.set_halign(Gtk.Align.FILL)
+        card.set_spacing(10)
+        card.set_margin_top(4)
+        card.set_margin_bottom(4)
+        card.add_css_class("new-project-card")
+
+        # Plus icon
+        plus_lbl = Gtk.Label(label="+")
+        plus_lbl.set_halign(Gtk.Align.CENTER)
+        plus_lbl.set_valign(Gtk.Align.CENTER)
+        plus_lbl.set_size_request(44, 44)
+        plus_lbl.add_css_class("new-project-plus")
+
+        # Text
+        text_lbl = Gtk.Label(label="New Project")
+        text_lbl.set_halign(Gtk.Align.START)
+        text_lbl.set_valign(Gtk.Align.CENTER)
+        text_lbl.add_css_class("dim-label")
+
+        card.append(plus_lbl)
+        card.append(text_lbl)
+
+        # Click → show popover
+        ev = Gtk.GestureClick()
+        ev.connect("pressed", lambda *a: self._show_create_popover(card))
+        card.add_controller(ev)
+
+        return card
+
+    def _show_create_popover(self, anchor: Gtk.Widget):
+        """Show a popover form to create a new project."""
+        if not self._on_create_project:
+            return
+
+        popover = Gtk.Popover()
+        popover.set_parent(anchor)
+        popover.set_position(Gtk.PositionType.BOTTOM)
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        vbox.set_margin_start(12)
+        vbox.set_margin_end(12)
+        vbox.set_margin_top(8)
+        vbox.set_margin_bottom(8)
+
+        name_entry = Gtk.Entry()
+        name_entry.set_placeholder_text("Project name")
+        name_entry.set_hexpand(True)
+
+        create_btn = Gtk.Button(label="Create")
+        create_btn.add_css_class("suggested-action")
+
+        def on_create(_btn):
+            name = name_entry.get_text().strip()
+            if not name:
+                return
+            result = self._on_create_project(name)
+            if result is not None:
+                popover.popdown()
+
+        create_btn.connect("clicked", on_create)
+
+        # Enter key submits
+        name_entry.connect("activate", lambda _e: on_create(create_btn))
+
+        vbox.append(name_entry)
+        vbox.append(create_btn)
+        popover.set_child(vbox)
+        popover.popup()
+
+        # Focus the entry after popover appears
+        GLib.idle_add(lambda: name_entry.grab_focus() and False)
+
     def _show_tree(self, name, path):
         """Show the directory tree for a project. Restores TreeView."""
         # Swap card box back to TreeView
@@ -242,6 +347,8 @@ class FileTree(Gtk.Box):
         self._folder_icon.set_visible(True)
         self._title_lbl.set_markup(f"<b>{name}</b>")
         self._title_lbl.set_use_markup(True)
+        self._title_lbl.set_hexpand(True)
+        self._search_entry.set_visible(False)
 
         entries = scan_directory(path)
         for entry_name, full_path, is_dir in entries:
@@ -307,6 +414,13 @@ class FileTree(Gtk.Box):
             child = model.append(it, [prefix + entry_name, full_path, is_dir, False])
             if is_dir:
                 model.append(child, ["…", "", True, False])
+
+    def _on_search_changed(self, entry):
+        """Filter project cards on search-changed. Mirrors LeftPanel._on_prompt_search_changed."""
+        query = entry.get_text()
+        if self._project_list_handler:
+            self._project_list_handler.search(query)
+            self._show_project_picker()
 
     def _on_back_clicked(self, button):
         """Navigate back to the project picker."""

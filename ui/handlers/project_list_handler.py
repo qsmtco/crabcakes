@@ -28,6 +28,7 @@ class ProjectListHandler:
         self._on_project_opened = on_project_opened
         # Round-robin project color assignment
         self._project_colors: dict[str, str] = {}  # path → hex color
+        self._search_query: str = ""  # active search filter
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -59,3 +60,28 @@ class ProjectListHandler:
         """
         if self._on_project_opened:
             self._on_project_opened(name, path)
+
+    def search(self, query: str) -> list[tuple[str, str, str]]:
+        """
+        Set search filter and return filtered projects.
+        Follows the same pattern as PromptsHandler.search().
+        """
+        self._search_query = query.strip().lower()
+        return self._filtered_projects()
+
+    def clear_search(self) -> None:
+        """Reset search filter."""
+        self._search_query = ""
+
+    # ── Private ──────────────────────────────────────────────────────────────
+
+    def _filtered_projects(self) -> list[tuple[str, str, str]]:
+        """Return projects filtered by current search query."""
+        all_projects = self.get_projects()
+        if not self._search_query:
+            return all_projects
+        return [
+            (name, path, color)
+            for name, path, color in all_projects
+            if self._search_query in name.lower()
+        ]

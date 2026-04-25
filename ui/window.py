@@ -203,6 +203,7 @@ class MainWindow(Gtk.ApplicationWindow):
         left_panel._file_tree.set_project_list_handler(self._project_list_handler)
         left_panel._file_tree.set_on_navigate_back(self._on_file_tree_navigate_back)
         left_panel._file_tree.set_on_project_opened(self._project_handler.open_project)
+        left_panel._file_tree.set_on_create_project(self._project_handler.create_project)
         self._left_panel.set_toggle_agent_callback(self._project_handler.toggle_agent)
 
         # Wire MainContent → ProjectHandler (for right-click project tab menu)

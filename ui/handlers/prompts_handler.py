@@ -132,6 +132,27 @@ class PromptsHandler:
         if self._on_prompt_loaded:
             self._on_prompt_loaded(filepath, name, content)
 
+    def import_prompt(self, source_path: str) -> str | None:
+        """
+        Copy a .md file into the prompts directory.
+        Returns the new filepath on success, None on failure or if name conflicts.
+        Called by LeftPanel when user selects a file from the import picker.
+        """
+        import shutil
+        filename = os.path.basename(source_path)
+        if not filename.endswith('.md'):
+            return None
+        prompts_dir = self._get_prompts_dir()
+        os.makedirs(prompts_dir, exist_ok=True)
+        dest = os.path.join(prompts_dir, filename)
+        if os.path.exists(dest):
+            return None  # already exists — don't overwrite
+        try:
+            shutil.copy2(source_path, dest)
+            return dest
+        except OSError:
+            return None
+
     # ── Private ────────────────────────────────────────────────────────────
 
     def _scan_prompts(self) -> list[dict]:

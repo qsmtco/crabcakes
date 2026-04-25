@@ -63,19 +63,19 @@ class TestGetSortedAgents:
     def test_groups_by_name(self, agent_mgr):
         h = AgentListHandler(agent_mgr=agent_mgr)
         sorted_agents = h.get_sorted_agents()
-        names = [name for _, name, _ in sorted_agents]
+        names = [name for _, name, _, _ in sorted_agents]
         assert set(names) == {"Qat", "FL600"}
 
     def test_prefers_main_session(self, agent_mgr):
         h = AgentListHandler(agent_mgr=agent_mgr)
         sorted_agents = h.get_sorted_agents()
-        qat_entry = next((sk for sk, n, _ in sorted_agents if n == "Qat"), None)
+        qat_entry = next((sk for sk, n, _, _ in sorted_agents if n == "Qat"), None)
         assert qat_entry == "agent:qat:main"
 
     def test_project_members_tracked(self, agent_mgr):
         h = AgentListHandler(agent_mgr=agent_mgr)
         sorted_agents = h.get_sorted_agents(project_members=["agent:qat:main"])
-        qat_entry = next((sk, n, ip) for sk, n, ip in sorted_agents if n == "Qat")
+        qat_entry = next((sk, n, ip, _) for sk, n, ip, _ in sorted_agents if n == "Qat")
         assert qat_entry[2] is True  # in_project
 
     def test_no_agent_mgr_returns_empty(self):
@@ -102,5 +102,5 @@ class TestCallbacks:
         h = AgentListHandler()
         assert h.get_sorted_agents() == []
         h.set_agent_mgr(agent_mgr)
-        names = [n for _, n, _ in h.get_sorted_agents()]
+        names = [n for _, n, _, _ in h.get_sorted_agents()]
         assert "Qat" in names
