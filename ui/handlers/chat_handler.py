@@ -586,10 +586,19 @@ class ChatHandler:
             from utils.project_awareness import build_awareness_dict
             from utils.prompt_loader import compose_system_prompt
             awareness_dict = build_awareness_dict(project_path)
+            # Read review_mode from awareness snapshot (defaults to "off")
+            review_mode = "off"
+            try:
+                from utils.project_awareness import build_awareness_snapshot
+                snapshot = build_awareness_snapshot(project_path)
+                review_mode = snapshot.get("review_mode", "off")
+            except Exception:
+                pass
             prompt = compose_system_prompt(
                 agent_name="",
                 project_path=project_path,
                 project_awareness=awareness_dict,
+                review_mode=review_mode,
             )
             if prompt.strip():
                 return f"[System Instructions]\n{prompt}\n\n[User Message]\n"

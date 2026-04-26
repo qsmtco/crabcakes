@@ -336,6 +336,7 @@ def build_system_prompt(
         from utils.prompt_loader import compose_system_prompt
         prompt = compose_system_prompt(
             agent_name=agent_name,
+            agent_role="coder" if "coder" in agent_name.lower() else "debugger" if "debugger" in agent_name.lower() else "",
             project_path=project_path,
             project_awareness=awareness_dict,
             tools=tools,

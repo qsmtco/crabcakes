@@ -40,19 +40,27 @@ def load_prompt_template(name: str) -> str | None:
 def fill_template(template: str, variables: dict[str, str]) -> str:
     """Replace {{KEY}} with values from variables dict.
 
-    Unresolved variables are left as-is (not stripped).
+    Resolved variables are replaced. Unresolved variables are stripped entirely
+    and logged at WARNING level to aid debugging.
     """
+    unresolved: list[str] = []
+
     def _replace(match: re.Match) -> str:
         key = match.group(1)
         if key in variables:
             return variables[key]
-        return match.group(0)  # leave unresolved
+        unresolved.append(key)
+        return ""  # strip unresolved
 
-    return _VAR_RE.sub(_replace, template)
+    result = _VAR_RE.sub(_replace, template)
+    if unresolved:
+        _logger.warning("Unresolved template variables stripped: %s", ", ".join(unresolved))
+    return result
 
 
 def compose_system_prompt(
     agent_name: str = "",
+    agent_role: str = "",
     project_path: str | None = None,
     project_awareness: dict | None = None,
     tools: list[str] | None = None,
@@ -64,8 +72,8 @@ def compose_system_prompt(
     1. Always: default.md
     2. If project active: project-awareness.md (filled with awareness variables)
     3. If review_mode != "off": code-review.md
-    4. If agent_name contains "coder": coder.md
-    5. If agent_name contains "debugger": debugger.md
+    4. If agent_role == "coder": coder.md
+    5. If agent_role == "debugger": debugger.md
 
     Templates are concatenated with double-newline separators.
     Missing templates are silently skipped.
@@ -73,6 +81,7 @@ def compose_system_prompt(
 
     Args:
         agent_name: Display name of the agent.
+        agent_role: Explicit role identifier ("coder", "debugger", or "" for gateway agents).
         project_path: Absolute path to the project root, or None.
         project_awareness: Dict of template variables from build_awareness_dict().
         tools: List of tool names (for agent runtime).
@@ -101,13 +110,12 @@ def compose_system_prompt(
         if cr:
             parts.append(cr)
 
-    # 4. Agent-specific templates
-    name_lower = agent_name.lower() if agent_name else ""
-    if "coder" in name_lower:
+    # 4. Agent-specific templates (by explicit role)
+    if agent_role == "coder":
         ct = load_prompt_template("coder")
         if ct:
             parts.append(ct)
-    elif "debugger" in name_lower:
+    elif agent_role == "debugger":
         dt = load_prompt_template("debugger")
         if dt:
             parts.append(dt)
