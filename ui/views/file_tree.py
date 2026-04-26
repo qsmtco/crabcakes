@@ -321,6 +321,7 @@ class FileTree(Gtk.Box):
             result = self._on_create_project(name)
             if result is not None:
                 popover.popdown()
+                self.load_project(name, result)
 
         create_btn.connect("clicked", on_create)
 
