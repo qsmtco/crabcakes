@@ -21,6 +21,7 @@
 #   save_project_context(project_path, content) -> None
 #   build_awareness_snapshot(project_path, task_store) -> dict
 #   save_awareness_snapshot(project_path, snapshot) -> None
+#   is_project_onboarded(project_path) -> bool
 #   build_awareness_block(project_path, task_store) -> str
 #   detect_tech_stack(project_path) -> list[str]
 #   generate_project_skeleton(project_path, project_name) -> None
@@ -236,6 +237,26 @@ def load_project_manifest(project_path: str) -> str | None:
             return f.read()
     except OSError:
         return None
+
+
+def is_project_onboarded(project_path: str) -> bool:
+    """True if project has been onboarded (has real content in project.md or context.md).
+
+    Detection: strip HTML comments from project.md. If no content lines remain
+    beyond section headers, and context.md is empty, the project hasn't been onboarded.
+    """
+    manifest = load_project_manifest(project_path)
+    if manifest is None:
+        return False
+    # Strip HTML comments — if nothing remains, it's still a skeleton
+    stripped = re.sub(r'<!--.*?-->', '', manifest, flags=re.DOTALL).strip()
+    # Check for any real content beyond section headers
+    content_lines = [l for l in stripped.split('\n') if l.strip() and not l.startswith('#')]
+    if content_lines:
+        return True
+    # Also check context.md
+    context = load_project_context(project_path)
+    return bool(context.strip())
 
 
 # ── Team ──────────────────────────────────────────────────────────────────────

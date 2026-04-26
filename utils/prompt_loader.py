@@ -104,13 +104,24 @@ def compose_system_prompt(
         if pa:
             parts.append(pa)
 
-    # 3. Code review mode
+    # 3. Project onboarding (when project active but not yet onboarded)
+    if project_path:
+        try:
+            from utils.project_awareness import is_project_onboarded
+            if not is_project_onboarded(project_path):
+                onboarding = load_prompt_template("project-onboarding")
+                if onboarding:
+                    parts.append(onboarding)
+        except Exception:
+            pass  # non-fatal — skip onboarding if check fails
+
+    # 4. Code review mode
     if review_mode and review_mode != "off":
         cr = load_prompt_template("code-review")
         if cr:
             parts.append(cr)
 
-    # 4. Agent-specific templates (by explicit role)
+    # 5. Agent-specific templates (by explicit role)
     if agent_role == "coder":
         ct = load_prompt_template("coder")
         if ct:

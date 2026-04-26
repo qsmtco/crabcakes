@@ -103,7 +103,7 @@ class ProjectHandler:
         for cb in self._on_project_opened:
             cb(name, path)
 
-    def create_project(self, name: str, path: str | None = None) -> str | None:
+    def create_project(self, name: str, path: str | None = None, pm_name: str = "", pm_id: str = "") -> str | None:
         """
         Create a new project directory and open it.
         Called by FileTree when user fills out the New Project form.
@@ -111,6 +111,8 @@ class ProjectHandler:
         Args:
             name:  Project display name (must be non-empty)
             path:  Optional path override. Defaults to $CRABCAKES_PROJECTS_DIR/<name>
+            pm_name: Project manager display name (e.g. "Captain")
+            pm_id:   Project manager identifier (e.g. "cli")
 
         Returns:
             The project path on success, or None on failure.
@@ -137,7 +139,7 @@ class ProjectHandler:
 
         # Initialize .crabcakes/ with awareness artifacts
         if self._awareness:
-            self._awareness.init_project_config(path, name)
+            self._awareness.init_project_config(path, name, pm_name, pm_id)
 
         # Auto-initialize git repo with initial commit
         result = init_repo(path)
@@ -146,6 +148,11 @@ class ProjectHandler:
             commit(path, f"project {name} created via CrabCakes")
         else:
             _logger.warning("git init failed for %s: %s", path, result.error)
+
+        # Refresh awareness snapshot AFTER git init so git state is captured
+        if self._awareness:
+            snapshot = self._awareness.build_awareness_snapshot(path)
+            self._awareness.save_awareness_snapshot(path, snapshot)
 
         # Open the project (creates tab, refreshes agents, fires callbacks)
         self.open_project(name, path)
@@ -360,6 +367,8 @@ class ProjectHandler:
                     new_members.append(TeamMember(session_key=sk, name=""))
             team.members = new_members
             self._awareness.save_team(path, team)
+            # Auto-commit team changes
+            self._git_commit_if_available(path, "update team roster")
             return
         # Fallback to legacy
         if self._projects:
@@ -379,6 +388,14 @@ class ProjectHandler:
     def get_active_project_path(self) -> str | None:
         """Return the currently active project path, or None."""
         return self._active_project_path
+
+    def _git_commit_if_available(self, path: str, message: str) -> None:
+        """Stage all and commit if git is available. Non-fatal on failure."""
+        try:
+            stage_all(path)
+            commit(path, message)
+        except Exception:
+            _logger.debug("git commit failed for %s: %s", path, message)
 
     def _dispatch(self, fn: Callable):
         """Call fn on the GTK main thread. Direct call if GLib not available."""

@@ -331,20 +331,34 @@ class ChatHandler:
                     solo_target = None
 
                 # Inject project awareness on first message to each agent
-                awareness_prefix = self._build_awareness_prefix(project_name)
+                awareness_prefix_cache = None  # lazily built per-agent
 
                 if solo_target:
                     # Solo DM — send only to the selected member
                     key = f"{project_name}:{solo_target}"
-                    prefix = awareness_prefix if key not in self._awareness_sent else ""
+                    if key not in self._awareness_sent:
+                        agent_display = solo_target.split("/")[-1]
+                        awareness_prefix_cache = self._build_awareness_prefix(project_name, agent_display)
+                    prefix = awareness_prefix_cache or ""
                     self._gw.send_message(solo_target, prefix + text)
                     self._awareness_sent.add(key)
                 else:
                     # Group broadcast — fan out to all members
-                    members = self._project_handler.get_project_members(project_name) if self._project_handler else []
+                    if self._project_handler:
+                        members = self._project_handler.get_project_members(project_name)
+                    elif self._projects:
+                        members = list(self._projects.load_members(project_name))
+                    else:
+                        members = []
                     for member in members:
                         key = f"{project_name}:{member}"
-                        prefix = awareness_prefix if key not in self._awareness_sent else ""
+                        if key not in self._awareness_sent:
+                            agent_display = member.split("/")[-1]
+                            if awareness_prefix_cache is None:
+                                awareness_prefix_cache = self._build_awareness_prefix(project_name, agent_display)
+                            prefix = awareness_prefix_cache if awareness_prefix_cache else ""
+                        else:
+                            prefix = ""
                         self._gw.send_message(member, prefix + text)
                         self._awareness_sent.add(key)
             else:
@@ -572,7 +586,7 @@ class ChatHandler:
 
     # ── Internal ─────────────────────────────────────────────────────────────
 
-    def _build_awareness_prefix(self, project_name: str) -> str:
+    def _build_awareness_prefix(self, project_name: str, agent_name: str = "") -> str:
         """Build project awareness prefix for first message to an agent.
         Uses the template system (prompts/system/) for composed system prompt.
         Returns empty string if awareness not available.
@@ -595,7 +609,7 @@ class ChatHandler:
             except Exception:
                 pass
             prompt = compose_system_prompt(
-                agent_name="",
+                agent_name=agent_name,
                 project_path=project_path,
                 project_awareness=awareness_dict,
                 review_mode=review_mode,
