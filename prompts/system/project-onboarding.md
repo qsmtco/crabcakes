@@ -21,8 +21,3 @@ Ask the user about the project, one or two questions at a time. Be conversationa
   - Conventions → "## Conventions" section
   - Team → update .crabcakes/team.json with roles
 - Append a dated entry to context.md summarizing the onboarding
-
-## Current Project State
-Project: {{PROJECT_NAME}}
-Path: {{PROJECT_PATH}}
-{{CURRENT_STATE}}

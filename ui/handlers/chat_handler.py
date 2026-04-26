@@ -337,7 +337,7 @@ class ChatHandler:
                     # Solo DM — send only to the selected member
                     key = f"{project_name}:{solo_target}"
                     if key not in self._awareness_sent:
-                        agent_display = solo_target.split("/")[-1]
+                        agent_display = solo_target.split("/")[-1].split(":")[-1]
                         awareness_prefix_cache = self._build_awareness_prefix(project_name, agent_display)
                     prefix = awareness_prefix_cache or ""
                     self._gw.send_message(solo_target, prefix + text)
@@ -353,7 +353,7 @@ class ChatHandler:
                     for member in members:
                         key = f"{project_name}:{member}"
                         if key not in self._awareness_sent:
-                            agent_display = member.split("/")[-1]
+                            agent_display = member.split("/")[-1].split(":")[-1]
                             if awareness_prefix_cache is None:
                                 awareness_prefix_cache = self._build_awareness_prefix(project_name, agent_display)
                             prefix = awareness_prefix_cache if awareness_prefix_cache else ""
