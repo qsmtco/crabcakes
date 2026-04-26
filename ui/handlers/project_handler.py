@@ -13,6 +13,11 @@
 
 from typing import Callable
 import os
+import logging
+
+from utils.git_ops import init_repo, stage_all, commit
+
+_logger = logging.getLogger(__name__)
 
 
 class ProjectHandler:
@@ -133,6 +138,14 @@ class ProjectHandler:
         # Initialize .crabcakes/ with awareness artifacts
         if self._awareness:
             self._awareness.init_project_config(path, name)
+
+        # Auto-initialize git repo with initial commit
+        result = init_repo(path)
+        if result.success:
+            stage_all(path)
+            commit(path, f"project {name} created via CrabCakes")
+        else:
+            _logger.warning("git init failed for %s: %s", path, result.error)
 
         # Open the project (creates tab, refreshes agents, fires callbacks)
         self.open_project(name, path)

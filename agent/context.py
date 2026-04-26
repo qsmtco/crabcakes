@@ -2,7 +2,7 @@
 # System prompt + file context builder for the agent runtime.
 #
 # Manifest:
-#   - Reads: project files, .gitignore, .crabcakes/agent-system-prompt.md, AGENTS.md
+#   - Reads: project files, .gitignore, prompts/system/ templates
 #   - No network, no GTK, no config files outside the project
 #   - No stateful mutations — pure functions
 #
@@ -16,46 +16,7 @@ import re
 from fnmatch import fnmatch
 from typing import Callable
 
-# ── Default prompt templates ──────────────────────────────────────────────────
-
-# These are the default templates used when no custom prompt is found.
-# Custom prompts (from .crabcakes/agent-system-prompt.md or AGENTS.md)
-# completely replace these.
-
-_CODER_SYSTEM_PROMPT = """You are {agent_name}, a software engineering agent.
-
-Project: {project_path}
-Review mode: {review_mode}
-
-You have access to the following tools:
-{tool_list}
-
-Guidelines:
-- Work in small, verified steps — never write large untested blocks
-- Prefer patterns: early returns, explicit logging, narrow asserts
-- Never rely solely on memory — verify against actual code, docs, and specs
-- Output format: plain text explanations, with code in markdown backtick blocks
-- When in doubt, ask before acting externally
-
-{file_context_block}"""
-
-_DEBUGGER_SYSTEM_PROMPT = """You are {agent_name}, a diagnostic and debugging agent.
-
-Project: {project_path}
-Review mode: {review_mode}
-
-You have access to the following tools:
-{tool_list}
-
-Guidelines:
-- Start from verifiable facts: reproduce the error, read the actual code
-- Trace execution path step by step — don't guess
-- Prefer patterns: early returns, explicit logging, narrow asserts
-- Never rely solely on memory — verify against actual code, docs, and specs
-- Output format: plain text explanations, with code in markdown backtick blocks
-- When in doubt, ask before acting externally
-
-{file_context_block}"""
+# ── System prompts now loaded from prompts/system/ via utils/prompt_loader.py ──
 
 # ── Gitignore ─────────────────────────────────────────────────────────────────
 
@@ -135,41 +96,6 @@ def _is_ignored(rel_path: str, project_path: str, patterns: list[str]) -> bool:
         if _match_gitignore(part, patterns):
             return True
     return False
-
-
-# ── Custom prompt loading ─────────────────────────────────────────────────────
-
-
-def load_custom_system_prompt(project_path: str) -> str | None:
-    """
-    Load custom agent system prompt from project.
-
-    Searches in order:
-    1. .crabcakes/agent-system-prompt.md
-    2. AGENTS.md (project root)
-
-    Returns the content if found, or None if neither exists.
-    Raises OSError if the file exists but can't be read.
-    """
-    if not project_path or not os.path.isdir(project_path):
-        return None
-
-    candidates = [
-        os.path.join(project_path, ".crabcakes", "agent-system-prompt.md"),
-        os.path.join(project_path, "AGENTS.md"),
-    ]
-
-    for path in candidates:
-        if os.path.isfile(path):
-            try:
-                with open(path, encoding="utf-8", errors="replace") as fh:
-                    content = fh.read().strip()
-                if content:
-                    return content
-            except OSError:
-                # Try next candidate
-                pass
-    return None
 
 
 # ── File context builder ──────────────────────────────────────────────────────
@@ -384,69 +310,42 @@ def build_system_prompt(
     """
     Build the system prompt for an agent.
 
-    Includes: agent identity, project context, tool usage instructions,
-    review mode awareness, output format guidelines.
-
-    Custom prompts (from .crabcakes/agent-system-prompt.md or AGENTS.md)
-    completely replace this default template.
+    Uses templates from prompts/system/ composed by utils/prompt_loader.
+    Falls back to a minimal hardcoded prompt if templates are unavailable.
 
     Args:
         agent_name: Display name of the agent (e.g. "Coder").
-        project_path: Absolute path to the project root. Used in system prompt
-            and to load custom prompts and file context.
+        project_path: Absolute path to the project root.
         tools: List of tool names this agent can use.
         review_mode: "off" | "review" — controls write permission awareness.
 
     Returns:
         Formatted system prompt string.
     """
-    # Check for custom prompt first
-    if project_path:
-        custom = load_custom_system_prompt(project_path)
-        if custom:
-            return custom
-
-    # Build tool list string
-    tool_list = "\n".join(f"  - {t}" for t in tools) if tools else "  (no tools)"
-
-    # Review mode awareness
-    review_note = ""
-    if review_mode == "review":
-        review_note = (
-            "\n[REVIEW MODE ACTIVE] You are in review mode. "
-            "All file writes are queued for PM approval. "
-            "Do not write directly — propose changes for review.]"
-        )
-
-    # File context
-    file_context = ""
-    if project_path:
-        file_context = build_file_context(project_path)
-        if file_context:
-            file_context = f"\n\n## File context\n\n{file_context}"
-
-    # Project awareness injection
-    awareness_block = ""
+    # Build awareness dict if project active
+    awareness_dict = None
     if project_path:
         try:
-            from utils.project_awareness import build_awareness_block
-            awareness_block = build_awareness_block(project_path)
-            if awareness_block:
-                awareness_block = f"\n\n## Project Awareness\n\n{awareness_block}"
+            from utils.project_awareness import build_awareness_dict
+            awareness_dict = build_awareness_dict(project_path)
         except Exception:
-            pass  # Non-fatal — awareness is a bonus, not a requirement
+            pass  # Non-fatal
 
-    # Select template
-    template = (
-        _CODER_SYSTEM_PROMPT
-        if "coder" in agent_name.lower()
-        else _DEBUGGER_SYSTEM_PROMPT
-    )
+    # Use template system
+    try:
+        from utils.prompt_loader import compose_system_prompt
+        prompt = compose_system_prompt(
+            agent_name=agent_name,
+            project_path=project_path,
+            project_awareness=awareness_dict,
+            tools=tools,
+            review_mode=review_mode,
+        )
+        if prompt:
+            return prompt
+    except Exception:
+        pass  # Fall through to minimal fallback
 
-    return template.format(
-        agent_name=agent_name,
-        project_path=project_path or "(no project open)",
-        review_mode=review_mode,
-        tool_list=tool_list,
-        file_context_block=file_context + awareness_block + review_note,
-    )
+    # Minimal fallback if template system unavailable
+    tool_list = "\n".join(f"  - {t}" for t in tools) if tools else "  (no tools)"
+    return f"You are {agent_name}.\n\nTools:\n{tool_list}"

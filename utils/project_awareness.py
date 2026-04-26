@@ -28,6 +28,7 @@
 import json
 import logging
 import os
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -553,3 +554,59 @@ def detect_tech_stack(project_path: str) -> list[str]:
             seen.add(s)
             unique.append(s)
     return unique
+
+
+# ── Awareness dict (for prompt_loader template variables) ────────────────
+
+
+def build_awareness_dict(project_path: str) -> dict[str, str]:
+    """Return awareness data as a dict of template variables.
+
+    Keys: PROJECT_NAME, TEAM_ROSTER, CURRENT_STATE, PROJECT_MEMORY.
+    Parallel to build_awareness_block() but returns structured data
+    instead of formatted text.
+    """
+    parts: dict[str, str] = {}
+
+    # Project name
+    manifest = load_project_manifest(project_path)
+    name_match = re.search(r"^#\s+(.+)$", manifest, re.MULTILINE) if manifest else None
+    parts["PROJECT_NAME"] = name_match.group(1).strip() if name_match else os.path.basename(project_path)
+
+    # Team roster
+    team = load_team(project_path)
+    if team.members:
+        lines = []
+        if team.pm_name:
+            lines.append(f"PM: {team.pm_name}")
+        for m in team.members:
+            role_str = f" — {m.role}" if m.role else ""
+            write_str = " [write]" if m.can_write else ""
+            lines.append(f"- {m.name} ({m.session_key}){role_str}{write_str}")
+        parts["TEAM_ROSTER"] = "\n".join(lines)
+    else:
+        parts["TEAM_ROSTER"] = "No team members yet."
+
+    # Current state
+    snapshot = build_awareness_snapshot(project_path)
+    state_lines = [f"Project: {snapshot.get('project_name', 'unknown')}"]
+    state_lines.append(f"Path: {snapshot.get('project_path', '')}")
+    git = snapshot.get("git", {})
+    if git.get("available"):
+        state_lines.append(f"Git: {git.get('head_sha', '?')[:7]} ({'dirty' if git.get('dirty') else 'clean'})")
+    else:
+        state_lines.append("Git: not available")
+    state_lines.append(f"Review mode: {snapshot.get('review_mode', 'off')}")
+    parts["CURRENT_STATE"] = "\n".join(state_lines)
+
+    # Project memory
+    context = load_project_context(project_path)
+    if context.strip():
+        truncated = context[:3000]
+        if len(context) > 3000:
+            truncated += "\n[... context memory truncated ...]"
+        parts["PROJECT_MEMORY"] = truncated
+    else:
+        parts["PROJECT_MEMORY"] = ""
+
+    return parts

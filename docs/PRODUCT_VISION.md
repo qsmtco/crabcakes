@@ -1,6 +1,6 @@
 # CrabCakes — Product Vision
 
-**Last updated:** 2026-04-21
+**Last updated:** 2026-04-25
 
 ---
 
@@ -84,6 +84,61 @@ Full loop. One agent at a time. That's v1.0.
 | Performance Tracking | Per-agent stats: acceptance rate, cost, time. Know who's actually good. | Not spec'd yet |
 
 These make CrabCakes *more powerful*. But they're not needed to ship.
+
+---
+
+## Chat Input Editor
+
+The input box evolves from a plain `Gtk.TextView` into a lightweight text editor, with the currently-unused `ChatControlBar` repurposed as its toolbar.
+
+**Approach:** Enhance the existing `Gtk.TextView` (not replace it). GTK4's `TextBuffer` API already supports undo/redo via `begin_irreversible_action()`/`end_irreversible_action()`. No new widget dependencies.
+
+**Toolbar controls (ChatControlBar → Editor Toolbar):**
+
+| Control | Description |
+|---------|-------------|
+| 📂 Open | Load file contents into the input buffer via `Gtk.FileDialog` (GTK4 async API) |
+| 💾 Save | Write buffer contents to a file (save / save-as) |
+| ✕ Close | Clear buffer, detach from any loaded file |
+| ↩ Undo / ↪ Redo | Native GTK4 TextBuffer undo/redo |
+| 🔤 Spell Check | Toggle inline spell checking (off by default) |
+| Word count | Subtle display of character/word count |
+
+**Spell checking:** Use `libspelling` (GNOME's GTK4-native library). `Spelling.Checker` + `Spelling.TextBufferAdapter` wraps the existing `TextBuffer` with zero UI changes — underlines and right-click suggestions appear automatically. Toggled off by default since it's a chat input to an LLM (typos don't matter for quick messages). Useful for longer compositions.
+
+**Why not GtkSourceView:** SourceView adds syntax highlighting, line numbers, minimap — great for code editors, heavy for a chat input. The existing `TextView` with undo/redo + spell check covers 90% of the need. Upgrade to SourceView later if code editing in the input becomes a pattern.
+
+**Implementation notes:**
+- `ChatControlBar` refactors from `Gtk.Label` → `Gtk.Box(HORIZONTAL)` with icon buttons
+- Toolbar is contextual: subtle when input is empty, full controls on focus/content
+- File open/save uses existing `Gtk.FileDialog` async pattern (already used for prompt import)
+- All editor logic lives in a new handler (e.g., `EditorHandler`) per Section 8.6
+
+---
+
+## Project-Aware Prompt Improvement
+
+The "Improve ✦" button evolves from a generic text editor into a project-fluent assistant. When a project is active, the improve function injects project context so the LLM can resolve vague references into concrete codebase identifiers.
+
+**The problem:** A user writes *"fix the border on the left tab panel"* — the Improve LLM has no idea what "left tab panel" is. It can only clean up grammar and phrasing. The improved prompt still says "left tab panel."
+
+**The fix:** Inject a concise project summary into the improve system prompt. The LLM then knows "left tab panel" = `LeftPanel` (ui/views/left_panel.py), so the improved prompt reads *"fix the border on `LeftPanel` cards in the Agents tab"* — specific, actionable, no ambiguity.
+
+**How it works:**
+1. User clicks Improve with an active project
+2. Project awareness module provides a concise context block (~500 tokens max)
+3. Context is injected into the system prompt before `{{USER_INPUT}}`
+4. The LLM improves the prompt with full knowledge of component names, class names, and file paths
+5. The user gets back a prompt that speaks the codebase's language
+
+**Context source:** `.crabcakes/context.md` (already exists per project), supplemented with key class/function names from the file tree.
+
+**Implementation notes:**
+- The system prompt already supports customization via `prompts/improve-system-prompt.md` with `{{USER_INPUT}}` template mode
+- `utils/project_awareness.py` already provides project context — just needs to be wired into `media_handler.py`
+- No new infrastructure — just connect existing pieces
+- Keep injected context concise (~500 tokens) to control MiniMax costs and latency
+- Only inject when a project is active — otherwise, Improve works as a generic editor (current behavior)
 
 ---
 

@@ -574,7 +574,8 @@ class ChatHandler:
 
     def _build_awareness_prefix(self, project_name: str) -> str:
         """Build project awareness prefix for first message to an agent.
-        Returns empty string if already sent or awareness not available.
+        Uses the template system (prompts/system/) for composed system prompt.
+        Returns empty string if awareness not available.
         """
         if not self._project_handler:
             return ""
@@ -582,10 +583,16 @@ class ChatHandler:
         if not project_path:
             return ""
         try:
-            from utils.project_awareness import build_awareness_block
-            block = build_awareness_block(project_path)
-            if block.strip():
-                return f"[Project Context]\n{block}\n\n[User Message]\n"
+            from utils.project_awareness import build_awareness_dict
+            from utils.prompt_loader import compose_system_prompt
+            awareness_dict = build_awareness_dict(project_path)
+            prompt = compose_system_prompt(
+                agent_name="",
+                project_path=project_path,
+                project_awareness=awareness_dict,
+            )
+            if prompt.strip():
+                return f"[System Instructions]\n{prompt}\n\n[User Message]\n"
         except Exception:
             pass
         return ""

@@ -37,7 +37,7 @@ When you change code, you **must** update this document in the same commit. If y
 Crabcakes is a GTK4 desktop application that connects to an OpenClaw gateway via WebSocket, enabling multi-agent chat management. It provides:
 
 - A split-panel UI: left sidebar (Prompts/Agents/Projects notebook) + right main content (chat tabs + input)
-- Prompt library: load `.md` files from the `prompts/` directory
+- Prompt library: load `.md` files from the `prompts/` directory (system prompts in `prompts/system/`)
 - Agent discovery: connect to gateway, discover agents, open chat tabs per agent
 - Project browser: browse directories from `CRABCAKES_PROJECTS_DIR` via TreeView
 - **Project group chat**: open a project → fan-out message to all project members → responses routed back to the project tab
@@ -79,7 +79,7 @@ crabcakes/
 │   ├── runtime.py            # AgentRuntime — tool loop, LLM API, streaming, cost tracking
 │   ├── tools.py              # Tool definitions + execution (read_file, write_file, exec_command, etc.)
 │   ├── config.py             # LLM provider config (api_key, base_url, model per provider)
-│   ├── context.py            # System prompt + file context builder, .gitignore parsing
+│   ├── context.py            # System prompt builder (via prompts/system/ templates) + file context builder + .gitignore parsing
 │   └── special_agents.py     # Coder + Debugger agent definitions
 │
 ├── ui/                        # All UI components
@@ -121,11 +121,12 @@ crabcakes/
     ├── prompts.py             # load_prompts() — reads .md from prompts/
     ├── projects.py             # load_projects(), scan_directory(), load_members(), save_members()
     ├── favorites.py           # favorites persistence (favorites.json)
-    ├── improve.py             # improve_prompt() — MiniMax API for prompt improvement (template mode with {{USER_INPUT}} marker)
+    ├── improve.py             # improve_prompt() — MiniMax API for prompt improvement (template mode with {{USER_INPUT}} marker, loads from prompts/system/improve.md)
     ├── stt.py                 # STTEngine — faster-whisper push-to-talk
     ├── config.py              # Config path helpers — get_config_dir(), get_projects_dir(), COMMAND_PREFIX (Phase 7)
     ├── diff_parser.py         # parse_diff() — unified diff → FileDiff/ParsedDiff data (Phase 7)
     ├── git_ops.py              # GitPython wrapper — git add/commit/diff/checkout via GitResult (Phase 7)
+    ├── prompt_loader.py         # System prompt template loader — loads/fills/composes prompts/system/*.md
     └── icons.py               # Gdk.Texture SVG rendering (agent avatars + folder icons)
 ```
 
@@ -451,7 +452,10 @@ toggle_favorite(filepath) -> bool   # True if now favorited
 | `scan_directory(path)` | `projects.py` | Returns `[(name, full_path, is_dir), ...]` for one level, filtered (skips `__pycache__`, `.git`, etc.) |
 | `load_members(project_name)` | `projects.py` | Returns `[{session_key}, ...]` from `~/.config/crabcakes/projects/<name>/members.json` |
 | `save_members(project_name, members)` | `projects.py` | Writes members list to `members.json`, creates dir if needed |
-| `improve_prompt(text, callback, GLib)` | `improve.py` | Loads template from `prompts/improve-system-prompt.md`, injects user text at `{{USER_INPUT}}` marker (or legacy split), sends to MiniMax API, calls `callback(improved, error)` with GLib dispatch |
+| `improve_prompt(text, callback, GLib)` | `improve.py` | Loads template from `prompts/system/improve.md`, injects user text at `{{USER_INPUT}}` marker (or legacy split), sends to MiniMax API, calls `callback(improved, error)` with GLib dispatch |
+| `load_prompt_template(name)` | `prompt_loader.py` | Load `prompts/system/<name>.md` template, return raw string or None |
+| `fill_template(template, variables)` | `prompt_loader.py` | Replace `{{KEY}}` markers with values from dict |
+| `compose_system_prompt(agent_name, ...)` | `prompt_loader.py` | Compose full system prompt from templates based on context (project, review mode, agent type) |
 | `STTEngine` class | `stt.py` | Push-to-talk STT via faster-whisper — arecord → PCM buffer → faster-whisper (tiny.en model) → stop_async callback |
 | `show_session_menu(parent, agent_name, sessions, on_select)` | `session_menu.py` | GTK popover menu listing sessions; clicking fires `on_select(session_key)` |
 

@@ -3,7 +3,7 @@
 #
 # Security Manifest:
 #   Reads: ~/.config/crabcakes/config.json (apiKey, baseUrl, model)
-#   Reads: <crabcakes_root>/prompts/improve-system-prompt.md (system prompt template)
+#   Reads: <crabcakes_root>/prompts/system/improve.md (system prompt template)
 #   External: POST to baseUrl (MiniMax API), HTTPS
 #   No files written; no secrets stored
 
@@ -86,9 +86,9 @@ def improve_prompt(raw_text, callback, GLib=None):
     model = cfg.get("model", DEFAULT_MODEL).strip() or DEFAULT_MODEL
 
     # Load system prompt from file
-    prompts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "prompts")
+    prompts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "prompts", "system")
     system_prompt = DEFAULT_SYSTEM_PROMPT
-    prompt_path = os.path.join(prompts_dir, "improve-system-prompt.md")
+    prompt_path = os.path.join(prompts_dir, "improve.md")
     if os.path.isfile(prompt_path):
         try:
             with open(prompt_path) as f:
