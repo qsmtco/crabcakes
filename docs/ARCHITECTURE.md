@@ -497,6 +497,8 @@ def on_prompt_activated(filepath: str):   # load + fire on_prompt_loaded callbac
 
 **Responsibility:** All chat logic — sending, project fan-out, incoming message routing, tab switching. Extracted from `window.py` in Phase 1.
 
+**Key setters:** `set_gateway_client()`, `set_project_handler()`, `set_command_handler()`, `set_chat_render_handler()`, `set_agent_runtime_handler()`, `set_agent_manager()`, `set_on_forward_message()`, `set_on_send_initiated()`, `set_on_res_confirmed()`
+
 ### 3.14a `utils/escaping.py` — Pango-Aware XML Escape
 
 **Responsibility:** Escape XML/Pango specials while preserving known Pango markup tags.

@@ -994,6 +994,8 @@ class MainWindow(Gtk.ApplicationWindow):
         self._command_handler.set_agent_manager(self._gateway_handler.agent_mgr)
         # Wire ProjectHandler with live AgentManager for session lookup
         self._project_handler.set_agent_manager(self._gateway_handler.agent_mgr)
+        # Wire ChatHandler with AgentManager for display name resolution
+        self._chat_handler.set_agent_manager(self._gateway_handler.agent_mgr)
         # Wire forward button callback
         self._chat_handler.set_on_forward_message(self._on_forward_clicked)
         # Wire send-initiated → ActivityHandler pre-flight state

@@ -62,6 +62,7 @@ class ChatHandler:
         self._on_res_confirmed: Callable[[str], None] | None = None  # pre-flight confirm via res
         self._agent_runtime_handler = None  # injected via set_agent_runtime_handler()
         self._awareness_sent: set[str] = set()  # track "project:agent" pairs that received awareness
+        self._agent_mgr = None  # injected via set_agent_manager() after gateway connect
 
     def set_chat_render_handler(self, handler):
         """"Inject ChatRenderHandler. Called by window.py._build()."""
@@ -110,6 +111,10 @@ class ChatHandler:
     def set_command_handler(self, handler):
         """Inject CommandHandler. Called by window.py._build()."""
         self._command_handler = handler
+
+    def set_agent_manager(self, agent_mgr) -> None:
+        """Inject the live AgentManager after gateway connect. Called by window.py."""
+        self._agent_mgr = agent_mgr
 
     def _show_forward_menu(self, text, anchor_widget):
         """
@@ -337,7 +342,7 @@ class ChatHandler:
                     # Solo DM — send only to the selected member
                     key = f"{project_name}:{solo_target}"
                     if key not in self._awareness_sent:
-                        agent_display = solo_target.split("/")[-1].split(":")[-1]
+                        agent_display = self._get_agent_display_name(solo_target)
                         awareness_prefix_cache = self._build_awareness_prefix(project_name, agent_display)
                     prefix = awareness_prefix_cache or ""
                     self._gw.send_message(solo_target, prefix + text)
@@ -353,7 +358,7 @@ class ChatHandler:
                     for member in members:
                         key = f"{project_name}:{member}"
                         if key not in self._awareness_sent:
-                            agent_display = member.split("/")[-1].split(":")[-1]
+                            agent_display = self._get_agent_display_name(member)
                             if awareness_prefix_cache is None:
                                 awareness_prefix_cache = self._build_awareness_prefix(project_name, agent_display)
                             prefix = awareness_prefix_cache if awareness_prefix_cache else ""
@@ -585,6 +590,17 @@ class ChatHandler:
                 break
 
     # ── Internal ─────────────────────────────────────────────────────────────
+
+    def _get_agent_display_name(self, session_key: str) -> str:
+        """Resolve session_key to a display name via AgentManager.
+        Falls back to last segment of session_key if manager not available.
+        """
+        if self._agent_mgr:
+            name = self._agent_mgr.get_name(session_key)
+            if name:
+                return name
+        # Fallback: last meaningful segment
+        return session_key.split("/")[-1].split(":")[-1]
 
     def _build_awareness_prefix(self, project_name: str, agent_name: str = "") -> str:
         """Build project awareness prefix for first message to an agent.
