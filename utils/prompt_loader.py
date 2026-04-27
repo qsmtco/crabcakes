@@ -138,7 +138,10 @@ def compose_system_prompt(
     composed = "\n\n".join(parts)
 
     # Build variable dict
-    tool_list_str = "\n".join(f"  - {t}" for t in tools) if tools else "  (no tools)"
+    if tools:
+        tool_list_str = "## Tools\n" + "\n".join(f"  - {t}" for t in tools)
+    else:
+        tool_list_str = ""  # Gateway agents — tool info controlled by gateway, not CrabCakes
     variables = {
         "AGENT_NAME": agent_name or "",
         "PROJECT_PATH": project_path or "(no project open)",

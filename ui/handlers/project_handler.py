@@ -16,6 +16,7 @@ import os
 import logging
 
 from utils.git_ops import init_repo, stage_all, commit
+from utils.workflow_state import init_workflow
 
 _logger = logging.getLogger(__name__)
 
@@ -88,6 +89,12 @@ class ProjectHandler:
         if self._awareness:
             self._awareness.init_project_config(path, name)
 
+        # Initialize workflow.md (idempotent — skips if already exists)
+        try:
+            init_workflow(path)
+        except Exception:
+            pass  # non-fatal
+
         # Create the project tab in main content
         self._dispatch(lambda: self._mc.create_chat_tab(f"project:{name}", f"Project: {name}"))
 
@@ -140,6 +147,12 @@ class ProjectHandler:
         # Initialize .crabcakes/ with awareness artifacts
         if self._awareness:
             self._awareness.init_project_config(path, name, pm_name, pm_id)
+
+        # Initialize workflow.md (idempotent — creates with onboarding as current)
+        try:
+            init_workflow(path)
+        except Exception:
+            pass  # non-fatal
 
         # Auto-initialize git repo with initial commit
         result = init_repo(path)
