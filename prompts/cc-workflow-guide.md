@@ -60,6 +60,10 @@ Reads `project.md` + `requirements.md` + `architecture.md`, proposes a task brea
 
 ---
 
+## Phase Gates
+
+Each phase ends with a **gate** — the agent must stop and get explicit confirmation before proceeding to the next phase. No phase crossing without PM approval.
+
 ## How to Use This Guide
 
 1. After onboarding, the agent will suggest loading this guide
@@ -67,5 +71,6 @@ Reads `project.md` + `requirements.md` + `architecture.md`, proposes a task brea
 3. Review the phases and work through them in order — discovery → architecture → task planning → implementation
 4. Each phase produces the input for the next
 5. Load each phase prompt from the Prompts tab when you're ready for that step
+6. The agent will **always** stop at the gate and ask before moving to the next phase
 
 **Prompts tab search:** Type `cc` to find all workflow prompts.

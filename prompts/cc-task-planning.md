@@ -14,7 +14,7 @@ Break the architecture into concrete, ordered, assignable tasks that the engine 
 2. Propose a task breakdown ordered by dependency
 3. Present the plan to me for review
 4. I approve, modify, or reject tasks
-5. Create each approved task via `task add @agent — description`
+5. Create each approved task via `task add` command
 6. Update `.crabcakes/workflow.md` — mark task-planning as done
 7. Append to `.crabcakes/context.md`
 
@@ -73,10 +73,7 @@ Wait for my approval before creating tasks via `task add`.
 
 ## After Approval
 
-For each approved task, ask me to type the command for you, or if you have direct access to the terminal, run:
-```
-task add @agent — {description}
-```
+For each approved task, create it using the task system. The assignee will be determined by the team roles defined during onboarding.
 
 Then write a summary to `.crabcakes/tasks.md`:
 ```markdown
