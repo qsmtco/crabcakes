@@ -174,6 +174,89 @@ These three form a complete loop: *see* (attention) → *understand* (breadcrumb
 
 ---
 
+---
+
+## Progress Bar → Sound Meter
+
+The static progress bar is dead. Replace it with a **sound meter** — a live visualization that pulses and breathes with agent activity.
+
+When a project tab opens, the sound meter sits in the header or toolbar area. It doesn't show "progress" — it shows **energy**. Is the agent thinking? Reading files? Writing code? Idle? The meter reflects cognitive state in real time.
+
+**Visual concept:** A horizontal bar with frequency-band segments (like a graphic equalizer). Each band represents a different activity dimension:
+
+| Band | Activity | Visual
+|------|----------|--------
+| Think | Agent is reasoning / LLM inference | Warm pulse (amber)
+| Read | Agent reading files | Cool pulse (blue)
+| Write | Agent writing/modifying files | Sharp spike (green)
+| Test | Agent running tests | Rhythmic pulse (cyan)
+| Idle | Agent waiting for input | Flatline (dim gray)
+
+The meter doesn't show completion percentage. It shows **what's happening right now**. A burst of green spikes means the agent is writing code. A sustained amber glow means it's thinking through a problem. Silence means it's waiting for you.
+
+**Why a sound meter, not a progress bar:** Progress bars lie. They imply linear completion. But agent work isn't linear — it's exploratory, cyclical, sometimes regressive. A sound meter tells the truth: here's the energy signature of what's happening. You learn to read it like a pilot reads instruments.
+
+**Data source:** The existing activity handler (`ui/handlers/activity_handler.py`) already tracks 6 agent states. The sound meter consumes this data and visualizes it.
+
+---
+
+## Project Notes Tab
+
+When a project tab opens, a **Notes** tab appears alongside the chat — a living scratchpad for the PM.
+
+This is NOT a chat with an agent. It's a freeform markdown editor where the PM captures:
+- Ideas and feature sketches
+- Architecture decisions made verbally
+- Todo items and priorities
+- Random thoughts that don't deserve a full chat message
+- Links, references, bookmarks
+
+**How it works:**
+- Stored as `.crabcakes/notes.md` — persisted, versioned with git
+- Opens as a `Gtk.TextView` with markdown formatting
+- Auto-saves on edit (debounced, like a real notes app)
+- Agents can READ it (via project awareness) but cannot write to it
+- The PM owns this space. It's their notebook.
+
+**Why it matters:** Right now, PMs lose context between sessions. Conversations scroll away. Notes persist. The PM can jot down "we decided to use watchdog for the file watcher" and every future agent session can see that decision.
+
+**Relationship to `context.md`:** `context.md` is the agent's shared memory — what agents write to remember things. `notes.md` is the PM's memory — what the human writes to remember things. Two separate streams, both persisted, both readable by agents.
+
+---
+
+## File Changes as Layers
+
+Borrowing from Photoshop's layer concept, file changes in a project are visualized as **layers** — stacked, togglable, transparent overlays on the codebase.
+
+**The problem:** When an agent makes changes across 8 files, the PM sees a flat list of diffs. They have to mentally reconstruct which changes belong together, what depends on what, and what's safe to revert. It's like looking at a Photoshop canvas with all layers flattened — you can't unmix the paint.
+
+**The fix:** Group file changes into layers. Each layer represents one logical unit of work:
+
+| Layer | What It Contains | Example
+|-------|-----------------|----------
+| Task #1 | Files changed for task 1 | `watcher.py`, `requirements.txt`
+| Task #2 | Files changed for task 2 | `diary.py`, `writer.py`
+| Hotfix | Unplanned fix | `writer.py` (bugfix)
+| WIP | In-progress changes | `tests/test_watcher.py` (unfinished)
+
+**Layer interactions:**
+- **Toggle visibility** — hide a layer to see the codebase without those changes (git stash for that layer's files)
+- **Solo** — show only one layer's changes
+- **Reorder** — drag layers to change merge priority
+- **Merge down** — squash two layers together
+- **Delete** — revert all changes in a layer (git checkout for those files)
+
+**How layers are defined:**
+- **Automatic:** Each task in the task engine creates a layer. Files changed during that task's execution belong to its layer.
+- **Manual:** The PM can create ad-hoc layers and drag files into them.
+- **Commit-aligned:** Each git commit is a layer. Commits that belong to the same task are grouped.
+
+**Data source:** The task engine (implementation engine proposal) already tracks which task is active. The review layer already captures diffs. Layers = grouping diffs by task/commit.
+
+**Why this matters:** It transforms code review from "here's 800 lines of diff, good luck" into "here are 4 logical changes, review them one at a time." The PM can accept Task #1's layer while reverting Task #2's layer — without cherry-picking individual files.
+
+---
+
 ## The Philosophy
 
 The jump from "doesn't exist" to "single-agent coding assistant with review and task management" is the big one. Everything after that is iterative. The ship is never really done — you just keep adding rooms.
