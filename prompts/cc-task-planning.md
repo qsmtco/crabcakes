@@ -14,7 +14,7 @@ Break the architecture into concrete, ordered, assignable tasks that the engine 
 2. Propose a task breakdown ordered by dependency
 3. Present the plan to me for review
 4. I approve, modify, or reject tasks
-5. Create each approved task using CrabCakes backtick commands
+5. Create each approved task using CrabCakes backtick commands (typed in the project feed, NOT a shell CLI)
 6. Update `.crabcakes/workflow.md` — mark task-planning as done
 7. Append to `.crabcakes/context.md`
 
@@ -73,11 +73,13 @@ Wait for my approval before creating tasks.
 
 ## After Approval
 
-For each approved task, ask the PM to create it in CrabCakes using the backtick command:
+For each approved task, ask the PM to create it in CrabCakes using the backtick command (typed in the project feed):
 ```
 `task @assignee — description
 ```
-Or create it yourself if you have access to the CrabCakes command system. The assignee is determined by team roles from onboarding.
+Or create it yourself if you have access to the CrabCakes command system.
+
+**Important:** This is a CrabCakes backtick command, NOT a shell/terminal command. Do not run `task add` in a terminal.
 
 Then write a summary to `.crabcakes/tasks.md`:
 ```markdown
