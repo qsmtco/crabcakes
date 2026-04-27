@@ -14,7 +14,7 @@ Break the architecture into concrete, ordered, assignable tasks that the engine 
 2. Propose a task breakdown ordered by dependency
 3. Present the plan to me for review
 4. I approve, modify, or reject tasks
-5. Create each approved task via `task add` command
+5. Create each approved task using CrabCakes backtick commands
 6. Update `.crabcakes/workflow.md` — mark task-planning as done
 7. Append to `.crabcakes/context.md`
 
@@ -67,13 +67,17 @@ I will:
 - Reject tasks that don't fit the architecture
 - Ask you to split L tasks into S/M before approval
 
-Wait for my approval before creating tasks via `task add`.
+Wait for my approval before creating tasks.
 
 ---
 
 ## After Approval
 
-For each approved task, create it using the task system. The assignee will be determined by the team roles defined during onboarding.
+For each approved task, ask the PM to create it in CrabCakes using the backtick command:
+```
+`task @assignee — description
+```
+Or create it yourself if you have access to the CrabCakes command system. The assignee is determined by team roles from onboarding.
 
 Then write a summary to `.crabcakes/tasks.md`:
 ```markdown
@@ -92,4 +96,4 @@ Then write a summary to `.crabcakes/tasks.md`:
 
 1. Update `.crabcakes/workflow.md` — find the task-planning row, change its status to ✅ done, set started/completed dates
 2. Append to `context.md`: "Task Planning phase complete. {N} tasks created."
-3. Suggest: "All tasks created. Run `task run` to start the engine, or review with `task list`."
+3. Suggest: "All tasks created. Use `` `tasks `` to review, or tell the assigned agent to `` `start #1 ``."
