@@ -21,3 +21,4 @@ Ask the user about the project, one or two questions at a time. Be conversationa
   - Conventions → "## Conventions" section
   - Team → update .crabcakes/team.json with roles
 - Append a dated entry to context.md summarizing the onboarding
+- Update `.crabcakes/workflow.md` — find the onboarding row, change its status to ✅ done, set the completed date (today's date in YYYY-MM-DD format)

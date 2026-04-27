@@ -149,6 +149,7 @@ def compose_system_prompt(
         "TEAM_ROSTER": awareness.get("TEAM_ROSTER", ""),
         "CURRENT_STATE": awareness.get("CURRENT_STATE", ""),
         "PROJECT_MEMORY": awareness.get("PROJECT_MEMORY", ""),
+        "WORKFLOW_STATUS": awareness.get("WORKFLOW_STATUS", ""),
         "REVIEW_MODE": review_mode,
         "TOOL_LIST": tool_list_str,
     }

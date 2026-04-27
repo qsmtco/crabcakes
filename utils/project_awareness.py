@@ -583,7 +583,7 @@ def detect_tech_stack(project_path: str) -> list[str]:
 def build_awareness_dict(project_path: str) -> dict[str, str]:
     """Return awareness data as a dict of template variables.
 
-    Keys: PROJECT_NAME, TEAM_ROSTER, CURRENT_STATE, PROJECT_MEMORY.
+    Keys: PROJECT_NAME, TEAM_ROSTER, CURRENT_STATE, PROJECT_MEMORY, WORKFLOW_STATUS.
     Parallel to build_awareness_block() but returns structured data
     instead of formatted text.
     """
@@ -629,5 +629,13 @@ def build_awareness_dict(project_path: str) -> dict[str, str]:
         parts["PROJECT_MEMORY"] = truncated
     else:
         parts["PROJECT_MEMORY"] = ""
+
+    # Workflow status — lazy import to avoid circular dependency
+    try:
+        from utils.workflow_state import get_workflow_content
+        wf = get_workflow_content(project_path)
+        parts["WORKFLOW_STATUS"] = wf if wf.strip() else "(workflow.md not yet initialized)"
+    except Exception:
+        parts["WORKFLOW_STATUS"] = "(workflow state unavailable)"
 
     return parts
