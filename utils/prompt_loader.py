@@ -104,7 +104,13 @@ def compose_system_prompt(
         if pa:
             parts.append(pa)
 
-    # 3. Project onboarding (when project active but not yet onboarded)
+    # 3. CrabCakes commands reference (when project active)
+    if project_path:
+        cmds = load_prompt_template("crabcakes-commands")
+        if cmds:
+            parts.append(cmds)
+
+    # 4. Project onboarding (when project active but not yet onboarded)
     if project_path:
         try:
             from utils.project_awareness import is_project_onboarded
@@ -115,13 +121,13 @@ def compose_system_prompt(
         except Exception:
             pass  # non-fatal — skip onboarding if check fails
 
-    # 4. Code review mode
+    # 5. Code review mode
     if review_mode and review_mode != "off":
         cr = load_prompt_template("code-review")
         if cr:
             parts.append(cr)
 
-    # 5. Agent-specific templates (by explicit role)
+    # 6. Agent-specific templates (by explicit role)
     if agent_role == "coder":
         ct = load_prompt_template("coder")
         if ct:
