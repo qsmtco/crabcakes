@@ -16,10 +16,18 @@ class AgentManager:
         self._agent_sessions: dict[str, list[str]] = {}  # name -> [session_keys]
 
     def register(self, session_key: str, agent_name: str) -> None:
-        """Register a new agent session."""
-        if session_key not in self._agent_names:
-            self._agent_names[session_key] = agent_name
-            self._assign_color(agent_name)
+        """Register an agent session. Updates name on re-registration (gateway reconnect)."""
+        old_name = self._agent_names.get(session_key)
+        self._agent_names[session_key] = agent_name
+        self._assign_color(agent_name)
+        if old_name is None:
+            # New session — track it
+            self._agent_sessions.setdefault(agent_name, []).append(session_key)
+        elif old_name != agent_name:
+            # Name changed — migrate from old name's session list to new
+            old_list = self._agent_sessions.get(old_name, [])
+            if session_key in old_list:
+                old_list.remove(session_key)
             self._agent_sessions.setdefault(agent_name, []).append(session_key)
 
     def get_name(self, session_key: str) -> str:

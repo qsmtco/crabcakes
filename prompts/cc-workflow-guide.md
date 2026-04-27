@@ -4,9 +4,9 @@
 
 # Workflow Guide
 
-Welcome to the CrabCakes workflow. This guide explains the phases available for structured development.
+Welcome to the CrabCakes workflow. This guide explains the phases for structured development.
 
-> **Quick-fix mode is always available.** If you just want something done — "fix this bug", "add this feature" — just say so. No workflow required.
+Use this workflow for any project that needs planning. Go through the phases in order — they build on each other.
 
 ---
 
@@ -60,26 +60,12 @@ Reads `project.md` + `requirements.md` + `architecture.md`, proposes a task brea
 
 ---
 
-## Quick-Fix Mode
-
-The workflow is optional. You can skip all phases and just request:
-
-```
-"Fix the auth bug in crabwatch.py"
-"Add a --verbose flag"
-"Refactor the watcher to use async I/O"
-```
-
-The agent will execute directly — no discovery, no architecture, no task planning. Just work.
-
----
-
 ## How to Use This Guide
 
 1. After onboarding, the agent will suggest loading this guide
 2. Click **cc-workflow-guide** from the Prompts tab to load it
-3. Review the phases and decide which ones you need
-4. Load and run the phases you want — skip the ones you don't
-5. At any point, send a direct request and the agent will switch to quick-fix mode
+3. Review the phases and work through them in order — discovery → architecture → task planning → implementation
+4. Each phase produces the input for the next
+5. Load each phase prompt from the Prompts tab when you're ready for that step
 
 **Prompts tab search:** Type `cc` to find all workflow prompts.

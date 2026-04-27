@@ -593,14 +593,18 @@ class ChatHandler:
 
     def _get_agent_display_name(self, session_key: str) -> str:
         """Resolve session_key to a display name via AgentManager.
-        Falls back to last segment of session_key if manager not available.
+        Falls back to agent name from session key format (agent:name:...).
         """
         if self._agent_mgr:
             name = self._agent_mgr.get_name(session_key)
             if name:
                 return name
-        # Fallback: last meaningful segment
-        return session_key.split("/")[-1].split(":")[-1]
+        # Fallback: extract agent name from session key (agent:name:...)
+        segments = session_key.split(":")
+        if len(segments) >= 2 and segments[0] == "agent":
+            return segments[1]  # e.g. "qtr" from "agent:qtr:telegram:..."
+        # Last resort: last segment
+        return segments[-1]
 
     def _build_awareness_prefix(self, project_name: str, agent_name: str = "") -> str:
         """Build project awareness prefix for first message to an agent.
