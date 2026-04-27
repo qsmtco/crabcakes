@@ -15,6 +15,8 @@ from typing import Callable
 import os
 import logging
 
+from models.command import Command, CommandResult
+from models import task_store
 from utils.git_ops import init_repo, stage_all, commit
 from utils.workflow_state import init_workflow
 
@@ -401,6 +403,83 @@ class ProjectHandler:
     def get_active_project_path(self) -> str | None:
         """Return the currently active project path, or None."""
         return self._active_project_path
+
+    # ── Command entry points (Phase 7) ────────────────────────────────────────
+
+
+    def cmd_status(self, cmd: Command, session_key: str | None = None) -> CommandResult:
+        """`status → project status summary"""
+        sk = session_key or ""
+        if not sk.startswith("project:"):
+            return CommandResult(handled=True, response_text="Open a project tab to check status.")
+        project_name = sk.split(":", 1)[1]
+        members = self.get_project_members(project_name)
+        solo_target = self.get_solo_target(project_name)
+        all_tasks = task_store.list_all()
+        project_tasks = [t for t in all_tasks if t.assigned_to in members]
+        pending = sum(1 for t in project_tasks if t.status == "pending")
+        in_progress = sum(1 for t in project_tasks if t.status == "in_progress")
+        blocked = sum(1 for t in project_tasks if t.status == "blocked")
+        done = sum(1 for t in project_tasks if t.status == "done")
+        review_state = self._review_handler.get_state(project_name) if hasattr(self, '_review_handler') and self._review_handler else None
+        review_status = "active" if (review_state and review_state.is_active()) else "not started"
+        solo_str = f"@{self._agent_mgr.get_name(solo_target)}" if solo_target and self._agent_mgr else "none"
+        lines = [
+            f"Project: {project_name}",
+            f"Members: {len(members)}",
+            f"Tasks: {pending} pending, {in_progress} in progress, {blocked} blocked, {done} done",
+            f"Review: {review_status}",
+            f"Solo DM: {solo_str}",
+        ]
+        return CommandResult(handled=True, response_text="\n".join(lines))
+
+    def cmd_agents(self, cmd: Command, session_key: str | None = None) -> CommandResult:
+        """`agents → list project agents and their state"""
+        sk = session_key or ""
+        if not sk.startswith("project:"):
+            return CommandResult(handled=True, response_text="Open a project tab to list agents.")
+        project_name = sk.split(":", 1)[1]
+        members = self.get_project_members(project_name)
+        solo_target = self.get_solo_target(project_name)
+        lines = [f"Members in {project_name}:", ""]
+        for m in members:
+            name = self._agent_mgr.get_name(m) if self._agent_mgr else m
+            solo_marker = " (solo DM target)" if m == solo_target else ""
+            lines.append(f"• @{name} — {m}{solo_marker}")
+        return CommandResult(handled=True, response_text="\n".join(lines))
+
+
+    def cmd_cost(self, cmd: Command, session_key: str | None = None) -> CommandResult:
+        """`cost — spending summary for current project"""
+        sk = session_key or ""
+        if not sk.startswith("project:"):
+            return CommandResult(handled=True, response_text="Open a project tab to check cost.")
+        project_name = sk.split(":", 1)[1]
+        members = self.get_project_members(project_name)
+        if not members:
+            return CommandResult(handled=True, response_text="No members in this project.")
+        agent_names = [self._agent_mgr.get_name(sk) if self._agent_mgr else sk for sk in members]
+        lines = [
+            f"Spending summary for {project_name}:",
+            "(last 7 days)",
+            "",
+            "Agent      Tokens   Cost",
+            "────────────────────────",
+        ]
+        for name in agent_names:
+            lines.append(f"  @{name}  (contact gateway for usage API)")
+        lines.extend([
+            "────────────────────────",
+            "Note: Cost data requires OpenClaw usage tracking to be enabled.",
+        ])
+        return CommandResult(handled=True, response_text="\n".join(lines))
+
+
+    def set_review_handler(self, review_handler) -> None:
+        """"Inject ReviewHandler for review state queries in cmd_status."""
+        self._review_handler = review_handler
+
+    # ── Git commit helper ───────────────────────────────────────────────
 
     def _git_commit_if_available(self, path: str, message: str) -> None:
         """Stage all and commit if git is available. Non-fatal on failure."""

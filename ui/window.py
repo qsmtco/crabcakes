@@ -37,6 +37,9 @@ from ui.handlers.gateway_handler import GatewayHandler
 from ui.handlers.media_handler import MediaHandler
 from ui.handlers.project_handler import ProjectHandler
 from ui.handlers.activity_handler import ActivityHandler
+from ui.handlers.task_handler import TaskHandler
+from ui.handlers.collab_handler import CollabHandler
+from ui.handlers.session_handler import SessionHandler
 
 from models.command import Command
 from models.task import Task
@@ -64,6 +67,13 @@ class MainWindow(Gtk.ApplicationWindow):
         # Agent-to-project routing table — shared between ProjectHandler (writes) and ChatHandler (reads)
         from models import AgentRoutingTable
         self._agent_to_project = AgentRoutingTable()
+
+        # Task handler — owns task command logic (Phase 7)
+        self._task_handler = None
+        # Collab handler — owns collaboration command logic (Phase 7)
+        self._collab_handler = None
+        # Session handler — owns session switching logic (Phase 7)
+        self._session_handler = None
 
         self._build()
         self._setup_keyboard_shortcuts()
@@ -216,6 +226,20 @@ class MainWindow(Gtk.ApplicationWindow):
         # Note: set_on_project_tab_close is called here AND re-called below (Bug #13 fix)
         # Both callbacks fire: _on_tab_close (feed bar) + review_handler.on_project_closed
         self._main_content.set_on_project_settings_update(self._on_feed_bar_update)
+        # Task handler — task commands (Phase 7)
+        self._task_handler = TaskHandler(
+            on_display_card=self._on_command_card,
+            on_display_text=self._on_command_text,
+        )
+        # Collab handler — collaboration commands (Phase 7)
+        self._collab_handler = CollabHandler()
+        # Session handler — session switching (Phase 7)
+        # Needs AgentManager and ProjectHandler injected via setters after connect
+        self._session_handler = SessionHandler(
+            agent_manager=None,   # synced in _sync_gateway_to_chat_handler
+            project_handler=self._project_handler,
+        )
+
         # Command handler — owns backtick command parsing + routing (Phase 0.2)
         # Created AFTER ProjectHandler is initialized so project_handler reference is valid.
         from ui.handlers.command_handler import CommandHandler
@@ -346,580 +370,59 @@ class MainWindow(Gtk.ApplicationWindow):
         self._main_content.scroll_chat_to_bottom()
 
     def _register_stub_commands(self):
-        """Register all 16 commands as stubs that return 'not yet implemented'."""
-        from models.command import CommandResult
-
-        def stub(cmd):
-            return CommandResult(handled=True, response_text="Not yet implemented.")
-
-        # Collaboration — Phase 1 real implementations
-        self._command_handler.register_command("ask", self._cmd_ask, aliases=["a"],
-            help_text="Ask an agent a question: `ask @agent — question")
-        self._command_handler.register_command("delegate", self._cmd_delegate, aliases=["d"],
-            help_text="PM delegates to agent: `delegate @agent — task")
-        self._command_handler.register_command("stop", self._cmd_stop,
-            help_text="PM stops the current collaboration: `stop @agent")
-        self._command_handler.register_command("tell", self._cmd_tell,
-            help_text="One agent shares information with another: `tell @agent — info")
-        # Task — Phase 2 real implementations
-        self._command_handler.register_command("task", self._cmd_task, aliases=["t"],
-            help_text="Create a task card assigned to agent")
-        self._command_handler.register_command("done", self._cmd_done,
-            help_text="Mark task complete")
-        self._command_handler.register_command("start", self._cmd_start,
-            help_text="Start working on a task")
-        self._command_handler.register_command("blocked", self._cmd_blocked,
-            help_text="Report a blocker on a task")
-        self._command_handler.register_command("cancel", self._cmd_cancel,
-            help_text="Cancel a task")
-        self._command_handler.register_command("tasks", self._cmd_tasks,
-            help_text="Show all tasks")
-        self._command_handler.register_command("assign", self._cmd_assign,
-            help_text="Reassign a task to a different agent")
-        self._command_handler.register_command("priority", self._cmd_priority,
-            help_text="Set task priority")
-        # Review — Phase 3 real implementations
-        self._command_handler.register_command("review", self._cmd_review,
-            help_text="Start a review checkpoint")
-        self._command_handler.register_command("check", self._cmd_check,
-            help_text="Show diff of changes since checkpoint")
-        self._command_handler.register_command("accept", self._cmd_accept,
-            help_text="Accept all changes (or single file)")
-        self._command_handler.register_command("reject", self._cmd_reject,
-            help_text="Reject all pending changes")
-        # Project
-        self._command_handler.register_command("status", self._cmd_status, aliases=["s"],
-            help_text="Project status summary")
-        self._command_handler.register_command("agents", self._cmd_agents,
-            help_text="List project agents and current state")
-        self._command_handler.register_command("cost", self._cmd_cost,
-            help_text="Spending summary for this project")
-        # Utility
-        self._command_handler.register_command("help", self._cmd_help, aliases=["?"],
-            help_text="List all commands or help for a specific command")
-        self._command_handler.register_command("session", self._cmd_session, aliases=["s"],
-            help_text="Switch agent session in project: `session list @agent | `session <ref> @agent")
-
-    def _cmd_help(self, cmd: Command):
-        """Handle `help [command] — returns command list card."""
-        from models.command import CommandResult
-
-        if cmd.args:
-            # Help for specific command
-            name = cmd.args[0].lstrip("@")
-            help_text = self._command_handler.get_help(name)   # includes aliases via registry
-            if help_text is None:
-                help_text = f"Unknown command: `{name}"
-            else:
-                help_text = f"`{name}` — {help_text}"
-            return CommandResult(handled=True, response_text=help_text)
-
-        # Full list — dynamically read from registry so aliases are shown
-        lines = [" CrabCakes Commands", ""]
-        reg = self._command_handler._registry
-        for name in reg.list_commands():
-            alias_list = [al for al, cn in reg.list_aliases().items() if cn == name]
-            alias_str = f" (`{', `'.join(alias_list)}`)" if alias_list else ""
-            lines.append(f"  `{name}`{alias_str}")
-        lines.extend(["", f"Type `help <command> for details."])
-        return CommandResult(handled=True, response_text="\n".join(lines))
-
-    def _cmd_session(self, cmd: Command):
-        """`session list @agent — list sessions | `session <ref> @agent — switch session"""
-        from models.command import CommandResult
-
-        sk = cmd.source_session_key
-        if not sk or not sk.startswith("project:"):
-            return CommandResult(handled=True, response_text="Session switching is only available in project tabs.")
-
-        project_name = sk.split(":", 1)[1]
-
-        # Need @agent resolved
-        if not cmd.target_session_key:
-            return CommandResult(
-                handled=True,
-                response_text="Usage: `session list @agent | `session <ref> @agent",
-            )
-
-        agent_mgr = self._gateway_handler.agent_mgr if self._gateway_handler else None
-        if agent_mgr is None:
-            return CommandResult(handled=True, response_text="Not connected to gateway.")
-
-        agent_name = agent_mgr.get_name(cmd.target_session_key)
-        if not agent_name:
-            return CommandResult(handled=True, response_text=f"Unknown agent: {cmd.target_session_key}")
-
-        # Verify agent is a member of this project
-        current_sk = self._project_handler.get_agent_session_in_project(project_name, agent_name)
-        if current_sk is None:
-            return CommandResult(handled=True, response_text=f"@{agent_name} is not a member of this project.")
-
-        # Sub-command dispatch
-        if not cmd.args:
-            return CommandResult(
-                handled=True,
-                response_text="Usage: `session list @agent | `session <ref> @agent",
-            )
-
-        subcmd = cmd.args[0].lower()
-
-        if subcmd == "list":
-            return self._session_list(agent_mgr, agent_name, current_sk)
-        else:
-            return self._session_switch(
-                agent_mgr, project_name, agent_name, current_sk, subcmd,
-            )
-
-    def _session_list(self, agent_mgr, agent_name, current_sk):
-        """Format and return a numbered list of agent sessions."""
-        from models.command import CommandResult
-
-        sessions = agent_mgr.get_sessions(agent_name)
-        if not sessions:
-            return CommandResult(handled=True, response_text=f"No sessions found for @{agent_name}.")
-
-        lines = [f"Sessions for {agent_name}:"]
-        for i, sk in enumerate(sessions, 1):
-            display = self._short_session_key(sk)
-            if sk == current_sk:
-                lines.append(f"  {i}. {display}  ✓ (current)")
-            else:
-                lines.append(f"  {i}. {display}")
-        lines.append("")
-        lines.append("Switch: `session <number> @" + agent_name)
-        return CommandResult(handled=True, response_text="\n".join(lines))
-
-    def _session_switch(self, agent_mgr, project_name, agent_name, old_sk, session_ref):
-        """Switch an agent to a different session in the project."""
-        from models.command import CommandResult
-
-        sessions = agent_mgr.get_sessions(agent_name)
-        if not sessions:
-            return CommandResult(handled=True, response_text=f"No sessions found for @{agent_name}.")
-
-        # Resolve session_ref: numeric index or string match
-        new_sk = None
-
-        # Try numeric index (1-based)
-        try:
-            idx = int(session_ref)
-            if 1 <= idx <= len(sessions):
-                new_sk = sessions[idx - 1]
-        except ValueError:
-            pass
-
-        # Try string match (exact or unique prefix)
-        if new_sk is None:
-            # Exact match
-            for sk in sessions:
-                if sk == session_ref:
-                    new_sk = sk
-                    break
-            # Prefix match
-            if new_sk is None:
-                # Match against the part after "agent:<name>:"
-                prefix = f"agent:{agent_name.lower()}:"
-                matches = [sk for sk in sessions if sk.lower().startswith(prefix + session_ref.lower())]
-                if len(matches) == 1:
-                    new_sk = matches[0]
-                elif len(matches) > 1:
-                    return CommandResult(
-                        handled=True,
-                        response_text=f"Ambiguous session ref '{session_ref}'. Use `session list @{agent_name} to see options.",
-                    )
-
-        if new_sk is None:
-            return CommandResult(
-                handled=True,
-                response_text=f"No matching session '{session_ref}'. Use `session list @{agent_name} to see options.",
-            )
-
-        if new_sk == old_sk:
-            display = self._short_session_key(new_sk)
-            return CommandResult(
-                handled=True,
-                response_text=f"Already on session: {display}",
-            )
-
-        # Perform the switch
-        self._project_handler.update_agent_session(project_name, old_sk, new_sk)
-        display = self._short_session_key(new_sk)
-        return CommandResult(
-            handled=True,
-            response_text=f"✓ Switched @{agent_name} to: {display}",
-        )
-
-    def _short_session_key(self, key: str) -> str:
-        """Shorten a session key for display.
-
-        Strips the 'agent:<name>:' prefix, showing only the session-specific part.
-        """
-        parts = key.split(":")
-        if len(parts) >= 3 and parts[0] == "agent":
-            return ":".join(parts[2:])
-        return key
-
-    def _cmd_ask(self, cmd: Command):
-        """`ask @agent — question → forward question to agent (or all members if `@`)"""
-        from models.command import CommandResult
-        if cmd.is_broadcast:   # BUG #4 fix: fan-out to all project members
-            return CommandResult(handled=True, broadcast_targets=cmd.broadcast_targets, forward_text=cmd.body)
-        if not cmd.target_session_key:
-            return CommandResult(handled=True, response_text="No target agent. Usage: `ask @agent — question")
-        return CommandResult(handled=True, forward_to=cmd.target_session_key, forward_text=cmd.body)
-
-    def _cmd_delegate(self, cmd: Command):
-        """`delegate @agent — task → forward task to agent (or all members if `@`)"""
-        from models.command import CommandResult
-        if cmd.is_broadcast:   # BUG #4 fix: fan-out
-            return CommandResult(handled=True, broadcast_targets=cmd.broadcast_targets, forward_text=cmd.body)
-        if not cmd.target_session_key:
-            return CommandResult(handled=True, response_text="No target agent. Usage: `delegate @agent — task")
-        return CommandResult(handled=True, forward_to=cmd.target_session_key, forward_text=cmd.body)
-
-    def _cmd_stop(self, cmd: Command):
-        """`stop @agent → send stop signal to agent, show local echo."""
-        from models.command import CommandResult
-        if not cmd.target_session_key:
-            return CommandResult(handled=True, response_text="No target agent. Usage: `stop @agent")
-        return CommandResult(handled=True, forward_to=cmd.target_session_key, forward_text="stop")
-
-    def _cmd_tell(self, cmd: Command):
-        """`tell @agent — info → forward info to agent (or all members if `@`)"""
-        from models.command import CommandResult
-        if cmd.is_broadcast:   # BUG #4 fix: fan-out
-            return CommandResult(handled=True, broadcast_targets=cmd.broadcast_targets, forward_text=cmd.body)
-        if not cmd.target_session_key:
-            return CommandResult(handled=True, response_text="No target agent. Usage: `tell @agent — info")
-        return CommandResult(handled=True, forward_to=cmd.target_session_key, forward_text=cmd.body)
-
-    def _cmd_task(self, cmd: Command):
-        """`task @agent — description → create task, assign to agent, show card"""
-        from models.command import CommandResult
-        from models.task import TASK_STATUS_LABELS, PRIORITY_LABELS
-        if not cmd.target_session_key:
-            return CommandResult(handled=True, response_text="No target agent. Usage: `task @agent — description")
-        now = datetime.now().isoformat()
-        task = task_store.create(Task(
-            title=cmd.body,
-            assigned_to=cmd.target_session_key,
-            created_by=cmd.source_session_key,
-            created_at=now,
-            updated_at=now,
-        ))
-        status_label = TASK_STATUS_LABELS.get(task.status, task.status)
-        priority_label = PRIORITY_LABELS.get(task.priority, task.priority)
-        # Resolve agent name for display
-        agent_name = cmd.args[0] if cmd.args else ""
-        card = {
-            "type": "task",
-            "action": "created",
-            "id": task.id,
-            "title": task.title,
-            "status": status_label,
-            "priority": priority_label,
-            "assigned_to": agent_name,
-        }
-        return CommandResult(handled=True, response_card=card)
-
-    def _cmd_done(self, cmd: Command):
-        """`done <id> → mark task complete"""
-        from models.command import CommandResult
-        from models.task import TASK_STATUS_LABELS
-        task_id = cmd.args[0].lstrip('#') if cmd.args else ''
-        if not task_id:
-            return CommandResult(handled=True, response_text="Usage: `done <task_id>")
-        task = task_store.get(task_id)
-        if not task:
-            return CommandResult(handled=True, response_text=f"Task not found: {task_id}")
-        task.status = "done"
-        task_store.update(task)
-        status_label = TASK_STATUS_LABELS.get(task.status, task.status)
-        card = {
-            "type": "task",
-            "action": "updated",
-            "id": task.id,
-            "title": task.title,
-            "status": status_label,
-            "priority": "",
-            "assigned_to": "",
-        }
-        return CommandResult(handled=True, response_card=card)
-
-    def _cmd_start(self, cmd: Command):
-        """`start <id> → start working on task"""
-        from models.command import CommandResult
-        from models.task import TASK_STATUS_LABELS
-        if not cmd.args:
-            return CommandResult(handled=True, response_text="Usage: `start <task_id>")
-        task_id = cmd.args[0].lstrip('#') if cmd.args else ''
-        task = task_store.get(task_id)
-        if not task:
-            return CommandResult(handled=True, response_text=f"Task not found: {task_id}")
-        task.status = "in_progress"
-        task_store.update(task)
-        status_label = TASK_STATUS_LABELS.get(task.status, task.status)
-        card = {
-            "type": "task",
-            "action": "updated",
-            "id": task.id,
-            "title": task.title,
-            "status": status_label,
-            "priority": "",
-            "assigned_to": "",
-        }
-        return CommandResult(handled=True, response_card=card)
-
-    def _cmd_blocked(self, cmd: Command):
-        """`blocked <id> — reason → mark task blocked"""
-        from models.command import CommandResult
-        from models.task import TASK_STATUS_LABELS
-        task_id = cmd.args[0].lstrip('#') if cmd.args else ''
-        if not task_id:
-            return CommandResult(handled=True, response_text="Usage: `blocked <task_id> — reason")
-        task = task_store.get(task_id)
-        if not task:
-            return CommandResult(handled=True, response_text=f"Task not found: {task_id}")
-        task.status = "blocked"
-        task.blocked_reason = cmd.body   # BUG #17 fix: body text is the blocked reason
-        task_store.update(task)
-        status_label = TASK_STATUS_LABELS.get(task.status, task.status)
-        card = {
-            "type": "task",
-            "action": "updated",
-            "id": task.id,
-            "title": task.title,
-            "status": status_label,
-            "priority": "",
-            "assigned_to": "",
-        }
-        return CommandResult(handled=True, response_card=card)
-
-    def _cmd_cancel(self, cmd: Command):
-        """`cancel <id> → cancel task"""
-        from models.command import CommandResult
-        from models.task import TASK_STATUS_LABELS
-        task_id = cmd.args[0].lstrip('#') if cmd.args else ''
-        if not task_id:
-            return CommandResult(handled=True, response_text="Usage: `cancel <task_id>")
-        task = task_store.get(task_id)
-        if not task:
-            return CommandResult(handled=True, response_text=f"Task not found: {task_id}")
-        task.status = "cancelled"
-        task_store.update(task)
-        status_label = TASK_STATUS_LABELS.get(task.status, task.status)
-        card = {
-            "type": "task",
-            "action": "updated",
-            "id": task.id,
-            "title": task.title,
-            "status": status_label,
-            "priority": "",
-            "assigned_to": "",
-        }
-        return CommandResult(handled=True, response_card=card)
-
-    def _cmd_tasks(self, cmd: Command):
-        """`tasks → show all tasks"""
-        from models.command import CommandResult
-        from models.task import TASK_STATUS_LABELS, PRIORITY_LABELS
-        tasks = task_store.list_all()
-        if not tasks:
-            return CommandResult(handled=True, response_text="No tasks yet.")
-        lines = ["📋 Tasks", ""]
-        for t in tasks:
-            status = TASK_STATUS_LABELS.get(t.status, t.status)
-            priority = PRIORITY_LABELS.get(t.priority, t.priority)
-            lines.append(f"[{t.id}] {t.title}")
-            lines.append(f"    {status} | {priority}")
-            lines.append("")
-        return CommandResult(handled=True, response_text="\n".join(lines))
-
-    def _cmd_assign(self, cmd: Command):
-        """`assign <id> @agent → reassign task"""
-        from models.command import CommandResult
-        from models.task import TASK_STATUS_LABELS
-        task_id = cmd.args[0].lstrip('#') if cmd.args else ''
-        if len(cmd.args) < 2:
-            return CommandResult(handled=True, response_text="Usage: `assign <task_id> @agent")
-        task = task_store.get(task_id)
-        if not task:
-            return CommandResult(handled=True, response_text=f"Task not found: {task_id}")
-        if cmd.target_session_key:
-            task.assigned_to = cmd.target_session_key
-        else:
-            task.assigned_to = cmd.args[1]
-        task_store.update(task)
-        status_label = TASK_STATUS_LABELS.get(task.status, task.status)
-        card = {
-            "type": "task",
-            "action": "updated",
-            "id": task.id,
-            "title": task.title,
-            "status": status_label,
-            "priority": "",
-            "assigned_to": cmd.args[1] if len(cmd.args) > 1 else "",
-        }
-        return CommandResult(handled=True, response_card=card)
-
-    def _cmd_priority(self, cmd: Command):
-        """`priority <id> <level> → set task priority"""
-        from models.command import CommandResult
-        from models.task import TASK_STATUS_LABELS, PRIORITY_LABELS
-        valid = list(PRIORITY_LABELS.keys())
-        if len(cmd.args) < 2:
-            return CommandResult(handled=True, response_text=f"Usage: `priority <task_id> <{'|'.join(valid)}>")
-        task_id = cmd.args[0].lstrip('#') if cmd.args else ''
-        task = task_store.get(task_id)
-        if not task:
-            return CommandResult(handled=True, response_text=f"Task not found: {task_id}")
-        level = cmd.args[1].lower()
-        if level not in valid:
-            return CommandResult(handled=True, response_text=f"Invalid priority. Use: {', '.join(valid)}")
-        task.priority = level
-        task_store.update(task)
-        status_label = TASK_STATUS_LABELS.get(task.status, task.status)
-        priority_label = PRIORITY_LABELS.get(task.priority, task.priority)
-        card = {
-            "type": "task",
-            "action": "updated",
-            "id": task.id,
-            "title": task.title,
-            "status": status_label,
-            "priority": priority_label,
-            "assigned_to": "",
-        }
-        return CommandResult(handled=True, response_card=card)
-
-    # ── Review commands (Phase 3) ────────────────────────────────────────────
-
-    def _cmd_review(self, cmd: Command):
-        """`review → start a review session"""
-        from models.command import CommandResult
-        session_key = self._main_content.get_current_session_key() or ""
-        if not session_key.startswith("project:"):
-            return CommandResult(handled=True, response_text="Open a project tab first.")
-        project_name = session_key.split(":", 1)[1]
-        self._review_handler.start_review(project_name, session_key)
-        return CommandResult(handled=True, response_text="Starting review...")
-
-    def _cmd_check(self, cmd: Command):
-        """`check → check changes since checkpoint"""
-        from models.command import CommandResult
-        session_key = self._main_content.get_current_session_key() or ""
-        if not session_key.startswith("project:"):
-            return CommandResult(handled=True, response_text="Open a project tab first.")
-        project_name = session_key.split(":", 1)[1]
-        self._review_handler.check_changes(project_name, session_key)
-        return CommandResult(handled=True, response_text="Checking changes...")
-
-    def _cmd_accept(self, cmd: Command):
-        """`accept → accept all changes"""
-        from models.command import CommandResult
-        session_key = self._main_content.get_current_session_key() or ""
-        if not session_key.startswith("project:"):
-            return CommandResult(handled=True, response_text="Open a project tab first.")
-        project_name = session_key.split(":", 1)[1]
-        body = " ".join(cmd.args) or "approved"
-        self._review_handler.accept_changes(project_name, body, session_key)
-        return CommandResult(handled=True, response_text="Accepting changes...")
-
-    def _cmd_reject(self, cmd: Command):
-        """`reject → reject all changes"""
-        from models.command import CommandResult
-        session_key = self._main_content.get_current_session_key() or ""
-        if not session_key.startswith("project:"):
-            return CommandResult(handled=True, response_text="Open a project tab first.")
-        project_name = session_key.split(":", 1)[1]
-        reason = cmd.body or "rejected"
-        self._review_handler.reject_changes(project_name, reason, session_key)
-        return CommandResult(handled=True, response_text="Rejecting changes...")
-
-    def _cmd_status(self, cmd: Command):
-        """`status → project status summary"""
-        from models.command import CommandResult
-        session_key = self._main_content.get_current_session_key() or ""
-        if not session_key.startswith("project:"):
-            return CommandResult(handled=True, response_text="Open a project tab to check status.")
-        project_name = session_key.split(":", 1)[1]
-
-        # Get project info
-        members = self._project_handler.get_project_members(project_name)
-        solo_target = self._project_handler.get_solo_target(project_name) if self._project_handler else None
-
-        # Get task summary
-        all_tasks = task_store.list_all()
-
-        # Filter tasks for this project's agents
-        project_tasks = [t for t in all_tasks if t.assigned_to in members]
-        pending = sum(1 for t in project_tasks if t.status == "pending")
-        in_progress = sum(1 for t in project_tasks if t.status == "in_progress")
-        blocked = sum(1 for t in project_tasks if t.status == "blocked")
-        done = sum(1 for t in project_tasks if t.status == "done")
-
-        # Review state
-        review_state = None
-        if hasattr(self, '_review_handler') and self._review_handler:
-            review_state = self._review_handler.get_state(project_name)
-        review_status = "active" if (review_state and review_state.is_active()) else "not started"
-
-        solo_str = f"@{self._agent_list_handler.get_name(solo_target)}" if solo_target else "none"
-
-        lines = [
-            f"Project: {project_name}",
-            f"Members: {len(members)}",
-            f"Tasks: {pending} pending, {in_progress} in progress, {blocked} blocked, {done} done",
-            f"Review: {review_status}",
-            f"Solo DM: {solo_str}",
-        ]
-        return CommandResult(handled=True, response_text="\n".join(lines))
-
-    def _cmd_agents(self, cmd: Command):
-        """`agents → list project agents and their state"""
-        from models.command import CommandResult
-        session_key = self._main_content.get_current_session_key() or ""
-        if not session_key.startswith("project:"):
-            return CommandResult(handled=True, response_text="Open a project tab to list agents.")
-        project_name = session_key.split(":", 1)[1]
-
-        members = self._project_handler.get_project_members(project_name)
-        solo_target = self._project_handler.get_solo_target(project_name) if self._project_handler else None
-
-        lines = [f"Members in {project_name}:", ""]
-        for m in members:
-            name = self._agent_list_handler.get_name(m) if hasattr(self, '_agent_list_handler') and self._agent_list_handler else m
-            solo_marker = " (solo DM target)" if m == solo_target else ""
-            lines.append(f"• @{name} — {m}{solo_marker}")
-
-        return CommandResult(handled=True, response_text="\n".join(lines))
-
-    def _cmd_cost(self, cmd: Command):
-        """`cost — spending summary for current project"""
-        from models.command import CommandResult
-        session_key = self._main_content.get_current_session_key() or ""
-        if not session_key.startswith("project:"):
-            return CommandResult(handled=True, response_text="Open a project tab to check cost.")
-        project_name = session_key.split(":", 1)[1]
-        members = self._project_handler.get_project_members(project_name)
-        if not members:
-            return CommandResult(handled=True, response_text="No members in this project.")
-        # BUG #18 fix: use actual agent names from project members (not hardcoded)
-        agent_names = [self._agent_mgr.get_name(sk) if self._agent_mgr else sk for sk in members]
-        lines = [
-            f"Spending summary for {project_name}:",
-            "(last 7 days)",
-            "",
-            "Agent      Tokens   Cost",
-            "────────────────────────",
-        ]
-        for name in agent_names:
-            lines.append(f"  @{name}  (contact gateway for usage API)")
-        lines.extend([
-            "────────────────────────",
-            "Note: Cost data requires OpenClaw usage tracking to be enabled.",
-        ])
-        return CommandResult(handled=True, response_text="\n".join(lines))
-
+            """Wire all commands to their handler methods (Phase 7)."""
+            # Collaboration — CollabHandler
+            ch = self._collab_handler
+            self._command_handler.register_command("ask", ch.cmd_ask, aliases=["a"],
+                help_text="Ask an agent a question: `ask @agent — question")
+            self._command_handler.register_command("delegate", ch.cmd_delegate, aliases=["d"],
+                help_text="PM delegates to agent: `delegate @agent — task")
+            self._command_handler.register_command("stop", ch.cmd_stop,
+                help_text="PM stops the current collaboration: `stop @agent")
+            self._command_handler.register_command("tell", ch.cmd_tell,
+                help_text="One agent shares information with another: `tell @agent — info")
+            # Task — TaskHandler
+            th = self._task_handler
+            self._command_handler.register_command("task", th.cmd_task, aliases=["t"],
+                help_text="Create a task card assigned to agent")
+            self._command_handler.register_command("done", th.cmd_done,
+                help_text="Mark task complete")
+            self._command_handler.register_command("start", th.cmd_start,
+                help_text="Start working on a task")
+            self._command_handler.register_command("blocked", th.cmd_blocked,
+                help_text="Report a blocker on a task")
+            self._command_handler.register_command("cancel", th.cmd_cancel,
+                help_text="Cancel a task")
+            self._command_handler.register_command("tasks", th.cmd_tasks,
+                help_text="Show all tasks")
+            self._command_handler.register_command("assign", th.cmd_assign,
+                help_text="Reassign a task to a different agent")
+            self._command_handler.register_command("priority", th.cmd_priority,
+                help_text="Set task priority")
+            # Review — ReviewHandler
+            rh = self._review_handler
+            self._command_handler.register_command("review", rh.cmd_review,
+                help_text="Start a review checkpoint")
+            self._command_handler.register_command("check", rh.cmd_check,
+                help_text="Show diff of changes since checkpoint")
+            self._command_handler.register_command("accept", rh.cmd_accept,
+                help_text="Accept all changes (or single file)")
+            self._command_handler.register_command("reject", rh.cmd_reject,
+                help_text="Reject all pending changes")
+            # Project — ProjectHandler
+            ph = self._project_handler
+            self._command_handler.register_command("status", ph.cmd_status, aliases=["s"],
+                help_text="Project status summary")
+            self._command_handler.register_command("agents", ph.cmd_agents,
+                help_text="List project agents and current state")
+            self._command_handler.register_command("cost", ph.cmd_cost,
+                help_text="Spending summary for this project")
+            # Utility — SessionHandler + CommandHandler
+            sh = self._session_handler
+            self._command_handler.register_command("help", self._command_handler.cmd_help, aliases=["?"],
+                help_text="List all commands or help for a specific command")
+            self._command_handler.register_command("session", sh.cmd_session, aliases=["s"],
+                help_text="Switch agent session in project: `session list @agent | `session <ref> @agent")
     def _on_project_selected(self, path):
         """Handle file tree selection — no-op; project card clicks route via ProjectHandler."""
         pass
@@ -994,6 +497,10 @@ class MainWindow(Gtk.ApplicationWindow):
         self._command_handler.set_agent_manager(self._gateway_handler.agent_mgr)
         # Wire ProjectHandler with live AgentManager for session lookup
         self._project_handler.set_agent_manager(self._gateway_handler.agent_mgr)
+        # Wire ProjectHandler → ReviewHandler for cmd_status review state queries
+        self._project_handler.set_review_handler(self._review_handler)
+        # Wire SessionHandler with live AgentManager for session lookups
+        self._session_handler.set_agent_manager(self._gateway_handler.agent_mgr)
         # Wire ChatHandler with AgentManager for display name resolution
         self._chat_handler.set_agent_manager(self._gateway_handler.agent_mgr)
         # Wire forward button callback

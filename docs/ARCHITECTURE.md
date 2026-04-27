@@ -99,6 +99,9 @@ crabcakes/
 │   │   ├── activity_handler.py  # ActivityHandler — 6-state activity machine (Phase 6)
 │   │   ├── command_handler.py   # CommandHandler — backtick command parser (Phase 7)
 │   │   ├── review_handler.py    # ReviewHandler — review session lifecycle (Phase 7)
+│   │   ├── task_handler.py      # TaskHandler — task commands: task/done/start/blocked/cancel/tasks/assign/priority (Phase 7)
+│   │   ├── collab_handler.py   # CollabHandler — collaboration commands: ask/delegate/stop/tell (Phase 7)
+│   │   ├── session_handler.py  # SessionHandler — session switching in project tabs (Phase 7)
 │   │   ├── agent_runtime_handler.py  # AgentRuntimeHandler — local agent UI bridge (Phase 1.4)
 │   │   └── project_list_handler.py  # ProjectListHandler — project card data + color round-robin
 │   └── views/                 # View widgets
@@ -953,7 +956,45 @@ def set_accept_callback(cb)
 def set_reject_callback(cb)
 ```
 
-### 3.21d `ui/views/diff_card.py` — Diff Card Widget Factories (Phase 7)
+### 3.21c `ui/handlers/task_handler.py` — Task Commands (Phase 7)
+
+**Public API:**
+```python
+class TaskHandler:
+    def __init__(self, on_display_card, on_display_text, GLib_module)
+    def cmd_task(cmd) -> CommandResult
+    def cmd_done(cmd) -> CommandResult
+    def cmd_start(cmd) -> CommandResult
+    def cmd_blocked(cmd) -> CommandResult
+    def cmd_cancel(cmd) -> CommandResult
+    def cmd_tasks(cmd) -> CommandResult
+    def cmd_assign(cmd) -> CommandResult
+    def cmd_priority(cmd) -> CommandResult
+```
+
+### 3.21d `ui/handlers/collab_handler.py` — Collaboration Commands (Phase 7)
+
+**Public API:**
+```python
+class CollabHandler:
+    def cmd_ask(cmd) -> CommandResult
+    def cmd_delegate(cmd) -> CommandResult
+    def cmd_stop(cmd) -> CommandResult
+    def cmd_tell(cmd) -> CommandResult
+```
+
+### 3.21e `ui/handlers/session_handler.py` — Session Switching (Phase 7)
+
+**Public API:**
+```python
+class SessionHandler:
+    def __init__(self, agent_manager, project_handler)
+    def set_agent_manager(agent_mgr) -> None
+    def set_project_handler(project_handler) -> None
+    def cmd_session(cmd) -> CommandResult
+```
+
+### 3.21f `ui/views/diff_card.py` — Diff Card Widget Factories (Phase 7)
 
 **Responsibility:** GTK widget factories for diff display in project chat tabs.
 
@@ -964,7 +1005,7 @@ build_file_diff_card(file_diff, on_accept_file=None, on_reject_file=None) -> Gtk
 build_diff_summary_card(parsed_diff, on_accept_all=None, on_reject_all=None) -> Gtk.Widget
 ```
 
-### 3.21e `utils/diff_parser.py` — Diff Parser (Phase 7)
+### 3.21g `utils/diff_parser.py` — Diff Parser (Phase 7)
 
 **Public API:**
 ```python
@@ -977,7 +1018,7 @@ parse_diff_stat(stat_text) -> list[(file_path, additions, deletions)]
 @dataclass ParsedDiff: files, total_additions, total_deletions, summary
 ```
 
-### 3.21f `utils/git_ops.py` — Git Operations (Phase 7)
+### 3.21h `utils/git_ops.py` — Git Operations (Phase 7)
 
 **Public API:**
 ```python
@@ -997,7 +1038,7 @@ status(project_path) -> GitResult
 @dataclass GitResult: success, stdout, error, sha
 ```
 
-### 3.21g `utils/config.py` — Config Path Helpers (Phase 7)
+### 3.21i `utils/config.py` — Config Path Helpers (Phase 7)
 
 **Public API:**
 ```python

@@ -92,6 +92,24 @@ class CommandHandler:
         """Change the command prefix character. Default: backtick."""
         self._prefix = char
 
+    def cmd_help(self, cmd: Command) -> CommandResult:
+        """Handle `help [command] — returns command list card."""
+        if cmd.args:
+            name = cmd.args[0].lstrip("@")
+            help_text = self.get_help(name)
+            if help_text is None:
+                help_text = f"Unknown command: `{name}"
+            else:
+                help_text = f"`{name}` — {help_text}"
+            return CommandResult(handled=True, response_text=help_text)
+        lines = [" CrabCakes Commands", ""]
+        for name in self._registry.list_commands():
+            alias_list = [al for al, cn in self._registry.list_aliases().items() if cn == name]
+            alias_str = f" (`{', `'.join(alias_list)}`)" if alias_list else ""
+            lines.append(f"  `{name}`{alias_str}")
+        lines.extend(["", f"Type `help <command> for details."])
+        return CommandResult(handled=True, response_text="\n".join(lines))
+
     def get_help(self, name: str) -> str | None:   # BUG #10 fix: public API for help
         """Return help text for a command, or None if not registered."""
         return self._registry.get_help(name)

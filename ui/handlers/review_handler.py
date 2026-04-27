@@ -6,6 +6,8 @@
 import threading
 from typing import Callable
 
+from models.command import Command, CommandResult
+
 from models.review_state import ReviewState
 from utils import git_ops
 from utils.diff_parser import parse_diff
@@ -335,6 +337,45 @@ class ReviewHandler:
         return self._states.get(project_name)
 
     # ── Project lifecycle hooks ─────────────────────────────────────────
+
+    def cmd_review(self, cmd: Command, session_key: str | None = None) -> CommandResult:
+        """`review → start a review session"""
+        sk = session_key or ""
+        if not sk.startswith("project:"):
+            return CommandResult(handled=True, response_text="Open a project tab first.")
+        project_name = sk.split(":", 1)[1]
+        self.start_review(project_name, sk)
+        return CommandResult(handled=True, response_text="Starting review...")
+
+    def cmd_check(self, cmd: Command, session_key: str | None = None) -> CommandResult:
+        """`check → check changes since checkpoint"""
+        sk = session_key or ""
+        if not sk.startswith("project:"):
+            return CommandResult(handled=True, response_text="Open a project tab first.")
+        project_name = sk.split(":", 1)[1]
+        self.check_changes(project_name, sk)
+        return CommandResult(handled=True, response_text="Checking changes...")
+
+    def cmd_accept(self, cmd: Command, session_key: str | None = None) -> CommandResult:
+        """`accept → accept all changes"""
+        sk = session_key or ""
+        if not sk.startswith("project:"):
+            return CommandResult(handled=True, response_text="Open a project tab first.")
+        project_name = sk.split(":", 1)[1]
+        body = " ".join(cmd.args) or "approved"
+        self.accept_changes(project_name, body, sk)
+        return CommandResult(handled=True, response_text="Accepting changes...")
+
+
+    def cmd_reject(self, cmd: Command, session_key: str | None = None) -> CommandResult:
+        """`reject → reject all changes"""
+        sk = session_key or ""
+        if not sk.startswith("project:"):
+            return CommandResult(handled=True, response_text="Open a project tab first.")
+        project_name = sk.split(":", 1)[1]
+        reason = cmd.body or "rejected"
+        self.reject_changes(project_name, reason, sk)
+        return CommandResult(handled=True, response_text="Rejecting changes...")
 
     def on_project_opened(self, project_name: str, project_path: str) -> None:
         """Called when a project tab opens. Initializes ReviewState."""
