@@ -63,4 +63,4 @@ Capture roles and assignments.
 3. Append a dated entry to `.crabcakes/context.md` summarizing the onboarding
 4. Update `.crabcakes/workflow.md` — find the onboarding row, change its status to ✅ done, set the completed date (today's date in YYYY-MM-DD format)
 5. **Gate:** Tell the PM onboarding is complete and suggest the next step:
-   > "Onboarding complete. Ready to move to **discovery**? Load **cc-discovery** from the Prompts tab."
+   > "Onboarding complete. Next step: load **cc-workflow-guide** from the Prompts tab to see the full development workflow."
