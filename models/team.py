@@ -55,7 +55,18 @@ class ProjectTeam:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ProjectTeam":
+    def from_dict(cls, data) -> "ProjectTeam":
+        # Handle legacy list format (raw session key list) or current dict format.
+        # If data is a list, treat it as a list of session keys (legacy members.json).
+        # If data is a dict, treat it as {"members": [...], "pm": {...}}.
+        if isinstance(data, list):
+            members = []
+            for sk in data:
+                if isinstance(sk, str) and sk:
+                    members.append(TeamMember(session_key=sk, name="", role="", can_write=False))
+            return cls(members=members)
+        if not isinstance(data, dict):
+            return cls()
         members_data = data.get("members", [])
         members = [TeamMember.from_dict(m) for m in members_data if isinstance(m, dict)]
         pm = data.get("pm", {})
