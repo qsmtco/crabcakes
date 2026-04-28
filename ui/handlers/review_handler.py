@@ -340,7 +340,7 @@ class ReviewHandler:
 
     def cmd_review(self, cmd: Command, session_key: str | None = None) -> CommandResult:
         """`review → start a review session"""
-        sk = session_key or ""
+        sk = cmd.source_session_key
         if not sk.startswith("project:"):
             return CommandResult(handled=True, response_text="Open a project tab first.")
         project_name = sk.split(":", 1)[1]
@@ -349,7 +349,7 @@ class ReviewHandler:
 
     def cmd_check(self, cmd: Command, session_key: str | None = None) -> CommandResult:
         """`check → check changes since checkpoint"""
-        sk = session_key or ""
+        sk = cmd.source_session_key
         if not sk.startswith("project:"):
             return CommandResult(handled=True, response_text="Open a project tab first.")
         project_name = sk.split(":", 1)[1]
@@ -358,7 +358,7 @@ class ReviewHandler:
 
     def cmd_accept(self, cmd: Command, session_key: str | None = None) -> CommandResult:
         """`accept → accept all changes"""
-        sk = session_key or ""
+        sk = cmd.source_session_key
         if not sk.startswith("project:"):
             return CommandResult(handled=True, response_text="Open a project tab first.")
         project_name = sk.split(":", 1)[1]
@@ -369,7 +369,7 @@ class ReviewHandler:
 
     def cmd_reject(self, cmd: Command, session_key: str | None = None) -> CommandResult:
         """`reject → reject all changes"""
-        sk = session_key or ""
+        sk = cmd.source_session_key
         if not sk.startswith("project:"):
             return CommandResult(handled=True, response_text="Open a project tab first.")
         project_name = sk.split(":", 1)[1]
