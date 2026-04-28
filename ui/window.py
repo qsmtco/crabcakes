@@ -252,8 +252,6 @@ class MainWindow(Gtk.ApplicationWindow):
             on_display_text=self._on_command_text,
         )
         self._command_handler.set_prefix(COMMAND_PREFIX)   # BUG #9 fix: read prefix from config
-        # Register all 20 commands (Phase 1-4 implementations)
-        self._register_stub_commands()
         # Inject CommandHandler into ChatHandler (ChatHandler calls process_input before send)
         self._chat_handler.set_command_handler(self._command_handler)
 
@@ -280,6 +278,9 @@ class MainWindow(Gtk.ApplicationWindow):
         self._main_content.set_on_project_tab_close(
             lambda sk: (self._on_tab_close(sk), self._review_handler.on_project_closed(sk.replace("project:", "", 1)))
         )
+
+        # Register all commands — must be after _review_handler is created (Phase 7)
+        self._register_stub_commands()
 
         # Wire STT + improve buttons
         self._main_content.set_on_stt_click(self._media_handler.on_stt_click)
