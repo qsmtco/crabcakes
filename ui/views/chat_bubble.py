@@ -35,6 +35,12 @@ from gi.repository import Gtk, Pango, Gdk
 from utils.escaping import escape_for_pango
 from utils.markdown import format_markdown
 from utils.block_parser import extract_blocks
+from utils.crabcard_parser import is_crabcards_placeholder, get_placeholder_index as _get_placeholder_index
+
+# Module-level registry for placeholder card lookup in chat bubbles.
+# Populated by ChatRenderHandler when crabcards are extracted.
+# Maps card_index → (FeedCardData, on_tab_switch callback)
+_crabcards_registry: dict[int, tuple] = {}
 from utils.syntax_highlight import highlight
 
 
@@ -50,13 +56,59 @@ def process_segments(text: str) -> list[dict]:
     Each segment dict has a 'type' key and processed content:
       - text segments: 'markup' key with Pango-formatted string
       - code segments: 'code_markup' with highlighted Pango, 'raw_content' for copy
+      - crabcard_placeholder segments: 'index' key — rendered as feed reference chip
       - other segments (quote, terminal, heading, task): 'content' passthrough
 
     Groups consecutive text segments for unified rendering (same as build_role_bubble).
     """
-    segments = extract_blocks(text)
+    # Phase 3: Pre-scan for crabcard placeholder markers (\x00CRABCARD_REF:N\x00)
+    # These are embedded in cleaned_text by extract_crabcards(). We split them
+    # out into dedicated segments so build_role_bubble can render feed chips.
+    parts = text.split("\x00CRABCARD_REF:")
     processed = []
-    text_buf = []  # accumulate consecutive text segments
+
+    # text_parts[0] is before first placeholder (no prefix to strip)
+    # subsequent parts: "N\x00...rest" — strip N+trailing \x00, remainder is text
+
+    for i, part in enumerate(parts):
+        if i == 0:
+            # First part — before any placeholder. Process normally.
+            _process_text_chunk(part, processed)
+            continue
+
+        # Extract index from "N\x00..."
+        null_pos = part.find("\x00")
+        if null_pos < 0:
+            # Malformed (no closing null) — treat entire part as text
+            _process_text_chunk("\x00CRABCARD_REF:" + part, processed)
+            continue
+
+        try:
+            card_index = int(part[:null_pos])
+        except ValueError:
+            _process_text_chunk("\x00CRABCARD_REF:" + part, processed)
+            continue
+
+        # Emit placeholder segment
+        processed.append({"type": "crabcard_placeholder", "index": card_index})
+
+        # Rest of part (after \x00) is normal text — process it
+        rest = part[null_pos + 1:]
+        _process_text_chunk(rest, processed)
+
+    return processed
+
+
+def _process_text_chunk(text_chunk: str, processed: list) -> None:
+    """
+    Extract blocks from a text chunk and append processed segments to `processed`.
+    Merges consecutive text segments before appending.
+    """
+    if not text_chunk.strip():
+        return
+
+    segments = extract_blocks(text_chunk)
+    text_buf: list[str] = []
 
     def flush_text():
         if not text_buf:
@@ -88,11 +140,10 @@ def process_segments(text: str) -> list[dict]:
                 processed.append({
                     "type": seg_type,
                     "content": seg.get("content", ""),
-                    **({"lang": seg.get("lang", "")} if "lang" in seg else {}),
-                    **({"level": seg.get("level", 1)} if "level" in seg else {}),
+                    **({"lang": seg["lang"]} if "lang" in seg else {}),
+                    **({"level": seg["level"]} if "level" in seg else {}),
                 })
     flush_text()
-    return processed
 
 
 def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool = False, forwarded_from: str = None, session_key: str = None, agent_name: str = None) -> Gtk.Widget:
@@ -287,6 +338,58 @@ def _add_action_buttons(bubble: Gtk.Box, raw_text: str, on_forward_click, sessio
 # Segment widget factories
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _build_crabcard_placeholder_segment(seg: dict) -> Gtk.Widget | None:
+    """
+    Render a crabcard placeholder as a small feed-reference chip.
+    The chip shows a feed icon + "Added to feed" label and is clickable.
+    Click → calls on_tab_switch callback to switch to the Project Feed tab.
+
+    Cards and on_tab_switch callback are stored in module-level _crabcards_registry
+    by ChatRenderHandler before rendering.
+    """
+    from ui.views.feed_card import build_feed_reference_widget
+
+    card_index = seg.get("index")
+    if card_index not in _crabcards_registry:
+        # No card registered — render a plain text placeholder
+        label = Gtk.Label()
+        label.set_text("📋 [card added to feed]")
+        label.add_css_class("chat-msg-label")
+        return label
+
+    card_data, on_tab_switch = _crabcards_registry[card_index]
+
+    def _on_click():
+        if on_tab_switch:
+            on_tab_switch()
+
+    try:
+        widget = build_feed_reference_widget(card_data, on_click=_on_click)
+        widget.add_css_class("crabcard-ref-chip")
+        return widget
+    except Exception:
+        label = Gtk.Label()
+        label.set_text("📋 [card added to feed]")
+        label.add_css_class("chat-msg-label")
+        return label
+
+
+def _set_crabcards_registry(cards: list, on_tab_switch) -> None:
+    """
+    Store card + tab-switch callback in the module-level registry so
+    chat bubble rendering can look up cards by index.
+
+    Called by ChatRenderHandler when crabcards are extracted from an agent message.
+    """
+    for i, card in enumerate(cards):
+        _crabcards_registry[i] = (card, on_tab_switch)
+
+
+def _clear_crabcards_registry() -> None:
+    """Clear the registry (called between renders to avoid stale state)."""
+    _crabcards_registry.clear()
+
+
 def _build_segment_widget(seg: dict) -> Gtk.Widget | None:
     """Route a segment dict to the appropriate widget factory."""
     seg_type = seg.get("type", "text")
@@ -301,6 +404,8 @@ def _build_segment_widget(seg: dict) -> Gtk.Widget | None:
         return _build_heading_segment(seg)
     elif seg_type == "task":
         return _build_task_segment(seg)
+    elif seg_type == "crabcard_placeholder":
+        return _build_crabcard_placeholder_segment(seg)
     else:
         return None
 

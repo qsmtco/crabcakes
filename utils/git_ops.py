@@ -133,6 +133,26 @@ def log(project_path: str, count: int = 10) -> GitResult:
         return GitResult(success=False, stdout="", error=str(e), sha=None)
 
 
+def get_recent_commits(project_path: str, count: int = 10) -> GitResult:
+    """
+    Recent commits as lines of "sha message" (one line per commit, no decorations).
+    Used by FeedHandler to seed the project feed on open.
+
+    Returns GitResult where stdout is lines of: "<sha> <commit subject>"
+    """
+    try:
+        repo = gitpython.Repo(project_path)
+        lines = []
+        for commit in repo.iter_commits(max_count=count):
+            sha = commit.hexsha[:8]
+            # First line of commit message only (subject)
+            subject = commit.message.split("\n", 1)[0]
+            lines.append(f"{sha} {subject}")
+        return GitResult(success=True, stdout="\n".join(lines), error="", sha=None)
+    except Exception as e:
+        return GitResult(success=False, stdout="", error=str(e), sha=None)
+
+
 def push(project_path: str, remote: str = "origin", branch: str = "main") -> GitResult:
     """Push to remote."""
     try:

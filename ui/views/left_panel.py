@@ -342,9 +342,16 @@ class LeftPanel(Gtk.Box):
         """Add or remove an agent from the active project via toggle_agent callback."""
         if not self._active_project_name:
             return
-        session_key = button._agent_session_key
-        if self._toggle_agent_callback:
-            self._toggle_agent_callback(session_key)
+        name = button._agent_name
+        # Resolve primary session key at click time (not row-build time) to handle reconnects
+        if self._agent_list_handler and self._agent_list_handler.has_agent_mgr():
+            primary_sk = self._agent_list_handler.get_primary_session(name)
+            if primary_sk and self._toggle_agent_callback:
+                self._toggle_agent_callback(primary_sk)
+        else:
+            # Fallback to stored key if handler not yet wired
+            if self._toggle_agent_callback:
+                self._toggle_agent_callback(button._agent_session_key)
 
     # ── Prompts tab ─────────────────────────────────────────────────────────
 

@@ -673,6 +673,126 @@ notebook > header > tabs > tab {
 .diff-btn-reject-all:hover {
     background: #e11d48;
 }
+
+/* -- Feed Cards -------------------------------------------------------- */
+.feed-card {
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+.feed-card-header {
+    padding: 8px 12px;
+    font-weight: bold;
+    font-size: 13px;
+}
+.feed-card-body {
+    padding: 8px 12px;
+    font-family: monospace;
+    font-size: 12px;
+    min-height: 24px;
+}
+.feed-card-footer {
+    padding: 6px 12px;
+    font-size: 11px;
+    color: alpha(@theme_fg_color, 0.5);
+}
+.feed-card-actions {
+    padding: 4px 12px 8px;
+}
+
+/* Card type colors */
+.feed-card-git .feed-card-header { background: #2d5a3d; color: #a8e6c1; }
+.feed-card-git .feed-card-body { background: #1a3d2a; }
+.feed-card-diff .feed-card-header { background: #5a4a2d; color: #e6c1a8; }
+.feed-card-diff .feed-card-body { background: #3d321a; }
+.feed-card-file-new .feed-card-header { background: #2d4a5a; color: #a8c1e6; }
+.feed-card-file-new .feed-card-body { background: #1a323d; }
+.feed-card-file-del .feed-card-header { background: #5a2d2d; color: #e6a8a8; }
+.feed-card-file-del .feed-card-body { background: #3d1a1a; }
+.feed-card-dir-new .feed-card-header { background: #2d5a5a; color: #a8e6e6; }
+.feed-card-dir-new .feed-card-body { background: #1a3d3d; }
+.feed-card-agent .feed-card-header { background: #4a2d5a; color: #c1a8e6; }
+.feed-card-agent .feed-card-body { background: #321a3d; }
+.feed-card-task .feed-card-header { background: #5a5a2d; color: #e6e6a8; }
+.feed-card-task .feed-card-body { background: #3d3d1a; }
+.feed-card-system .feed-card-header { background: #3a3a3a; color: #b0b0b0; }
+.feed-card-system .feed-card-body { background: #2a2a2a; }
+
+/* Feed action buttons */
+.feed-btn-review,
+.feed-btn-accept,
+.feed-btn-reject {
+    border-radius: 4px;
+    padding: 3px 10px;
+    font-size: 11px;
+    border: none;
+}
+.feed-btn-review {
+    background: rgba(99, 102, 241, 0.2);
+    color: #a5b4fc;
+}
+.feed-btn-review:hover {
+    background: rgba(99, 102, 241, 0.35);
+}
+.feed-btn-accept {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+}
+.feed-btn-accept:hover {
+    background: rgba(16, 185, 129, 0.35);
+}
+.feed-btn-reject {
+    background: rgba(244, 63, 94, 0.2);
+    color: #f43f5e;
+}
+.feed-btn-reject:hover {
+    background: rgba(244, 63, 94, 0.35);
+}
+
+/* Feed tab container */
+.feed-tab-bar { background: rgba(30, 30, 40, 0.5); border-radius: 6px; margin: 4px 8px; }
+.feed-tab-bar button { padding: 6px 16px; }
+.feed-tab-bar button:checked { background: rgba(99, 102, 241, 0.3); color: #c7d2fe; border-radius: 4px; }
+.feed-scroll { background: transparent; }
+.feed-card-list { padding: 8px; }
+.feed-empty { padding: 48px; color: alpha(@theme_fg_color, 0.4); }
+
+/* Feed reference in chat bubbles */
+.feed-reference {
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: #a5b4fc;
+    cursor: pointer;
+}
+.feed-reference:hover {
+    background: rgba(99, 102, 241, 0.2);
+    color: #c7d2fe;
+}
+.feed-ref-icon { margin-right: 4px; }
+.feed-ref-title { font-weight: 500; }
+
+/* Feed card accepted/rejected overlays */
+.feed-card-accepted { opacity: 0.6; }
+.feed-card-rejected { opacity: 0.4; }
+.feed-accepted-badge {
+    background: rgba(16, 185, 129, 0.8);
+    color: white;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: bold;
+}
+.feed-rejected-badge {
+    background: rgba(244, 63, 94, 0.8);
+    color: white;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: bold;
+}
 """
 
 

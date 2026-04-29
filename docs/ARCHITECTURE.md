@@ -72,6 +72,7 @@ crabcakes/
 │   ├── conversation.py        # Conversation + Message + ToolCall dataclasses (Agent Runtime Phase 1.1)
 │   ├── streaming.py           # StreamingBubble dataclass — streaming bubble state (Phase 5)
 │   ├── task.py                # Task + TaskStore + status/priority labels (Phase 3)
+│   └── feed_card.py           # FeedCardData dataclass + css_class_for_type() (Phase 5)
 │   └── review_state.py        # ReviewState dataclass — per-project review session data (Phase 7)
 │
 ├── agent/                     # Local agent runtime — no UI dependencies
@@ -103,12 +104,14 @@ crabcakes/
 │   │   ├── collab_handler.py   # CollabHandler — collaboration commands: ask/delegate/stop/tell (Phase 7)
 │   │   ├── session_handler.py  # SessionHandler — session switching in project tabs (Phase 7)
 │   │   ├── agent_runtime_handler.py  # AgentRuntimeHandler — local agent UI bridge (Phase 1.4)
-│   │   └── project_list_handler.py  # ProjectListHandler — project card data + color round-robin
+│   │   ├── project_list_handler.py  # ProjectListHandler — project card data + color round-robin
+│   │   ├── crabwatch_handler.py  # CrabWatchHandler — Gio.FileMonitor filesystem watcher (Phase 5)
 │   └── views/                 # View widgets
 │       ├── __init__.py
 │       ├── chat_bubble.py      # build_role_bubble() — chat bubble widget factories (Phase 1)
 │       ├── chat_control_bar.py # ChatControlBar — planned stub (update() not wired)
 │       ├── feedbar.py          # FeedBar — Response Status Bar + progress bar + ActivityHandler public API (Phase 6)
+│       ├── feed_card.py        # feed_card widget factory (Phase 5)
 │       ├── diff_card.py         # Diff card widget factories — build_file_diff_card, build_diff_summary_card (Phase 7)
 │       ├── review_bar.py        # ReviewBar widget — review mode dropdown + action buttons (Phase 7)
 │       ├── file_tree.py        # FileTree — Gtk.TreeView directory browser
@@ -124,6 +127,7 @@ crabcakes/
     ├── prompts.py             # load_prompts() — reads .md from prompts/
     ├── projects.py             # load_projects(), scan_directory(), load_members(), save_members()
     ├── favorites.py           # favorites persistence (favorites.json)
+    ├── feed_store.py         # FeedStore — FIFO feed store with project scoping + eviction (Phase 5)
     ├── improve.py             # improve_prompt() — MiniMax API for prompt improvement (template mode with {{USER_INPUT}} marker, loads from prompts/system/improve.md)
     ├── stt.py                 # STTEngine — faster-whisper push-to-talk
     ├── config.py              # Config path helpers — get_config_dir(), get_projects_dir(), COMMAND_PREFIX (Phase 7)
@@ -211,6 +215,7 @@ client.send_message(session_key, text, on_sent=cb)
 | `Command`, `CommandResult` | `command.py` | Parsed command input + result of command processing |
 | `CommandRegistry` | `command.py` | Maps command names to handlers; extensible |
 | `StreamingBubble` | `streaming.py` | Dataclass for streaming bubble state (Phase 5) |
+| `FeedCardData` | `feed_card.py` | Dataclass for Project Feed cards (Phase 5) |
 | `Task`, `TaskStore` | `task.py` | Task data model + in-memory store (Phase 3) |
 | `ReviewState` | `review_state.py` | Per-project review session data (Phase 7) |
 
@@ -1216,9 +1221,92 @@ set_progress_opacity(opacity)      # Set bar opacity 0.0..1.0 (for subtle idle p
 
 **States driven by ActivityHandler:** idle | sending | reasoning | streaming | tool_use | done
 
+### 3.22a `ui/views/feed_card.py` — Project Feed Card Widgets (Phase 5)
+
+**Responsibility:** GTK widget factories for individual feed cards in the project tab. Pure view — no business logic.
+
+**Owns:** Card widget layout and CSS class application. State comes from `FeedCardData` dicts passed at construction.
+
+**Public API:**
+```python
+build_feed_card(card_data: dict) -> Gtk.Widget
+```
+
+**card_type key determines card variant and icon:**
+- `file_created` — green dot icon, CSS: `feed-card-file-created`
+- `file_modified` — amber dot icon, CSS: `feed-card-file-modified`
+- `file_deleted` — red dot icon, CSS: `feed-card-file-deleted`
+- `dir_created` / `dir_deleted` — folder icon
+- `commit` — git-commit icon, CSS: `feed-card-commit`
+- `agent_joined` / `agent_left` — user icon
+- `member_joined` / `member_left` — person icon
+- `system` — info icon
+
+### 3.22b `models/feed_card.py` — FeedCardData Dataclass (Phase 5)
+
+**Responsibility:** Plain data container for Project Feed card state. No GTK, no network.
+
+**Public API:**
+```python
+@dataclass FeedCardData:
+    card_type: str       # "file_created" | "file_modified" | "file_deleted" |
+                         # "dir_created" | "dir_deleted" | "commit" |
+                         # "agent_joined" | "agent_left" |
+                         # "member_joined" | "member_left" | "system"
+    source: str          # "gateway" | "crabwatch" | "system"
+    title: str           # Short title text
+    body: str            # Body subtitle text
+    author: str          # Display name of actor
+    timestamp: datetime  # UTC timestamp
+    project_name: str | None   # Set for project-scoped cards
+    file_path: str | None      # Set for file/dir change cards (crabwatch)
+    commit_sha: str | None     # Set for commit cards
+
+def css_class_for_type(card_type: str) -> str:
+    """Map card_type to CSS class name for feed card styling."""
+```
+
 ---
 
-### 3.23 `ui/handlers/activity_handler.py` — Activity State Machine (Phase 6)
+
+### 3.22c `ui/handlers/feed_handler.py` — Project Feed Handler (Phase 5)
+
+**Responsibility:** Manages the in-memory feed store and renders feed cards into the project tab's scrolled window. Coordinates with `CrabWatchHandler` and gateway event listeners.
+
+**Owns:** `_feed_store` (list of `FeedCardData` dicts), `_feed_container` (GTK widget reference), `_project_name` (current project).
+
+**Public API:**
+```python
+class FeedHandler:
+    def __init__(self, GLib, on_fs_event_callback=None)
+    def on_filesystem_event(card_data: dict)    # called by CrabWatchHandler
+    def on_gateway_event(event: str, payload: dict)  # gateway → feed card events
+    def clear_feed()                              # clear all cards
+    def add_card(card_data: dict)                 # add a feed card
+    def start_feed(project_name: str, container: Gtk.Widget)
+    def stop_feed()
+```
+
+**card_data dict structure:**
+```python
+{
+    "card_type": str,    # "file_created" | "file_modified" | ...
+    "source": str,       # "gateway" | "crabwatch" | "system"
+    "title": str,
+    "body": str,
+    "author": str,
+    "timestamp": datetime,
+    "project_name": str | None,
+    "file_path": str | None,
+    "commit_sha": str | None,
+}
+```
+
+**Wiring in `window.py`:** `FeedHandler` is created before `CrabWatchHandler`. `CrabWatchHandler`'s `on_event` callback is set to `FeedHandler.on_filesystem_event`. Gateway events for agent/project lifecycle fire `on_gateway_event`.
+
+---
+
+## 3.23 `ui/handlers/activity_handler.py` — Activity State Machine (Phase 6)
 
 **Responsibility:** The 6-state activity machine that drives the Response Status bar (FeedBar). Manages state transitions, live timers, and FeedBar updates.
 
@@ -1260,6 +1348,74 @@ on_chat_final(session_key)                       # chat final (no-op; on_agent_e
 - `tool_call` event → `tool_use`
 - First chat delta → `streaming`
 - Agent message in history → `sending` (pre-flight)
+
+### 3.22d `utils/feed_store.py` — Feed Store (Phase 5)
+
+**Responsibility:** In-memory FIFO feed store with per-project scoping and automatic eviction. Shared by `FeedHandler` and `FeedTab`.
+
+**Public API:**
+```python
+class FeedStore:
+    def __init__(max_cards_per_project=50)
+    def add(project_name: str, card_data: dict) -> None
+    def get_cards(project_name: str) -> list[dict]    # newest first
+    def clear(project_name: str) -> None
+    def set_max_cards(n: int) -> None
+    def get_stats() -> dict  # {project_name: count}
+```
+
+**Architecture rules:**
+- Lives in `utils/` — pure Python, no GTK, no network
+- Thread-unsafe (called only from GTK main thread)
+- No imports from `ui/` or `gateway/`
+
+---
+
+## 3.24 `ui/handlers/crabwatch_handler.py` — CrabWatch Filesystem Watcher (Phase 5)
+
+**Responsibility:** Watch the active project directory for filesystem changes via `Gio.FileMonitor`. Route `FeedCardData` events to `FeedHandler.on_filesystem_event()` for display in the Project Feed.
+
+**Architecture rules:**
+- Lives in `ui/handlers/` — uses GLib only (no GTK widget creation)
+- Thread-safe via GLib event callbacks; GTK dispatch via `GLib.idle_add()` where needed
+- No IPC, no sockets, no external processes — pure GTK4/Gio integration
+
+**Constructor dependencies:**
+- `GLib_module`: GLib reference for dispatch
+- `on_event`: callback receiving `FeedCardData` dicts — wired to `FeedHandler.on_filesystem_event()`
+
+**Public API:**
+```python
+class CrabWatchHandler:
+    def start_watching(project_path: str, project_name: str) -> None:
+        """Start monitoring project_path. Stops any previous watch."""
+    def stop_watching() -> None:
+        """Stop monitoring."""
+    def is_watching() -> bool
+```
+
+**Events fired as `FeedCardData`:**
+
+| Gio event | card_type | title format |
+|-----------|-----------|--------------|
+| `CREATED` (file) | `file_created` | "Created <filename>" |
+| `CHANGED` (file) | `file_modified` | "Modified <filename>" |
+| `DELETED` (file) | `file_deleted` | "Deleted <filename>" |
+| `CREATED` (dir) | `dir_created` | "Created directory <filename>" |
+| `DELETED` (dir) | `dir_deleted` | "Deleted directory <filename>" |
+
+**Ignored paths (no events):**
+- `.crabcakes/`, `.git/`, `node_modules/`, `__pycache__/`
+- `*.pyc` files, `.DS_Store`, dotfiles (names starting with `.`)
+
+**Debouncing:** Events on the same relative path within 200ms are batched — only the final state fires a card.
+
+**Wiring in `window.py`:**
+- Created alongside `FeedHandler` in `_build()`
+- `start_watching(p, n)` called in `set_on_project_opened` callback chain
+- `stop_watching()` called in `set_on_project_tab_close` callback chain
+
+---
 
 ## 4. Data Flow
 
@@ -1916,6 +2072,7 @@ crabcakes/
 │   │   ├── project_handler.py    # 281 lines — active project + agent-to-project routing + session switching
 │   │   ├── project_list_handler.py # 61 lines — project card data + color round-robin
 │   │   ├── prompts_handler.py    # 187 lines — favorites, search, last-used, load_prompt()
+│   │   ├── crabwatch_handler.py  # CrabWatchHandler — filesystem watcher via Gio.FileMonitor (Phase 5)
 │   │   └── review_handler.py    # 340 lines — review session lifecycle: checkpoint/check/accept/reject (Phase 7)
 │   └── views/
 │       ├── __init__.py          # 1 line
@@ -1968,6 +2125,10 @@ tests/
     ├── test_improve.py
     ├── test_markdown.py
     ├── test_media_handler.py
+    ├── test_crabwatch_handler.py  # CrabWatchHandler: init, watch, ignore patterns, debounce (Phase 5)
+    ├── test_feed_handler.py        # FeedHandler: add/clear cards, gateway/fs event routing (Phase 5)
+    ├── test_feed_card.py           # feed_card view: card type rendering, CSS class mapping
+    ├── test_feed_store.py          # FeedStore: FIFO eviction, project scoping, card ordering
     ├── test_project_handler.py
     ├── test_project_list_handler.py
     ├── test_prompts_handler.py

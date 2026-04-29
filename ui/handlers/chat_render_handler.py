@@ -30,7 +30,7 @@ from utils.escaping import escape_for_pango
 from utils.markdown import format_markdown
 from concurrent.futures import ThreadPoolExecutor
 
-from ui.views.chat_bubble import build_role_bubble, process_segments
+from ui.views.chat_bubble import build_role_bubble, process_segments, _clear_crabcards_registry
 
 
 class _ReentrancySet:
@@ -187,6 +187,11 @@ class ChatRenderHandler:
         self._on_forward_message = None   # set via set_on_forward_message()
         # Phase 5: MainContent reference for self-contained scroll operations
         self._main_content = None
+        # Phase 3: Crabcard extraction callback — set via set_on_crabcard_extracted()
+        # Called with (list[FeedCardData], session_key) when crabcards are found in a message.
+        self._on_crabcard_extracted = None
+        # Phase 3: Active project name for crabcard parsing (set via set_project_name())
+        self._project_name = ""
         # Streaming throttle: avoid redundant escape+set_markup on every delta
         self._last_stream_update: dict[str, float] = {}  # session_key → monotonic timestamp
         self._stream_throttle_sec = 0.15  # min 150ms between UI updates
@@ -300,8 +305,20 @@ class ChatRenderHandler:
         """Set callback for forward button: cb(text, anchor_widget)."""
         self._on_forward_message = cb
 
-    def set_main_content(self, main_content):
-        """Set MainContent reference for self-contained scroll operations."""
+    def set_on_crabcard_extracted(self, cb: "Callable[[list[FeedCardData], str], None]") -> None:
+        """
+        Set callback for when crabcards are extracted from a message.
+        Callback: cb(cards: list[FeedCardData], session_key: str)
+        Called on the same thread as render_sync() — caller should dispatch to main thread if needed.
+        """
+        self._on_crabcard_extracted = cb
+
+    def set_project_name(self, name: str) -> None:
+        """Set the active project name for crabcard parsing."""
+        self._project_name = name
+
+    def set_main_content(self, main_content) -> None:
+        """Set MainContent reference for self-contained scroll operations and agent name lookup."""
         self._main_content = main_content
 
     def render_sync(self, role: str, text: str, session_key: str = None, on_forward_click=None, forwarded_from: str = None, agent_name: str = None):
@@ -331,7 +348,21 @@ class ChatRenderHandler:
                 agent_name = agent_mgr.get_name(session_key)
         current_key = f"{role}:{session_key}" if session_key else None
         tight = (current_key == self._last_message_key) and self._last_message_key is not None
-        bubble = build_role_bubble(role, text, on_forward_click=on_forward_click, tight=tight, session_key=session_key, forwarded_from=forwarded_from, agent_name=agent_name)
+
+        # Phase 3: Extract crabcard blocks before building bubble
+        if self._on_crabcard_extracted is not None and role == "Agent":
+            from utils.crabcard_parser import extract_crabcards
+            # Clear stale registry entries from previous renders.
+            _clear_crabcards_registry()
+            # agent_name already resolved above via _agent_mgr.get_name() — use it or default
+            agent_for_card = agent_name or "agent"
+            cleaned_text, cards = extract_crabcards(text, self._project_name, agent_for_card)
+            if cards:
+                self._on_crabcard_extracted(cards, session_key or "")
+        else:
+            cleaned_text = text
+
+        bubble = build_role_bubble(role, cleaned_text, on_forward_click=on_forward_click, tight=tight, session_key=session_key, forwarded_from=forwarded_from, agent_name=agent_name)
         self._last_message_key = current_key
         return bubble
 

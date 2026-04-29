@@ -226,6 +226,95 @@ class MainWindow(Gtk.ApplicationWindow):
         # Note: set_on_project_tab_close is called here AND re-called below (Bug #13 fix)
         # Both callbacks fire: _on_tab_close (feed bar) + review_handler.on_project_closed
         self._main_content.set_on_project_settings_update(self._on_feed_bar_update)
+
+        # ── Feed handler + feed tab (Phase 2) ────────────────────────────────
+        # Create FeedTab (view) and FeedHandler (logic) before wiring to project lifecycle.
+        # FeedHandler receives MainContent's user_input buffer for on_populate_input.
+        from ui.views.feed_tab import FeedTab
+        from ui.handlers.feed_handler import FeedHandler
+
+        # The feed tab shares the FileTree instance from LeftPanel for the "Files" tab.
+        # For project tabs, the bottom widget below chat is injected via
+        # MainContent.set_project_bottom_widget() called in the project open path.
+        self._feed_tab = FeedTab(file_tree=left_panel._file_tree)
+
+        def _on_populate_input(text: str):
+            """Fill the user input box with review prompt text."""
+            buf = self._main_content.user_input.get_buffer()
+            buf.set_text("")
+            buf.set_text(text)
+            # Move cursor to end
+            end_iter = buf.get_end_iter()
+            buf.place_cursor(end_iter)
+            self._main_content.user_input.grab_focus()
+
+        def _on_send_to_agent(session_key: str, text: str):
+            """Send a message to an agent tab (used for rejection notifications)."""
+            if session_key.startswith("project:"):
+                # For project tabs, send to the project tab directly
+                tab_session = session_key
+            else:
+                tab_session = session_key
+            self._chat_handler.send_raw_message(tab_session, text)
+
+        def _on_tab_switch():
+            """Switch project tab to the feed view."""
+            self._feed_tab.show_feed_tab()
+
+        self._feed_handler = FeedHandler(
+            GLib=GLib,
+            feed_tab=self._feed_tab,
+            on_populate_input=_on_populate_input,
+            on_send_to_agent=_on_send_to_agent,
+            on_tab_switch=_on_tab_switch,
+        )
+
+        # CrabWatch (Phase 5 — filesystem watcher for project feed)
+        from ui.handlers.crabwatch_handler import CrabWatchHandler
+        self._crabwatch_handler = CrabWatchHandler(
+            GLib=GLib,
+            on_event=self._feed_handler.on_filesystem_event,
+        )
+
+        # Wire ChatRenderHandler → FeedHandler (Phase 3: crabcard interception)
+        # When crabcards are extracted from agent messages, route them to feed.
+        def _on_crabcards_extracted(cards: list, session_key: str):
+            # Populate placeholder registry so chat bubble can render feed chips.
+            # Import here to avoid circular imports at module load time.
+            from ui.views.chat_bubble import _set_crabcards_registry
+            _set_crabcards_registry(cards, _on_tab_switch)
+            for card in cards:
+                self._feed_handler.add_card(card)
+
+        self._chat_render_handler.set_on_crabcard_extracted(_on_crabcards_extracted)
+        self._chat_render_handler.set_project_name("")  # set per-project when project opens
+
+        # ── Wire FeedHandler into project lifecycle ─────────────────────────────────
+        # ProjectHandler fires _on_project_opened callbacks on (name, path).
+        # Also set the project name on ChatRenderHandler so crabcard parsing has context.
+        self._project_handler.set_on_project_opened(
+            lambda n, p: (
+                self._on_feed_bar_update(n, len(self._project_handler.get_project_members(n)) if n else 0),
+                self._feed_handler.on_project_opened(n, p) if n else None,
+                self._main_content.set_project_bottom_widget(n, self._feed_tab) if n else None,
+                self._chat_render_handler.set_project_name(n) if n else None,
+                self._crabwatch_handler.start_watching(p, n) if n and p else None,
+            )
+        )
+        self._project_handler.set_on_members_changed(
+            lambda n, m: self._on_feed_bar_update(n, len(m))
+        )
+        # Clear feed tab when project closes
+        self._main_content.set_on_project_tab_close(
+            lambda sk: (
+                self._on_tab_close(sk),
+                self._review_handler.on_project_closed(sk.replace("project:", "", 1)),
+                self._feed_handler.on_project_closed(sk.replace("project:", "", 1)) if sk.startswith("project:") else None,
+                self._main_content.clear_project_bottom_widget(),
+                self._crabwatch_handler.stop_watching(),
+            )
+        )
+        # ── End Feed handler ──────────────────────────────────────────────
         # Task handler — task commands (Phase 7)
         self._task_handler = TaskHandler(
             on_display_card=self._on_command_card,
@@ -493,6 +582,12 @@ class MainWindow(Gtk.ApplicationWindow):
         self._main_content.set_agent_manager(self._gateway_handler.agent_mgr)
         # Wire AgentListHandler to the live AgentManager
         self._agent_list_handler.set_agent_mgr(self._gateway_handler.agent_mgr)
+        # Refresh agents list for the currently open project — fixes members not
+        # appearing after gateway reconnect (session keys change on reconnect)
+        if self._project_handler.get_active_project_name():
+            self._left_panel.refresh_agents_with_project(
+                self._project_handler.get_active_project_name()
+            )
         # Wire CommandHandler with live references after connect
         self._command_handler.set_gateway_client(gw)
         self._command_handler.set_agent_manager(self._gateway_handler.agent_mgr)

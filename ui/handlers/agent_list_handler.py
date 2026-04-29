@@ -94,7 +94,10 @@ class AgentListHandler:
 
         result = []
         for name, sk in agents.items():
-            in_project = bool(project_members) and sk in project_members
+            in_project = bool(project_members) and (
+                sk in project_members or
+                any(s in project_members for s in self._agent_mgr.get_sessions(name))
+            )
             session_count = len(self._agent_mgr.get_sessions(name))
             result.append((sk, name, in_project, session_count))
 
@@ -111,10 +114,13 @@ class AgentListHandler:
             self._on_agent_toggle(session_key, name, in_project)
 
     def get_all_sessions_for_agent(self, name: str) -> list[str]:
-        """Return all session_keys for a given agent name."""
+        """Return all session_keys for a given agent name (public API)."""
         if self._agent_mgr is None:
             return []
-        return [
-            sk for sk, n in self._agent_mgr._agent_names.items()
-            if n == name
-        ]
+        return self._agent_mgr.get_sessions(name)
+
+    def get_primary_session(self, name: str) -> str | None:
+        """Return canonical session key for an agent name (delegates to AgentManager)."""
+        if self._agent_mgr is None:
+            return None
+        return self._agent_mgr.get_primary_session(name)

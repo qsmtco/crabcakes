@@ -222,6 +222,48 @@ class MainContent(Gtk.Box):
                 lbl.set_text(text)
             self._project_settings.append(lbl)
 
+    # ── Project bottom widget (Phase 2: FeedTab below chat) ────────────────
+
+    def set_project_bottom_widget(self, project_name: str, widget: Gtk.Widget) -> None:
+        """
+        Show a widget below the chat area in the project tab.
+        Called by window when a project opens, passing the FeedTab.
+        For non-project tabs, this is a no-op.
+        """
+        # Find the project tab's chat overlay
+        session_key = f"project:{project_name}"
+        page_idx = self._find_page_by_session(session_key)
+        if page_idx is None:
+            return
+        page = self._chat_notebook.get_nth_page(page_idx)
+        if page is None:
+            return
+        overlay = page  # chat_overlay
+        # Check if we already added the bottom widget
+        if hasattr(self, '_project_bottom_widget') and self._project_bottom_widget is not None:
+            if self._project_bottom_widget[0] == session_key:
+                return  # already set
+            self.clear_project_bottom_widget()
+        # Add widget as bottom overlay, below chat_scroll but above scroll btn
+        overlay.add_overlay(widget)
+        widget.set_valign(Gtk.Align.END)
+        # Store so we can remove it later
+        self._project_bottom_widget = (session_key, widget)
+
+    def clear_project_bottom_widget(self) -> None:
+        """Remove the project bottom widget from the current project tab."""
+        if not hasattr(self, '_project_bottom_widget') or self._project_bottom_widget is None:
+            return
+        session_key, widget = self._project_bottom_widget
+        page_idx = self._find_page_by_session(session_key)
+        if page_idx is None:
+            self._project_bottom_widget = None
+            return
+        page = self._chat_notebook.get_nth_page(page_idx)
+        if page is not None and hasattr(page, 'remove_overlay'):
+            page.remove_overlay(widget)
+        self._project_bottom_widget = None
+
     # ── Tab management ──────────────────────────────────────────────────────
 
     def create_chat_tab(self, session_key, agent_name):

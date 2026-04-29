@@ -47,6 +47,14 @@ class AgentManager:
         """Return list of session keys for an agent name."""
         return self._agent_sessions.get(agent_name, [])
 
+    def get_primary_session(self, agent_name: str) -> str | None:
+        """Return canonical session key for an agent (':main' preferred, else first registered)."""
+        sessions = self._agent_sessions.get(agent_name, [])
+        for sk in sessions:
+            if sk.endswith(":main"):
+                return sk
+        return sessions[0] if sessions else None
+
     def get_color(self, agent_name: str) -> str | None:
         """Return the assigned hex color for an agent name, or None if not registered."""
         return self._agent_colors.get(agent_name)

@@ -18,6 +18,20 @@
 - `ui/handlers/media_handler.py` — STT + prompt improvement
 - Extracted from `window.py`
 
+### Phase 5 — CrabWatch Filesystem Watcher ✅ (2026-04-28)
+- `ui/handlers/crabwatch_handler.py` — Gio.FileMonitor filesystem watcher with debouncing and path filtering
+- `models/feed_card.py` — FeedCardData dataclass + css_class_for_type() for all card types
+- `ui/views/feed_card.py` — feed card widget factory (file_created, file_modified, file_deleted, dir_created, dir_deleted, commit, agent_joined, agent_left, member_joined, member_left, system)
+- `ui/handlers/feed_handler.py` — FeedHandler managing feed store + gateway/fs event routing to project tab
+- `ui/handlers/feed_store.py` — FeedStore with FIFO eviction + project scoping
+- `tests/test_crabwatch_handler.py` — 21 passing tests (init, watch, ignore patterns, debounce)
+- `tests/test_feed_handler.py` — FeedHandler tests (add/clear cards, event routing)
+- `tests/test_feed_card.py` — feed_card view tests (card type rendering)
+- `tests/test_feed_store.py` — FeedStore tests (FIFO eviction, project scoping)
+- Wired into `ui/window.py` via `set_on_project_opened`/`set_on_project_tab_close` callbacks
+- ARCHITECTURE.md updated: Section 3 (3.22a/3.22b/3.22c/3.24), Section 2 (directory structure), Section 11 (file inventory)
+
+
 ### Agent Card Port ✅ (2026-04-11)
 - `utils/icons.py` — SVG avatar rendering (circle + hexagon + initials)
 - `ui/handlers/agent_list_handler.py` — initials, color, sorting
