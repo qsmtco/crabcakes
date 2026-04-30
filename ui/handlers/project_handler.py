@@ -37,7 +37,7 @@ class ProjectHandler:
     is provided. Safe to call from GTK main thread without GLib.
 
     Args:
-        main_content:      MainContent instance — for create_chat_tab()
+        main_content:      DEPRECATED — no longer used (project view is in LeftPanel)
         left_panel:       LeftPanel instance — for refresh_agents_with_project()
         projects_module:  utils.projects module — for load_members() / save_members()
         agent_to_project: AgentRoutingTable — shared with ChatHandler (writes here, reads there)
@@ -46,14 +46,12 @@ class ProjectHandler:
 
     def __init__(
         self,
-        main_content,
         left_panel,
         projects_module,
         agent_to_project,  # AgentRoutingTable
         GLib_module=None,
         awareness_module=None,  # utils.project_awareness module (optional)
     ):
-        self._mc = main_content
         self._lp = left_panel
         self._projects = projects_module
         self._GLib = GLib_module
@@ -71,6 +69,7 @@ class ProjectHandler:
 
         # ── Cross-handler callbacks (set by window) ───────────────────────
         self._on_project_opened: list[Callable] = []   # window's callbacks
+        self._on_project_closed: list[Callable] = []   # window's close callbacks
         self._on_members_changed: Callable | None = None   # window's callback
 
     # ── Public API — for window / other handlers ───────────────────────────
@@ -98,7 +97,7 @@ class ProjectHandler:
             pass  # non-fatal
 
         # Create the project tab in main content
-        self._dispatch(lambda: self._mc.create_chat_tab(f"project:{name}", f"Project: {name}"))
+        # NOTE: No chat tab creation here. Project view lives in LeftPanel's Projects tab.
 
         # Refresh the agents list to show +/− buttons
         self._dispatch(lambda: self._lp.refresh_agents_with_project(name))
@@ -211,15 +210,19 @@ class ProjectHandler:
         Does NOT close the tab — caller handles that.
 
         Args:
-            name:  Project display name (ignored, just clears state)
+            name:  Project display name
         """
+        if self._active_project_name is None:
+            return
+        # Capture name BEFORE clearing state — callbacks need the project name
+        closing_name = name
         self._active_project_name = None
         self._active_project_path = None
         # Clear routing entries for this project
         self._agent_to_project.remove_project(name)
         self._dispatch(lambda: self._lp.refresh_agents_with_project(None))
-        for cb in self._on_project_opened:
-            cb(None, None)
+        for cb in self._on_project_closed:
+            cb(closing_name)
 
     def get_project_for_session(self, session_key: str) -> str | None:
         """Resolve project name from a session key.
@@ -345,6 +348,10 @@ class ProjectHandler:
     def set_on_project_opened(self, cb: Callable):
         """Add a callback for when a project is opened. Supports multiple callbacks."""
         self._on_project_opened.append(cb)
+
+    def set_on_project_closed(self, cb: Callable):
+        """Add a callback for when a project is closed. Supports multiple callbacks."""
+        self._on_project_closed.append(cb)
 
     def set_on_members_changed(self, cb: Callable):
         """Window calls this to receive membership-change notifications."""

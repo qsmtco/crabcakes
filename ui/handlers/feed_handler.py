@@ -42,14 +42,13 @@ class FeedHandler:
         self,
         *,
         GLib,                        # gi.repository.GLib
-        feed_tab,                    # FeedTab instance
         on_populate_input,            # callback(text) — fills input box (Review)
         on_send_to_agent,             # callback(session_key, text) — send to agent
         on_tab_switch,                # callback() — switch to feed tab
         on_card_added=None,           # callback(card_id) | None
     ):
         self._GLib = GLib
-        self._feed_tab = feed_tab
+        self._feed_tab = None         # set via set_feed_tab() after FeedTab is created
         self._on_populate_input = on_populate_input
         self._on_send_to_agent = on_send_to_agent
         self._on_tab_switch = on_tab_switch
@@ -64,7 +63,19 @@ class FeedHandler:
         # Project name → project path lookup (for persistence)
         self._project_paths: dict[str, str] = {}
         # True when loading persisted cards (skips redundant feed.json writes)
+        self._active_project_name: str | None = None
         self._loading = False
+        # Protects all shared dicts from concurrent access across threads
+        self._lock = threading.Lock()
+
+    def set_feed_tab(self, feed_tab) -> None:
+        """
+        Set the FeedTab view instance.
+
+        Called by window after FeedTab is created and before any project is opened.
+        Once set, FeedHandler can add/remove cards from the FeedTab.
+        """
+        self._feed_tab = feed_tab
 
     # ─────────────────────────────────────────────────────────────────
     # Card lifecycle
@@ -87,16 +98,17 @@ class FeedHandler:
         card_id = str(uuid.uuid4())
         card_data.card_id = card_id
 
-        # Store data
-        self._cards[card_id] = card_data
+        # Store data under lock (protects against concurrent _load_and_render)
+        with self._lock:
+            self._cards[card_id] = card_data
 
-        # Index under project
-        proj = card_data.project_name
-        if proj not in self._project_cards:
-            self._project_cards[proj] = []
-        self._project_cards[proj].insert(0, card_id)  # newest first
+            # Index under project
+            proj = card_data.project_name
+            if proj not in self._project_cards:
+                self._project_cards[proj] = []
+            self._project_cards[proj].insert(0, card_id)  # newest first
 
-        # Build widget
+        # Build widget (pure Python, no shared state) — done outside lock
         widget = build_feed_card(
             card_data,
             on_review=self._make_review_cb(card_id),
@@ -105,16 +117,19 @@ class FeedHandler:
             on_copy=self._make_copy_cb(card_data),
         )
 
-        self._card_widgets[card_id] = widget
+        with self._lock:
+            self._card_widgets[card_id] = widget
 
-        # Get project path from card metadata (set by on_project_opened load path)
-        project_path = card_data.metadata.get("project_path", "")
+        # Get project path from card metadata (set by on_project_opened load path),
+        # or fall back to _project_paths if the card came from the parser (metadata empty).
+        project_path = card_data.metadata.get("project_path", "") or self._project_paths.get(card_data.project_name, "")
 
-        # Prepend to feed tab on main thread, then persist
-        def _prepend():
-            self._feed_tab.prepend_card(widget, card_id)
-            if self._on_card_added:
-                self._on_card_added(card_id)
+        # Append to feed tab on main thread (newest at bottom), then persist
+        def _append():
+            if self._feed_tab is not None:
+                self._feed_tab.append_card(widget, card_id)
+                if self._on_card_added:
+                    self._on_card_added(card_id)
 
         def _persist():
             if project_path and hasattr(card_data, 'to_dict') and not self._loading:
@@ -131,19 +146,18 @@ class FeedHandler:
 
     def remove_card(self, card_id: str) -> None:
         """Remove a card from the feed."""
-        if card_id not in self._cards:
-            return
-
-        proj = self._cards[card_id].project_name
-        if proj in self._project_cards and card_id in self._project_cards[proj]:
-            self._project_cards[proj].remove(card_id)
-
-        del self._cards[card_id]
-
-        widget = self._card_widgets.pop(card_id, None)
+        with self._lock:
+            if card_id not in self._cards:
+                return
+            proj = self._cards[card_id].project_name
+            if proj in self._project_cards and card_id in self._project_cards[proj]:
+                self._project_cards[proj].remove(card_id)
+            self._cards.pop(card_id, None)
+            widget = self._card_widgets.pop(card_id, None)
 
         def _remove():
-            self._feed_tab.remove_card(card_id)
+            if self._feed_tab is not None:
+                self._feed_tab.remove_card(card_id)
 
         self._GLib.idle_add(_remove)
 
@@ -158,18 +172,15 @@ class FeedHandler:
 
     def clear_project(self, project_name: str) -> None:
         """Remove all cards for a project (on project close)."""
-        card_ids = self._project_cards.get(project_name, [])
-        for cid in list(card_ids):
-            widget = self._card_widgets.pop(cid, None)
-            del self._cards[cid]
-        if project_name in self._project_cards:
-            del self._project_cards[project_name]
-
-        def _clear():
-            # FeedTab clears itself when switching projects
-            pass
-
-        self._GLib.idle_add(_clear)
+        with self._lock:
+            card_ids = self._project_cards.get(project_name, [])
+            for cid in list(card_ids):
+                self._card_widgets.pop(cid, None)
+                self._cards.pop(cid, None)
+            self._project_cards.pop(project_name, None)
+        for cid in card_ids:
+            if self._feed_tab:
+                self._feed_tab.remove_card(cid)
 
     # ─────────────────────────────────────────────────────────────────
     # Project lifecycle hooks
@@ -179,12 +190,18 @@ class FeedHandler:
         """
         Called when a project opens.
 
-        1. Load cards from .crabcakes/feed.json via feed_store.load_feed()
-        2. Render all cards (chronological order → newest at bottom)
-        3. Switch to Project Feed tab (default tab on open)
-        4. Auto-scroll to bottom (newest card visible)
-        5. If no cards, show empty state widget
+        1. Clear previous project's cards if switching projects
+        2. Load cards from .crabcakes/feed.json via feed_store.load_feed()
+        3. Render all cards (chronological order → oldest at top, newest at bottom)
+        4. Switch to Project Feed tab (default tab on open)
+        5. Auto-scroll to bottom (newest card visible)
+        6. If no cards, show empty state widget
         """
+        # Clear previous project if switching — prevents card bleed between projects
+        prev = self._active_project_name
+        if prev and prev != project_name:
+            self.clear_project(prev)
+        self._active_project_name = project_name
         # Store project_path for persistence on new card adds
         self._project_paths[project_name] = project_path
 
@@ -196,50 +213,54 @@ class FeedHandler:
             cards = feed_store.load_feed(project_path)
 
             if not cards:
-                self._GLib.idle_add(lambda: self._feed_tab.show_empty_state())
-                self._GLib.idle_add(lambda: self._feed_tab.show_feed_tab())
+                self._GLib.idle_add(lambda: self._feed_tab.show_empty_state() if self._feed_tab else None)
+                self._GLib.idle_add(lambda: self._feed_tab.show_feed_tab() if self._feed_tab else None)
                 self._loading = False
                 return
 
-            # Seed state: set metadata, store widgets/data
+            # Seed state: set metadata
             for card in cards:
                 if not card.metadata:
                     card.metadata = {}
                 card.metadata["project_path"] = project_path
 
-            # Index by project (newest first)
-            if project_name not in self._project_cards:
-                self._project_cards[project_name] = []
-            for card in cards:
-                if card.card_id:
-                    self._project_cards[project_name].append(card.card_id)
+            # Build all widgets (pure Python — no GTK yet) while holding lock
+            widgets = {}
+            with self._lock:
+                # Index by project (newest first)
+                if project_name not in self._project_cards:
+                    self._project_cards[project_name] = []
+                for card in cards:
+                    if card.card_id:
+                        self._project_cards[project_name].append(card.card_id)
 
-            # Build all widgets (pure Python — no GTK yet)
-            for card in cards:
-                widget = build_feed_card(
-                    card,
-                    on_review=self._make_review_cb(card.card_id),
-                    on_accept=self._make_accept_cb(card.card_id),
-                    on_reject=self._make_reject_cb(card.card_id),
-                    on_copy=self._make_copy_cb(card),
-                )
-                self._card_widgets[card.card_id] = widget
-                self._cards[card.card_id] = card
+                # Build and store widgets/data under lock
+                for card in cards:
+                    widget = build_feed_card(
+                        card,
+                        on_review=self._make_review_cb(card.card_id),
+                        on_accept=self._make_accept_cb(card.card_id),
+                        on_reject=self._make_reject_cb(card.card_id),
+                        on_copy=self._make_copy_cb(card),
+                    )
+                    self._card_widgets[card.card_id] = widget
+                    self._cards[card.card_id] = card
+                    widgets[card.card_id] = widget
 
             # Switch to feed tab on main thread (default tab on project open)
-            self._GLib.idle_add(lambda: self._feed_tab.show_feed_tab())
+            self._GLib.idle_add(lambda: self._feed_tab.show_feed_tab() if self._feed_tab else None)
 
             # Add each card to the feed on main thread
             def _add_card_widget(card):
-                widget = self._card_widgets.get(card.card_id)
-                if widget:
-                    self._feed_tab.prepend_card(widget, card.card_id)
+                widget = widgets.get(card.card_id)
+                if widget and self._feed_tab:
+                    self._feed_tab.append_card(widget, card.card_id)
 
-            for card in reversed(cards):  # oldest at bottom → newest at top
+            for card in cards:  # chronological: oldest first, newest last (bottom)
                 self._GLib.idle_add(lambda c=card: _add_card_widget(c))
 
             # Auto-scroll to bottom (newest card visible) on main thread
-            self._GLib.idle_add(lambda: self._feed_tab.scroll_to_bottom())
+            self._GLib.idle_add(lambda: self._feed_tab.scroll_to_bottom() if self._feed_tab else None)
 
             self._loading = False
 
@@ -248,9 +269,13 @@ class FeedHandler:
 
     def on_project_closed(self, project_name: str) -> None:
         """Called when project closes. Clear cards for this project."""
+        if self._active_project_name == project_name:
+            self._active_project_name = None
         self.clear_project(project_name)
+
         def _clear():
-            self._feed_tab.show_empty_state()
+            if self._feed_tab is not None:
+                self._feed_tab.show_empty_state()
         self._GLib.idle_add(_clear)
 
     # ─────────────────────────────────────────────────────────────────
@@ -286,6 +311,9 @@ class FeedHandler:
 
         self._on_populate_input(prompt)
         self._on_tab_switch()
+
+        # Mark card as reviewed (per SPEC — runtime flag)
+        card.reviewed = True
 
     def handle_accept(self, card_id: str) -> None:
         """

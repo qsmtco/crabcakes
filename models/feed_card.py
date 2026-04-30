@@ -67,7 +67,7 @@ class FeedCardData:
             "git_commit": "feed-card-git",
             "diff": "feed-card-diff",
             "file_created": "feed-card-file-new",
-            "file_modified": "feed-card-file-new",
+            "file_modified": "feed-card-file-mod",
             "file_deleted": "feed-card-file-del",
             "dir_created": "feed-card-dir-new",
             "dir_deleted": "feed-card-dir-del",

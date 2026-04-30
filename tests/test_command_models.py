@@ -183,7 +183,7 @@ class TestRegistryGetHelp:
         reg = CommandRegistry()
         reg.register("ask", lambda cmd: CommandResult(), aliases=['a'], help_text="ask help text")
         assert reg.get_help("a") == "ask help text"
-        assert reg.get_help("ASK") == "ask help text"
+        assert reg.get_help("ASK") == "ask help text  [aliases: a]"
 
     def test_no_help_text_returns_empty_string(self):
         reg = CommandRegistry()

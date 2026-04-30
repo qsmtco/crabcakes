@@ -29,6 +29,30 @@ class ChatControlBar(Gtk.Label):
             'Chat Control Bar</span>'
         )
 
-    def update(self, event_type, message):
-        """TODO: wire to real control logic."""
-        pass
+    def update(self, event_type: str, message: str) -> None:
+        """
+        Update the control bar with current session/activity info.
+
+        event_type: state name from ActivityHandler (idle/sending/reasoning/
+                   streaming/tool_use/done) or 'text' for direct markup.
+        message:   Pango markup string or fallback text.
+        """
+        if event_type == "text":
+            # Direct markup passed via set_control_bar_text()
+            self.set_markup(message)
+        else:
+            # State-based update — show colored state dot + message
+            state_colors = {
+                "idle": "#4ade80",      # green
+                "sending": "#f59e0b",  # amber
+                "reasoning": "#f59e0b",
+                "streaming": "#f59e0b",
+                "tool_use": "#a78bfa",  # purple
+                "done": "#4ade80",
+            }
+            color = state_colors.get(event_type, "#6b6b7a")
+            if message:
+                markup = f'<span foreground="{color}" font_desc="Sans 10">{message}</span>'
+            else:
+                markup = f'<span foreground="{color}" font_desc="Sans 10">● {event_type.title()}</span>'
+            self.set_markup(markup)

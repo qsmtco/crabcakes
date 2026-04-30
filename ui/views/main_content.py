@@ -69,6 +69,9 @@ class MainContent(Gtk.Box):
 
         self._control_bar = ChatControlBar()
 
+        # Control bar is updated by ActivityHandler via set_on_control_bar_update()
+        self._on_control_bar_update: callable | None = None
+
         # Top box minimum height — prevents it collapsing when notebook is empty
         top_box.set_size_request(-1, 120)
 
@@ -154,9 +157,6 @@ class MainContent(Gtk.Box):
         # Improve state
         self._on_improve_click = None
 
-        # Project tab close callback — set by window via set_on_project_tab_close()
-        self._on_project_tab_close: list[Callable] = []
-
         # Agent manager reference — set via set_agent_manager()
         self._agent_mgr = None
 
@@ -192,6 +192,15 @@ class MainContent(Gtk.Box):
             lbl.set_text(text)
         self._project_settings.append(lbl)
 
+    def set_on_control_bar_update(self, cb: "Callable[[str, str], None]") -> None:
+        """Set the callback for control bar updates. cb(event_type, message)."""
+        self._on_control_bar_update = cb
+
+    def update_control_bar(self, event_type: str, message: str) -> None:
+        """Update the control bar. Called by ActivityHandler on state transitions."""
+        if self._on_control_bar_update:
+            self._on_control_bar_update(event_type, message)
+
     def set_on_project_settings_update(self, cb):
         """Set callback for project settings updates. cb(project_name, member_count)."""
         self._on_feed_bar_update = cb
@@ -221,48 +230,6 @@ class MainContent(Gtk.Box):
             else:
                 lbl.set_text(text)
             self._project_settings.append(lbl)
-
-    # ── Project bottom widget (Phase 2: FeedTab below chat) ────────────────
-
-    def set_project_bottom_widget(self, project_name: str, widget: Gtk.Widget) -> None:
-        """
-        Show a widget below the chat area in the project tab.
-        Called by window when a project opens, passing the FeedTab.
-        For non-project tabs, this is a no-op.
-        """
-        # Find the project tab's chat overlay
-        session_key = f"project:{project_name}"
-        page_idx = self._find_page_by_session(session_key)
-        if page_idx is None:
-            return
-        page = self._chat_notebook.get_nth_page(page_idx)
-        if page is None:
-            return
-        overlay = page  # chat_overlay
-        # Check if we already added the bottom widget
-        if hasattr(self, '_project_bottom_widget') and self._project_bottom_widget is not None:
-            if self._project_bottom_widget[0] == session_key:
-                return  # already set
-            self.clear_project_bottom_widget()
-        # Add widget as bottom overlay, below chat_scroll but above scroll btn
-        overlay.add_overlay(widget)
-        widget.set_valign(Gtk.Align.END)
-        # Store so we can remove it later
-        self._project_bottom_widget = (session_key, widget)
-
-    def clear_project_bottom_widget(self) -> None:
-        """Remove the project bottom widget from the current project tab."""
-        if not hasattr(self, '_project_bottom_widget') or self._project_bottom_widget is None:
-            return
-        session_key, widget = self._project_bottom_widget
-        page_idx = self._find_page_by_session(session_key)
-        if page_idx is None:
-            self._project_bottom_widget = None
-            return
-        page = self._chat_notebook.get_nth_page(page_idx)
-        if page is not None and hasattr(page, 'remove_overlay'):
-            page.remove_overlay(widget)
-        self._project_bottom_widget = None
 
     # ── Tab management ──────────────────────────────────────────────────────
 
@@ -486,6 +453,7 @@ class MainContent(Gtk.Box):
         self._chat_notebook.remove_page(page_idx)
         self._tab_sessions.pop(page_idx, None)
         self._tab_chat_boxes.pop(page_idx, None)
+        self._tab_scrolls.pop(page_idx, None)
         if not self._bulk_closing:
             self._reindex_tabs()
 
@@ -542,12 +510,13 @@ class MainContent(Gtk.Box):
                 self._chat_notebook.remove_page(idx)
                 self._tab_sessions.pop(idx, None)
                 self._tab_chat_boxes.pop(idx, None)
+                self._tab_scrolls.pop(idx, None)
         finally:
             self._bulk_closing = False
         self._reindex_tabs()
 
     def _on_tab_close_clicked(self, _btn):
-        """× button clicked on a tab — close it. For project tabs, also close the project."""
+        """× button clicked on a tab — close it."""
         tab_label_box = _btn.get_parent()
         session_key = getattr(tab_label_box, "_session_key", None) if tab_label_box else None
         if session_key is None:
@@ -555,14 +524,7 @@ class MainContent(Gtk.Box):
         page_idx = self._find_page_by_session(session_key)
         if page_idx is None:
             return
-        # If it's a project tab, close the project in left_panel
-        for cb in self._on_project_tab_close:
-            cb(session_key)
         self._close_tab(page_idx)
-
-    def set_on_project_tab_close(self, cb: Callable):
-        """Add a callback for when a project tab is closed. Supports multiple callbacks."""
-        self._on_project_tab_close.append(cb)
 
     def _on_tab_middle_click(self, ctrl, n_press, x, y):
         """Middle-click on tab label — close it."""

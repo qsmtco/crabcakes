@@ -97,10 +97,28 @@ class FeedBar(Gtk.Box):
 
     # ── Legacy API (not used by ActivityHandler, kept for compatibility) ──
 
-    def update(self, event_type, message):
+    def update(self, event_type: str, message: str) -> None:
         """
-        Update the feed bar with an activity event.
-        Called by window._on_ws_event when feed events fire.
+        Legacy compatibility method — delegates to the direct FeedBar API.
+
+        ActivityHandler calls the direct API (set_status_text, set_progress_*).
+        This method exists for any external callers that expect a generic
+        update(event_type, message) interface.
         """
-        # TODO: wire to real feed event logic
-        pass
+        # Map event_type to a colored status label the same way
+        # ActivityHandler._update_feedbar() does.
+        state_colors = {
+            "idle": "#4ade80",
+            "sending": "#f59e0b",
+            "reasoning": "#f59e0b",
+            "streaming": "#f59e0b",
+            "tool_use": "#a855f7",
+            "done": "#4ade80",
+        }
+        color = state_colors.get(event_type, "#6b6b7a")
+        if message:
+            markup = f'<span foreground="{color}">{message}</span>'
+        else:
+            markup = f'<span foreground="{color}">● {event_type.title()}</span>'
+        self.set_status_text(markup)
+        self.set_progress_hidden(event_type == "idle")

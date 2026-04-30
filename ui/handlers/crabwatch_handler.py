@@ -31,8 +31,10 @@ from models.feed_card import FeedCardData
 
 # Paths/dirs to ignore — never fire events for these
 IGNORED_PREFIXES: tuple[str, ...] = (
-    ".crabcakes/",
-    ".git/",
+    ".crabcakes",  # directory itself (e.g. makedirs creating it)
+    ".crabcakes/",  # contents
+    ".git",         # directory itself
+    ".git/",        # contents
     "node_modules/",
     "__pycache__/",
 )
@@ -97,6 +99,7 @@ class CrabWatchHandler:
 
         # Monitor state — one monitor per watched directory (recursive)
         self._monitors: dict[str, Gio.FileMonitor] = {}  # abs_path → monitor
+        self._known_dirs: set[str] = set()                # abs_path of known directories
         self._watched_path: str | None = None
         self._watched_name: str | None = None
 
@@ -202,6 +205,9 @@ class CrabWatchHandler:
         if event_type == Gio.FileMonitorEvent.CREATED:
             is_dir = file.query_file_type(Gio.FileQueryInfoFlags.NONE, None) == Gio.FileType.DIRECTORY
             event_type_str = "dir_created" if is_dir else "file_created"
+            # Record directory so we can classify DELETED events correctly
+            if is_dir:
+                self._known_dirs.add(event_path)
             # Recursively watch new subdirectories
             if is_dir:
                 self._add_monitor_recursive(event_path)
@@ -213,16 +219,10 @@ class CrabWatchHandler:
             if abs_path in self._monitors:
                 self._monitors[abs_path].cancel()
                 del self._monitors[abs_path]
-            is_dir = other_file is not None and (
-                other_file.query_file_type(Gio.FileQueryInfoFlags.NONE, None) == Gio.FileType.DIRECTORY
-                if other_file else False
-            )
-            # Try to infer from original file if available
-            try:
-                if file.query_file_type(Gio.FileQueryInfoFlags.NONE, None) == Gio.FileType.DIRECTORY:
-                    is_dir = True
-            except Exception:
-                pass
+            # Check our known-dirs set first (reliable, no filesystem query needed)
+            is_dir = abs_path in self._known_dirs
+            if is_dir:
+                self._known_dirs.discard(abs_path)
             event_type_str = "dir_deleted" if is_dir else "file_deleted"
         else:
             return  # IGNORED, WILL_SHOOT, UNKNOWN, BACKUP, RENAMED — ignored
@@ -291,6 +291,7 @@ class CrabWatchHandler:
         for monitor in self._monitors.values():
             monitor.cancel()
         self._monitors.clear()
+        self._known_dirs.clear()
 
         # Cancel all pending debounce timers
         for source in self._debounce_map.values():

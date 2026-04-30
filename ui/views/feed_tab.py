@@ -7,9 +7,8 @@
 #       get_card_container() -> Gtk.Box
 #       get_stack() -> Gtk.Stack
 #       show_feed_tab() -> None
-#       show_files_tab() -> None
 #       show_empty_state() -> None
-#       prepend_card(card_widget: Gtk.Widget) -> None
+#       append_card(card_widget: Gtk.Widget) -> None
 #       remove_card(card_id: str) -> None
 #       scroll_to_bottom() -> None
 
@@ -24,9 +23,8 @@ class FeedTab(Gtk.Box):
 
     Layout:
       Gtk.Box (vertical)
-        ├── Gtk.StackSwitcher (tab bar: "Files" | "Feed")
+        ├── Gtk.StackSwitcher (tab bar: "Feed")
         └── Gtk.Stack
-             ├── "files" → file_tree (injected)
              └── "feed"  → Gtk.ScrolledWindow → card_container (vertical box)
 
     CSS classes:
@@ -35,11 +33,7 @@ class FeedTab(Gtk.Box):
       .feed-card-list — the vertical box holding cards
     """
 
-    def __init__(self, file_tree: Gtk.Widget):
-        """
-        Args:
-            file_tree: existing FileTree widget to show under the "Files" tab.
-        """
+    def __init__(self):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.set_vexpand(True)
 
@@ -48,15 +42,10 @@ class FeedTab(Gtk.Box):
         self._stack: Gtk.Stack | None = None
         self._cards_by_id: dict[str, Gtk.Widget] = {}  # card_id → widget
 
-        # ── Build stack (Files | Feed) ─────────────────────────────────
+        # ── Build stack (Feed only) ──────────────────────────────────────
         self._stack = Gtk.Stack()
         self._stack.set_vexpand(True)
         self._stack.set_halign(Gtk.Align.FILL)
-
-        # "files" page — inject the existing FileTree
-        files_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        files_page.append(file_tree)
-        self._stack.add_titled(files_page, "files", "Files")
 
         # "feed" page — scrollable card list
         feed_page, card_container, scroll = self._build_feed_tab()
@@ -64,7 +53,7 @@ class FeedTab(Gtk.Box):
         self._feed_scroll = scroll
         self._stack.add_titled(feed_page, "feed", "Project Feed")
 
-        # ── Stack switcher (tab bar) ─────────────────────────────────────
+        # ── Stack switcher (tab bar — single tab) ─────────────────────────
         tab_bar = Gtk.StackSwitcher()
         tab_bar.set_stack(self._stack)
         tab_bar.add_css_class("feed-tab-bar")
@@ -110,10 +99,6 @@ class FeedTab(Gtk.Box):
         """Switch to the Project Feed tab."""
         self._stack.set_visible_child_name("feed")
 
-    def show_files_tab(self) -> None:
-        """Switch to the Files tab."""
-        self._stack.set_visible_child_name("files")
-
     def show_empty_state(self) -> None:
         """Clear all cards and show the empty state widget."""
         from ui.views.feed_card import build_empty_feed_widget
@@ -130,9 +115,9 @@ class FeedTab(Gtk.Box):
         self._card_container.append(empty)
         self._empty_widget = empty
 
-    def prepend_card(self, card_widget: Gtk.Widget, card_id: str | None = None) -> None:
+    def append_card(self, card_widget: Gtk.Widget, card_id: str | None = None) -> None:
         """
-        Prepend a card widget to the top of the feed (reverse-chronological).
+        Append a card widget to the bottom of the feed (chronological, newest last).
         If card_id is provided, the card can be removed via remove_card().
         Removes the empty state widget if present.
         """
@@ -143,8 +128,8 @@ class FeedTab(Gtk.Box):
         if empty is not None and empty in self._card_container:
             self._card_container.remove(empty)
             self._empty_widget = None
-        # Insert at top (newest card at bottom, so prepend puts newest at top)
-        self._card_container.insert_child_at_start(card_widget)
+        # Append to bottom (newest card at bottom — social-media order)
+        self._card_container.append(card_widget)
         if card_id is not None:
             self._cards_by_id[card_id] = card_widget
 

@@ -71,10 +71,20 @@ class LeftPanel(Gtk.Box):
             Gtk.Label(label="Agents")
         )
 
-        # Tab 3: Projects — FileTree with expandable directory browser
+        # Tab 3: Projects — Gtk.Stack switching between picker (FileTree) and project (FeedTab) view
+        self._projects_stack = Gtk.Stack()
+        self._projects_stack.set_vexpand(True)
+        self._projects_stack.set_halign(Gtk.Align.FILL)
+
+        # "picker" page — FileTree with project cards (default)
         self._file_tree = FileTree(on_file_selected=self._on_project_selected)
+        self._projects_stack.add_titled(self._file_tree, "picker", "Projects")
+
+        # "project" page — FeedTab, added lazily on first project open
+        self._feed_tab = None
+
         PAP_notebook.append_page(
-            self._file_tree,
+            self._projects_stack,
             Gtk.Label(label="Projects")
         )
 
@@ -133,6 +143,36 @@ class LeftPanel(Gtk.Box):
         """Called by window when a project tab opens — refreshes +/− buttons."""
         self._active_project_name = project_name
         self._refresh_agents_list()
+
+    # ── Projects tab — Stack switching between picker (FileTree) and project (FeedTab) ───
+
+    def open_project_view(self, feed_tab: "FeedTab") -> None:
+        """
+        Switch Projects tab from picker (FileTree) to project (FeedTab) view.
+
+        Called by window when a project card is clicked and the project opens.
+        The FeedTab is created by window and passed in so LeftPanel owns the widget.
+
+        Args:
+            feed_tab: FeedTab instance to show in the project view.
+        """
+        # Store and add FeedTab to the stack if not already present
+        if self._feed_tab is None:
+            self._feed_tab = feed_tab
+            self._projects_stack.add_titled(self._feed_tab, "project", "Project")
+        # Switch to project page — FeedTab default is "feed" child
+        self._projects_stack.set_visible_child_name("project")
+
+    def close_project_view(self) -> None:
+        """
+        Switch Projects tab from project (FeedTab) back to picker (FileTree) view.
+        Called by window when the user navigates back or closes a project.
+        """
+        self._projects_stack.set_visible_child_name("picker")
+
+    def get_feed_tab(self) -> "FeedTab | None":
+        """Return the FeedTab instance. None until open_project_view() is called."""
+        return self._feed_tab
 
     def _refresh_agents_list(self):
         """

@@ -197,7 +197,6 @@ class MainWindow(Gtk.ApplicationWindow):
         self._projects = __import__("utils.projects", fromlist=["projects"])
         self._awareness = __import__("utils.project_awareness", fromlist=["project_awareness"])
         self._project_handler = ProjectHandler(
-            main_content=self._main_content,
             left_panel=self._left_panel,
             projects_module=self._projects,
             agent_to_project=self._agent_to_project,  # shared AgentRoutingTable — ProjectHandler writes, ChatHandler reads
@@ -223,96 +222,104 @@ class MainWindow(Gtk.ApplicationWindow):
         self._chat_handler.set_project_handler(self._project_handler)
 
         # Wire feed bar — updates when project opens or members change
-        # Note: set_on_project_tab_close is called here AND re-called below (Bug #13 fix)
-        # Both callbacks fire: _on_tab_close (feed bar) + review_handler.on_project_closed
         self._main_content.set_on_project_settings_update(self._on_feed_bar_update)
 
         # ── Feed handler + feed tab (Phase 2) ────────────────────────────────
-        # Create FeedTab (view) and FeedHandler (logic) before wiring to project lifecycle.
-        # FeedHandler receives MainContent's user_input buffer for on_populate_input.
-        from ui.views.feed_tab import FeedTab
-        from ui.handlers.feed_handler import FeedHandler
+        # ── Feed handler + feed tab (Phase 2 — Project Feed) ─────────────────────
+        #
+        # Architecture: LeftPanel Projects tab owns the FeedTab view (created once).
+        # FeedHandler manages card state. FeedHandler is told about FeedTab via set_feed_tab().
+        # window wires project lifecycle → LeftPanel ↔ FeedHandler coordination.
+        #
+        # Order: FeedHandler → CrabWatch → FeedTab → wire callbacks
 
-        # The feed tab shares the FileTree instance from LeftPanel for the "Files" tab.
-        # For project tabs, the bottom widget below chat is injected via
-        # MainContent.set_project_bottom_widget() called in the project open path.
-        self._feed_tab = FeedTab(file_tree=left_panel._file_tree)
+        from ui.handlers.feed_handler import FeedHandler
 
         def _on_populate_input(text: str):
             """Fill the user input box with review prompt text."""
             buf = self._main_content.user_input.get_buffer()
             buf.set_text("")
             buf.set_text(text)
-            # Move cursor to end
             end_iter = buf.get_end_iter()
             buf.place_cursor(end_iter)
             self._main_content.user_input.grab_focus()
 
         def _on_send_to_agent(session_key: str, text: str):
             """Send a message to an agent tab (used for rejection notifications)."""
-            if session_key.startswith("project:"):
-                # For project tabs, send to the project tab directly
-                tab_session = session_key
-            else:
-                tab_session = session_key
-            self._chat_handler.send_raw_message(tab_session, text)
+            self._chat_handler.send_raw_message(session_key, text)
 
-        def _on_tab_switch():
-            """Switch project tab to the feed view."""
-            self._feed_tab.show_feed_tab()
+        def _on_show_feed_subtab():
+            """Switch FeedTab to show the feed sub-tab (not the file tree)."""
+            if self._left_panel.get_feed_tab() is not None:
+                self._left_panel.get_feed_tab().show_feed_tab()
 
+        # FeedHandler created before FeedTab — set_feed_tab() called after FeedTab exists
         self._feed_handler = FeedHandler(
             GLib=GLib,
-            feed_tab=self._feed_tab,
             on_populate_input=_on_populate_input,
             on_send_to_agent=_on_send_to_agent,
-            on_tab_switch=_on_tab_switch,
+            on_tab_switch=_on_show_feed_subtab,
         )
 
-        # CrabWatch (Phase 5 — filesystem watcher for project feed)
+        # CrabWatch — filesystem watcher for project feed
         from ui.handlers.crabwatch_handler import CrabWatchHandler
         self._crabwatch_handler = CrabWatchHandler(
-            GLib=GLib,
+            GLib_module=GLib,
             on_event=self._feed_handler.on_filesystem_event,
         )
 
-        # Wire ChatRenderHandler → FeedHandler (Phase 3: crabcard interception)
-        # When crabcards are extracted from agent messages, route them to feed.
+        # FeedTab created here (once) — LeftPanel takes ownership via open_project_view()
+        from ui.views.feed_tab import FeedTab
+        self._feed_tab = FeedTab()
+
+        # Tell FeedHandler about the FeedTab (FeedHandler needs it to add/remove cards)
+        self._feed_handler.set_feed_tab(self._feed_tab)
+
+        # Wire ChatRenderHandler → FeedHandler (crabcard interception)
         def _on_crabcards_extracted(cards: list, session_key: str):
-            # Populate placeholder registry so chat bubble can render feed chips.
-            # Import here to avoid circular imports at module load time.
             from ui.views.chat_bubble import _set_crabcards_registry
-            _set_crabcards_registry(cards, _on_tab_switch)
+            _set_crabcards_registry(cards, _on_show_feed_subtab)
             for card in cards:
                 self._feed_handler.add_card(card)
 
         self._chat_render_handler.set_on_crabcard_extracted(_on_crabcards_extracted)
         self._chat_render_handler.set_project_name("")  # set per-project when project opens
 
-        # ── Wire FeedHandler into project lifecycle ─────────────────────────────────
-        # ProjectHandler fires _on_project_opened callbacks on (name, path).
-        # Also set the project name on ChatRenderHandler so crabcard parsing has context.
+        # ── Wire project lifecycle → LeftPanel Projects tab ↔ FeedHandler ────────────
+        #
+        # When project OPENS:
+        #   1. LeftPanel switches Projects tab to project view (FeedTab)
+        #   2. FeedHandler loads feed.json for the project
+        #   3. CrabWatch starts watching the project directory
+        #   4. ChatRenderHandler gets the project name for crabcard context
+        #   5. Feed bar is updated
+        #
+        # When project CLOSES:
+        #   1. LeftPanel switches Projects tab back to picker (FileTree)
+        #   2. FeedHandler clears its state for the project
+        #   3. CrabWatch stops watching
+        #   4. Feed bar is cleared
+
         self._project_handler.set_on_project_opened(
             lambda n, p: (
+                self._left_panel.open_project_view(self._feed_tab),
+                self._feed_handler.on_project_opened(n, p),
+                self._crabwatch_handler.start_watching(p, n),
+                self._chat_render_handler.set_project_name(n),
                 self._on_feed_bar_update(n, len(self._project_handler.get_project_members(n)) if n else 0),
-                self._feed_handler.on_project_opened(n, p) if n else None,
-                self._main_content.set_project_bottom_widget(n, self._feed_tab) if n else None,
-                self._chat_render_handler.set_project_name(n) if n else None,
-                self._crabwatch_handler.start_watching(p, n) if n and p else None,
+            )
+        )
+        self._project_handler.set_on_project_closed(
+            lambda name: (
+                self._left_panel.close_project_view(),
+                self._feed_handler.on_project_closed(name),
+                self._crabwatch_handler.stop_watching(),
+                self._chat_render_handler.set_project_name(""),
+                self._on_feed_bar_update(None, 0),
             )
         )
         self._project_handler.set_on_members_changed(
             lambda n, m: self._on_feed_bar_update(n, len(m))
-        )
-        # Clear feed tab when project closes
-        self._main_content.set_on_project_tab_close(
-            lambda sk: (
-                self._on_tab_close(sk),
-                self._review_handler.on_project_closed(sk.replace("project:", "", 1)),
-                self._feed_handler.on_project_closed(sk.replace("project:", "", 1)) if sk.startswith("project:") else None,
-                self._main_content.clear_project_bottom_widget(),
-                self._crabwatch_handler.stop_watching(),
-            )
         )
         # ── End Feed handler ──────────────────────────────────────────────
         # Task handler — task commands (Phase 7)
@@ -344,9 +351,6 @@ class MainWindow(Gtk.ApplicationWindow):
         # Inject CommandHandler into ChatHandler (ChatHandler calls process_input before send)
         self._chat_handler.set_command_handler(self._command_handler)
 
-        self._project_handler.set_on_project_opened(lambda n, p: self._on_feed_bar_update(n, len(self._project_handler.get_project_members(n)) if n else 0))
-        self._project_handler.set_on_members_changed(lambda n, m: self._on_feed_bar_update(n, len(m)))
-
         # Review handler — owns review session lifecycle (Phase 3)
         from ui.handlers.review_handler import ReviewHandler
         self._review_handler = ReviewHandler(
@@ -364,8 +368,8 @@ class MainWindow(Gtk.ApplicationWindow):
         self._project_handler.set_on_project_opened(
             lambda n, p: (self._review_handler.on_project_opened(n, p))
         )
-        self._main_content.set_on_project_tab_close(
-            lambda sk: (self._on_tab_close(sk), self._review_handler.on_project_closed(sk.replace("project:", "", 1)))
+        self._project_handler.set_on_project_closed(
+            lambda name: (self._review_handler.on_project_closed(name))
         )
 
         # Register all commands — must be after _review_handler is created (Phase 7)
@@ -530,31 +534,22 @@ class MainWindow(Gtk.ApplicationWindow):
             gh.connect()
 
     def _close_project_tab(self, name: str):
-        """Close a project tab and reset all state. Called by both × and < paths.
-
-        Does: close notebook tab, navigate file_tree back, reset agents +/-, clear feed bar.
         """
-        # 1. Close the tab in the notebook
-        session_key = f"project:{name}"
-        page_idx = self._main_content._find_page_by_session(session_key)
-        if page_idx is not None:
-            self._main_content._close_tab(page_idx)
-        # 2. Navigate back to the project card picker in left_panel
-        self._left_panel._file_tree.navigate_back()
-        # 3. Reset project state (clears _active_project_name, refreshes +/− buttons)
+        Close a project: return Projects tab in LeftPanel to picker view.
+
+        Does: switch Projects tab back to picker, reset project state, clear feed bar.
+        """
+        # 1. Switch Projects tab in LeftPanel back to picker (FileTree) view
+        self._left_panel.close_project_view()
+        # 2. Reset project state (clears _active_project_name, refreshes +/− buttons)
         self._project_handler.close_project(name)
-        # 4. Clear the feed bar
+        # 3. Clear the feed bar
         self._on_feed_bar_update(None, 0)
 
     def _on_file_tree_navigate_back(self, project_name):
-        """← back button in FileTree — close project tab (delegates to shared method)."""
+        """← back button in FileTree — close project view in LeftPanel."""
         if project_name:
             self._close_project_tab(project_name)
-
-    def _on_tab_close(self, session_key: str):
-        """× clicked on a project tab — close project tab."""
-        project_name = session_key.replace("project:", "")
-        self._close_project_tab(project_name)
 
     def _on_feed_bar_update(self, project_name: str, member_count: int):
         """Update the project settings bar with project name + member count."""

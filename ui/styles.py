@@ -677,7 +677,6 @@ notebook > header > tabs > tab {
 /* -- Feed Cards -------------------------------------------------------- */
 .feed-card {
     border-radius: 8px;
-    overflow: hidden;
     margin-bottom: 8px;
 }
 .feed-card-header {
@@ -707,6 +706,8 @@ notebook > header > tabs > tab {
 .feed-card-diff .feed-card-body { background: #3d321a; }
 .feed-card-file-new .feed-card-header { background: #2d4a5a; color: #a8c1e6; }
 .feed-card-file-new .feed-card-body { background: #1a323d; }
+.feed-card-file-mod .feed-card-header { background: #5a4a2d; color: #e6e6a8; }
+.feed-card-file-mod .feed-card-body { background: #3d321a; }
 .feed-card-file-del .feed-card-header { background: #5a2d2d; color: #e6a8a8; }
 .feed-card-file-del .feed-card-body { background: #3d1a1a; }
 .feed-card-dir-new .feed-card-header { background: #2d5a5a; color: #a8e6e6; }
@@ -765,7 +766,6 @@ notebook > header > tabs > tab {
     padding: 4px 10px;
     font-size: 12px;
     color: #a5b4fc;
-    cursor: pointer;
 }
 .feed-reference:hover {
     background: rgba(99, 102, 241, 0.2);
