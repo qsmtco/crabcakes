@@ -335,16 +335,14 @@ class ChatHandler:
                 else:
                     solo_target = None
 
-                # Inject project awareness on first message to each agent
-                awareness_prefix_cache = None  # lazily built per-agent
-
                 if solo_target:
                     # Solo DM — send only to the selected member
                     key = f"{project_name}:{solo_target}"
                     if key not in self._awareness_sent:
                         agent_display = self._get_agent_display_name(solo_target)
-                        awareness_prefix_cache = self._build_awareness_prefix(project_name, agent_display)
-                    prefix = awareness_prefix_cache or ""
+                        prefix = self._build_awareness_prefix(project_name, agent_display)
+                    else:
+                        prefix = ""
                     self._gw.send_message(solo_target, prefix + text)
                     self._awareness_sent.add(key)
                 else:
@@ -359,9 +357,7 @@ class ChatHandler:
                         key = f"{project_name}:{member}"
                         if key not in self._awareness_sent:
                             agent_display = self._get_agent_display_name(member)
-                            if awareness_prefix_cache is None:
-                                awareness_prefix_cache = self._build_awareness_prefix(project_name, agent_display)
-                            prefix = awareness_prefix_cache if awareness_prefix_cache else ""
+                            prefix = self._build_awareness_prefix(project_name, agent_display)
                         else:
                             prefix = ""
                         self._gw.send_message(member, prefix + text)

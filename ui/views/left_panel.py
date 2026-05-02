@@ -71,22 +71,37 @@ class LeftPanel(Gtk.Box):
             Gtk.Label(label="Agents")
         )
 
-        # Tab 3: Projects — Gtk.Stack switching between picker (FileTree) and project (FeedTab) view
+        # Tab 3: Projects — Gtk.Stack switching between closed (FileTree) and open (nested Notebook) view
         self._projects_stack = Gtk.Stack()
         self._projects_stack.set_vexpand(True)
-        self._projects_stack.set_halign(Gtk.Align.FILL)
+        self._projects_stack.set_transition_type(Gtk.StackTransitionType.NONE)
 
-        # "picker" page — FileTree with project cards (default)
+        # "picker" page — Box container for FileTree (stable parent, always in Stack)
+        self._picker_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._picker_box.set_vexpand(True)
+        self._projects_stack.add_titled(self._picker_box, "picker", "Projects")
+
+        # "open" page — Box placeholder, replaced by nested Notebook on first project open
+        self._projects_open_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._projects_open_page.set_vexpand(True)
+        self._projects_stack.add_titled(self._projects_open_page, "open", "Project")
+
+        # FeedTab reference — set via set_feed_tab() before any project opens
+        self._feed_tab = None  # type: FeedTab | None
+        self._projects_nested_notebook = None  # type: Gtk.Notebook | None
+        self._is_project_view_open = False     # guard: prevents double-open // double-close
+
+        # FileTree — created here, parented into _picker_box (stable), reparents to nested Notebook on open
         self._file_tree = FileTree(on_file_selected=self._on_project_selected)
-        self._projects_stack.add_titled(self._file_tree, "picker", "Projects")
-
-        # "project" page — FeedTab, added lazily on first project open
-        self._feed_tab = None
+        self._picker_box.append(self._file_tree)
 
         PAP_notebook.append_page(
             self._projects_stack,
             Gtk.Label(label="Projects")
         )
+
+        # Store references needed by window
+        self._PAP_notebook = PAP_notebook  # outer notebook (Prompts/Agents/Projects)
 
         self.append(PAP_notebook)
 
@@ -144,35 +159,83 @@ class LeftPanel(Gtk.Box):
         self._active_project_name = project_name
         self._refresh_agents_list()
 
-    # ── Projects tab — Stack switching between picker (FileTree) and project (FeedTab) ───
+    # ── Projects tab — nested Notebook sub-tabs (FileTree / Feed) ─────────────────────
+
+    def set_feed_tab(self, feed_tab: "FeedTab") -> None:
+        """Store FeedTab reference. Called by window before any project opens."""
+        self._feed_tab = feed_tab
+
+    def get_feed_tab(self) -> "FeedTab | None":
+        """Return the FeedTab reference."""
+        return self._feed_tab
 
     def open_project_view(self, feed_tab: "FeedTab") -> None:
         """
-        Switch Projects tab from picker (FileTree) to project (FeedTab) view.
+        Open project view: create nested Notebook in Projects tab, reparent FileTree into it.
 
-        Called by window when a project card is clicked and the project opens.
-        The FeedTab is created by window and passed in so LeftPanel owns the widget.
+        - FileTree moves from Stack "picker" page → nested Notebook "File Tree" tab
+        - FeedTab added as "Feed" tab
+        - Stack switches to "open" page (nested Notebook is now its content)
 
         Args:
-            feed_tab: FeedTab instance to show in the project view.
+            feed_tab: FeedTab instance for the "Feed" sub-tab.
         """
-        # Store and add FeedTab to the stack if not already present
-        if self._feed_tab is None:
-            self._feed_tab = feed_tab
-            self._projects_stack.add_titled(self._feed_tab, "project", "Project")
-        # Switch to project page — FeedTab default is "feed" child
-        self._projects_stack.set_visible_child_name("project")
+        # Idempotency guard — if already open, do nothing
+        if self._is_project_view_open:
+            return
+        self._is_project_view_open = True
+
+        # Reparent FileTree out of Stack "picker" page
+        self._file_tree.unparent()
+
+        # Build nested Notebook: "File Tree" tab + "Feed" tab
+        nested_nb = Gtk.Notebook()
+        self._projects_nested_notebook = nested_nb
+
+        # Tab A: File Tree — FileTree as direct child
+        nested_nb.append_page(self._file_tree, Gtk.Label(label="File Tree"))
+
+        # Tab B: Feed — FeedTab wrapped in a Box (cannot add Notebook as child directly)
+        feed_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        feed_box.set_vexpand(True)
+        feed_box.append(feed_tab)
+        nested_nb.append_page(feed_box, Gtk.Label(label="Feed"))
+
+        # Replace Stack "open" page content with nested Notebook, then show "open" page
+        self._projects_open_page.append(nested_nb)
+        self._projects_stack.set_visible_child_name("open")
 
     def close_project_view(self) -> None:
-        """
-        Switch Projects tab from project (FeedTab) back to picker (FileTree) view.
-        Called by window when the user navigates back or closes a project.
-        """
+        # Idempotency guard — if already closed, do nothing
+        if not self._is_project_view_open:
+            return
+
+        # Find nested Notebook inside _projects_open_page
+        nested_nb = self._projects_open_page.get_first_child()
+        if nested_nb is not None:
+            self._projects_open_page.remove(nested_nb)
+            nested_nb.unparent()
+        self._projects_nested_notebook = None
+
+        # Reparent FileTree back into _picker_box (Stack "picker" page)
+        # Must explicitly unparent from nested_nb first — unparent() on a container
+        # does NOT recursively unparent its children; they retain stale parent refs
+        if self._file_tree.get_parent() is not None:
+            self._file_tree.unparent()
+        self._picker_box.append(self._file_tree)
         self._projects_stack.set_visible_child_name("picker")
 
-    def get_feed_tab(self) -> "FeedTab | None":
-        """Return the FeedTab instance. None until open_project_view() is called."""
-        return self._feed_tab
+        self._is_project_view_open = False
+
+    def switch_to_feed_tab(self) -> None:
+        """Switch the nested Notebook to the Feed sub-tab. Safe to call even if no project open."""
+        if self._projects_nested_notebook is not None:
+            self._projects_nested_notebook.set_current_page(1)
+
+    def switch_to_file_tree_tab(self) -> None:
+        """Switch the nested Notebook to the File Tree sub-tab. Safe to call even if no project open."""
+        if self._projects_nested_notebook is not None:
+            self._projects_nested_notebook.set_current_page(0)
 
     def _refresh_agents_list(self):
         """

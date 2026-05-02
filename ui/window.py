@@ -249,9 +249,8 @@ class MainWindow(Gtk.ApplicationWindow):
             self._chat_handler.send_raw_message(session_key, text)
 
         def _on_show_feed_subtab():
-            """Switch FeedTab to show the feed sub-tab (not the file tree)."""
-            if self._left_panel.get_feed_tab() is not None:
-                self._left_panel.get_feed_tab().show_feed_tab()
+            """Switch Projects notebook to the Feed sub-tab."""
+            self._left_panel.switch_to_feed_tab()
 
         # FeedHandler created before FeedTab — set_feed_tab() called after FeedTab exists
         self._feed_handler = FeedHandler(
@@ -268,12 +267,15 @@ class MainWindow(Gtk.ApplicationWindow):
             on_event=self._feed_handler.on_filesystem_event,
         )
 
-        # FeedTab created here (once) — LeftPanel takes ownership via open_project_view()
+        # FeedTab created here (once) — inject into LeftPanel's Projects "Feed" sub-tab
         from ui.views.feed_tab import FeedTab
         self._feed_tab = FeedTab()
 
         # Tell FeedHandler about the FeedTab (FeedHandler needs it to add/remove cards)
         self._feed_handler.set_feed_tab(self._feed_tab)
+
+        # Inject FeedTab into LeftPanel's Projects notebook "Feed" sub-tab
+        self._left_panel.set_feed_tab(self._feed_tab)
 
         # Wire ChatRenderHandler → FeedHandler (crabcard interception)
         def _on_crabcards_extracted(cards: list, session_key: str):
@@ -285,23 +287,22 @@ class MainWindow(Gtk.ApplicationWindow):
         self._chat_render_handler.set_on_crabcard_extracted(_on_crabcards_extracted)
         self._chat_render_handler.set_project_name("")  # set per-project when project opens
 
-        # ── Wire project lifecycle → LeftPanel Projects tab ↔ FeedHandler ────────────
+        # ── Wire project lifecycle → FeedHandler + CrabWatch ──────────────────────────
         #
         # When project OPENS:
-        #   1. LeftPanel switches Projects tab to project view (FeedTab)
-        #   2. FeedHandler loads feed.json for the project
-        #   3. CrabWatch starts watching the project directory
-        #   4. ChatRenderHandler gets the project name for crabcard context
-        #   5. Feed bar is updated
+        #   1. FeedHandler loads feed.json for the project
+        #   2. CrabWatch starts watching the project directory
+        #   3. ChatRenderHandler gets the project name for crabcard context
+        #   4. Feed bar is updated
         #
         # When project CLOSES:
-        #   1. LeftPanel switches Projects tab back to picker (FileTree)
-        #   2. FeedHandler clears its state for the project
-        #   3. CrabWatch stops watching
-        #   4. Feed bar is cleared
+        #   1. FeedHandler clears its state for the project
+        #   2. CrabWatch stops watching
+        #   3. Feed bar is cleared
 
         self._project_handler.set_on_project_opened(
             lambda n, p: (
+                self._main_content.create_chat_tab(f"project:{n}", f"Project: {n}"),
                 self._left_panel.open_project_view(self._feed_tab),
                 self._feed_handler.on_project_opened(n, p),
                 self._crabwatch_handler.start_watching(p, n),
@@ -311,7 +312,6 @@ class MainWindow(Gtk.ApplicationWindow):
         )
         self._project_handler.set_on_project_closed(
             lambda name: (
-                self._left_panel.close_project_view(),
                 self._feed_handler.on_project_closed(name),
                 self._crabwatch_handler.stop_watching(),
                 self._chat_render_handler.set_project_name(""),
@@ -539,10 +539,10 @@ class MainWindow(Gtk.ApplicationWindow):
 
         Does: switch Projects tab back to picker, reset project state, clear feed bar.
         """
-        # 1. Switch Projects tab in LeftPanel back to picker (FileTree) view
-        self._left_panel.close_project_view()
-        # 2. Reset project state (clears _active_project_name, refreshes +/− buttons)
+        # 1. Reset project state (clears _active_project_name, fires on_project_closed callbacks)
         self._project_handler.close_project(name)
+        # 2. Reparent FileTree back to Stack picker, destroy nested Notebook
+        self._left_panel.close_project_view()
         # 3. Clear the feed bar
         self._on_feed_bar_update(None, 0)
 

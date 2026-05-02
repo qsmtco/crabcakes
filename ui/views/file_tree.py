@@ -72,7 +72,7 @@ class FileTree(Gtk.Box):
         self._search_entry.set_placeholder_text("Search projects...")
         self._search_entry.set_hexpand(True)
         self._search_entry.set_valign(Gtk.Align.CENTER)
-        self._search_entry.connect("search-changed", self._on_search_changed)
+        self._search_changed_handler_id = self._search_entry.connect("search-changed", self._on_search_changed)
         self._search_entry.set_visible(False)
 
         self._header.append(self._back_btn)
@@ -120,8 +120,14 @@ class FileTree(Gtk.Box):
             self._on_project_opened(name, path)
         self._show_tree(name, path)
 
-    def navigate_back(self):
-        """Return to the project picker. Fires on_navigate_back if set."""
+    def navigate_back(self, fire_callback: bool = True):
+        """
+        Return to the project picker. Fires on_navigate_back if set.
+
+        Args:
+            fire_callback: If True (default), fires _on_navigate_back callback.
+                          Pass False when caller manages the callback to avoid double-fire.
+        """
         project_name = self._project_name  # capture before clearing
         self._project_name = None
         self._project_path = None
@@ -129,10 +135,15 @@ class FileTree(Gtk.Box):
         # Clear search when returning to picker
         if self._project_list_handler:
             self._project_list_handler.clear_search()
+        # Block signal to prevent _on_search_changed from firing while FileTree
+        # is still inside the nested notebook (would build cards in wrong parent).
+        # The explicit _show_project_picker() call below runs after reparenting is complete.
+        self._search_entry.handler_block(self._search_changed_handler_id)
         self._search_entry.set_text("")
-        self._show_project_picker()
-        if self._on_navigate_back:
+        self._search_entry.handler_unblock(self._search_changed_handler_id)
+        if fire_callback and self._on_navigate_back:
             self._on_navigate_back(project_name)
+        self._show_project_picker()
 
     def set_page(self, page):
         """Set the notebook page container (for clearing content)."""

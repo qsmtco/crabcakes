@@ -214,7 +214,6 @@ class FeedHandler:
 
             if not cards:
                 self._GLib.idle_add(lambda: self._feed_tab.show_empty_state() if self._feed_tab else None)
-                self._GLib.idle_add(lambda: self._feed_tab.show_feed_tab() if self._feed_tab else None)
                 self._loading = False
                 return
 
@@ -248,7 +247,6 @@ class FeedHandler:
                     widgets[card.card_id] = widget
 
             # Switch to feed tab on main thread (default tab on project open)
-            self._GLib.idle_add(lambda: self._feed_tab.show_feed_tab() if self._feed_tab else None)
 
             # Add each card to the feed on main thread
             def _add_card_widget(card):
