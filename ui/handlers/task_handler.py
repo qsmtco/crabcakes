@@ -18,9 +18,10 @@
 # Architecture: pure Python. No imports from ui/, gateway/, or agent/.
 
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from models.command import Command, CommandResult
+from models.feed_card import FeedCardData
 from models.task import Task, TaskStore, TASK_STATUS_LABELS, PRIORITY_LABELS
 
 
@@ -47,10 +48,48 @@ class TaskHandler:
         on_display_card=None,
         on_display_text=None,
         GLib_module=None,
+        on_feed_card=None,  # callback(FeedCardData) — add card to project feed
     ):
         self._on_display_card = on_display_card
         self._on_display_text = on_display_text
         self._GLib = GLib_module
+        self._on_feed_card = on_feed_card
+
+    def _emit_feed_card(self, card: dict) -> None:
+        """Convert task card dict to FeedCardData and fire feed callback.
+
+        Extracts project name from the command source_session_key.
+        Only fires if _on_feed_card is set and source is a project tab.
+        """
+        if not self._on_feed_card:
+            return
+        if not hasattr(card, 'get'):
+            return  # guard: card is a dict, not some other type
+        project_name = ""
+        # project_name extracted from source_session_key in calling commands
+        project_name = getattr(self, '_last_project_name', "")
+        if not project_name:
+            return
+        feed_card = FeedCardData(
+            card_type="task",
+            source="agent",
+            title=card.get("title", "Task"),
+            body=f"Status: {card.get('status', 'unknown')} • Assigned: {card.get('assigned_to', '?')}",
+            author=card.get("assigned_to", "unknown"),
+            timestamp=datetime.now(timezone.utc),
+            project_name=project_name,
+            task_id=str(card.get("id", "")),
+            metadata={"action": card.get("action", "updated")},
+        )
+        self._on_feed_card(feed_card)
+
+    def _set_project_context(self, cmd: Command) -> None:
+        """Store project name from command source for _emit_feed_card."""
+        sk = cmd.source_session_key or ""
+        if sk.startswith("project:"):
+            self._last_project_name = sk.split(":", 1)[1]
+        else:
+            self._last_project_name = ""
 
     # ── Task commands ───────────────────────────────────────────────────────────
 
@@ -78,6 +117,8 @@ class TaskHandler:
             "priority": priority_label,
             "assigned_to": agent_name,
         }
+        self._set_project_context(cmd)
+        self._emit_feed_card(card)
         return CommandResult(handled=True, response_card=card)
 
     def cmd_done(self, cmd: Command) -> CommandResult:
@@ -100,6 +141,8 @@ class TaskHandler:
             "priority": "",
             "assigned_to": "",
         }
+        self._set_project_context(cmd)
+        self._emit_feed_card(card)
         return CommandResult(handled=True, response_card=card)
 
     def cmd_start(self, cmd: Command) -> CommandResult:
@@ -122,6 +165,8 @@ class TaskHandler:
             "priority": "",
             "assigned_to": "",
         }
+        self._set_project_context(cmd)
+        self._emit_feed_card(card)
         return CommandResult(handled=True, response_card=card)
 
     def cmd_blocked(self, cmd: Command) -> CommandResult:
@@ -145,6 +190,8 @@ class TaskHandler:
             "priority": "",
             "assigned_to": "",
         }
+        self._set_project_context(cmd)
+        self._emit_feed_card(card)
         return CommandResult(handled=True, response_card=card)
 
     def cmd_cancel(self, cmd: Command) -> CommandResult:
@@ -167,6 +214,8 @@ class TaskHandler:
             "priority": "",
             "assigned_to": "",
         }
+        self._set_project_context(cmd)
+        self._emit_feed_card(card)
         return CommandResult(handled=True, response_card=card)
 
     def cmd_tasks(self, cmd: Command) -> CommandResult:

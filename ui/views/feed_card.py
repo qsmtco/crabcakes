@@ -42,8 +42,20 @@ def _make_feed_card_header(
     title_label.set_halign(Gtk.Align.START)
     title_label.set_hexpand(True)
 
-    copy_btn = Gtk.Button(label="Copy")
-    copy_btn.add_css_class("feed-copy-btn")
+    copy_btn = Gtk.Button()
+    copy_btn.add_css_class("flat")
+    copy_btn.set_tooltip_text("Copy")
+    copy_btn.set_size_request(22, 22)
+    copy_btn.set_opacity(0.3)
+    try:
+        copy_btn.set_child(Gtk.Image.new_from_file(
+            "/home/q/projects/crabcakes/ui/icons/copy.svg"))
+    except Exception:
+        copy_btn.set_label("📋")
+    copy_motion = Gtk.EventControllerMotion()
+    copy_motion.connect("enter", lambda _c, _x, _y: copy_btn.set_opacity(1.0))
+    copy_motion.connect("leave", lambda _c: copy_btn.set_opacity(0.3))
+    copy_btn.add_controller(copy_motion)
     # Body text for copy
     body_for_copy = card_data.body or title
     copy_btn.connect("clicked", lambda _, t=body_for_copy: on_copy(t))

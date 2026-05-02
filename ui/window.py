@@ -326,6 +326,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self._task_handler = TaskHandler(
             on_display_card=self._on_command_card,
             on_display_text=self._on_command_text,
+            on_feed_card=self._feed_handler.add_card,
         )
         # Collab handler — collaboration commands (Phase 7)
         self._collab_handler = CollabHandler()

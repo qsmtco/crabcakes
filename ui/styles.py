@@ -680,9 +680,9 @@ notebook > header > tabs > tab {
     margin-bottom: 8px;
 }
 .feed-card-header {
-    padding: 8px 12px;
+    padding: 4px 8px;
     font-weight: bold;
-    font-size: 13px;
+    font-size: 12px;
 }
 .feed-card-body {
     padding: 8px 12px;

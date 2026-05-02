@@ -232,12 +232,13 @@ def build_file_diff_card(
         else:
             card.remove_css_class("diff-collapsed")
 
-    header_event = Gtk.EventBox()
-    header_event.add_css_class("diff-card-header")
-    header_event.connect("button-press-event", toggle_collapse)
-    header_event.set_child(header_box)
+    header_box.add_css_class("diff-card-header")
+    header_box.set_can_target(True)
+    gesture = Gtk.GestureClick()
+    gesture.connect("pressed", toggle_collapse)
+    header_box.add_controller(gesture)
 
-    card.append(header_event)
+    card.append(header_box)
 
     # Body (hunks)
     body_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)

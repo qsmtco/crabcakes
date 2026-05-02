@@ -135,7 +135,7 @@ class FeedHandler:
             if project_path and hasattr(card_data, 'to_dict') and not self._loading:
                 feed_store.append_feed_card(project_path, card_data)
 
-        self._GLib.idle_add(_prepend)
+        self._GLib.idle_add(_append)
         # Persist in background to avoid blocking UI.
         # Skip persistence when _loading=True (cards already on disk from load).
         if project_path and not self._loading:
@@ -313,6 +313,25 @@ class FeedHandler:
         # Mark card as reviewed (per SPEC — runtime flag)
         card.reviewed = True
 
+    def _add_git_card(self, original_card: FeedCardData, result) -> None:
+        """Create a git_commit feed card after accept or reject."""
+        if result is None or not hasattr(result, 'success') or not result.success:
+            return
+        accepted = original_card.accepted is True
+        action = "Accepted" if accepted else "Rejected"
+        git_card = FeedCardData(
+            card_type="git_commit",
+            source="git",
+            title=f"{action}: {original_card.title}",
+            body=result.stdout.strip() if result.stdout else "",
+            author="PM",
+            timestamp=datetime.now(timezone.utc),
+            project_name=original_card.project_name,
+            commit_sha=result.sha if hasattr(result, 'sha') and result.sha else None,
+            file_path=original_card.file_path,
+        )
+        self.add_card(git_card)
+
     def handle_accept(self, card_id: str) -> None:
         """
         Accept button clicked.
@@ -330,7 +349,7 @@ class FeedHandler:
             return
 
         if card.card_type in ("diff", "file_created", "file_deleted"):
-            project_path = card.metadata.get("project_path", "")
+            project_path = card.metadata.get("project_path", "") or self._project_paths.get(card.project_name, "")
             if not project_path:
                 return
 
@@ -350,6 +369,7 @@ class FeedHandler:
                     def _mark():
                         self._update_card_visual(card_id, accepted=True)
                     self._GLib.idle_add(_mark)
+                    self._GLib.idle_add(lambda: self._add_git_card(card, result_commit))
 
             t = threading.Thread(target=_git_accept, daemon=True)
             t.start()
@@ -374,15 +394,14 @@ class FeedHandler:
             return
 
         if card.card_type in ("diff", "file_created", "file_deleted"):
-            project_path = card.metadata.get("project_path", "")
+            project_path = card.metadata.get("project_path", "") or self._project_paths.get(card.project_name, "")
             if not project_path:
                 return
 
             def _git_reject():
                 fp = card.file_path
                 sha = card.commit_sha or "HEAD"
-                if fp:
-                    git_ops.checkout_paths(project_path, sha, [fp])
+                result_reject = git_ops.checkout_paths(project_path, sha, [fp]) if fp else None
 
                 def _mark():
                     card.accepted = False
@@ -393,6 +412,8 @@ class FeedHandler:
                     # Notify agent
                     msg = f"[PM] Rejected change: {card.title}"
                     self._on_send_to_agent(f"project:{card.project_name}", msg)
+                    # Add git card
+                    self._add_git_card(card, result_reject)
                 self._GLib.idle_add(_mark)
 
             t = threading.Thread(target=_git_reject, daemon=True)
