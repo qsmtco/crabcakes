@@ -127,7 +127,8 @@ crabcakes/
     ├── prompts.py             # load_prompts() — reads .md from prompts/
     ├── projects.py             # load_projects(), scan_directory(), load_members(), save_members()
     ├── favorites.py           # favorites persistence (favorites.json)
-    ├── feed_store.py         # FeedStore — FIFO feed store with project scoping + eviction (Phase 5)
+    ├── crabcard_parser.py    # extract_crabcards() — parse ```crabcard blocks from agent chat into FeedCardData (Phase 5)
+    ├── feed_store.py         # Feed JSON persistence — load/save/append/update to .crabcakes/feed.json (Phase 5)
     ├── improve.py             # improve_prompt() — MiniMax API for prompt improvement (template mode with {{USER_INPUT}} marker, loads from prompts/system/improve.md)
     ├── stt.py                 # STTEngine — faster-whisper push-to-talk
     ├── config.py              # Config path helpers — get_config_dir(), get_projects_dir(), COMMAND_PREFIX (Phase 7)
@@ -1229,18 +1230,24 @@ set_progress_opacity(opacity)      # Set bar opacity 0.0..1.0 (for subtle idle p
 
 **Public API:**
 ```python
-build_feed_card(card_data: dict) -> Gtk.Widget
+build_feed_card(card_data: FeedCardData, *, on_review, on_accept, on_reject, on_copy) -> Gtk.Widget
+build_feed_reference_widget(card_data: FeedCardData, *, on_click) -> Gtk.Widget
+build_empty_feed_widget() -> Gtk.Widget
+update_card_badge(card_widget: Gtk.Widget, accepted: bool | None) -> None
+    # Post-construction badge update — called by FeedHandler after accept/reject
 ```
 
 **card_type key determines card variant and icon:**
-- `file_created` — green dot icon, CSS: `feed-card-file-created`
-- `file_modified` — amber dot icon, CSS: `feed-card-file-modified`
-- `file_deleted` — red dot icon, CSS: `feed-card-file-deleted`
-- `dir_created` / `dir_deleted` — folder icon
-- `commit` — git-commit icon, CSS: `feed-card-commit`
-- `agent_joined` / `agent_left` — user icon
-- `member_joined` / `member_left` — person icon
-- `system` — info icon
+- `file_created` — green dot icon, CSS: `feed-card-file-new`
+- `file_modified` — amber dot icon, CSS: `feed-card-file-mod`
+- `file_deleted` — red dot icon, CSS: `feed-card-file-del`
+- `dir_created` — folder icon, CSS: `feed-card-dir-new`
+- `dir_deleted` — folder icon, CSS: `feed-card-dir-del`
+- `git_commit` — git-commit icon, CSS: `feed-card-git`
+- `diff` — diff icon, CSS: `feed-card-diff`
+- `agent_action` — user icon, CSS: `feed-card-agent`
+- `task` — task icon, CSS: `feed-card-task`
+- `system` — info icon, CSS: `feed-card-system`
 
 ### 3.22b `models/feed_card.py` — FeedCardData Dataclass (Phase 5)
 
@@ -1271,38 +1278,46 @@ def css_class_for_type(card_type: str) -> str:
 
 ### 3.22c `ui/handlers/feed_handler.py` — Project Feed Handler (Phase 5)
 
-**Responsibility:** Manages the in-memory feed store and renders feed cards into the project tab's scrolled window. Coordinates with `CrabWatchHandler` and gateway event listeners.
+**Responsibility:** Manages project feed card lifecycle — add, remove, persist, accept/reject. Coordinates with `CrabWatchHandler` (filesystem events) and `ChatRenderHandler` (crabcard extraction). Delegates rendering to `feed_card.py`, persistence to `feed_store.py`, git ops to `git_ops.py`.
 
-**Owns:** `_feed_store` (list of `FeedCardData` dicts), `_feed_container` (GTK widget reference), `_project_name` (current project).
+**Owns:** `_cards` (dict: card_id → FeedCardData), `_card_widgets` (dict: card_id → Gtk.Widget), `_project_cards` (dict: project_name → [card_ids]), `_project_paths` (dict: project_name → abs_path), `_recent_git_paths` (dict: file_path → monotonic timestamp for echo suppression), `_lock` (threading.Lock).
+
+**Constructor:**
+```python
+class FeedHandler:
+    def __init__(
+        self,
+        *,
+        GLib,                        # gi.repository.GLib — for idle_add dispatch
+        on_populate_input,           # Callable[[str], None] — fill input box (Review)
+        on_send_to_agent,            # Callable[[str, str], None] — send to agent
+        on_tab_switch,               # Callable[[], None] — switch to feed sub-tab
+        on_card_added=None,          # Callable[[str], None] | None — card_id after add
+    )
+```
+
+**Note:** `feed_tab` is NOT a constructor parameter. Set via `set_feed_tab()` after construction.
 
 **Public API:**
 ```python
-class FeedHandler:
-    def __init__(self, GLib, on_fs_event_callback=None)
-    def on_filesystem_event(card_data: dict)    # called by CrabWatchHandler
-    def on_gateway_event(event: str, payload: dict)  # gateway → feed card events
-    def clear_feed()                              # clear all cards
-    def add_card(card_data: dict)                 # add a feed card
-    def start_feed(project_name: str, container: Gtk.Widget)
-    def stop_feed()
+    def set_feed_tab(self, feed_tab) -> None
+    def add_card(self, card_data: FeedCardData) -> str    # returns card_id
+    def remove_card(self, card_id: str) -> None
+    def get_card(self, card_id: str) -> FeedCardData | None
+    def get_cards_for_project(self, project_name: str) -> list[FeedCardData]
+    def clear_project(self, project_name: str) -> None
+    def on_project_opened(self, project_name: str, project_path: str) -> None
+    def on_project_closed(self, project_name: str) -> None
+    def on_filesystem_event(self, card_data: FeedCardData) -> None
+    def handle_review(self, card_id: str) -> None
+    def handle_accept(self, card_id: str) -> None
+    def handle_reject(self, card_id: str) -> None
+    def handle_copy(self, text: str) -> None
 ```
 
-**card_data dict structure:**
-```python
-{
-    "card_type": str,    # "file_created" | "file_modified" | ...
-    "source": str,       # "gateway" | "crabwatch" | "system"
-    "title": str,
-    "body": str,
-    "author": str,
-    "timestamp": datetime,
-    "project_name": str | None,
-    "file_path": str | None,
-    "commit_sha": str | None,
-}
-```
+**Thread safety:** All GTK operations via `GLib.idle_add()`. Git ops in background threads. `_lock` protects dict mutations.
 
-**Wiring in `window.py`:** `FeedHandler` is created before `CrabWatchHandler`. `CrabWatchHandler`'s `on_event` callback is set to `FeedHandler.on_filesystem_event`. Gateway events for agent/project lifecycle fire `on_gateway_event`.
+**Echo suppression:** Git accept/reject operations modify files on disk, causing CrabWatch to fire filesystem events that would create duplicate cards. FeedHandler suppresses these echoes by recording `file_path` + timestamp in `_recent_git_paths` before starting git threads. `on_filesystem_event()` checks this map and drops events for paths operated on within the last 3 seconds.
 
 ---
 
@@ -1349,25 +1364,68 @@ on_chat_final(session_key)                       # chat final (no-op; on_agent_e
 - First chat delta → `streaming`
 - Agent message in history → `sending` (pre-flight)
 
-### 3.22d `utils/feed_store.py` — Feed Store (Phase 5)
+### 3.22d `utils/feed_store.py` — Feed Persistence (Phase 5)
 
-**Responsibility:** In-memory FIFO feed store with per-project scoping and automatic eviction. Shared by `FeedHandler` and `FeedTab`.
+**Responsibility:** JSON persistence for feed cards. Pure functions — no classes, no GTK, no state. Loads/saves `FeedCardData` lists from `.crabcakes/feed.json` per project.
 
 **Public API:**
 ```python
-class FeedStore:
-    def __init__(max_cards_per_project=50)
-    def add(project_name: str, card_data: dict) -> None
-    def get_cards(project_name: str) -> list[dict]    # newest first
-    def clear(project_name: str) -> None
-    def set_max_cards(n: int) -> None
-    def get_stats() -> dict  # {project_name: count}
+def load_feed(project_path: str) -> list[FeedCardData]
+    # Load cards from .crabcakes/feed.json. Chronological (oldest first). Empty list if missing/invalid.
+
+def save_feed(project_path: str, cards: list[FeedCardData]) -> None
+    # Save cards to .crabcakes/feed.json. Creates .crabcakes/ if needed.
+
+def append_feed_card(project_path: str, card: FeedCardData) -> None
+    # Append single card. Load → append → save.
+
+def update_feed_card(project_path: str, card_id: str, updates: dict) -> bool
+    # Update card by card_id. Returns True if found. Only allows runtime fields (accepted, reviewed, metadata).
 ```
 
 **Architecture rules:**
 - Lives in `utils/` — pure Python, no GTK, no network
-- Thread-unsafe (called only from GTK main thread)
+- Thread-safe via file I/O (called from background threads by FeedHandler)
+- Imports `models.feed_card.FeedCardData` only
 - No imports from `ui/` or `gateway/`
+
+### 3.22e `utils/crabcard_parser.py` — Crabcard Block Parser (Phase 5)
+
+**Responsibility:** Parse `` ```crabcard `` blocks from agent chat messages into `FeedCardData`. Pure function — no GTK, no state. Returns cleaned text with placeholder markers for downstream rendering.
+
+**Public API:**
+```python
+def extract_crabcards(text: str, project_name: str, agent_name: str = "agent") -> tuple[str, list[FeedCardData]]
+    # Parse ```crabcard blocks. Returns (cleaned_text, cards).
+    # Cleaned text contains \x00CRABCARD_REF:N\x00 placeholders.
+
+def is_crabcards_placeholder(text: str) -> bool
+    # True if text contains a crabcard placeholder marker.
+
+def get_placeholder_index(placeholder: str) -> int | None
+    # Extract card index from placeholder string.
+```
+
+**Crabcard format:**
+```
+```crabcard
+type: <card_type>
+title: <title text>
+file: <optional file path>
+additions: <optional int>
+deletions: <optional int>
+commit_sha: <optional str>
+task_id: <optional str>
+---
+<body content — diff text, description, etc.>
+```
+```
+
+**Architecture rules:**
+- Lives in `utils/` — pure Python, no GTK, no network
+- Imports `models.feed_card.FeedCardData` only
+- No imports from `ui/` or `gateway/`
+- Called from `ui/handlers/chat_render_handler.py` during `render_sync()`
 
 ---
 
@@ -2128,7 +2186,7 @@ tests/
     ├── test_crabwatch_handler.py  # CrabWatchHandler: init, watch, ignore patterns, debounce (Phase 5)
     ├── test_feed_handler.py        # FeedHandler: add/clear cards, gateway/fs event routing (Phase 5)
     ├── test_feed_card.py           # feed_card view: card type rendering, CSS class mapping
-    ├── test_feed_store.py          # FeedStore: FIFO eviction, project scoping, card ordering
+    ├── test_feed_store.py          # feed_store: load/save/append/update feed.json persistence
     ├── test_project_handler.py
     ├── test_project_list_handler.py
     ├── test_prompts_handler.py

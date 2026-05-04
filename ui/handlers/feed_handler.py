@@ -10,11 +10,12 @@
 from dataclasses import dataclass
 import logging
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 
 from models.feed_card import FeedCardData
-from ui.views.feed_card import build_feed_card
+from ui.views.feed_card import build_feed_card, update_card_badge
 from utils import git_ops
 from utils import feed_store
 
@@ -67,6 +68,12 @@ class FeedHandler:
         self._loading = False
         # Protects all shared dicts from concurrent access across threads
         self._lock = threading.Lock()
+
+        # Echo suppression: git accept/reject triggers filesystem changes that
+        # CrabWatch detects as new events. Track recently operated file paths
+        # to suppress these echoes. dict[file_path] → timestamp (time.monotonic()).
+        self._recent_git_paths: dict[str, float] = {}
+        self._echo_suppress_seconds = 3.0
 
     def set_feed_tab(self, feed_tab) -> None:
         """
@@ -348,7 +355,7 @@ class FeedHandler:
         if card is None:
             return
 
-        if card.card_type in ("diff", "file_created", "file_deleted"):
+        if card.card_type in ("diff", "file_created", "file_modified", "file_deleted"):
             project_path = card.metadata.get("project_path", "") or self._project_paths.get(card.project_name, "")
             if not project_path:
                 return
@@ -370,6 +377,12 @@ class FeedHandler:
                         self._update_card_visual(card_id, accepted=True)
                     self._GLib.idle_add(_mark)
                     self._GLib.idle_add(lambda: self._add_git_card(card, result_commit))
+
+            # Record path for echo suppression BEFORE starting git thread.
+            # CrabWatch will fire events when git modifies the filesystem;
+            # on_filesystem_event() checks _recent_git_paths to suppress echoes.
+            if card.file_path:
+                self._recent_git_paths[card.file_path] = time.monotonic()
 
             t = threading.Thread(target=_git_accept, daemon=True)
             t.start()
@@ -393,7 +406,7 @@ class FeedHandler:
         if card is None:
             return
 
-        if card.card_type in ("diff", "file_created", "file_deleted"):
+        if card.card_type in ("diff", "file_created", "file_modified", "file_deleted"):
             project_path = card.metadata.get("project_path", "") or self._project_paths.get(card.project_name, "")
             if not project_path:
                 return
@@ -415,6 +428,10 @@ class FeedHandler:
                     # Add git card
                     self._add_git_card(card, result_reject)
                 self._GLib.idle_add(_mark)
+
+            # Record path for echo suppression BEFORE starting git thread.
+            if card.file_path:
+                self._recent_git_paths[card.file_path] = time.monotonic()
 
             t = threading.Thread(target=_git_reject, daemon=True)
             t.start()
@@ -443,7 +460,24 @@ class FeedHandler:
         """
         Entry point for CrabWatch file change events.
         Same as add_card() but source is always 'system' or 'crabwatch'.
+
+        Includes echo suppression: if this file_path was involved in a recent
+        git accept/reject (within _echo_suppress_seconds), the event is dropped
+        to avoid duplicate cards for changes the PM just approved/rejected.
         """
+        # Echo suppression — check if this path was recently part of a git op
+        fp = card_data.file_path
+        if fp and fp in self._recent_git_paths:
+            elapsed = time.monotonic() - self._recent_git_paths[fp]
+            if elapsed < self._echo_suppress_seconds:
+                _logger.debug(
+                    "on_filesystem_event: suppressed echo for %s (%.1fs after git op)",
+                    fp, elapsed,
+                )
+                return
+            # Expired — clean up
+            del self._recent_git_paths[fp]
+
         card_data.source = "system"
         self.add_card(card_data)
 
@@ -473,7 +507,7 @@ class FeedHandler:
         return cb
 
     def _update_card_visual(self, card_id: str, accepted: bool) -> None:
-        """Apply accepted/rejected CSS class to card widget."""
+        """Apply accepted/rejected CSS class + badge to card widget."""
         widget = self._card_widgets.get(card_id)
         if widget is None:
             return
@@ -483,6 +517,9 @@ class FeedHandler:
         cls_rem = "feed-card-rejected" if accepted else "feed-card-accepted"
         widget.add_css_class(cls_add)
         widget.remove_css_class(cls_rem)
+
+        # Update badge in footer (ACCEPTED/REJECTED label)
+        update_card_badge(widget, accepted)
 
         # Update card data
         card = self._cards.get(card_id)

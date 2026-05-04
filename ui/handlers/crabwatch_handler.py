@@ -104,9 +104,15 @@ class CrabWatchHandler:
         self._watched_name: str | None = None
 
         # Debounce: batch rapid successive events on the same file within 200ms
-        self._debounce_map: dict[str, GLib.Source | None] = {}  # path → timeout source
+        self._debounce_map: dict[str, int] = {}  # path → GLib source ID (int)
         self._pending_events: dict[str, dict] = {}  # path → event fields
         self._debounce_ms = 200
+
+        # Atomic replace detection: git/text editors may DELETE then CREATE a file
+        # within milliseconds. We delay delete events by 500ms and check if a CREATE
+        # follows — if so, we merge the pair into a single file_modified event.
+        self._pending_deletes: dict[str, int] = {}  # path → GLib source ID for delayed delete
+        self._delete_delay_ms = 500
 
     def _dispatch(self, fn, *args):
         """Dispatch a callable to the main thread via GLib.idle_add."""
@@ -154,9 +160,9 @@ class CrabWatchHandler:
         Otherwise schedule a new one to fire after _debounce_ms.
         """
         # Cancel existing scheduled event for this path
-        existing = self._debounce_map.get(relative_path)
-        if existing is not None:
-            existing.destroy()
+        existing_id = self._debounce_map.get(relative_path)
+        if existing_id is not None:
+            GLib.Source.remove(existing_id)
             del self._debounce_map[relative_path]
 
         # Store pending event data
@@ -176,6 +182,31 @@ class CrabWatchHandler:
             _fire,
         )
         self._debounce_map[relative_path] = source
+
+    def _schedule_debounced_delete(self, relative_path: str, event_type: str):
+        """
+        Schedule a file_deleted event with a longer delay to allow for atomic replace detection.
+
+        If a CREATED event for the same path arrives before this fires, the CREATED handler
+        will cancel this timer and emit file_modified instead.
+        """
+        # Cancel any existing pending delete for this path
+        existing_id = self._pending_deletes.get(relative_path)
+        if existing_id is not None:
+            GLib.Source.remove(existing_id)
+
+        # Store pending event data (reuse _pending_events for the event fields)
+        self._pending_events[relative_path] = {"event_type": event_type}
+
+        def _fire_delete():
+            self._pending_deletes.pop(relative_path, None)
+            event_data = self._pending_events.pop(relative_path, None)
+            if event_data is not None:
+                self._emit_event(event_data["event_type"], relative_path)
+            self._debounce_map.pop(relative_path, None)
+
+        source_id = self._GLib.timeout_add(self._delete_delay_ms, _fire_delete)
+        self._pending_deletes[relative_path] = source_id
 
     def _on_monitor_event(
         self,
@@ -204,13 +235,25 @@ class CrabWatchHandler:
         # Determine card type and scheduling strategy
         if event_type == Gio.FileMonitorEvent.CREATED:
             is_dir = file.query_file_type(Gio.FileQueryInfoFlags.NONE, None) == Gio.FileType.DIRECTORY
-            event_type_str = "dir_created" if is_dir else "file_created"
-            # Record directory so we can classify DELETED events correctly
-            if is_dir:
-                self._known_dirs.add(event_path)
-            # Recursively watch new subdirectories
-            if is_dir:
-                self._add_monitor_recursive(event_path)
+
+            # Check if this CREATE follows a recent DELETE for the same path (atomic replace)
+            # If so, cancel the pending delete and emit file_modified instead
+            if not is_dir and relative_path in self._pending_deletes:
+                delete_source_id = self._pending_deletes.pop(relative_path)
+                GLib.Source.remove(delete_source_id)
+                # Also clean up any pending event data from the delete
+                self._pending_events.pop(relative_path, None)
+                self._debounce_map.pop(relative_path, None)
+                # Emit as modification, not creation
+                event_type_str = "file_modified"
+            else:
+                event_type_str = "dir_created" if is_dir else "file_created"
+                # Record directory so we can classify DELETED events correctly
+                if is_dir:
+                    self._known_dirs.add(event_path)
+                # Recursively watch new subdirectories
+                if is_dir:
+                    self._add_monitor_recursive(event_path)
         elif event_type == Gio.FileMonitorEvent.CHANGED:
             event_type_str = "file_modified"
         elif event_type == Gio.FileMonitorEvent.DELETED:
@@ -223,7 +266,15 @@ class CrabWatchHandler:
             is_dir = abs_path in self._known_dirs
             if is_dir:
                 self._known_dirs.discard(abs_path)
-            event_type_str = "dir_deleted" if is_dir else "file_deleted"
+                event_type_str = "dir_deleted" if is_dir else "file_deleted"
+            else:
+                # For file deletes, use a longer delay to detect atomic replaces
+                # (git checkout, editor save). If a CREATE follows within _delete_delay_ms,
+                # the CREATED handler will cancel this and emit file_modified instead.
+                event_type_str = "file_deleted"
+                # Schedule with longer delay for file deletes
+                self._schedule_debounced_delete(relative_path, event_type_str)
+                return
         else:
             return  # IGNORED, WILL_SHOOT, UNKNOWN, BACKUP, RENAMED — ignored
 
@@ -294,11 +345,17 @@ class CrabWatchHandler:
         self._known_dirs.clear()
 
         # Cancel all pending debounce timers
-        for source in self._debounce_map.values():
-            if source is not None:
-                source.destroy()
+        for source_id in self._debounce_map.values():
+            if source_id is not None:
+                GLib.Source.remove(source_id)
         self._debounce_map.clear()
         self._pending_events.clear()
+
+        # Cancel all pending delete detection timers
+        for source_id in self._pending_deletes.values():
+            if source_id is not None:
+                GLib.Source.remove(source_id)
+        self._pending_deletes.clear()
 
         self._watched_path = None
         self._watched_name = None

@@ -82,6 +82,16 @@ class ChatHandler:
         """
         self._gw = gw
 
+    def send_raw_message(self, session_key: str, text: str) -> None:
+        """
+        Send a raw message to a session via the gateway.
+        Used by window callbacks (e.g., FeedHandler agent notifications).
+
+        No routing, no echo, no broadcast — just sends.
+        """
+        if self._gw is not None and self._gw.is_connected():
+            self._gw.send_message(session_key, text)
+
     def set_on_forward_message(self, cb):
         """Set callback for forward button: cb(text, anchor_widget)."""
         self._on_forward_message = cb

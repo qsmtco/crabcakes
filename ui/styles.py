@@ -676,13 +676,15 @@ notebook > header > tabs > tab {
 
 /* -- Feed Cards -------------------------------------------------------- */
 .feed-card {
-    border-radius: 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     margin-bottom: 8px;
 }
 .feed-card-header {
-    padding: 4px 8px;
+    padding: 2px 8px;
     font-weight: bold;
     font-size: 12px;
+    border-radius: 6px 6px 0 0;
 }
 .feed-card-body {
     padding: 8px 12px;
@@ -694,9 +696,12 @@ notebook > header > tabs > tab {
     padding: 6px 12px;
     font-size: 11px;
     color: alpha(@theme_fg_color, 0.5);
+    background: rgba(0, 0, 0, 0.25);
 }
 .feed-card-actions {
     padding: 4px 12px 8px;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 0 0 6px 6px;
 }
 
 /* Card type colors */
@@ -712,6 +717,8 @@ notebook > header > tabs > tab {
 .feed-card-file-del .feed-card-body { background: #3d1a1a; }
 .feed-card-dir-new .feed-card-header { background: #2d5a5a; color: #a8e6e6; }
 .feed-card-dir-new .feed-card-body { background: #1a3d3d; }
+.feed-card-dir-del .feed-card-header { background: #5a3d3d; color: #e6b8b8; }
+.feed-card-dir-del .feed-card-body { background: #3d1a1a; }
 .feed-card-agent .feed-card-header { background: #4a2d5a; color: #c1a8e6; }
 .feed-card-agent .feed-card-body { background: #321a3d; }
 .feed-card-task .feed-card-header { background: #5a5a2d; color: #e6e6a8; }

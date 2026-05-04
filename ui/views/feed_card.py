@@ -393,3 +393,49 @@ def build_empty_feed_widget() -> Gtk.Widget:
     box.append(hint)
 
     return box
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Post-construction badge update
+# ─────────────────────────────────────────────────────────────────────────────
+
+def update_card_badge(card_widget: Gtk.Widget, accepted: bool | None) -> None:
+    """
+    Update the ACCEPTED/REJECTED badge on an existing feed card widget.
+
+    Called by FeedHandler after accept/reject actions to inject the badge
+    into the footer without rebuilding the entire card.
+
+    Args:
+        card_widget: The root Gtk.Box returned by build_feed_card().
+        accepted:    True → ACCEPTED badge, False → REJECTED badge, None → no badge.
+    """
+    # Card structure: index 0=header, 1=body, 2=footer, 3=actions
+    footer = card_widget.get_first_child()  # header
+    if footer is None:
+        return
+    footer = footer.get_next_sibling()  # body
+    if footer is None:
+        return
+    footer = footer.get_next_sibling()  # footer
+    if footer is None:
+        return
+
+    # Remove any existing badge (last child of footer if it has a badge CSS class)
+    child = footer.get_first_child()
+    while child is not None:
+        next_child = child.get_next_sibling()
+        css_classes = child.get_css_classes()
+        if "feed-accepted-badge" in css_classes or "feed-rejected-badge" in css_classes:
+            footer.remove(child)
+        child = next_child
+
+    # Add new badge if applicable
+    if accepted is True:
+        badge = Gtk.Label(label="ACCEPTED")
+        badge.add_css_class("feed-accepted-badge")
+        footer.append(badge)
+    elif accepted is False:
+        badge = Gtk.Label(label="REJECTED")
+        badge.add_css_class("feed-rejected-badge")
+        footer.append(badge)
