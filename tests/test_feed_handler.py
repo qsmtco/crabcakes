@@ -42,6 +42,9 @@ class MockFeedTab:
     def show_empty_state(self):
         self.empty_shown = True
 
+    def scroll_to_bottom(self):
+        pass  # no-op in tests
+
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 

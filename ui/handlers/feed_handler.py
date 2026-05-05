@@ -144,6 +144,7 @@ class FeedHandler:
         def _append():
             if self._feed_tab is not None:
                 self._feed_tab.append_card(widget, card_id)
+                self._feed_tab.scroll_to_bottom()
                 if self._on_card_added:
                     self._on_card_added(card_id)
 
