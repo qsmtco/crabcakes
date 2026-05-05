@@ -109,8 +109,14 @@ class FeedHandler:
         card_id = str(uuid.uuid4())
         card_data.card_id = card_id
 
-        # ── Create conversation snapshot (NEW) ───────────────────────────
-        self._maybe_create_snapshot(card_data)
+        # ── Create conversation snapshot (deferred) ───────────────────────
+        # Must run AFTER the bubble is appended to the chat box, because
+        # _maybe_create_snapshot reads messages from the chat box widgets.
+        # At this point render_sync() just returned the bubble but it hasn't
+        # been appended yet (that happens in _handle_final_response after
+        # render_sync returns). idle_add defers to the next main-loop cycle.
+        _card_id = card_id
+        self._GLib.idle_add(lambda: self._finalize_snapshot(_card_id))
 
         # Store data under lock (protects against concurrent _load_and_render)
         with self._lock:
@@ -505,6 +511,40 @@ class FeedHandler:
             snapshot = conversation_store.snapshot_from_git_diff(project_path, card_data.file_path)
             card_data.conversation_snapshot = snapshot
         self.add_card(card_data)
+
+    def _finalize_snapshot(self, card_id: str) -> bool:
+        """Deferred snapshot creation — runs via GLib.idle_add after bubble is in chat box."""
+        card = self._cards.get(card_id)
+        if card is not None:
+            self._maybe_create_snapshot(card)
+            # Re-render the card widget if it exists and snapshot was created
+            if card.conversation_snapshot is not None:
+                widget = self._card_widgets.get(card_id)
+                if widget is not None and hasattr(widget, '_context_panel'):
+                    # Panel already built without snapshot — update it
+                    panel = widget._context_panel
+                    # Clear old content
+                    child = panel.get_first_child()
+                    while child is not None:
+                        next_child = child.get_next_sibling()
+                        panel.remove(child)
+                        child = next_child
+                    # Rebuild panel content with snapshot data
+                    self._rebuild_context_panel(panel, card.conversation_snapshot)
+        return False  # Don't repeat
+
+    def _rebuild_context_panel(self, panel, snapshot):
+        """Rebuild the contents of a context panel from a snapshot."""
+        from ui.views.feed_card import build_context_panel
+        # We can't replace the panel in-place easily, so we rebuild its children.
+        # build_context_panel returns a new box — copy its children into the existing panel.
+        new_panel = build_context_panel(snapshot)
+        child = new_panel.get_first_child()
+        while child is not None:
+            next_child = child.get_next_sibling()
+            new_panel.remove(child)
+            panel.append(child)
+            child = next_child
 
     def _maybe_create_snapshot(self, card_data: FeedCardData) -> None:
         """

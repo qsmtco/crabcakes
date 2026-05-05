@@ -425,9 +425,13 @@ def build_feed_card(
     # ── Context panel (expandable, hidden by default) ────────────────────
     if card_data.conversation_snapshot is not None:
         context_panel = build_context_panel(card_data.conversation_snapshot)
-        card.append(context_panel)
-        # Store reference for toggling via Review button
-        card._context_panel = context_panel
+    else:
+        # Placeholder panel — will be populated by _finalize_snapshot via idle_add
+        context_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        context_panel.add_css_class("feed-context-panel")
+    context_panel.set_visible(False)
+    card.append(context_panel)
+    card._context_panel = context_panel
 
     return card
 
