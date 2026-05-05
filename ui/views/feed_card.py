@@ -399,28 +399,36 @@ def build_feed_card(
 
     card.append(footer)
 
-    # ── Action buttons ─────────────────────────────────────────────────
-    actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-    actions.add_css_class("feed-card-actions")
-    actions.set_spacing(6)
+    # ── Action buttons (conditional visibility) ────────────────────
+    #
+    # git_commit: informational — no buttons needed
+    # accepted/rejected: hide Accept/Reject (decision made), keep Review (context)
+    # pending (None): show all buttons
+    is_resolved = card_data.accepted is not None
+    is_commit = card_data.card_type == "git_commit"
 
-    btn_review = Gtk.Button(label="Review")
-    btn_review.add_css_class("feed-btn-review")
-    # Review passes card widget for context panel toggling
-    btn_review.connect("clicked", lambda _, cid=card_id, w=card: on_review(cid, w))
+    if not is_commit:
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        actions.add_css_class("feed-card-actions")
+        actions.set_spacing(6)
 
-    btn_accept = Gtk.Button(label="Accept")
-    btn_accept.add_css_class("feed-btn-accept")
-    btn_accept.connect("clicked", lambda _, cid=card_id: on_accept(cid))
+        btn_review = Gtk.Button(label="Review")
+        btn_review.add_css_class("feed-btn-review")
+        btn_review.connect("clicked", lambda _, cid=card_id, w=card: on_review(cid, w))
+        actions.append(btn_review)
 
-    btn_reject = Gtk.Button(label="Reject")
-    btn_reject.add_css_class("feed-btn-reject")
-    btn_reject.connect("clicked", lambda _, cid=card_id: on_reject(cid))
+        if not is_resolved:
+            btn_accept = Gtk.Button(label="Accept")
+            btn_accept.add_css_class("feed-btn-accept")
+            btn_accept.connect("clicked", lambda _, cid=card_id: on_accept(cid))
+            actions.append(btn_accept)
 
-    actions.append(btn_review)
-    actions.append(btn_accept)
-    actions.append(btn_reject)
-    card.append(actions)
+            btn_reject = Gtk.Button(label="Reject")
+            btn_reject.add_css_class("feed-btn-reject")
+            btn_reject.connect("clicked", lambda _, cid=card_id: on_reject(cid))
+            actions.append(btn_reject)
+
+        card.append(actions)
 
     # ── Context panel (expandable, hidden by default) ────────────────────
     if card_data.conversation_snapshot is not None:
