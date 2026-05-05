@@ -18,6 +18,8 @@ from models.feed_card import FeedCardData
 from ui.views.feed_card import build_feed_card, update_card_badge
 from utils import git_ops
 from utils import feed_store
+from utils import conversation_store
+from models.conversation_snapshot import ConversationSnapshot
 
 _logger = logging.getLogger(__name__)
 
@@ -47,6 +49,7 @@ class FeedHandler:
         on_send_to_agent,             # callback(session_key, text) — send to agent
         on_tab_switch,                # callback() — switch to feed tab
         on_card_added=None,           # callback(card_id) | None
+        get_chat_box_for_session=None,  # callback(session_key) -> Gtk.Box | None — NEW
     ):
         self._GLib = GLib
         self._feed_tab = None         # set via set_feed_tab() after FeedTab is created
@@ -54,6 +57,7 @@ class FeedHandler:
         self._on_send_to_agent = on_send_to_agent
         self._on_tab_switch = on_tab_switch
         self._on_card_added = on_card_added
+        self._get_chat_box_for_session = get_chat_box_for_session
 
         # Card storage: card_id → FeedCardData
         self._cards: dict[str, FeedCardData] = {}
@@ -105,6 +109,9 @@ class FeedHandler:
         card_id = str(uuid.uuid4())
         card_data.card_id = card_id
 
+        # ── Create conversation snapshot (NEW) ───────────────────────────
+        self._maybe_create_snapshot(card_data)
+
         # Store data under lock (protects against concurrent _load_and_render)
         with self._lock:
             self._cards[card_id] = card_data
@@ -140,7 +147,15 @@ class FeedHandler:
 
         def _persist():
             if project_path and hasattr(card_data, 'to_dict') and not self._loading:
-                feed_store.append_feed_card(project_path, card_data)
+                # Skip snapshot persistence if oversized
+                if card_data.metadata.get("_snapshot_oversized"):
+                    # Temporarily remove snapshot for persistence
+                    saved = card_data.conversation_snapshot
+                    card_data.conversation_snapshot = None
+                    feed_store.append_feed_card(project_path, card_data)
+                    card_data.conversation_snapshot = saved
+                else:
+                    feed_store.append_feed_card(project_path, card_data)
 
         self._GLib.idle_add(_append)
         # Persist in background to avoid blocking UI.
@@ -287,8 +302,8 @@ class FeedHandler:
     # Button action handlers
     # ─────────────────────────────────────────────────────────────────
 
-    def handle_review(self, card_id: str) -> None:
-        """Review button clicked — populate input box with review prompt."""
+    def handle_review(self, card_id: str, card_widget=None) -> None:
+        """Review button clicked — populate input box with review prompt and toggle context panel."""
         card = self._cards.get(card_id)
         if card is None:
             return
@@ -319,6 +334,11 @@ class FeedHandler:
 
         # Mark card as reviewed (per SPEC — runtime flag)
         card.reviewed = True
+
+        # ── Toggle context panel visibility (NEW) ────────────────────────
+        if card_widget is not None and hasattr(card_widget, '_context_panel'):
+            panel = card_widget._context_panel
+            panel.set_visible(not panel.get_visible())
 
     def _add_git_card(self, original_card: FeedCardData, result) -> None:
         """Create a git_commit feed card after accept or reject."""
@@ -479,16 +499,86 @@ class FeedHandler:
             del self._recent_git_paths[fp]
 
         card_data.source = "system"
+        # ── Create diff snapshot for system cards (NEW) ────────────────
+        project_path = self._project_paths.get(card_data.project_name, "")
+        if project_path and card_data.file_path:
+            snapshot = conversation_store.snapshot_from_git_diff(project_path, card_data.file_path)
+            card_data.conversation_snapshot = snapshot
         self.add_card(card_data)
+
+    def _maybe_create_snapshot(self, card_data: FeedCardData) -> None:
+        """
+        Create a conversation snapshot for the card if applicable.
+
+        - Agent cards: extract conversation from chat box
+        - System/crabwatch cards: extract git diff
+        """
+        snapshot = None
+
+        if card_data.source == "agent" and self._get_chat_box_for_session:
+            # Use tab_key (the chat box key, e.g. "project:crabwatch") not session_key
+            # (the agent's gateway key, e.g. "agent:qaster:...") for the lookup.
+            # Falls back to session_key for non-project chats where both are the same.
+            lookup_key = card_data.metadata.get("tab_key", "") or card_data.metadata.get("session_key", "")
+            chat_box = self._get_chat_box_for_session(lookup_key)
+            if chat_box is not None:
+                messages_raw = self._extract_messages_from_chat_box(chat_box)
+                snapshot = conversation_store.snapshot_from_messages(
+                    messages_raw, session_key, total_available=len(messages_raw)
+                )
+
+        elif card_data.source in ("system", "crabwatch"):
+            project_path = card_data.metadata.get("project_path", "") or self._project_paths.get(card_data.project_name, "")
+            if project_path and card_data.file_path:
+                snapshot = conversation_store.snapshot_from_git_diff(project_path, card_data.file_path)
+
+        if snapshot is not None:
+            card_data.conversation_snapshot = snapshot
+            # Check size limit — skip persistence if too large
+            if conversation_store.snapshot_exceeds_size_limit(snapshot):
+                _logger.warning(
+                    "Snapshot for card %s exceeds %dKB — rendered in-memory but not persisted",
+                    card_data.card_id, conversation_store.MAX_SNAPSHOT_SIZE_KB,
+                )
+                # Remove from metadata so to_dict() won't persist it,
+                # but keep on card_data for in-memory rendering.
+                # We achieve this by NOT setting metadata["snapshot"] —
+                # to_dict() serializes from conversation_snapshot field.
+                # Instead, we'll handle this in _persist by stripping snapshot.
+                card_data.metadata["_snapshot_oversized"] = True
 
     # ─────────────────────────────────────────────────────────────────
     # Private helpers
     # ─────────────────────────────────────────────────────────────────
 
     def _make_review_cb(self, card_id: str):
-        def cb(cid=card_id):
-            self.handle_review(cid)
+        def cb(cid=card_id, widget=None):
+            self.handle_review(cid, widget)
         return cb
+
+    def _extract_messages_from_chat_box(self, chat_box) -> list[tuple[str, str]]:
+        """
+        Extract (role, text) pairs from a Gtk.Box containing chat bubbles.
+
+        Walks child widgets and reads _crabcakes_role / _crabcakes_text
+        attributes set by build_role_bubble(). Returns oldest-first.
+
+        This is the ONLY place GTK widget methods are called for snapshot
+        extraction — keeping utils/conversation_store.py GTK-free.
+        """
+        all_children = []
+        child = chat_box.get_first_child()
+        while child is not None:
+            all_children.append(child)
+            child = child.get_next_sibling()
+
+        messages = []
+        for widget in all_children:
+            role = getattr(widget, "_crabcakes_role", None)
+            text = getattr(widget, "_crabcakes_text", None)
+            if role is not None and text is not None:
+                messages.append((role, text))
+        return messages
 
     def _make_accept_cb(self, card_id: str):
         def cb(cid=card_id):

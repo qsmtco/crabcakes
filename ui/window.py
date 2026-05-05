@@ -258,6 +258,7 @@ class MainWindow(Gtk.ApplicationWindow):
             on_populate_input=_on_populate_input,
             on_send_to_agent=_on_send_to_agent,
             on_tab_switch=_on_show_feed_subtab,
+            get_chat_box_for_session=self._main_content.get_chat_box_for_session,
         )
 
         # CrabWatch — filesystem watcher for project feed
@@ -278,10 +279,12 @@ class MainWindow(Gtk.ApplicationWindow):
         self._left_panel.set_feed_tab(self._feed_tab)
 
         # Wire ChatRenderHandler → FeedHandler (crabcard interception)
-        def _on_crabcards_extracted(cards: list, session_key: str):
+        def _on_crabcards_extracted(cards: list, session_key: str, tab_key: str = ""):
             from ui.views.chat_bubble import _set_crabcards_registry
             _set_crabcards_registry(cards, _on_show_feed_subtab)
             for card in cards:
+                card.metadata["session_key"] = session_key  # agent's gateway key
+                card.metadata["tab_key"] = tab_key or session_key  # chat box key (project:xxx or agent:xxx)
                 self._feed_handler.add_card(card)
 
         self._chat_render_handler.set_on_crabcard_extracted(_on_crabcards_extracted)

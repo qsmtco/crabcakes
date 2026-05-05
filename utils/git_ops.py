@@ -168,6 +168,23 @@ def push(project_path: str, remote: str = "origin", branch: str = "main") -> Git
         return GitResult(success=False, stdout="", error=str(e), sha=None)
 
 
+def diff_working_tree(project_path: str, file_path: str | None = None) -> GitResult:
+    """Diff of working tree against HEAD (unstaged + staged changes).
+
+    Equivalent to: git diff HEAD -- [file_path]
+    If file_path is None, diffs all files.
+    """
+    try:
+        repo = gitpython.Repo(project_path)
+        args = ["HEAD"]
+        if file_path:
+            args.extend(["--", file_path])
+        diff_text = repo.git.diff(*args)
+        return GitResult(success=True, stdout=diff_text, error="", sha=None)
+    except Exception as e:
+        return GitResult(success=False, stdout="", error=str(e), sha=None)
+
+
 def status(project_path: str) -> GitResult:
     """git status --porcelain output."""
     try:

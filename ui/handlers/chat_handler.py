@@ -487,7 +487,7 @@ class ChatHandler:
         else:
             # No streaming bubble existed (STREAMING_ENABLED=False or first msg):
             # render the final bubble via render_sync instead.
-            bubble = self._chat_render_handler.render_sync("Agent", final_text, session_key, on_forward_click=self._on_forward_message)
+            bubble = self._chat_render_handler.render_sync("Agent", final_text, session_key, on_forward_click=self._on_forward_message, tab_key=tab)
             if bubble is not None and chat_box is not None:
                 chat_box.append(bubble)
                 self._mc.scroll_chat_to_bottom()
@@ -518,19 +518,6 @@ class ChatHandler:
         elif isinstance(content, str):
             return content
         return str(content) if content else ""
-
-    def _show_agent_response(self, tab, final_text):
-        """Render and display an agent response bubble in the correct tab."""
-        chat_box = self._mc.get_chat_box_for_session(tab)
-        if chat_box is not None:
-            if self._chat_render_handler is not None:
-                bubble = self._chat_render_handler.render_sync("Agent", final_text, tab)
-                if bubble is not None:
-                    chat_box.append(bubble)
-            tab_idx = self._mc._find_page_by_session(tab)
-            self._mc.scroll_chat_to_bottom(tab_idx)
-            if hasattr(chat_box, 'record'):
-                chat_box.record("Agent", final_text)
 
     def _handle_special_event(self, event_type: str, session_key: str, target_tab: str, payload: dict):
         """

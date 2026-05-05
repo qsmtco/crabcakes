@@ -15,6 +15,7 @@ from gi.repository import Gtk
 from typing import Callable
 
 from models.feed_card import FeedCardData, CardType
+from models.conversation_snapshot import ConversationSnapshot
 from utils.escaping import escape_for_pango
 
 
@@ -214,13 +215,124 @@ def _render_task_body(card_data: FeedCardData) -> Gtk.Widget:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Context panel (conversation snapshot)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_context_panel(
+    snapshot: ConversationSnapshot,
+) -> Gtk.Widget:
+    """
+    Build the expandable context panel for a feed card.
+
+    For snapshot_type="conversation":
+      - Vertical box of compact mini-bubbles (role + text)
+      - User messages: right-aligned, muted background (.feed-context-mini-bubble-user)
+      - Agent messages: left-aligned, default background (.feed-context-mini-bubble-agent)
+      - If truncated, shows "Showing last N of M messages"
+
+    For snapshot_type="diff":
+      - Monospace label with diff text
+      - Red/green styling for -/+ lines
+      - CSS class: .feed-context-diff
+
+    Returns a Gtk.Box with CSS class "feed-context-panel".
+    Initially hidden (set_visible(False)). Toggled by Review button.
+    """
+    panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    panel.add_css_class("feed-context-panel")
+
+    # Header label
+    if snapshot.snapshot_type == "conversation":
+        header_text = "▼ Review Context"
+        if snapshot.total_messages > len(snapshot.messages):
+            header_text += f" (showing last {len(snapshot.messages)} of {snapshot.total_messages})"
+    else:
+        header_text = "▼ Diff Context"
+
+    header = Gtk.Label(label=header_text)
+    header.add_css_class("feed-context-header")
+    header.set_xalign(0)
+    header.set_margin_bottom(4)
+    panel.append(header)
+
+    if snapshot.snapshot_type == "conversation":
+        if not snapshot.messages:
+            empty = Gtk.Label(label="No conversation context available.")
+            empty.add_css_class("feed-context-empty")
+            panel.append(empty)
+        else:
+            for msg in snapshot.messages:
+                bubble = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+                is_user = msg.role == "You" or msg.role == "User"
+                bubble.add_css_class("feed-context-mini-bubble")
+                bubble.add_css_class(
+                    "feed-context-mini-bubble-user" if is_user
+                    else "feed-context-mini-bubble-agent"
+                )
+
+                role_label = Gtk.Label()
+                role_label.set_markup(f"<b>{escape_for_pango(msg.role)}:</b>")
+                role_label.set_xalign(0)
+                role_label.set_valign(Gtk.Align.START)
+
+                text_label = Gtk.Label()
+                text_label.set_markup(escape_for_pango(msg.text))
+                text_label.set_xalign(0)
+                text_label.set_wrap(True)
+                text_label.set_wrap_mode(1)  # Pango.WrapMode.WORD_CHAR
+                text_label.set_selectable(True)
+                text_label.set_can_focus(False)
+                text_label.set_hexpand(True)
+
+                bubble.append(role_label)
+                bubble.append(text_label)
+                panel.append(bubble)
+
+    elif snapshot.snapshot_type == "diff":
+        if not snapshot.diff_text:
+            empty = Gtk.Label(label="No diff available.")
+            empty.add_css_class("feed-context-empty")
+            panel.append(empty)
+        else:
+            # Render diff lines with +/- color coding
+            # Single label approach — see below for rendering
+
+            # Single label with full diff text for multi-line selection.
+            # Color coding via Pango spans (not CSS classes) so one label
+            # can show + in green, - in red, context in default.
+            markup_lines = []
+            for line in snapshot.diff_text.split("\n"):
+                escaped = escape_for_pango(line)
+                if line.startswith("+") and not line.startswith("+++"):
+                    markup_lines.append(f'<span foreground="#6a9955"><tt>{escaped}</tt></span>')
+                elif line.startswith("-") and not line.startswith("---"):
+                    markup_lines.append(f'<span foreground="#f44747"><tt>{escaped}</tt></span>')
+                else:
+                    markup_lines.append(f'<tt>{escaped}</tt>')
+            diff_markup = "\n".join(markup_lines)
+
+            diff_label = Gtk.Label()
+            diff_label.set_markup(diff_markup)
+            diff_label.set_xalign(0)
+            diff_label.set_selectable(True)
+            diff_label.set_can_focus(False)
+            diff_label.set_wrap(False)
+            diff_label.add_css_class("feed-context-diff")
+            panel.append(diff_label)
+
+    # Start hidden
+    panel.set_visible(False)
+    return panel
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main card factory
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_feed_card(
     card_data: FeedCardData,
     *,
-    on_review: Callable[[str], None],
+    on_review: Callable[[str, Gtk.Widget], None],
     on_accept: Callable[[str], None],
     on_reject: Callable[[str], None],
     on_copy: Callable[[str], None],
@@ -232,8 +344,10 @@ def build_feed_card(
       - Header: colored bar with title + copy button (via css_class_for_type)
       - Body: content area with card-specific rendering
       - Footer: author • timestamp + Review/Accept/Reject buttons
+      - Context panel: expandable section (if snapshot present, hidden by default)
 
-    All callbacks receive (card_id: str) except on_copy which receives (text: str).
+    on_review callback receives (card_id: str, card_widget: Gtk.Widget).
+    All other callbacks receive (card_id: str) except on_copy which receives (text: str).
     """
     card_id = card_data.card_id or ""
 
@@ -292,7 +406,8 @@ def build_feed_card(
 
     btn_review = Gtk.Button(label="Review")
     btn_review.add_css_class("feed-btn-review")
-    btn_review.connect("clicked", lambda _, cid=card_id: on_review(cid))
+    # Review passes card widget for context panel toggling
+    btn_review.connect("clicked", lambda _, cid=card_id, w=card: on_review(cid, w))
 
     btn_accept = Gtk.Button(label="Accept")
     btn_accept.add_css_class("feed-btn-accept")
@@ -306,6 +421,13 @@ def build_feed_card(
     actions.append(btn_accept)
     actions.append(btn_reject)
     card.append(actions)
+
+    # ── Context panel (expandable, hidden by default) ────────────────────
+    if card_data.conversation_snapshot is not None:
+        context_panel = build_context_panel(card_data.conversation_snapshot)
+        card.append(context_panel)
+        # Store reference for toggling via Review button
+        card._context_panel = context_panel
 
     return card
 

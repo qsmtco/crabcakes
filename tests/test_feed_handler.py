@@ -31,8 +31,10 @@ class MockFeedTab:
         self.cards = []  # list of (card_id, widget)
         self.empty_shown = False
 
-    def prepend_card(self, widget, card_id=None):
-        self.cards.insert(0, (card_id, widget))
+    def append_card(self, widget, card_id=None):
+        self.cards.append((widget, card_id))
+
+    prepend_card = append_card  # backward compat
 
     def remove_card(self, card_id):
         self.cards = [(cid, w) for cid, w in self.cards if cid != card_id]
@@ -61,11 +63,11 @@ def feed_handler(mock_glib, mock_feed_tab):
     on_switch = MagicMock()
     h = FeedHandler(
         GLib=mock_glib,
-        feed_tab=mock_feed_tab,
         on_populate_input=on_pop,
         on_send_to_agent=on_send,
         on_tab_switch=on_switch,
     )
+    h.set_feed_tab(mock_feed_tab)
     return h
 
 

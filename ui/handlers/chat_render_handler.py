@@ -305,10 +305,12 @@ class ChatRenderHandler:
         """Set callback for forward button: cb(text, anchor_widget)."""
         self._on_forward_message = cb
 
-    def set_on_crabcard_extracted(self, cb: "Callable[[list[FeedCardData], str], None]") -> None:
+    def set_on_crabcard_extracted(self, cb: "Callable[[list[FeedCardData], str, str], None]") -> None:
         """
         Set callback for when crabcards are extracted from a message.
-        Callback: cb(cards: list[FeedCardData], session_key: str)
+        Callback: cb(cards: list[FeedCardData], session_key: str, tab_key: str)
+        - session_key: agent's gateway key (e.g. "agent:qaster:...")
+        - tab_key: key of the chat box where the bubble lives (e.g. "project:crabwatch")
         Called on the same thread as render_sync() — caller should dispatch to main thread if needed.
         """
         self._on_crabcard_extracted = cb
@@ -321,7 +323,7 @@ class ChatRenderHandler:
         """Set MainContent reference for self-contained scroll operations and agent name lookup."""
         self._main_content = main_content
 
-    def render_sync(self, role: str, text: str, session_key: str = None, on_forward_click=None, forwarded_from: str = None, agent_name: str = None):
+    def render_sync(self, role: str, text: str, session_key: str = None, on_forward_click=None, forwarded_from: str = None, agent_name: str = None, tab_key: str = None):
         """
         Process text and return a bubble widget synchronously.
 
@@ -333,6 +335,10 @@ class ChatRenderHandler:
             text:  Raw message text
             session_key: Optional session key for reentrancy guarding.
                        If a render is in-flight for this key, returns None.
+            tab_key: Optional key for the chat box where the bubble lives.
+                     Used for crabcard snapshot lookup. Falls back to session_key.
+                     For project chats, this is "project:<name>" while session_key
+                     is the agent's gateway key (e.g. "agent:qaster:...").
             agent_name: Optional agent display name. If None and role is "Agent",
                         looked up from _main_content._agent_mgr using session_key.
 
@@ -358,7 +364,7 @@ class ChatRenderHandler:
             agent_for_card = agent_name or "agent"
             cleaned_text, cards = extract_crabcards(text, self._project_name, agent_for_card)
             if cards:
-                self._on_crabcard_extracted(cards, session_key or "")
+                self._on_crabcard_extracted(cards, session_key or "", tab_key or session_key or "")
         else:
             cleaned_text = text
 

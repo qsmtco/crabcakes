@@ -800,6 +800,53 @@ notebook > header > tabs > tab {
     font-size: 10px;
     font-weight: bold;
 }
+/* ── Feed Card Context Panel ────────────────────────────────────── */
+.feed-context-panel {
+    background: alpha(@theme_bg_color, 0.5);
+    border-top: 1px solid alpha(@theme_fg_color, 0.1);
+    border-radius: 0 0 8px 8px;
+    padding: 8px;
+    margin: 4px 6px 6px 6px;
+}
+.feed-context-header {
+    font-weight: bold;
+    font-size: 0.9em;
+    color: alpha(@theme_fg_color, 0.7);
+}
+.feed-context-mini-bubble {
+    padding: 4px 8px;
+    border-radius: 6px;
+    margin: 2px 0;
+    font-size: 0.85em;
+}
+.feed-context-mini-bubble-user {
+    background: alpha(@theme_selected_bg_color, 0.15);
+    margin-left: 24px;
+}
+.feed-context-mini-bubble-agent {
+    background: alpha(@theme_fg_color, 0.08);
+    margin-right: 24px;
+}
+.feed-context-diff {
+    font-family: monospace;
+    font-size: 0.82em;
+    padding: 8px;
+    background: alpha(#1e1e1e, 0.9);
+    border-radius: 4px;
+    color: #d4d4d4;
+}
+.feed-context-diff-line-add {
+    color: #6a9955;
+}
+.feed-context-diff-line-del {
+    color: #f44747;
+}
+.feed-context-empty {
+    color: alpha(@theme_fg_color, 0.4);
+    font-style: italic;
+    padding: 8px;
+    text-align: center;
+}
 """
 
 

@@ -178,6 +178,12 @@ def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool =
     bubble.set_margin_top(1 if tight else 4)
     bubble.set_margin_bottom(4)
 
+    # Store role+text as custom attributes for conversation snapshot extraction.
+    # FeedHandler._extract_messages_from_chat_box() reads these when walking the chat box children.
+    # Attributes are on the container (the widget added to the chat box).
+    container._crabcakes_role = role
+    container._crabcakes_text = text
+
     # ── Header row: "Name ● HH:MM" ───────────────────────────────────
     # Always show for agents; show for You bubbles too (right-aligned)
     if agent_name or role == "You":

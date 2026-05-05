@@ -11,9 +11,14 @@
 #   - utils/crabcard_parser.py (parses raw text → FeedCardData)
 #   - tests/ (unit tests)
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from models.conversation_snapshot import ConversationSnapshot
 
 # Supported card types — exhaustive list for Phase 1
 CardType = Literal[
@@ -55,6 +60,9 @@ class FeedCardData:
     task_id: str | None = None
     metadata: dict = field(default_factory=dict)
 
+    # Conversation snapshot (set by FeedHandler at card creation time)
+    conversation_snapshot: ConversationSnapshot | None = None
+
     # Runtime fields (set by FeedHandler, not by source)
     card_id: str | None = None
     reviewed: bool = False
@@ -79,6 +87,15 @@ class FeedCardData:
 
     # ── Serialization (for feed.json persistence) ───────────────────────
 
+    def _serialize_metadata_with_snapshot(self) -> dict:
+        """Serialize metadata dict, injecting snapshot if present."""
+        meta = dict(self.metadata) if self.metadata else {}
+        if self.conversation_snapshot is not None:
+            meta["snapshot"] = self.conversation_snapshot.to_dict()
+        else:
+            meta.pop("snapshot", None)
+        return meta
+
     def to_dict(self) -> dict:
         """
         Serialize to a JSON-compatible dict. Includes all fields.
@@ -98,7 +115,7 @@ class FeedCardData:
             "additions": self.additions,
             "deletions": self.deletions,
             "task_id": self.task_id,
-            "metadata": self.metadata,
+            "metadata": self._serialize_metadata_with_snapshot(),
             "card_id": self.card_id,
             "reviewed": self.reviewed,
             "accepted": self.accepted,
@@ -115,6 +132,13 @@ class FeedCardData:
             ts = datetime.fromisoformat(ts)
         elif not isinstance(ts, datetime):
             ts = datetime.now(timezone.utc)
+        # Deserialize snapshot from metadata if present
+        metadata = data.get("metadata", {})
+        snapshot = None
+        if metadata and "snapshot" in metadata:
+            from models.conversation_snapshot import ConversationSnapshot
+            snapshot = ConversationSnapshot.from_dict(metadata["snapshot"])
+
         return cls(
             card_type=data["card_type"],
             source=data["source"],
@@ -128,8 +152,9 @@ class FeedCardData:
             additions=data.get("additions"),
             deletions=data.get("deletions"),
             task_id=data.get("task_id"),
-            metadata=data.get("metadata", {}),
+            metadata=metadata,
             card_id=data.get("card_id"),
             reviewed=data.get("reviewed", False),
             accepted=data.get("accepted"),
+            conversation_snapshot=snapshot,
         )
