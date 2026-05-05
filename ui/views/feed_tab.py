@@ -106,6 +106,36 @@ class FeedTab(Gtk.Box):
             self._card_container.remove(widget)
         del self._cards_by_id[card_id]
 
+    def replace_card(self, card_id: str, new_widget: Gtk.Widget) -> None:
+        """
+        Replace an existing card widget with a new one at the same position.
+
+        Used by FeedHandler.update_card() when a tool call card is updated
+        with results — the widget is rebuilt and swapped in-place.
+        """
+        if card_id not in self._cards_by_id:
+            return
+        old_widget = self._cards_by_id[card_id]
+        if self._card_container is None:
+            return
+        if old_widget not in self._card_container:
+            return
+
+        # Find the position of old_widget, then insert new_widget at the same spot
+        children = list(self._card_container)
+        try:
+            idx = children.index(old_widget)
+        except ValueError:
+            return
+
+        # Remove old widget — now children[0..idx-1] are what come before new_widget
+        self._card_container.remove(old_widget)
+
+        # predecessor is children[idx-1] if idx > 0, else None (insert at start)
+        predecessor = children[idx - 1] if idx > 0 else None
+        self._card_container.insert_child_after(new_widget, predecessor)
+        self._cards_by_id[card_id] = new_widget
+
     def scroll_to_bottom(self) -> None:
         """
         Scroll the feed so the newest card (bottom of list) is visible.

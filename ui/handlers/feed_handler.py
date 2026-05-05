@@ -47,12 +47,14 @@ class FeedHandler:
         GLib,                        # gi.repository.GLib
         on_send_to_agent,             # callback(session_key, text) — send to agent
         on_card_added=None,           # callback(card_id) | None
+        on_approve_exec=None,         # callback(approval_id, approved: bool) | None — Phase E
         get_chat_box_for_session=None,  # callback(session_key) -> Gtk.Box | None
     ):
         self._GLib = GLib
         self._feed_tab = None         # set via set_feed_tab() after FeedTab is created
         self._on_send_to_agent = on_send_to_agent
         self._on_card_added = on_card_added
+        self._on_approve_exec = on_approve_exec  # Phase E
         self._get_chat_box_for_session = get_chat_box_for_session
 
         # Card storage: card_id → FeedCardData
@@ -125,13 +127,24 @@ class FeedHandler:
             self._project_cards[proj].insert(0, card_id)  # newest first
 
         # Build widget (pure Python, no shared state) — done outside lock
-        widget = build_feed_card(
-            card_data,
-            on_review=self._make_review_cb(card_id),
-            on_accept=self._make_accept_cb(card_id),
-            on_reject=self._make_reject_cb(card_id),
-            on_copy=self._make_copy_cb(card_data),
-        )
+        # Phase E: approval cards use approve/deny callbacks instead of accept/reject
+        if card_data.metadata.get("needs_approval"):
+            on_approve, on_deny = self._make_approve_exec_cb(card_id)
+            widget = build_feed_card(
+                card_data,
+                on_review=self._make_review_cb(card_id),
+                on_accept=on_approve,
+                on_reject=on_deny,
+                on_copy=self._make_copy_cb(card_data),
+            )
+        else:
+            widget = build_feed_card(
+                card_data,
+                on_review=self._make_review_cb(card_id),
+                on_accept=self._make_accept_cb(card_id),
+                on_reject=self._make_reject_cb(card_id),
+                on_copy=self._make_copy_cb(card_data),
+            )
 
         with self._lock:
             self._card_widgets[card_id] = widget
@@ -189,6 +202,81 @@ class FeedHandler:
     def get_card(self, card_id: str) -> FeedCardData | None:
         """Get card data by ID."""
         return self._cards.get(card_id)
+
+    def update_card(self, card_id: str, card_data: FeedCardData) -> None:
+        """
+        Update an existing card's data and re-render its widget.
+
+        Used by AgentRuntimeHandler Phase D to update tool call cards with results.
+
+        Steps:
+        1. Update in-memory FeedCardData in self._cards
+        2. Rebuild widget via build_feed_card()
+        3. Replace old widget in self._card_widgets
+        4. Replace widget in FeedTab
+        5. Persist to feed_store
+
+        Thread-safe: GTK operations via GLib.idle_add().
+        """
+        if card_id not in self._cards:
+            logger.warning("update_card: card %s not found", card_id)
+            return
+
+        # Update in-memory data
+        with self._lock:
+            self._cards[card_id] = card_data
+
+        old_widget = self._card_widgets.get(card_id)
+
+        # Rebuild widget (same construction as add_card)
+        # Phase E: approval cards use approve/deny callbacks instead of accept/reject
+        if card_data.metadata.get("needs_approval"):
+            on_approve, on_deny = self._make_approve_exec_cb(card_id)
+            new_widget = build_feed_card(
+                card_data,
+                on_review=self._make_review_cb(card_id),
+                on_accept=on_approve,
+                on_reject=on_deny,
+                on_copy=self._make_copy_cb(card_data),
+            )
+        else:
+            new_widget = build_feed_card(
+                card_data,
+                on_review=self._make_review_cb(card_id),
+                on_accept=self._make_accept_cb(card_id),
+                on_reject=self._make_reject_cb(card_id),
+                on_copy=self._make_copy_cb(card_data),
+            )
+
+        # Update widget storage
+        with self._lock:
+            self._card_widgets[card_id] = new_widget
+
+        # Persist to feed_store (update_feed_card updates JSON)
+        project_path = self._project_paths.get(card_data.project_name, "")
+        if project_path:
+            from utils.feed_store import update_feed_card
+            updates = {
+                "body": card_data.body,
+                "metadata": card_data.metadata,
+            }
+            update_feed_card(project_path, card_id, updates)
+
+        # Replace widget in FeedTab on main thread
+        _card_id = card_id
+        _old_widget = old_widget
+        _new_widget = new_widget
+
+        def _replace():
+            if self._feed_tab is None:
+                return
+            if _old_widget is not None:
+                self._feed_tab.replace_card(_card_id, _new_widget)
+            else:
+                # No old widget to replace — just append (edge case)
+                self._feed_tab.append_card(_new_widget, _card_id)
+
+        self._GLib.idle_add(_replace)
 
     def get_cards_for_project(self, project_name: str) -> list[FeedCardData]:
         """Get all cards for a project, newest first."""
@@ -600,6 +688,39 @@ class FeedHandler:
         def cb(cid=card_id):
             self.handle_reject(cid)
         return cb
+
+    def handle_approve_exec(self, card_id: str, approved: bool) -> None:
+        """
+        Phase E: Handle Approve/Deny click on a pending exec approval card.
+
+        For cards with needs_approval=True, this is called instead of
+        handle_accept/handle_reject. Delegates to on_approve_exec callback
+        (AgentRuntimeHandler.approve_exec) to resolve the pending approval.
+        """
+        card = self._cards.get(card_id)
+        if card is None:
+            return
+        if card.metadata.get("needs_approval") != True:
+            # Not an approval card — fall through to handle_accept/handle_reject
+            return
+
+        if self._on_approve_exec is not None:
+            self._on_approve_exec(card_id, approved)
+        else:
+            _logger.warning("handle_approve_exec: no on_approve_exec callback registered")
+
+    def _make_approve_exec_cb(self, card_id: str) -> tuple[Callable, Callable]:
+        """
+        Phase E: Return (approve_cb, deny_cb) for an approval card.
+
+        Called when building an approval card to wire Accept/Deny buttons
+        to handle_approve_exec with approved=True/False.
+        """
+        def on_approve(cid=card_id):
+            self.handle_approve_exec(cid, True)
+        def on_deny(cid=card_id):
+            self.handle_approve_exec(cid, False)
+        return on_approve, on_deny
 
     def _make_copy_cb(self, card_data: FeedCardData):
         body = card_data.body or card_data.title

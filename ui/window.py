@@ -148,7 +148,7 @@ class MainWindow(Gtk.ApplicationWindow):
         # Register built-in special agents from the registry
         from agent.special_agents import get_special_agents
         for agent_def in get_special_agents():
-            self._agent_runtime_handler.add_special_agent(agent_def.display_name, agent_def.conv_id_prefix)
+            self._agent_runtime_handler.add_special_agent(agent_def)
 
         # Inject into dependents after _agent_runtime_handler is assigned
         self._chat_handler.set_agent_runtime_handler(self._agent_runtime_handler)
@@ -248,6 +248,7 @@ class MainWindow(Gtk.ApplicationWindow):
             GLib=GLib,
             on_send_to_agent=_on_send_to_agent,
             get_chat_box_for_session=self._main_content.get_chat_box_for_session,
+            on_approve_exec=self._agent_runtime_handler.approve_exec,  # Phase E
         )
 
         # CrabWatch — filesystem watcher for project feed
@@ -299,6 +300,7 @@ class MainWindow(Gtk.ApplicationWindow):
                 self._feed_handler.on_project_opened(n, p),
                 self._crabwatch_handler.start_watching(p, n),
                 self._chat_render_handler.set_project_name(n),
+                self._agent_runtime_handler.set_active_project(n, p),
                 self._on_feed_bar_update(n, len(self._project_handler.get_project_members(n)) if n else 0),
             )
         )
@@ -307,6 +309,7 @@ class MainWindow(Gtk.ApplicationWindow):
                 self._feed_handler.on_project_closed(name),
                 self._crabwatch_handler.stop_watching(),
                 self._chat_render_handler.set_project_name(""),
+                self._agent_runtime_handler.clear_active_project(),
                 self._on_feed_bar_update(None, 0),
             )
         )
@@ -357,6 +360,8 @@ class MainWindow(Gtk.ApplicationWindow):
         )
         # Wire ReviewHandler into AgentRuntimeHandler (deferred to avoid circular dep in _build order)
         self._agent_runtime_handler.set_review_handler(self._review_handler)
+        # Wire FeedHandler into AgentRuntimeHandler (Phase D: tool call feed cards)
+        self._agent_runtime_handler.set_feed_handler(self._feed_handler)
         # Wire project lifecycle → ReviewHandler
         self._project_handler.set_on_project_opened(
             lambda n, p: (self._review_handler.on_project_opened(n, p))

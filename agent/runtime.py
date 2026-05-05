@@ -641,6 +641,7 @@ def _save_conversation_to_disk(conv: "Conversation", session_key: str) -> str:
         "total_tokens": conv.total_tokens,
         "total_cost": conv.total_cost,
         "step_count": conv.step_count,
+        "allowed_tools": conv.allowed_tools,
         "created_at": conv.created_at.isoformat() if hasattr(conv.created_at, "isoformat") else conv.created_at,
     }
     with open(path, "w", encoding="utf-8") as f:
@@ -691,6 +692,7 @@ def _load_conversation_from_disk(session_key: str) -> tuple["Conversation", dict
         total_tokens=data.get("total_tokens", 0),
         total_cost=data.get("total_cost", 0.0),
         step_count=data.get("step_count", 0),
+        allowed_tools=data.get("allowed_tools"),
     )
     return conv, data
 
@@ -794,11 +796,16 @@ class AgentRuntime:
         session_key: str,
         project_path: str | None = None,
         model: str | None = None,
+        allowed_tools: list[str] | None = None,  # NEW
     ) -> str:
         """
         Create a new conversation for an agent.
 
         Returns the session_key (same as the argument).
+
+        Args:
+            allowed_tools: If provided, only these tool names are available to
+                          the agent. If None, all tools are available.
         """
         from agent.context import build_system_prompt
         from models.conversation import Conversation
@@ -806,15 +813,20 @@ class AgentRuntime:
         if model is None:
             model = self._config.default_model
 
-        # Build system prompt
+        # Build tool list — use allowed_tools if provided, otherwise all tools
         from agent.tools import get_all_tools
-        tools = get_all_tools()
-        tool_names = [t.name for t in tools]
+        if allowed_tools is not None:
+            all_tools = get_all_tools()
+            tool_names = [t.name for t in all_tools if t.name in allowed_tools]
+        else:
+            tools = get_all_tools()
+            tool_names = [t.name for t in tools]
         system_prompt = build_system_prompt(agent_name, project_path, tool_names)
 
         conv = Conversation(
             agent_name=agent_name,
             project_path=project_path,
+            allowed_tools=allowed_tools,
             model=model,
             system_prompt=system_prompt,
         )
@@ -897,9 +909,9 @@ class AgentRuntime:
                 from models.conversation import MessageRole
                 messages = conv.to_api_messages()
 
-                # Get tools for this agent
+                # Get tools for this agent (filtered by allowed_tools if set)
                 from agent.tools import get_tool_definitions_for_api
-                tools = get_tool_definitions_for_api()
+                tools = get_tool_definitions_for_api(conv.allowed_tools)
 
                 # Call LLM
                 response = self._call_llm(session_key, messages, tools)
@@ -945,8 +957,8 @@ class AgentRuntime:
                     # Approval gating for exec_command
                     if tool_name == "exec_command":
                         approved = self._dispatch_approval(session_key, tool_name, args)
-                        if approved is False:
-                            tc.mark_failed("exec_command requires PM approval — request denied")
+                        if approved is False or approved is None:  # None = timeout = denial
+                            tc.mark_failed("exec_command requires PM approval — request denied or timed out")
                             conv.add_tool_result(call_id, tc.result or "denied")
                             self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied")
                             continue
@@ -954,18 +966,14 @@ class AgentRuntime:
                     # Execute tool
                     import agent.tools as agent_tools_module
                     from agent.tools import execute_tool, set_approval_callback, _approval_callback
-                    # Bug #3 fix: runtime already approved via _dispatch_approval().
-                    # Temporarily register a permissive callback so _exec_command's
-                    # _get_approval() doesn't re-check and deny an already-approved command.
-                    prev_cb = None
-                    if tool_name == "exec_command" and approved is not False:
-                        prev_cb = _approval_callback
-                        set_approval_callback(lambda *a: True)
+                    # Bypass exec_command's internal approval check — the runtime already
+                    # confirmed PM approval via _dispatch_approval above (returned True).
+                    prev_cb = _approval_callback
+                    set_approval_callback(lambda *a: True)
                     try:
-                        result = execute_tool(tool_name, args, conv.project_path or "/tmp", session_key)
+                        result = execute_tool(to_name, args, conv.project_path or "/tmp", session_key)
                     finally:
-                        if tool_name == "exec_command":
-                            set_approval_callback(prev_cb)
+                        set_approval_callback(prev_cb)
                     tc.mark_completed(result.output if result.success else result.error or "")
                     conv.add_tool_result(call_id, tc.result or "")
                     self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "")
@@ -1001,15 +1009,15 @@ class AgentRuntime:
                 "result_ref": result_ref,
             }
 
-        # Dispatch to callback
+        # Dispatch to callback — PM must click Approve/Deny to resolve.
+        # do_approval() MUST NOT set event or result_ref. Those are only set
+        # by approve_exec() when the PM clicks. Setting them here causes the
+        # event to fire immediately (before PM clicks), making approval meaningless.
         def do_approval():
             try:
-                result = self._on_tool_call_approval_needed(session_key, tool_name, args)
-                result_ref[0] = result
+                self._on_tool_call_approval_needed(session_key, tool_name, args)
             except Exception:
-                result_ref[0] = False
-            finally:
-                event.set()
+                logger.exception("Approval callback raised exception")
 
         if self._GLib is not None:
             self._GLib.idle_add(do_approval)
@@ -1017,10 +1025,12 @@ class AgentRuntime:
             t = threading.Thread(target=do_approval, daemon=True)
             t.start()
 
-        # Wait for approval (with timeout)
-        event.wait(timeout=60)
-        with self._lock:
-            self._pending_approvals.pop(approval_key, None)
+        # Wait for approval (with timeout).
+        # approve_exec() sets event and result_ref when PM clicks.
+        # If timeout expires, treat as denial so the tool loop doesn't execute.
+        timed_out = not event.wait(timeout=60)
+        if timed_out:
+            result_ref[0] = False
         return result_ref[0]
 
     def _call_llm(
@@ -1149,8 +1159,11 @@ class AgentRuntime:
 
     def approve_exec(self, session_key: str, tool_name: str, args: dict, approved: bool) -> None:
         """
-        Called when PM resolves an exec_command approval request.
-        Updates the pending approval result so the tool loop can continue.
+        Resolve a pending approval when the PM clicks Approve or Deny.
+
+        Called by AgentRuntimeHandler.approve_exec() via the feed UI.
+        Sets result_ref so _dispatch_approval's waiting thread unblocks,
+        then removes the entry from _pending_approvals.
         """
         with self._lock:
             for key, pending in list(self._pending_approvals.items()):
@@ -1158,4 +1171,5 @@ class AgentRuntime:
                     pending["result_ref"][0] = approved
                     pending["event"].set()
                     self._pending_approvals.pop(key, None)
+                    logger.info("Approval resolved for %s: %s", session_key, approved)
                     return

@@ -411,6 +411,31 @@ class ChatRenderHandler:
         """Return True if a streaming bubble exists for session_key."""
         return session_key in self._streaming_bubbles
 
+    def get_streaming_text(self, session_key: str) -> str | None:
+        """
+        Get the current accumulated plain text for a streaming session.
+
+        Used by AgentRuntimeHandler to extract crabcards from the accumulated
+        streaming text before end_streaming() finalizes the bubble.
+        Returns None if no streaming bubble exists for this session.
+        """
+        sb = self._streaming_bubbles.get(session_key)
+        return sb.plain_text if sb is not None else None
+
+    def set_streaming_text(self, session_key: str, text: str) -> bool:
+        """
+        Overwrite the accumulated streaming text for a session.
+
+        Used by AgentRuntimeHandler after extracting crabcards — sets the
+        cleaned text so end_streaming() renders the bubble without crabcard blocks.
+        Returns True if successful, False if no streaming bubble exists.
+        """
+        sb = self._streaming_bubbles.get(session_key)
+        if sb is None:
+            return False
+        sb.plain_text = text
+        return True
+
     def update_streaming(self, session_key: str, delta_text: str):
         """
         Update the streaming bubble label for session_key.

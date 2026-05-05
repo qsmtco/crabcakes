@@ -95,6 +95,7 @@ class Conversation:
     """
     agent_name: str
     project_path: str | None = None
+    allowed_tools: list[str] | None = None  # filtered tool set — None means all tools
     system_prompt: str = ""
     messages: list[Message] = field(default_factory=list)
     model: str = ""                      # e.g. "openai/gpt-4o"

@@ -591,14 +591,24 @@ def get_all_tools() -> list[ToolDefinition]:
     return [defn for defn, _ in _TOOLS.values()]
 
 
-def get_tool_definitions_for_api() -> list[dict]:
+def get_tool_definitions_for_api(allowed_tools: list[str] | None = None) -> list[dict]:
     """
     Return tool definitions in OpenAI function-calling format.
 
+    Args:
+        allowed_tools: If None, returns all tools. If a list, returns only
+                      tools whose names are in allowed_tools (order preserved).
     Used by AgentRuntime when calling the LLM API.
     """
+    all_tools = get_all_tools()
+    if allowed_tools is not None:
+        allowed_set = set(allowed_tools)
+        tools_to_include = [t for t in all_tools if t.name in allowed_set]
+    else:
+        tools_to_include = all_tools
+
     result = []
-    for defn, _ in _TOOLS.values():
+    for defn in tools_to_include:
         entry: dict[str, Any] = {
             "type": "function",
             "function": {
