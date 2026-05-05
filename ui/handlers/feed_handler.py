@@ -524,7 +524,7 @@ class FeedHandler:
             if chat_box is not None:
                 messages_raw = self._extract_messages_from_chat_box(chat_box)
                 snapshot = conversation_store.snapshot_from_messages(
-                    messages_raw, session_key, total_available=len(messages_raw)
+                    messages_raw, lookup_key, total_available=len(messages_raw)
                 )
 
         elif card_data.source in ("system", "crabwatch"):
