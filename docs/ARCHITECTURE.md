@@ -1289,10 +1289,9 @@ class FeedHandler:
         self,
         *,
         GLib,                        # gi.repository.GLib — for idle_add dispatch
-        on_populate_input,           # Callable[[str], None] — fill input box (Review)
         on_send_to_agent,            # Callable[[str, str], None] — send to agent
-        on_tab_switch,               # Callable[[], None] — switch to feed sub-tab
         on_card_added=None,          # Callable[[str], None] | None — card_id after add
+        get_chat_box_for_session=None,  # Callable[[str], Gtk.Box | None] — chat box lookup for snapshots
     )
 ```
 

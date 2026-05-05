@@ -235,15 +235,6 @@ class MainWindow(Gtk.ApplicationWindow):
 
         from ui.handlers.feed_handler import FeedHandler
 
-        def _on_populate_input(text: str):
-            """Fill the user input box with review prompt text."""
-            buf = self._main_content.user_input.get_buffer()
-            buf.set_text("")
-            buf.set_text(text)
-            end_iter = buf.get_end_iter()
-            buf.place_cursor(end_iter)
-            self._main_content.user_input.grab_focus()
-
         def _on_send_to_agent(session_key: str, text: str):
             """Send a message to an agent tab (used for rejection notifications)."""
             self._chat_handler.send_raw_message(session_key, text)
@@ -255,9 +246,7 @@ class MainWindow(Gtk.ApplicationWindow):
         # FeedHandler created before FeedTab — set_feed_tab() called after FeedTab exists
         self._feed_handler = FeedHandler(
             GLib=GLib,
-            on_populate_input=_on_populate_input,
             on_send_to_agent=_on_send_to_agent,
-            on_tab_switch=_on_show_feed_subtab,
             get_chat_box_for_session=self._main_content.get_chat_box_for_session,
         )
 

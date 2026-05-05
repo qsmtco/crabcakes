@@ -58,14 +58,10 @@ def mock_feed_tab():
 @pytest.fixture
 def feed_handler(mock_glib, mock_feed_tab):
     from ui.handlers.feed_handler import FeedHandler
-    on_pop = MagicMock()
     on_send = MagicMock()
-    on_switch = MagicMock()
     h = FeedHandler(
         GLib=mock_glib,
-        on_populate_input=on_pop,
         on_send_to_agent=on_send,
-        on_tab_switch=on_switch,
     )
     h.set_feed_tab(mock_feed_tab)
     return h

@@ -45,17 +45,13 @@ class FeedHandler:
         self,
         *,
         GLib,                        # gi.repository.GLib
-        on_populate_input,            # callback(text) — fills input box (Review)
         on_send_to_agent,             # callback(session_key, text) — send to agent
-        on_tab_switch,                # callback() — switch to feed tab
         on_card_added=None,           # callback(card_id) | None
-        get_chat_box_for_session=None,  # callback(session_key) -> Gtk.Box | None — NEW
+        get_chat_box_for_session=None,  # callback(session_key) -> Gtk.Box | None
     ):
         self._GLib = GLib
         self._feed_tab = None         # set via set_feed_tab() after FeedTab is created
-        self._on_populate_input = on_populate_input
         self._on_send_to_agent = on_send_to_agent
-        self._on_tab_switch = on_tab_switch
         self._on_card_added = on_card_added
         self._get_chat_box_for_session = get_chat_box_for_session
 
@@ -309,39 +305,13 @@ class FeedHandler:
     # ─────────────────────────────────────────────────────────────────
 
     def handle_review(self, card_id: str, card_widget=None) -> None:
-        """Review button clicked — populate input box with review prompt and toggle context panel."""
+        """Review button clicked — toggle context panel visibility."""
         card = self._cards.get(card_id)
         if card is None:
             return
 
-        # Build review prompt based on card type
-        if card.card_type == "git_commit":
-            prompt = f"Review commit {card.commit_sha or '?'}: '{card.title}'. Is this change accurate?"
-        elif card.card_type == "diff":
-            fp = card.file_path or "unknown file"
-            delta = ""
-            if card.additions is not None or card.deletions is not None:
-                delta = f" +{card.additions or 0}/-{card.deletions or 0} lines"
-            prompt = f"Review changes to {fp}{delta}. Verify correctness."
-        elif card.card_type == "file_created":
-            prompt = f"Review new file {card.file_path or '?'}. Is this needed and correctly placed?"
-        elif card.card_type == "file_deleted":
-            prompt = f"Review deleted file {card.file_path or '?'}. Was this intentional?"
-        elif card.card_type == "task":
-            prompt = f"Review task: {card.title}. Status: {card.body or 'unknown'}. Is this done?"
-        elif card.card_type == "system":
-            fp = card.file_path or "?"
-            prompt = f"System detected change to {fp}. Verify this change."
-        else:
-            prompt = f"Review: {card.title}. {card.body}"
-
-        self._on_populate_input(prompt)
-        self._on_tab_switch()
-
-        # Mark card as reviewed (per SPEC — runtime flag)
         card.reviewed = True
 
-        # ── Toggle context panel visibility (NEW) ────────────────────────
         if card_widget is not None and hasattr(card_widget, '_context_panel'):
             panel = card_widget._context_panel
             panel.set_visible(not panel.get_visible())
