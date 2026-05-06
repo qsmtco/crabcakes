@@ -295,7 +295,7 @@ class LeftPanel(Gtk.Box):
         # Append special agents (Phase 1.4) — shown even without gateway connection
         if getattr(self, '_agent_runtime_handler', None):
             for sk, name in self._agent_runtime_handler.get_special_agents().items():
-                sorted_agents.append((sk, name, False, 1))
+                sorted_agents.append((sk, name, sk in project_members, 1))
 
         if not sorted_agents:
             placeholder = Gtk.Label()

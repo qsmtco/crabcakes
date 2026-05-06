@@ -9,6 +9,7 @@
 
 from dataclasses import dataclass
 import logging
+from typing import Callable
 import threading
 import time
 import uuid

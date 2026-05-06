@@ -230,8 +230,12 @@ class AgentRuntimeHandler:
 
         # Special agents require an active project
         if self._active_project is None:
-            self._dispatch(self._do_error, session_key,
-                           "Open a project first. Special agents work within projects.")
+            if self._GLib is not None:
+                self._GLib.idle_add(self._do_error, session_key,
+                                    "Open a project first. Special agents work within projects.")
+            else:
+                self._do_error(session_key,
+                               "Open a project first. Special agents work within projects.")
             return
 
         project_name, project_path = self._active_project

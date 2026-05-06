@@ -503,7 +503,7 @@ class MainWindow(Gtk.ApplicationWindow):
                 help_text="Reject all pending changes")
             # Project — ProjectHandler
             ph = self._project_handler
-            self._command_handler.register_command("status", ph.cmd_status, aliases=["s"],
+            self._command_handler.register_command("status", ph.cmd_status, aliases=["st"],
                 help_text="Project status summary")
             self._command_handler.register_command("agents", ph.cmd_agents,
                 help_text="List project agents and current state")

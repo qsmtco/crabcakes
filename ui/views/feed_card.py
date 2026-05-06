@@ -259,6 +259,7 @@ def build_context_panel(
         if not snapshot.messages:
             empty = Gtk.Label(label="No conversation context available.")
             empty.add_css_class("feed-context-empty")
+            empty.set_halign(Gtk.Align.CENTER)
             panel.append(empty)
         else:
             for msg in snapshot.messages:
@@ -292,6 +293,7 @@ def build_context_panel(
         if not snapshot.diff_text:
             empty = Gtk.Label(label="No diff available.")
             empty.add_css_class("feed-context-empty")
+            empty.set_halign(Gtk.Align.CENTER)
             panel.append(empty)
         else:
             # Render diff lines with +/- color coding

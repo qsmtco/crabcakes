@@ -845,7 +845,6 @@ notebook > header > tabs > tab {
     color: alpha(@theme_fg_color, 0.4);
     font-style: italic;
     padding: 8px;
-    text-align: center;
 }
 """
 
