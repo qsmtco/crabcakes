@@ -971,7 +971,7 @@ class AgentRuntime:
                     prev_cb = _approval_callback
                     set_approval_callback(lambda *a: True)
                     try:
-                        result = execute_tool(to_name, args, conv.project_path or "/tmp", session_key)
+                        result = execute_tool(tool_name, args, conv.project_path or "/tmp", session_key)
                     finally:
                         set_approval_callback(prev_cb)
                     tc.mark_completed(result.output if result.success else result.error or "")
