@@ -28,6 +28,10 @@ from utils.config import get_identity_dir
 
 _logger = logging.getLogger(__name__)
 
+# Enable raw gateway WS dump via CRABCAKES_GATEWAY_DEBUG=1 — independent of CRABCAKES_DEBUG
+if os.environ.get("CRABCAKES_GATEWAY_DEBUG"):
+    _logger.setLevel(logging.DEBUG)
+
 # ── Snapshot Schema ───────────────────────────────────────────────────────────────
 
 class SnapshotValidationError(Exception):
@@ -439,7 +443,7 @@ class GatewayClient:
         assert self._ws is not None, "_ws must be set before _listen"
         async for raw in self._ws:
             self._expire_pending()
-            print(f"[gateway>>] {raw[:300]}")
+            _logger.debug("[gateway>>] %s", raw[:300])
             self._expire_pending()
             try:
                 msg = json.loads(raw)

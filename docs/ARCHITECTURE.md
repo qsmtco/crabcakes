@@ -2011,6 +2011,8 @@ Agent and project avatars use a 10-color round-robin palette defined in `models/
 
 | Variable | Default | Purpose |
 |---------|---------|---------|
+| `CRABCAKES_DEBUG` | (unset) | Set to `1` to enable `logging.DEBUG` for all modules — agent runtime, handlers, utilities |
+| `CRABCAKES_GATEWAY_DEBUG` | (unset) | Set to `1` to enable raw WebSocket message dump in `gateway/client.py` — independent of `CRABCAKES_DEBUG` |
 | `CRABCAKES_GATEWAY_URL` | `ws://localhost:18789` | OpenClaw gateway WebSocket URL |
 | `CRABCAKES_PROJECTS_DIR` | `~/projects` | Directory containing project folders for the Projects tab |
 | `STT_MODEL_SIZE` | `tiny.en` | faster-whisper model size — "tiny.en" recommended for English (fastest CPU transcription) |
