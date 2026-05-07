@@ -508,6 +508,8 @@ def _call_llm_streaming(
                             "arguments": tc["arguments"]
                         }
                     })
+            logger.debug("[stream] sk=%s done: text_len=%d tool_calls=%d",
+                         session_key, len(full_content), len(tool_calls))
             return {
                 "choices": [{"message": {"content": full_content, "tool_calls": tool_calls}}],
                 "usage": {},  # streaming responses omit usage; caller should use blocking call for accurate counts
@@ -886,6 +888,8 @@ class AgentRuntime:
         try:
             # Step 1: add user message
             conv.add_user_message(text)
+            logger.debug("[tool-loop] sk=%s starting user_msg_len=%d model=%s",
+                         session_key, len(text), conv.model or self._config.default_model)
 
             # Step 2: loop until no tool calls or limit hit
             iteration = 0
@@ -904,6 +908,7 @@ class AgentRuntime:
                         self._dispatch(self._on_error, session_key, "Cancelled")
                         return
                 iteration += 1
+                logger.debug("[tool-loop] sk=%s iteration=%d/%d", session_key, iteration, max_iter)
 
                 # Build API messages
                 from models.conversation import MessageRole
@@ -929,8 +934,14 @@ class AgentRuntime:
                 conv.record_usage(prompt_tok + comp_tok, cost)
                 self._dispatch(self._on_token_usage, session_key, prompt_tok + comp_tok, cost)
 
+                logger.debug("[tool-loop] sk=%s llm response: text_len=%d tool_calls=%d tokens=%d cost=%.4f",
+                             session_key, len(text_content or ""), len(tool_calls_raw),
+                             prompt_tok + comp_tok, cost)
+
                 if not tool_calls_raw:
                     # Text-only response — done
+                    logger.debug("[tool-loop] sk=%s text-only response, dispatching on_response_complete len=%d",
+                                 session_key, len(text_content or ""))
                     conv.add_assistant_message(text_content, [])
                     self._dispatch(self._on_response_complete, session_key, text_content)
                     self._check_and_stop_on_limit(session_key, conv)
@@ -938,6 +949,7 @@ class AgentRuntime:
                     return
 
                 # Tool calls — execute each
+                logger.debug("[tool-loop] sk=%s executing %d tool calls", session_key, len(tool_calls_raw))
                 from models.conversation import ToolCall, ToolCallStatus
                 from agent.tools import execute_tool
 
@@ -957,6 +969,7 @@ class AgentRuntime:
                     # Approval gating for exec_command
                     if tool_name == "exec_command":
                         approved = self._dispatch_approval(session_key, tool_name, args)
+                        logger.debug("[tool-loop] sk=%s exec_command approval: %s", session_key, approved)
                         if approved is False or approved is None:  # None = timeout = denial
                             tc.mark_failed("exec_command requires PM approval — request denied or timed out")
                             conv.add_tool_result(call_id, tc.result or "denied")
@@ -966,6 +979,8 @@ class AgentRuntime:
                     # Execute tool
                     import agent.tools as agent_tools_module
                     from agent.tools import execute_tool, set_approval_callback, _approval_callback
+                    logger.debug("[tool-loop] sk=%s executing tool: %s args_keys=%s",
+                                 session_key, tool_name, list(args.keys()))
                     # Bypass exec_command's internal approval check — the runtime already
                     # confirmed PM approval via _dispatch_approval above (returned True).
                     prev_cb = _approval_callback
@@ -974,6 +989,8 @@ class AgentRuntime:
                         result = execute_tool(tool_name, args, conv.project_path or "/tmp", session_key)
                     finally:
                         set_approval_callback(prev_cb)
+                    logger.debug("[tool-loop] sk=%s tool %s result: success=%s output_len=%d",
+                                 session_key, tool_name, result.success, len(result.output or ""))
                     tc.mark_completed(result.output if result.success else result.error or "")
                     conv.add_tool_result(call_id, tc.result or "")
                     self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "")
@@ -1064,6 +1081,8 @@ class AgentRuntime:
 
         # Use streaming when on_text_delta callback is registered (Phase 1.3b)
         if self._on_text_delta is not None:
+            logger.debug("[call-llm] sk=%s streaming=True provider=%s model=%s msg_count=%d",
+                         session_key, provider_name, model, len(messages))
             return _call_llm_streaming(
                 runtime=self,
                 session_key=session_key,

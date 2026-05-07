@@ -253,6 +253,9 @@ class AgentRuntimeHandler:
         project_name, project_path = self._active_project
         rt = self._get_runtime(agent_def.display_name)
 
+        logger.debug("[handler] send_to_special_agent: sk=%s agent=%s project=%s text_len=%d",
+                     session_key, agent_def.display_name, project_name, len(text))
+
         # Create conversation if it doesn't exist yet, with project context and filtered tools
         if rt.get_conversation(session_key) is None:
             rt.create_conversation(
@@ -285,7 +288,9 @@ class AgentRuntimeHandler:
         if self._agent_to_project is not None:
             project_name = self._agent_to_project.get_project(session_key)
             if project_name is not None:
+                logger.debug("[handler] _resolve_chat_box: sk=%s → project:%s", session_key, project_name)
                 return self._mc.get_chat_box_for_session(f"project:{project_name}")
+        logger.debug("[handler] _resolve_chat_box: sk=%s → None (no tab, no routing)", session_key)
         return None
 
     # ── AgentRuntime callbacks (dispatched to render pipeline) ───────────────
@@ -403,6 +408,8 @@ class AgentRuntimeHandler:
         Phase 1.5 review staging: If write_file succeeds and review mode is active,
         copy the written file to a shadow staging directory inside the project.
         """
+        logger.debug("[handler] _do_tool_call_result: sk=%s tool=%s result_len=%d",
+                     session_key, name, len(str(result)) if result else 0)
         # Phase D: Update the feed card with the result
         card_id = self._tool_card_ids.pop(session_key, None)
         if card_id is not None and self._fh is not None:
@@ -561,6 +568,9 @@ class AgentRuntimeHandler:
         was_streaming = self._crh.is_streaming(session_key)
         project_name = self._active_project[0] if self._active_project else None
 
+        logger.debug("[handler] _do_response_complete: sk=%s was_streaming=%s text_len=%d",
+                     session_key, was_streaming, len(text or ""))
+
         # Phase C: Extract crabcards from streaming text before end_streaming
         if was_streaming and project_name and self._fh is not None:
             from utils.crabcard_parser import extract_crabcards
@@ -618,6 +628,7 @@ class AgentRuntimeHandler:
 
     def _do_error(self, session_key: str, message: str) -> None:
         """Main-thread portion of _on_error."""
+        logger.debug("[handler] _do_error: sk=%s msg=%s", session_key, message)
         self._streaming_text.pop(session_key, None)
         if self._crh is not None:
             self._crh.end_streaming(session_key)
