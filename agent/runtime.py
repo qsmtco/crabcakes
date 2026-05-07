@@ -372,6 +372,11 @@ def _stream_minimax_events(
                     yield SSEEvent(type="tool_call_delta", data={
                         "index": idx, "name": fname, "arguments": fargs
                     })
+            # MiniMax signals stream end via finish_reason, not [DONE]
+            finish_reason = d.get("choices", [{}])[0].get("finish_reason")
+            if finish_reason in ("stop", "tool_calls", "length"):
+                yield SSEEvent(type="done", data={})
+                return
 
 
 def _stream_anthropic_events(
@@ -515,8 +520,21 @@ def _call_llm_streaming(
                 "usage": {},  # streaming responses omit usage; caller should use blocking call for accurate counts
             }
 
-    # Should not reach here — done event should always fire
-    return {"choices": [{"message": {"content": full_content, "tool_calls": []}}]}
+    # Fallback — stream ended without explicit done event (e.g. provider doesn't send [DONE])
+    tool_calls = []
+    for idx in sorted(tool_calls_partial.keys()):
+        tc = tool_calls_partial[idx]
+        if tc["name"]:
+            tool_calls.append({
+                "id": f"call_{idx}",
+                "function": {
+                    "name": tc["name"],
+                    "arguments": tc["arguments"]
+                }
+            })
+    logger.debug("[stream-fallback] sk=%s text_len=%d tool_calls=%d (no done event)",
+                 session_key, len(full_content), len(tool_calls))
+    return {"choices": [{"message": {"content": full_content, "tool_calls": tool_calls}}], "usage": {}}
 
 
 
@@ -963,10 +981,9 @@ class AgentRuntime:
 
                 for call_id, tool_name, args in tool_calls_raw:
                     tc = next(tc for tc in tool_call_objects if tc.call_id == call_id)
-                    self._dispatch(self._on_tool_call_start, session_key, tool_name, args)
-                    tc.mark_executing()
 
-                    # Approval gating for exec_command
+                    # Approval gating for exec_command — fires BEFORE tool_call_start
+                    # so the approval card appears first. Non-approval tools skip this.
                     if tool_name == "exec_command":
                         approved = self._dispatch_approval(session_key, tool_name, args)
                         logger.debug("[tool-loop] sk=%s exec_command approval: %s", session_key, approved)
@@ -975,6 +992,11 @@ class AgentRuntime:
                             conv.add_tool_result(call_id, tc.result or "denied")
                             self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied")
                             continue
+
+                    # Tool call start — fires AFTER approval (for exec_command)
+                    # so the "running" card is truthful: the tool is actually about to run.
+                    self._dispatch(self._on_tool_call_start, session_key, tool_name, args)
+                    tc.mark_executing()
 
                     # Execute tool
                     import agent.tools as agent_tools_module
