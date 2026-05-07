@@ -362,6 +362,8 @@ class MainWindow(Gtk.ApplicationWindow):
         self._agent_runtime_handler.set_review_handler(self._review_handler)
         # Wire FeedHandler into AgentRuntimeHandler (Phase D: tool call feed cards)
         self._agent_runtime_handler.set_feed_handler(self._feed_handler)
+        # Wire AgentRoutingTable into AgentRuntimeHandler (solo DM response routing)
+        self._agent_runtime_handler.set_agent_routing(self._agent_to_project)
         # Wire project lifecycle → ReviewHandler
         self._project_handler.set_on_project_opened(
             lambda n, p: (self._review_handler.on_project_opened(n, p))

@@ -347,14 +347,20 @@ class ChatHandler:
 
                 if solo_target:
                     # Solo DM — send only to the selected member
-                    key = f"{project_name}:{solo_target}"
-                    if key not in self._awareness_sent:
-                        agent_display = self._get_agent_display_name(solo_target)
-                        prefix = self._build_awareness_prefix(project_name, agent_display)
+                    # Special agents route through AgentRuntimeHandler, not gateway
+                    is_special = (self._agent_runtime_handler is not None
+                                  and solo_target in self._agent_runtime_handler.get_special_agents())
+                    if is_special:
+                        self._agent_runtime_handler.send_to_special_agent(solo_target, text)
                     else:
-                        prefix = ""
-                    self._gw.send_message(solo_target, prefix + text)
-                    self._awareness_sent.add(key)
+                        key = f"{project_name}:{solo_target}"
+                        if key not in self._awareness_sent:
+                            agent_display = self._get_agent_display_name(solo_target)
+                            prefix = self._build_awareness_prefix(project_name, agent_display)
+                        else:
+                            prefix = ""
+                        self._gw.send_message(solo_target, prefix + text)
+                        self._awareness_sent.add(key)
                 else:
                     # Group broadcast — fan out to all members
                     if self._project_handler:

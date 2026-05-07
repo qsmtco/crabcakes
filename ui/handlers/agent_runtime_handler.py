@@ -56,6 +56,10 @@ class AgentRuntimeHandler:
         self._GLib = GLib_module
         self._review_handler = review_handler
 
+        # Shared routing table — set via set_agent_routing() (maps session_key → project_name)
+        # Used to route special agent responses to project chat boxes when no direct tab exists.
+        self._agent_to_project = None
+
         # Registered agents: session_key → SpecialAgentDef (full definition)
         self._agents: dict[str, Any] = {}
         # Active project: (name, path) or None
@@ -77,6 +81,11 @@ class AgentRuntimeHandler:
     def set_feed_handler(self, feed_handler) -> None:
         """Set FeedHandler. Called by window.py during _build (Phase D)."""
         self._fh = feed_handler
+
+    def set_agent_routing(self, routing_table) -> None:
+        """Set AgentRoutingTable. Called by window.py during _build.
+        Used to route special agent responses to project chat boxes."""
+        self._agent_to_project = routing_table
 
     def set_active_project(self, project_name: str, project_path: str) -> None:
         """
@@ -258,6 +267,24 @@ class AgentRuntimeHandler:
             rt.stop()
         self._runtimes.clear()
 
+    # ── Chat box resolution ────────────────────────────────────────────────
+
+    def _resolve_chat_box(self, session_key: str):
+        """Resolve the chat box for a session key.
+
+        If no direct tab exists (e.g. special agent messaged from project group chat),
+        looks up the project via AgentRoutingTable and returns the project chat box.
+        """
+        chat_box = self._mc.get_chat_box_for_session(session_key)
+        if chat_box is not None:
+            return chat_box
+        # No direct tab — check if this agent is routed to a project
+        if self._agent_to_project is not None:
+            project_name = self._agent_to_project.get_project(session_key)
+            if project_name is not None:
+                return self._mc.get_chat_box_for_session(f"project:{project_name}")
+        return None
+
     # ── AgentRuntime callbacks (dispatched to render pipeline) ───────────────
 
     def _on_text_delta(self, session_key: str, text: str) -> None:
@@ -275,7 +302,7 @@ class AgentRuntimeHandler:
         if self._crh is None:
             return
         if not self._crh.is_streaming(session_key):
-            chat_box = self._mc.get_chat_box_for_session(session_key)
+            chat_box = self._resolve_chat_box(session_key)
             if chat_box is not None:
                 self._crh.start_streaming(session_key, chat_box, "Agent")
         self._crh.update_streaming(session_key, text)
@@ -552,7 +579,7 @@ class AgentRuntimeHandler:
             else:
                 text_for_bubble = text
 
-            chat_box = self._mc.get_chat_box_for_session(session_key)
+            chat_box = self._resolve_chat_box(session_key)
             if chat_box is not None:
                 bubble = self._crh.render_sync(
                     "Agent", text_for_bubble, session_key, agent_name="Agent"
@@ -581,7 +608,7 @@ class AgentRuntimeHandler:
         """Main-thread portion of _on_error."""
         if self._crh is not None:
             self._crh.end_streaming(session_key)
-            chat_box = self._mc.get_chat_box_for_session(session_key)
+            chat_box = self._resolve_chat_box(session_key)
             if chat_box is not None:
                 bubble = self._crh.render_sync(
                     "Agent", f"[Error] {message}", session_key, agent_name="Agent"
