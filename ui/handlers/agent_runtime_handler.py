@@ -70,6 +70,9 @@ class AgentRuntimeHandler:
         # Used by Phase D to update feed cards when tool calls complete.
         # Keyed by session_key only — tool_name stored in card metadata.
         self._tool_card_ids: dict[str, str] = {}
+        # Accumulated streaming text: session_key → cumulative text
+        # AgentRuntime sends incremental deltas; ChatRenderHandler expects cumulative.
+        self._streaming_text: dict[str, str] = {}
         # Pending approval cards: approval_id (card_id) → {session_key, tool_name, args}
         # Used by Phase E to resolve approvals when PM clicks Approve/Deny.
         self._pending_approvals: dict[str, dict] = {}
@@ -298,14 +301,20 @@ class AgentRuntimeHandler:
             self._do_text_delta(session_key, text)
 
     def _do_text_delta(self, session_key: str, text: str) -> None:
-        """Main-thread portion of _on_text_delta."""
+        """Main-thread portion of _on_text_delta.
+
+        AgentRuntime sends incremental SSE chunks. ChatRenderHandler expects
+        cumulative text (same contract as gateway). Accumulate here.
+        """
         if self._crh is None:
             return
+        # Accumulate incremental delta into cumulative text
+        self._streaming_text[session_key] = self._streaming_text.get(session_key, "") + text
         if not self._crh.is_streaming(session_key):
             chat_box = self._resolve_chat_box(session_key)
             if chat_box is not None:
                 self._crh.start_streaming(session_key, chat_box, "Agent")
-        self._crh.update_streaming(session_key, text)
+        self._crh.update_streaming(session_key, self._streaming_text[session_key])
 
     def _on_tool_call_start(
         self, session_key: str, name: str, args: dict[str, Any]
@@ -546,6 +555,9 @@ class AgentRuntimeHandler:
         if self._crh is None:
             return
 
+        # Clear accumulated streaming text — no longer needed
+        self._streaming_text.pop(session_key, None)
+
         was_streaming = self._crh.is_streaming(session_key)
         project_name = self._active_project[0] if self._active_project else None
 
@@ -606,6 +618,7 @@ class AgentRuntimeHandler:
 
     def _do_error(self, session_key: str, message: str) -> None:
         """Main-thread portion of _on_error."""
+        self._streaming_text.pop(session_key, None)
         if self._crh is not None:
             self._crh.end_streaming(session_key)
             chat_box = self._resolve_chat_box(session_key)
