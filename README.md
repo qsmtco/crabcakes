@@ -1,4 +1,4 @@
-# CrabCakes
+# CrabCakes PDE
 
 **The world's first Project Development Environment.**
 
