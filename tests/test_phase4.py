@@ -19,6 +19,7 @@ from models.conversation import (
     Conversation,
     Message,
     MessageRole,
+    ToolCall,
 )
 
 
@@ -385,3 +386,72 @@ class TestTrimSummaryInjection:
             second_tokens = c.get_token_estimate()
             assert second_tokens <= first_tokens, \
                 f"Budget {budget}: tokens grew after 2nd trim ({first_tokens} → {second_tokens})"
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  §4.15 — Token budget breakdown (Phase 6)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestTokenBreakdown:
+    """Tests for Conversation.get_token_breakdown() — §4.15."""
+
+    def test_empty_conversation_breakdown(self):
+        """Empty conversation: system=0, conv=0, all remaining."""
+        c = Conversation(agent_name="Coder")
+        bd = c.get_token_breakdown(128000)
+        assert bd["system_prompt_tokens"] == 0
+        assert bd["conversation_tokens"] == 0
+        assert bd["total_used_tokens"] == 0
+        assert bd["remaining_tokens"] == 128000
+        assert bd["usage_percent"] == 0.0
+
+    def test_system_prompt_counted(self):
+        c = Conversation(agent_name="Coder", system_prompt="x" * 40)  # 10 tokens
+        bd = c.get_token_breakdown(128000)
+        assert bd["system_prompt_tokens"] == 10
+
+    def test_messages_counted_as_conversation(self):
+        c = Conversation(agent_name="Coder")
+        c.add_user_message("hello world")  # 11 chars → 2 tokens
+        bd = c.get_token_breakdown(128000)
+        assert bd["conversation_tokens"] == 11 // 4
+
+    def test_total_equals_system_plus_conversation(self):
+        c = Conversation(agent_name="Coder", system_prompt="s" * 20)
+        c.add_user_message("m" * 20)
+        bd = c.get_token_breakdown(1000)
+        assert bd["total_used_tokens"] == bd["system_prompt_tokens"] + bd["conversation_tokens"]
+
+    def test_remaining_is_max_minus_used(self):
+        c = Conversation(agent_name="Coder", system_prompt="x" * 40)
+        bd = c.get_token_breakdown(100)
+        assert bd["remaining_tokens"] == 100 - bd["total_used_tokens"]
+
+    def test_usage_percent_correct(self):
+        c = Conversation(agent_name="Coder", system_prompt="x" * 400)  # 100 tokens
+        bd = c.get_token_breakdown(1000)
+        assert bd["usage_percent"] == 10.0  # 100/1000 = 10%
+
+    def test_zero_max_tokens_no_division_error(self):
+        """model_max_tokens=0 should not crash."""
+        c = Conversation(agent_name="Coder", system_prompt="hello")
+        bd = c.get_token_breakdown(0)
+        assert bd["usage_percent"] == 0
+        assert bd["remaining_tokens"] == 0
+
+    def test_tool_call_args_counted_in_conversation(self):
+        c = Conversation(agent_name="Coder")
+        tc = ToolCall(call_id="c1", tool_name="read_file", arguments={"path": "a.py", "content": "xyzt"})
+        c.add_assistant_message("", [tc])
+        bd = c.get_token_breakdown(128000)
+        assert bd["conversation_tokens"] > 0
+
+    def test_consistent_with_get_token_estimate(self):
+        """get_token_breakdown total must match get_token_estimate."""
+        c = Conversation(agent_name="Coder", system_prompt="x" * 200)
+        for i in range(5):
+            c.add_user_message(f"message {i}: " + "y" * 30)
+            c.add_assistant_message(f"reply {i}: " + "z" * 30, [])
+        estimate = c.get_token_estimate()
+        bd = c.get_token_breakdown(128000)
+        assert bd["total_used_tokens"] == estimate

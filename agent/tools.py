@@ -41,9 +41,12 @@ class ToolDefinition:
 class ToolResult:
     """Result of executing a tool."""
     success: bool
-    output: str = ""              # text output or file contents
-    error: str | None = None
+    output: str = ""              # primary text output shown to the model
+    error: str | None = None       # error message (non-empty on failure)
     duration_ms: int = 0
+    stdout: str = ""              # raw stdout from exec_command
+    stderr: str = ""              # raw stderr from exec_command
+    exit_code: int | None = None   # raw exit code from exec_command
 
     def to_dict(self) -> dict:
         return {
@@ -51,6 +54,9 @@ class ToolResult:
             "output": self.output,
             "error": self.error,
             "duration_ms": self.duration_ms,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+            "exit_code": self.exit_code,
         }
 
 
@@ -304,20 +310,43 @@ def _exec_command(command: str, project_path: str, timeout: int = 30, session_ke
             timeout=timeout,
         )
         duration_ms = int((time.monotonic() - start) * 1000)
-        output = (result.stdout + result.stderr).decode("utf-8", errors="replace")
+        stdout_bytes = result.stdout
+        stderr_bytes = result.stderr
 
-        if len(output) > MAX_EXEC_OUTPUT:
-            output = output[:MAX_EXEC_OUTPUT] + f"\n[... truncated at {MAX_EXEC_OUTPUT} bytes ...]"
+        # Separate stdout/stderr for caller inspection; combined for output
+        stdout = stdout_bytes.decode("utf-8", errors="replace")
+        stderr = stderr_bytes.decode("utf-8", errors="replace")
+
+        # Truncate individual streams to prevent memory bloat
+        max_stream = MAX_EXEC_OUTPUT
+        if len(stdout) > max_stream:
+            stdout = stdout[:max_stream] + f"\n[... truncated at {max_stream} bytes ...]"
+        if len(stderr) > max_stream:
+            stderr = stderr[:max_stream] + f"\n[... truncated at {max_stream} bytes ...]"
+
+        combined = stdout + stderr
+        if len(combined) > MAX_EXEC_OUTPUT:
+            combined = combined[:MAX_EXEC_OUTPUT] + f"\n[... truncated at {MAX_EXEC_OUTPUT} bytes ...]"
 
         if result.returncode != 0:
             return ToolResult(
                 success=False,
-                output=output,
+                output=combined,
                 error=f"Exit {result.returncode}",
                 duration_ms=duration_ms,
+                stdout=stdout,
+                stderr=stderr,
+                exit_code=result.returncode,
             )
 
-        return ToolResult(success=True, output=output, duration_ms=duration_ms)
+        return ToolResult(
+            success=True,
+            output=combined,
+            duration_ms=duration_ms,
+            stdout=stdout,
+            stderr=stderr,
+            exit_code=result.returncode,
+        )
 
     except subprocess.TimeoutExpired:
         return ToolResult(success=False, error=f"Command timed out after {timeout}s", duration_ms=int((time.monotonic() - start) * 1000))
@@ -597,8 +626,13 @@ def _register_tools() -> None:
                 "(use read_file). Listing directories (use list_files).\n\n"
                 "BEHAVIOR: PM must approve each call before execution.\n"
                 "Blocked commands (rm -rf /, mkfs, fork bombs) are always denied.\n"
-                "Returns stdout+stderr combined, truncated at 100KB.\n"
-                "Default timeout 30s, max 120s.\n\n"
+                "Default timeout 30s, max 120s. Output is truncated at 100KB.\n\n"
+                "RESULT FORMAT (exec_command always returns all four fields):\n"
+                "  - output: stdout + stderr combined (shown to the model)\n"
+                "  - stdout: raw stdout text\n"
+                "  - stderr: raw stderr text\n"
+                "  - exit_code: integer exit code (0 = success)\n"
+                "  - error: non-empty on failure (contains exit_code reason)\n\n"
                 "COMMON PATTERNS:\n"
                 "- Run tests: exec_command with 'pytest' or 'python -m pytest'\n"
                 "- Check git status: exec_command with 'git status'\n"

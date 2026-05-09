@@ -192,6 +192,18 @@ class Conversation:
 
     # ── Token management ───────────────────────────────────────────────────────
 
+    def _count_char_tokens(self) -> tuple[int, int]:
+        """Return (system_prompt_chars, conversation_chars) for token estimation."""
+        system_chars = len(self.system_prompt)
+        conv_chars = 0
+        for msg in self.messages:
+            conv_chars += len(msg.content)
+            for tc in msg.tool_calls:
+                conv_chars += len(str(tc.arguments))
+                if tc.result:
+                    conv_chars += len(tc.result)
+        return system_chars, conv_chars
+
     def get_token_estimate(self) -> int:
         """
         Rough token count estimate (~4 chars per token).
@@ -199,14 +211,35 @@ class Conversation:
         Used for context-window management. Not accurate — overestimates
         for non-English text and underestimates for code-heavy content.
         """
-        total = len(self.system_prompt)
-        for msg in self.messages:
-            total += len(msg.content)
-            for tc in msg.tool_calls:
-                total += len(str(tc.arguments))
-                if tc.result:
-                    total += len(tc.result)
-        return total // 4
+        system_chars, conv_chars = self._count_char_tokens()
+        return (system_chars + conv_chars) // 4
+
+    def get_token_breakdown(self, model_max_tokens: int) -> dict:
+        """
+        §4.15 — Per-turn token budget breakdown.
+
+        Returns a dict with token allocation info for observability:
+        - system_prompt_tokens: chars in system_prompt // 4
+        - conversation_tokens: chars in all messages // 4
+        - total_used_tokens: system + conversation
+        - model_max_tokens: total available context window
+        - remaining_tokens: model_max - total_used
+        - usage_percent: (total_used / model_max_tokens) * 100
+
+        This helps identify context bloat before hitting the limit.
+        """
+        system_chars, conv_chars = self._count_char_tokens()
+        system_tokens = system_chars // 4
+        conversation_tokens = conv_chars // 4
+        total_used = system_tokens + conversation_tokens
+        return {
+            "system_prompt_tokens": system_tokens,
+            "conversation_tokens": conversation_tokens,
+            "total_used_tokens": total_used,
+            "model_max_tokens": model_max_tokens,
+            "remaining_tokens": max(0, model_max_tokens - total_used),
+            "usage_percent": round(total_used / model_max_tokens * 100, 1) if model_max_tokens > 0 else 0,
+        }
 
     def trim_to_token_limit(self, max_tokens: int) -> None:
         """

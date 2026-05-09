@@ -1077,6 +1077,8 @@ class ToolCallStatus(str, Enum): PENDING = "pending" | EXECUTING = "executing" |
     def add_tool_result(call_id, result) -> Message
     def to_api_messages() -> list[dict]
     def get_token_estimate() -> int
+    def _count_char_tokens() -> tuple[int, int]  # shared char counter for estimate + breakdown
+    def get_token_breakdown(model_max_tokens) -> dict  # §4.15: per-turn system/conv/remaining breakdown
     def trim_to_token_limit(max_tokens)  # §4.10: injects summary of trimmed messages when 8+ msgs remain
     def _last_exchange_summary() -> str  # compact summary of prior user turns
 ```
@@ -1123,7 +1125,7 @@ class AgentRuntime:
 **Public API:**
 ```python
 @dataclass ToolDefinition: name, description, parameters, requires_approval
-@dataclass ToolResult: success, output, error, duration_ms
+@dataclass ToolResult: success, output, error, duration_ms, stdout, stderr, exit_code  # §4.13: separate stdout/stderr/exit_code
 
 def get_all_tools() -> list[ToolDefinition]
 def get_tool_definitions_for_api() -> list[dict]    # OpenAI function-calling format
@@ -2130,7 +2132,7 @@ crabcakes/
 │   ├── agents.py                 # 49 lines — AgentManager (session_key → name, color, sessions)
 │   ├── colors.py                 # 50 lines — AGENT_COLORS palette + round-robin next_agent_color() / reset_color_indices()
 │   ├── command.py                # 149 lines — Command, CommandResult, CommandRegistry (Phase 7)
-│   ├── conversation.py           # 316 lines — MessageRole, ToolCall, Message, Conversation + summary-on-trim (§4.10)
+│   ├── conversation.py           # 355 lines — MessageRole, ToolCall, Message, Conversation + summary-on-trim (§4.10) + token breakdown (§4.15)
 │   ├── review_state.py           # 26 lines — ReviewState dataclass (Phase 7)
 │   ├── routing.py                # 41 lines — AgentRoutingTable (session_key → project_name)
 │   ├── streaming.py              # 30 lines — StreamingBubble dataclass (Phase 5)
@@ -2140,7 +2142,7 @@ crabcakes/
 │   ├── __init__.py               # 15 lines — package marker
 │   ├── config.py                 # AgentConfig, LLMProviderConfig, EnforcementConfig, load_agent_config() with chmod check
 │   ├── context.py                # 428 lines — build_system_prompt, build_file_context, _read_crabcakes_docs (§4.4a) + .gitignore parsing
-│   ├── tools.py                  # 829 lines — 8 tools: read_file, write_file, edit_file, exec_command, list_files, search_files, web_search, web_fetch
+│   ├── tools.py                  # 853 lines — 8 tools: read_file, write_file, edit_file, exec_command (§4.13 separate stdout/stderr), list_files, search_files, web_search, web_fetch
 │   └── enforcement.py             # Post-write verification: 3-tier checks (syntax, tests, lint)
 │
 ├── ui/

@@ -136,9 +136,27 @@ This file (`BUILD_ORDER.md`) is the **agreed execution order** — the single so
 **Source:** `CODER_PROMPT_FRAMEWORK_ENHANCEMENT_PROPOSAL.md` §4.12, §4.13, §4.15
 
 **Scope:**
-- §4.12: Enhanced `grep_code` tool — symbol search, import graph queries, reference finding (stretch goal)
+- §4.12: Enhanced `grep_code` tool — symbol search, import graph queries, reference finding (stretch goal) — **deferred, not implemented**
 - §4.13: Improved `exec_command` output — separate stdout/stderr, explicit exit code, specific failure lines for test failures
 - §4.15: Token budget logging — per-turn breakdown of system prompt / conversation / tool result token counts
+
+**Status:** ✅ Done
+
+**What was implemented:**
+
+**§4.13 — exec_command output improvements (agent/tools.py):**
+- `ToolResult` gained three new fields: `stdout`, `stderr`, `exit_code` (all with defaults, backward-compatible).
+- `_exec_command()` now decodes stdout and stderr separately before combining for `output`.
+- Both success and failure paths now populate all four result fields (`output`, `error`, `stdout`, `stderr`, `exit_code`).
+- Tool description updated to document the new result format fields.
+
+**§4.15 — Token budget logging (agent/runtime.py + models/conversation.py):**
+- New `Conversation.get_token_breakdown(model_max_tokens)` — returns a dict with `system_prompt_tokens`, `conversation_tokens`, `total_used_tokens`, `model_max_tokens`, `remaining_tokens`, `usage_percent`.
+- New optional `on_token_breakdown(session_key, breakdown_dict)` callback on `AgentRuntime` — fires after each LLM response alongside `on_token_usage`.
+- `_on_token_breakdown()` in `agent_runtime_handler.py` logs the breakdown: `system_prompt=X conv=Y total=Z/max remaining=W (P%)`.
+- Provider's `max_tokens` (context window size) is used from `LLMProviderConfig` when available.
+
+**§4.14 — Prompt dump on request:** Already existed in `utils/prompt_loader.py` — `CRABCAKES_PROMPT_DEBUG=1` writes composed prompt to stderr and `/tmp/crabcakes-last-prompt.md`.
 
 **Estimated:** 3-5 hours
 
@@ -169,7 +187,7 @@ This file (`BUILD_ORDER.md`) is the **agreed execution order** — the single so
 | 3 | Enforcement layer (A-D) | Enforcement Spec | Phases A-D | ✅ Done | 5-7h |
 | 4 | Context assembly | Enhancement Proposal | §4.4a, §4.10 | ✅ Done | 1-2h |
 | 5 | Conversation management (§4.9 remaining) | Enhancement Proposal | §4.9 | 🔲 Next | 3-4h |
-| 6 | Polish & observability | Enhancement Proposal | §4.12, §4.13, §4.15 | 🔲 Pending | 3-5h |
+| 6 | Polish & observability (§4.13, §4.15) | Enhancement Proposal | §4.12 defer, §4.13, §4.15 | ✅ Done | 3-5h |
 | 7 | Stuck detection + config | Enforcement Spec | Phases E-F | 🔲 Pending | 3-4h |
 
 **Total estimated remaining:** 21-34 hours

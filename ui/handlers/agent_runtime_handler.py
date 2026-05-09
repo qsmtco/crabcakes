@@ -215,6 +215,7 @@ class AgentRuntimeHandler:
             on_tool_call_approval_needed=self._on_tool_call_approval_needed,
             on_response_complete=self._on_response_complete,
             on_token_usage=self._on_token_usage,
+            on_token_breakdown=self._on_token_breakdown,
             on_error=self._on_error,
         )
         rt.start()
@@ -617,6 +618,19 @@ class AgentRuntimeHandler:
             session_key,
             total_tokens,
             cost,
+        )
+
+    def _on_token_breakdown(self, session_key: str, breakdown: dict) -> None:
+        """§4.15 — Per-turn token budget breakdown. Logged for observability."""
+        logger.info(
+            "[token-breakdown] sk=%s system_prompt=%d conv=%d total=%d/%d remaining=%d (%.1f%%)",
+            session_key,
+            breakdown["system_prompt_tokens"],
+            breakdown["conversation_tokens"],
+            breakdown["total_used_tokens"],
+            breakdown["model_max_tokens"],
+            breakdown["remaining_tokens"],
+            breakdown["usage_percent"],
         )
 
     def _on_error(self, session_key: str, message: str) -> None:

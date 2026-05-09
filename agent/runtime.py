@@ -739,6 +739,7 @@ class AgentRuntime:
         on_tool_call_approval_needed: (session_key, tool_name, args) → bool | None — approval needed.
         on_response_complete: (session_key, full_text) — final response ready.
         on_token_usage: (session_key, tokens, cost) — usage info.
+        on_token_breakdown: (session_key, breakdown_dict) — §4.15 per-turn token budget breakdown.
         on_error: (session_key, error_message) — error occurred.
     """
 
@@ -753,6 +754,7 @@ class AgentRuntime:
         on_tool_call_approval_needed: Callable | None = None,
         on_response_complete: Callable | None = None,
         on_token_usage: Callable | None = None,
+        on_token_breakdown: Callable | None = None,
         on_error: Callable | None = None,
         on_enforcement_status: Callable | None = None,
     ):
@@ -764,6 +766,7 @@ class AgentRuntime:
         self._on_tool_call_approval_needed = on_tool_call_approval_needed
         self._on_response_complete = on_response_complete
         self._on_token_usage = on_token_usage
+        self._on_token_breakdown = on_token_breakdown
         self._on_error = on_error
         self._on_enforcement_status = on_enforcement_status
 
@@ -956,6 +959,15 @@ class AgentRuntime:
                 cost = _cost_for_model(conv.model, prompt_tok, comp_tok)
                 conv.record_usage(prompt_tok + comp_tok, cost)
                 self._dispatch(self._on_token_usage, session_key, prompt_tok + comp_tok, cost)
+
+                # §4.15 — Token budget breakdown for observability
+                if self._on_token_breakdown is not None:
+                    model_max = 128_000  # default; use provider config if available
+                    provider_cfg = self._config.providers.get(conv.model.split("/")[0] if "/" in conv.model else self._config.default_provider)
+                    if provider_cfg is not None:
+                        model_max = provider_cfg.max_tokens
+                    breakdown = conv.get_token_breakdown(model_max)
+                    self._dispatch(self._on_token_breakdown, session_key, breakdown)
 
                 logger.debug("[tool-loop] sk=%s llm response: text_len=%d tool_calls=%d tokens=%d cost=%.4f",
                              session_key, len(text_content or ""), len(tool_calls_raw),
