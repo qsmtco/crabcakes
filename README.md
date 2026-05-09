@@ -1,8 +1,8 @@
-# 🦀 CrabCakes
+# CrabCakes
 
 **The world's first Project Development Environment.**
 
-Where your project is the chat. Where your feed is the dashboard. Where agents are your team.
+Where your project is the goup chat. Where the social media style project feed is the dashboard. Where agents are your team.
 
 ---
 
@@ -20,7 +20,7 @@ You create a project. You bring in your agents. You work together in a shared fe
 
 ## Why it exists
 
-Every AI coding tool makes the same trade-off: either the agent works alone (great for speed, terrible for quality) or a human supervises every action (great for control, terrible for scale). The moment you want two agents to collaborate — one writing, one reviewing, one debugging — you're duct-taping prompts together and hoping the output doesn't毁 (huǐ).
+Every AI coding tool makes the same trade-off: either the agent works alone (great for speed, terrible for quality) or a human supervises every action (great for control, terrible for scale). The moment you want two agents to collaborate — one writing, one reviewing, one debugging — you're duct-taping prompts together and hoping the output doesn't confuse the agent
 
 The real problem isn't making agents do things. The real problem is **orchestrating agents as a team** — giving them shared context, a shared feed, a shared task system, and a shared review layer. That's what CrabCakes solves.
 
