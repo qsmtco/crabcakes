@@ -77,11 +77,12 @@ crabcakes/
 │
 ├── agent/                     # Local agent runtime — no UI dependencies
 │   ├── __init__.py           # Exports: AgentRuntime
-│   ├── runtime.py            # AgentRuntime — tool loop, LLM API, streaming, cost tracking
-│   ├── tools.py              # Tool definitions + execution (read_file, write_file, exec_command, etc.)
-│   ├── config.py             # LLM provider config (api_key, base_url, model per provider)
+│   ├── runtime.py           # AgentRuntime — tool loop, LLM API, streaming, cost tracking + enforcement hook
+│   ├── tools.py              # Tool definitions + execution (read_file, write_file, edit_file, exec_command, etc.)
+│   ├── config.py             # LLM provider config + EnforcementConfig dataclass
 │   ├── context.py            # System prompt builder (via prompts/system/ templates) + file context builder + .gitignore parsing
-│   └── special_agents.py     # Coder + Debugger agent definitions
+│   ├── special_agents.py     # Coder + Debugger agent definitions
+│   └── enforcement.py        # Post-write verification: syntax guard, test runner, lint check (Phase 3)
 │
 ├── ui/                        # All UI components
 │   ├── __init__.py
@@ -1076,7 +1077,8 @@ class ToolCallStatus(str, Enum): PENDING = "pending" | EXECUTING = "executing" |
     def add_tool_result(call_id, result) -> Message
     def to_api_messages() -> list[dict]
     def get_token_estimate() -> int
-    def trim_to_token_limit(max_tokens)
+    def trim_to_token_limit(max_tokens)  # §4.10: injects summary of trimmed messages when 8+ msgs remain
+    def _last_exchange_summary() -> str  # compact summary of prior user turns
 ```
 
 **Rules:** No imports from `ui/`, `agent/`, `gateway/`, `subprocess`.
@@ -1091,7 +1093,8 @@ class ToolCallStatus(str, Enum): PENDING = "pending" | EXECUTING = "executing" |
 ```python
 class AgentRuntime:
     def __init__(config, GLib, on_text_delta, on_tool_call_start, on_tool_call_result,
-                 on_tool_call_approval_needed, on_response_complete, on_error, on_token_usage)
+                 on_tool_call_approval_needed, on_response_complete, on_error, on_token_usage,
+                 on_enforcement_status=None)
     def start() / def stop()
     def create_conversation(agent_name, session_key, project_path, model) -> str
     def send_message(session_key, text)         # tool loop: user msg → LLM → tool calls → results → LLM → response
@@ -1134,6 +1137,7 @@ def set_approval_callback(cb) -> None              # cb(session_key, tool_name, 
 |------|----------|-------------|
 | `read_file` | No | Read file (max 50KB, binary → error) |
 | `write_file` | No | Write file (sandboxed to project path) |
+| `edit_file` | No | Replace exact text in file (sandboxed, unique match required) |
 | `exec_command` | **Yes** | Run shell command (PM must approve; hardcoded blocklist rejects catastrophic calls first) |
 | `list_files` | No | List directory contents |
 | `search_files` | No | Grep/ripgrep for pattern |
@@ -1149,7 +1153,8 @@ def set_approval_callback(cb) -> None              # cb(session_key, tool_name, 
 **Public API:**
 ```python
 @dataclass LLMProviderConfig: name, base_url, api_key, default_model, supports_tools, supports_streaming, max_tokens
-@dataclass AgentConfig: providers, default_provider, default_model, max_tool_iterations, tool_timeout_seconds, auto_save_conversations, cost_limit, step_limit
+@dataclass EnforcementConfig: enabled, syntax_check, test_run, lint_check, syntax_timeout_seconds, test_timeout_seconds, lint_timeout_seconds, max_output_chars, skip_patterns
+@dataclass AgentConfig: providers, default_provider, default_model, max_tool_iterations, tool_timeout_seconds, auto_save_conversations, cost_limit, step_limit, enforcement
 
 def load_agent_config() -> AgentConfig      # reads <config_dir>/agent.json; checks chmod >600
 def get_api_key(provider_name) -> str | None
@@ -1160,7 +1165,9 @@ def get_api_key(provider_name) -> str | None
 **Public API:**
 ```python
 def build_system_prompt(agent_name, project_path, tools, review_mode) -> str
-def build_file_context(project_path, query=None) -> str    # respects .gitignore, capped ~50K chars
+def build_file_context(project_path, query=None) -> str    # respects .gitignore, capped ~50K chars; §4.4a prepends .crabcakes/ docs
+def _read_crabcakes_docs(project_path) -> str               # §4.4a — always include project docs in context
+def _load_crabcakes_doc(doc_name, project_path) -> str | None  # individual doc access
 def load_custom_system_prompt(project_path) -> str | None  # .crabcakes/agent-system-prompt.md → AGENTS.md → None
 ```
 
@@ -1168,15 +1175,36 @@ def load_custom_system_prompt(project_path) -> str | None  # .crabcakes/agent-sy
 
 **Public API:**
 ```python
-@dataclass SpecialAgentDef: conv_id_prefix, display_name, emoji, color, tools, system_prompt_template, can_write
+@dataclass SpecialAgentDef: conv_id_prefix, display_name, emoji, color, tools, can_write
 
 SPECIAL_AGENTS: dict[str, SpecialAgentDef]     # "special:coder", "special:debugger"
 def get_special_agents() -> list[SpecialAgentDef]
 def get_special_agent(prefix) -> SpecialAgentDef | None
 ```
 
-**Coder:** tools=`[read_file, write_file, exec_command, list_files, search_files, web_search, web_fetch]`, `can_write=True`
+**Coder:** tools=`[read_file, write_file, edit_file, exec_command, list_files, search_files, web_search, web_fetch]`, `can_write=True`
 **Debugger:** tools=`[read_file, exec_command, list_files, search_files, web_search, web_fetch]`, `can_write=False`
+
+### 3.21m `agent/enforcement.py` — Post-Write Verification (Phase 3)
+
+**Responsibility:** Run automatic verification checks after every file write (write_file / edit_file). Three tiers: syntax guard, test runner, lint check. Pure logic — no UI imports, no GTK.
+
+**Owns:** EnforcementCheck, EnforcementResult, SYNTAX_CHECKERS map, DEFAULT_SKIP_PATTERNS, tier detection logic.
+
+**Public API:**
+```python
+@dataclass EnforcementCheck: tier, tool, file, passed, detail, output, duration_ms
+@dataclass EnforcementResult: checks, appended_message
+
+def check(tool_name, tool_args, tool_result, project_path, config) -> EnforcementResult
+```
+
+**Tiers:**
+1. Syntax guard (`_check_syntax`): py_compile, node --check, bash -n, etc. Per-extension mapping.
+2. Test runner (`_check_tests`): detect framework (pytest, jest, make test), find related test file, run it. Skipped if syntax fails.
+3. Lint check (`_check_lint`): detect linter (ruff, mypy, eslint), run on changed file. Skipped if syntax fails.
+
+**Configuration:** `EnforcementConfig` on `AgentConfig` — enabled/syntax_check/test_run/lint_check toggles, timeouts, skip patterns.
 
 ### 3.21m `ui/handlers/agent_runtime_handler.py` — Agent Runtime UI Bridge (Phase 1.4)
 
@@ -2102,7 +2130,7 @@ crabcakes/
 │   ├── agents.py                 # 49 lines — AgentManager (session_key → name, color, sessions)
 │   ├── colors.py                 # 50 lines — AGENT_COLORS palette + round-robin next_agent_color() / reset_color_indices()
 │   ├── command.py                # 149 lines — Command, CommandResult, CommandRegistry (Phase 7)
-│   ├── conversation.py           # 244 lines — MessageRole, ToolCall, Message, Conversation (Phase 1.1)
+│   ├── conversation.py           # 316 lines — MessageRole, ToolCall, Message, Conversation + summary-on-trim (§4.10)
 │   ├── review_state.py           # 26 lines — ReviewState dataclass (Phase 7)
 │   ├── routing.py                # 41 lines — AgentRoutingTable (session_key → project_name)
 │   ├── streaming.py              # 30 lines — StreamingBubble dataclass (Phase 5)
@@ -2110,9 +2138,10 @@ crabcakes/
 │
 ├── agent/                        # Agent runtime (Phase 1.1–1.5)
 │   ├── __init__.py               # 15 lines — package marker
-│   ├── config.py                 # 197 lines — AgentConfig, LLMProviderConfig, load_agent_config() with chmod check
-│   ├── context.py                # 441 lines — build_system_prompt, build_file_context, load_custom_system_prompt (Phase 1.2)
-│   └── tools.py                  # 661 lines — 7 tools: read_file, write_file, exec_command, list_files, search_files, web_search, web_fetch
+│   ├── config.py                 # AgentConfig, LLMProviderConfig, EnforcementConfig, load_agent_config() with chmod check
+│   ├── context.py                # 428 lines — build_system_prompt, build_file_context, _read_crabcakes_docs (§4.4a) + .gitignore parsing
+│   ├── tools.py                  # 829 lines — 8 tools: read_file, write_file, edit_file, exec_command, list_files, search_files, web_search, web_fetch
+│   └── enforcement.py             # Post-write verification: 3-tier checks (syntax, tests, lint)
 │
 ├── ui/
 │   ├── __init__.py              # 1 line

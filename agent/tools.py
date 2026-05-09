@@ -218,6 +218,72 @@ def _write_file(path: str, content: str, project_path: str) -> ToolResult:
         return ToolResult(success=False, error=f"Cannot write {path}: {e}")
 
 
+def _edit_file(path: str, old_text: str, new_text: str, project_path: str) -> ToolResult:
+    """Replace exact old_text with new_text in a file within project_path.
+
+    Both old_text and new_text are matched exactly — no regex, no fuzzy matching.
+    old_text must be unique in the file; otherwise the edit is rejected.
+    Falls back to a full file rewrite if the file has only one occurrence.
+    """
+    resolved = _resolve_project_path(path, project_path)
+    if resolved is None:
+        return ToolResult(success=False, error=f"Path escapes project sandbox: {path}")
+
+    if not os.path.isfile(resolved):
+        return ToolResult(success=False, error=f"Not a file: {path}")
+
+    try:
+        with open(resolved, "r", encoding="utf-8") as f:
+            content = f.read()
+    except PermissionError:
+        return ToolResult(success=False, error=f"Permission denied: {path}")
+    except UnicodeDecodeError:
+        return ToolResult(success=False, error=f"File is not valid UTF-8: {path}")
+    except OSError as e:
+        return ToolResult(success=False, error=f"Cannot read {path}: {e}")
+
+    # Count occurrences of old_text in the file
+    count = content.count(old_text)
+    if count == 0:
+        return ToolResult(
+            success=False,
+            error=(
+                f"old_text not found in {path}.\n"
+                f"Verify the exact text you want to replace — whitespace and newlines matter.\n"
+                f"Use write_file if you need a full file rewrite."
+            ),
+        )
+    if count > 1:
+        return ToolResult(
+            success=False,
+            error=(
+                f"old_text is not unique in {path} — found {count} occurrences.\n"
+                f"Specify a larger, unique portion of surrounding context so the replacement\n"
+                f"is unambiguous. Use write_file if you need a full file rewrite."
+            ),
+        )
+
+    # Exactly one match — safe to replace
+    new_content = content.replace(old_text, new_text, 1)
+    try:
+        byte_count = len(new_content.encode("utf-8"))
+        if byte_count > MAX_WRITE_SIZE:
+            return ToolResult(success=False, error=f"Resulting file too large ({byte_count} bytes, max {MAX_WRITE_SIZE})")
+        with open(resolved, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        return ToolResult(
+            success=True,
+            output=(
+                f"OK — edited {path}\n"
+                f"[enforcement:edit] {count} occurrence replaced"
+            ),
+        )
+    except PermissionError:
+        return ToolResult(success=False, error=f"Permission denied: {path}")
+    except OSError as e:
+        return ToolResult(success=False, error=f"Cannot write {path}: {e}")
+
+
 def _exec_command(command: str, project_path: str, timeout: int = 30, session_key: str = "_unknown") -> ToolResult:
     """Run a shell command in the project directory. Requires PM approval."""
     # Hard blocklist check first — always denied before callback fires
@@ -423,9 +489,18 @@ def _register_tools() -> None:
         ToolDefinition(
             name="read_file",
             description=(
-                "Read the contents of a file from the project directory. "
-                "Returns the text content, or an error if the file is binary, missing, or inaccessible. "
-                "Truncates at 50KB."
+                "Read a file's text content from the project directory.\n\n"
+                "WHEN TO USE: Always read a file BEFORE modifying it. Use to understand\n"
+                "existing code, check imports, verify structure, or review tests.\n\n"
+                "WHEN NOT TO USE: For listing directory contents (use list_files).\n"
+                "For searching across files (use search_files).\n\n"
+                "BEHAVIOR: Returns UTF-8 text. Binary files return an error.\n"
+                "Truncates at 50KB. Use offset/limit for reading specific sections\n"
+                "of large files without loading everything.\n\n"
+                "COMMON PATTERNS:\n"
+                "- Read a file before writing: understand context, imports, style\n"
+                "- Read tests before implementing: understand expected behavior\n"
+                "- Read architecture.md first when starting a new task"
             ),
             parameters={
                 "type": "object",
@@ -447,9 +522,16 @@ def _register_tools() -> None:
         ToolDefinition(
             name="write_file",
             description=(
-                "Write content to a file in the project directory. "
-                "Creates parent directories if needed. Overwrites existing files. "
-                "Returns the number of bytes written."
+                "Write content to a file in the project directory.\n\n"
+                "WHEN TO USE: To create new files, or rewrite an entire file after\n"
+                "reading it first. Always read a file before overwriting it.\n\n"
+                "WHEN NOT TO USE: For running commands (use exec_command).\n"
+                "For reading files (use read_file).\n\n"
+                "BEHAVIOR: Creates parent directories if needed. Overwrites existing\n"
+                "files entirely — there is no partial edit. Max 2MB.\n"
+                "All paths are sandboxed to the project directory.\n\n"
+                "IMPORTANT: This replaces the ENTIRE file. Always read_file first,\n"
+                "then write back the full content with your changes applied."
             ),
             parameters={
                 "type": "object",
@@ -465,16 +547,62 @@ def _register_tools() -> None:
             _write_file(path, content, project_path),
     )
 
+    # edit_file
+    _TOOLS["edit_file"] = (
+        ToolDefinition(
+            name="edit_file",
+            description=(
+                "Make a targeted edit to a file by replacing exact text with new text.\n\n"
+                "WHEN TO USE: To change a specific section of a file without rewriting\n"
+                "the whole thing. Use when you know the exact text surrounding the change.\n\n"
+                "WHEN NOT TO USE: For creating new files (use write_file).\n"
+                "For large rewrites where the surrounding context is complex (use write_file\n"
+                "after reading the full file).\n\n"
+                "BEHAVIOR: Finds old_text exactly in the file (no regex, no fuzzy matching).\n"
+                "Replaces only the first unique occurrence. Must be unique in the file\n"
+                "or the edit is rejected. All paths are sandboxed to the project directory.\n\n"
+                "IMPORTANT: Both old_text and new_text are matched literally.\n"
+                "Copy the exact surrounding context (including whitespace and newlines)\n"
+                "to ensure the match succeeds. Use write_file if the text is not unique\n"
+                "or you need a full file rewrite.\n\n"
+                "COMMON PATTERNS:\n"
+                "- Change a function body: include the def line so context is unique\n"
+                "- Add a new import: include adjacent imports so the match is unique\n"
+                "- Fix a bug: include the buggy lines plus a few lines of surrounding context"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative path within the project directory"},
+                    "old_text": {"type": "string", "description": "Exact text to find and replace — must be unique in the file"},
+                    "new_text": {"type": "string", "description": "Replacement text"},
+                },
+                "required": ["path", "old_text", "new_text"],
+            },
+            requires_approval=False,
+        ),
+        lambda path, old_text, new_text, project_path, **kwargs:  # type: ignore
+            _edit_file(path, old_text, new_text, project_path),
+    )
+
     # exec_command
     _TOOLS["exec_command"] = (
         ToolDefinition(
             name="exec_command",
             description=(
-                "Run a shell command in the project directory. "
-                "The PM must approve each exec_command call before it runs. "
-                "Blocked commands (rm -rf /, mkfs, etc.) are always denied. "
-                "Returns stdout+stderr, truncated at 100KB. "
-                "Timeout defaults to 30s."
+                "Run a shell command in the project directory.\n\n"
+                "WHEN TO USE: Running tests, linters, build scripts, git commands,\n"
+                "checking environment (python version, installed packages).\n\n"
+                "WHEN NOT TO USE: Creating files (use write_file). Reading files\n"
+                "(use read_file). Listing directories (use list_files).\n\n"
+                "BEHAVIOR: PM must approve each call before execution.\n"
+                "Blocked commands (rm -rf /, mkfs, fork bombs) are always denied.\n"
+                "Returns stdout+stderr combined, truncated at 100KB.\n"
+                "Default timeout 30s, max 120s.\n\n"
+                "COMMON PATTERNS:\n"
+                "- Run tests: exec_command with 'pytest' or 'python -m pytest'\n"
+                "- Check git status: exec_command with 'git status'\n"
+                "- Install deps: exec_command with 'pip install -e .'"
             ),
             parameters={
                 "type": "object",
@@ -495,8 +623,14 @@ def _register_tools() -> None:
         ToolDefinition(
             name="list_files",
             description=(
-                "List files and subdirectories in a project directory. "
-                "Does not recurse by default. Skips .git, node_modules, __pycache__."
+                "List files and subdirectories in a project directory.\n\n"
+                "WHEN TO USE: Understanding project structure before diving into code.\n"
+                "Finding test files related to a module. Exploring an unfamiliar project.\n\n"
+                "WHEN NOT TO USE: Reading file contents (use read_file).\n"
+                "Searching for text patterns (use search_files).\n\n"
+                "BEHAVIOR: Non-recursive by default. Use recursive=True for full tree.\n"
+                "Skips .git, node_modules, __pycache__, .pytest_cache.\n"
+                "Shows file sizes for context."
             ),
             parameters={
                 "type": "object",
@@ -517,9 +651,19 @@ def _register_tools() -> None:
         ToolDefinition(
             name="search_files",
             description=(
-                "Search for text patterns in project files using grep. "
-                "Returns matching lines with file paths and line numbers. "
-                "Times out after 10s."
+                "Search for text patterns in project files using grep.\n\n"
+                "WHEN TO USE: Finding all callers of a function. Finding all imports\n"
+                "of a module. Finding usages of a variable or class. Finding error\n"
+                "strings to locate where they originate.\n\n"
+                "WHEN NOT TO USE: Finding files by name (use list_files).\n"
+                "Reading a specific file (use read_file).\n\n"
+                "BEHAVIOR: Returns matching lines with file paths and line numbers.\n"
+                "Supports regex. Use file_type to filter by extension (e.g. 'py').\n"
+                "Times out after 10s.\n\n"
+                "COMMON PATTERNS:\n"
+                "- Find function definition: search_files with 'def my_function'\n"
+                "- Find all usages: search_files with 'my_function(' file_type='py'\n"
+                "- Find import references: search_files with 'from mymodule import'"
             ),
             parameters={
                 "type": "object",
@@ -541,9 +685,13 @@ def _register_tools() -> None:
         ToolDefinition(
             name="web_search",
             description=(
-                "Search the web using Brave Search. "
-                "Requires BRAVE_API_KEY environment variable. "
-                "Returns title, URL, and snippet for each result."
+                "Search the web using Brave Search.\n\n"
+                "WHEN TO USE: Looking up API documentation, library references,\n"
+                "error message solutions, or current best practices.\n\n"
+                "WHEN NOT TO USE: Searching project files (use search_files).\n"
+                "Reading a URL's content (use web_fetch).\n\n"
+                "BEHAVIOR: Returns title, URL, and snippet for each result.\n"
+                "Default 5 results, max 10. Requires BRAVE_API_KEY env var."
             ),
             parameters={
                 "type": "object",
@@ -563,9 +711,14 @@ def _register_tools() -> None:
         ToolDefinition(
             name="web_fetch",
             description=(
-                "Fetch and extract readable text from a URL. "
-                "Strips HTML tags and returns plain text, truncated at 10,000 chars. "
-                "Only works on HTML/text pages."
+                "Fetch and extract readable text from a URL.\n\n"
+                "WHEN TO USE: Reading documentation pages, API references,\n"
+                "or GitHub repos that you found via web_search.\n\n"
+                "WHEN NOT TO USE: Searching the web (use web_search).\n"
+                "Reading local files (use read_file).\n\n"
+                "BEHAVIOR: Strips HTML tags, returns plain text.\n"
+                "Truncated at 10,000 chars by default (adjustable via max_chars).\n"
+                "Only works on HTML/text pages, not PDFs or binaries."
             ),
             parameters={
                 "type": "object",

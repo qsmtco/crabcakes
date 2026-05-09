@@ -38,6 +38,30 @@ class LLMProviderConfig:
 
 
 @dataclass
+class EnforcementConfig:
+    """Configuration for the enforcement layer."""
+    enabled: bool = True
+    syntax_check: bool = True
+    test_run: bool = True
+    lint_check: bool = True
+    syntax_timeout_seconds: int = 10
+    test_timeout_seconds: int = 60
+    lint_timeout_seconds: int = 15
+    max_output_chars: int = 2000
+    skip_patterns: list[str] = field(default_factory=lambda: [
+        "*.md", "*.txt", "*.rst", "*.adoc",
+        "*.json", "*.yaml", "*.yml", "*.toml",
+        "*.cfg", "*.ini", "*.conf",
+        "*.css", "*.scss", "*.less",
+        "*.html", "*.htm", "*.xml", "*.svg",
+        "*.png", "*.jpg", "*.jpeg", "*.gif", "*.ico", "*.webp",
+        "*.woff", "*.woff2", "*.ttf", "*.eot",
+        "*.lock", "*.map",
+        "LICENSE*", "README*",
+    ])
+
+
+@dataclass
 class AgentConfig:
     """Top-level agent runtime configuration."""
     providers: dict[str, LLMProviderConfig] = field(default_factory=dict)
@@ -49,6 +73,7 @@ class AgentConfig:
     cost_limit: float | None = None    # per-conversation USD limit
     step_limit: int | None = None      # per-conversation turn limit
     review_staging_dirname: str = ".crabcakes_review_staging"  # shadow dir for review-mode writes
+    enforcement: EnforcementConfig = field(default_factory=EnforcementConfig)
 
 
 # ── Config loading ─────────────────────────────────────────────────────────────
@@ -134,6 +159,23 @@ def load_agent_config(config_path: str | None = None) -> AgentConfig:
             max_tokens=prov.get("max_tokens", 128_000),
         )
 
+    # Parse enforcement config
+    enf_raw = raw.get("enforcement", {})
+    if isinstance(enf_raw, dict):
+        enforcement = EnforcementConfig(
+            enabled=enf_raw.get("enabled", True),
+            syntax_check=enf_raw.get("syntax_check", True),
+            test_run=enf_raw.get("test_run", True),
+            lint_check=enf_raw.get("lint_check", True),
+            syntax_timeout_seconds=enf_raw.get("syntax_timeout_seconds", 10),
+            test_timeout_seconds=enf_raw.get("test_timeout_seconds", 60),
+            lint_timeout_seconds=enf_raw.get("lint_timeout_seconds", 15),
+            max_output_chars=enf_raw.get("max_output_chars", 2000),
+            skip_patterns=enf_raw.get("skip_patterns", EnforcementConfig().skip_patterns),
+        )
+    else:
+        enforcement = EnforcementConfig()
+
     return AgentConfig(
         providers=providers,
         default_provider=raw.get("default_provider", "openai"),
@@ -143,6 +185,7 @@ def load_agent_config(config_path: str | None = None) -> AgentConfig:
         auto_save_conversations=raw.get("auto_save_conversations", True),
         cost_limit=raw.get("cost_limit"),
         step_limit=raw.get("step_limit"),
+        enforcement=enforcement,
     )
 
 

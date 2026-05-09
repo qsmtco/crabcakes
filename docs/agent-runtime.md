@@ -176,7 +176,6 @@ class SpecialAgentDef:
     emoji: str                    # e.g. "🛠️"
     color: str                    # hex color from AGENT_COLORS
     tools: list[str]              # tool names this agent can use
-    system_prompt_template: str   # template with {project_name}, {file_context}, etc.
     can_write: bool               # whether write_file is in the default tool set
 
 SPECIAL_AGENTS: dict[str, SpecialAgentDef] = {
@@ -186,7 +185,6 @@ SPECIAL_AGENTS: dict[str, SpecialAgentDef] = {
         emoji="🛠️",
         color="#6366f1",
         tools=["read_file", "write_file", "exec_command", "list_files", "search_files", "web_search", "web_fetch"],
-        system_prompt_template=CODER_PROMPT_TEMPLATE,
         can_write=True,
     ),
     "special:debugger": SpecialAgentDef(
@@ -195,7 +193,6 @@ SPECIAL_AGENTS: dict[str, SpecialAgentDef] = {
         emoji="🐛",
         color="#f43f5e",
         tools=["read_file", "exec_command", "list_files", "search_files", "web_search", "web_fetch"],
-        system_prompt_template=DEBUGGER_PROMPT_TEMPLATE,
         can_write=False,
     ),
 }

@@ -139,6 +139,58 @@ def _build_directory_tree(project_path: str, max_lines: int = 200) -> str:
     return "\n".join(lines)
 
 
+def _read_crabcakes_docs(project_path: str, max_size: int = 50 * 1024) -> str:
+    """
+    Read all .crabcakes/ project documentation files.
+
+    These are always small and always relevant — architecture, requirements,
+    context, tasks, team, workflow. Included first in every file context
+    so the agent always has project docs before exploring the tree.
+
+    Args:
+        project_path: Absolute path to the project root.
+        max_size: Skip files larger than this.
+
+    Returns:
+        Concatenated sections, each prefixed with ``## .crabcakes/{name}``.
+        Empty string if .crabcakes/ does not exist.
+    """
+    crab_dir = os.path.join(project_path, ".crabcakes")
+    if not os.path.isdir(crab_dir):
+        return ""
+
+    DOC_NAMES = (
+        "architecture.md", "requirements.md", "context.md",
+        "tasks.md", "team.json", "workflow.md",
+        "awareness.json", "project.md",
+    )
+
+    sections: list[str] = []
+    try:
+        entries = os.listdir(crab_dir)
+    except OSError:
+        return ""
+
+    for name in entries:
+        if name not in DOC_NAMES:
+            continue
+        file_path = os.path.join(crab_dir, name)
+        if not os.path.isfile(file_path):
+            continue
+        try:
+            size = os.path.getsize(file_path)
+            if size > max_size:
+                content = f"[File too large to display — {size // 1024}KB]"
+            else:
+                with open(file_path, encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+        except OSError:
+            continue
+        sections.append(f"## .crabcakes/{name}\n\n{content}\n")
+
+    return "\n".join(sections)
+
+
 def _read_key_files(project_path: str) -> str:
     """
     Read key project files for context: README, ARCHITECTURE, package.json, etc.
@@ -212,6 +264,11 @@ def build_file_context(
     patterns = _load_gitignore_patterns(project_path)
     parts: list[str] = []
 
+    # §4.4a quick win: always include .crabcakes/ project docs first
+    crab_docs = _read_crabcakes_docs(project_path)
+    if crab_docs:
+        parts.append(f"## Project docs\n\n{crab_docs}\n\n")
+
     if query:
         # Query mode: find files matching the query string
         matches = _find_matching_files(project_path, query, patterns)
@@ -239,6 +296,28 @@ def build_file_context(
 
     # Truncate, keeping as much as possible from the end (most recent context)
     return full[:max_chars] + f"\n\n[... file context truncated to {max_chars} chars ...]"
+
+
+def _load_crabcakes_doc(doc_name: str, project_path: str, max_size: int = 50 * 1024) -> str | None:
+    """
+    Read a single .crabcakes/ doc. Returns content or None if missing/large.
+
+    Reserved for future use by ``utils/prompt_loader`` when the system prompt
+    needs individual doc injection (per ARCHITECTURE.md §4.4a).
+    Currently unused but kept for API completeness — do not remove.
+    """
+    crab_dir = os.path.join(project_path, ".crabcakes")
+    file_path = os.path.join(crab_dir, doc_name)
+    if not os.path.isfile(file_path):
+        return None
+    try:
+        size = os.path.getsize(file_path)
+        if size > max_size:
+            return None
+        with open(file_path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return None
 
 
 def _find_matching_files(

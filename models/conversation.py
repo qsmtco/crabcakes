@@ -74,6 +74,7 @@ class Message:
     tool_call_id: str | None = None      # non-None only for tool-result messages
     timestamp: datetime = field(default_factory=datetime.now)
     tokens_used: int = 0                 # tokens consumed by this message
+    is_summary: bool = False             # True for injected summary-on-trim messages
 
     @property
     def is_tool_call(self) -> bool:
@@ -212,11 +213,18 @@ class Conversation:
         Trim oldest messages to stay under token limit.
 
         Keeps:
-        - The system prompt (never removed)
-        - The most recent exchange intact (user + assistant + optional tool_result + final assistant)
+        - The system prompt (never removed — stored separately in Conversation)
+        - The most recent exchange intact (user + assistant + optional tool_result
+          + final assistant)
 
-        Tool call/result pairs are removed together as a unit (ASSISTANT tool_calls + TOOL_RESULT).
-        Only removes when at least one full user→assistant exchange can be preserved.
+        Tool call/result pairs are removed together as a unit. Only removes when
+        at least one full user→assistant exchange can be preserved.
+
+        §4.10 (Summary on trim): After trimming, if the conversation is long
+        enough (8+ messages remaining), a compact summary of the trimmed user
+        messages is injected as an assistant message before the preserved tail.
+        This prevents the model from losing context of what was accomplished in
+        the removed exchanges.
         """
         while self.get_token_estimate() > max_tokens and len(self.messages) > 4:
             removed = False
@@ -247,6 +255,62 @@ class Conversation:
                         break
                 else:
                     break
+
+        # §4.10: Inject summary when old messages are removed so the model
+        # doesn't lose context of what was accomplished in the trimmed turns.
+        # Only fires when the conversation is long enough that meaningful work
+        # was trimmed (8+ messages, enough room for both a summary and a tail).
+        if len(self.messages) >= 8:
+            summary = self._last_exchange_summary()
+            if summary:
+                # Bug 1 fix: skip injection if it would push us back over the budget.
+                summary_tokens = len(summary) // 4
+                current_tokens = self.get_token_estimate()
+                if current_tokens + summary_tokens > max_tokens:
+                    return  # skip — injecting would exceed budget
+                # Inject summary as an assistant message right before the preserved tail
+                # (at index len-4, before the "always keep" last-4 messages).
+                summary_msg = Message(role=MessageRole.ASSISTANT, content=summary, is_summary=True)
+                insert_at = max(1, len(self.messages) - 4)
+                self.messages.insert(insert_at, summary_msg)
+
+    def _last_exchange_summary(self) -> str:
+        """
+        Generate a summary of the oldest trimmed user messages.
+
+        Called after trim_to_token_limit removes old exchanges.
+        The summary is injected as an assistant message before the preserved
+        tail so the model doesn't lose context of what was accomplished.
+
+        Returns empty string when the conversation is too short to summarize
+        meaningfully (< 4 messages) or when no user messages remain to capture.
+        """
+        if not self.messages:
+            return ""
+
+        # Collect user message content from the trimmed portion of the conversation.
+        # The ``tail_preserve`` messages (last 4: user + assistant + tool_result + assistant)
+        # are excluded so the summary only covers the part that was actually removed.
+        tail_preserve = 4
+        if len(self.messages) <= tail_preserve:
+            return ""
+
+        user_contents: list[str] = []
+        for msg in self.messages[:-tail_preserve]:
+            if msg.role == MessageRole.USER:
+                user_contents.append(msg.content.strip())
+
+        if not user_contents:
+            return ""
+
+        lines = [f"Conversation so far ({len(user_contents)} prior turns):"]
+        for i, content in enumerate(user_contents[:5], 1):
+            preview = content[:100] + ("…" if len(content) > 100 else "")
+            lines.append(f"  {i}. {preview}")
+        if len(user_contents) > 5:
+            lines.append(f"  … and {len(user_contents) - 5} more turns")
+
+        return "\n".join(lines)
 
     # ── Cost tracking ─────────────────────────────────────────────────────────
 

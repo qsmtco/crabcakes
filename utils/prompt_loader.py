@@ -7,6 +7,12 @@
 #   load_prompt_template(name) -> str | None
 #   fill_template(template, variables) -> str
 #   compose_system_prompt(agent_name, project_path, ...) -> str
+#
+# Token budget note:
+#   The composed system prompt for Coder (all templates + tool descriptions) is
+#   approximately 14K chars / ~3.5K tokens. Tool descriptions alone are ~3.8K chars.
+#   For a 128K context model this is negligible (<3%). For smaller models, monitor.
+#   Set CRABCAKES_PROMPT_DEBUG=1 to dump the full composed prompt to stdout.
 
 import os
 import logging
@@ -168,5 +174,15 @@ def compose_system_prompt(
         file_context = build_file_context(project_path)
         if file_context:
             result += f"\n\n## File context\n\n{file_context}"
+
+    # Debug dump — set CRABCAKES_PROMPT_DEBUG=1 to inspect the full composed prompt
+    if os.environ.get("CRABCAKES_PROMPT_DEBUG"):
+        import sys
+        print(f"\n{'='*60}", file=sys.stderr)
+        print(f"COMPOSED PROMPT ({len(result)} chars / ~{len(result)//4} tokens)", file=sys.stderr)
+        print(f"Agent: {agent_name} | Role: {agent_role}", file=sys.stderr)
+        print(f"{'='*60}\n", file=sys.stderr)
+        print(result, file=sys.stderr)
+        print(f"\n{'='*60}\n", file=sys.stderr)
 
     return result

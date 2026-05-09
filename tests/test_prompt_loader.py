@@ -70,7 +70,7 @@ class TestComposeSystemPrompt:
     def test_coder_template_included(self):
         prompt = compose_system_prompt(agent_name="Coder", agent_role="coder")
         assert "Coder" in prompt
-        assert "Coding" in prompt or "software" in prompt.lower()
+        assert "Core Principles" in prompt or "software" in prompt.lower()
 
     def test_debugger_template_included(self):
         prompt = compose_system_prompt(agent_name="Debugger", agent_role="debugger")
@@ -122,7 +122,7 @@ class TestVariableContractIntegration:
         provided_vars = {
             "AGENT_NAME", "PROJECT_PATH", "PROJECT_NAME",
             "TEAM_ROSTER", "CURRENT_STATE", "PROJECT_MEMORY",
-            "REVIEW_MODE", "TOOL_LIST",
+            "REVIEW_MODE", "TOOL_LIST", "WORKFLOW_STATUS",
         }
 
         unresolved = template_vars - provided_vars

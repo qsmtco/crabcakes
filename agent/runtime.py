@@ -26,6 +26,9 @@ from typing import TYPE_CHECKING, Any, Callable
 if TYPE_CHECKING:
     from models.conversation import Conversation
 
+from agent.enforcement import check as _enforcement_check
+
+import logging
 logger = logging.getLogger(__name__)
 
 # ── Cost tables (USD per 1M tokens) ─────────────────────────────────────────
@@ -751,6 +754,7 @@ class AgentRuntime:
         on_response_complete: Callable | None = None,
         on_token_usage: Callable | None = None,
         on_error: Callable | None = None,
+        on_enforcement_status: Callable | None = None,
     ):
         self._config = config
         self._GLib = GLib
@@ -761,6 +765,7 @@ class AgentRuntime:
         self._on_response_complete = on_response_complete
         self._on_token_usage = on_token_usage
         self._on_error = on_error
+        self._on_enforcement_status = on_enforcement_status
 
         # conversation_key → Conversation
         self._conversations: dict[str, Any] = {}
@@ -1013,6 +1018,32 @@ class AgentRuntime:
                         set_approval_callback(prev_cb)
                     logger.debug("[tool-loop] sk=%s tool %s result: success=%s output_len=%d",
                                  session_key, tool_name, result.success, len(result.output or ""))
+
+                    # === ENFORCEMENT LAYER HOOK ===
+                    if tool_name in ("write_file", "edit_file") and self._config.enforcement.enabled:
+                        enf_result = _enforcement_check(
+                            tool_name, args, result,
+                            conv.project_path or "/tmp",
+                            self._config.enforcement,
+                        )
+                        if enf_result.appended_message:
+                            result = dataclasses.replace(
+                                result,
+                                output=(result.output or "") + "\n" + enf_result.appended_message,
+                            )
+                            for check in enf_result.checks:
+                                self._dispatch(
+                                    self._on_enforcement_status,
+                                    session_key, tool_name,
+                                    {
+                                        "tier": check.tier,
+                                        "file": check.file,
+                                        "passed": check.passed,
+                                        "detail": check.detail,
+                                    },
+                                )
+                    # === END ENFORCEMENT HOOK ===
+
                     tc.mark_completed(result.output if result.success else result.error or "")
                     conv.add_tool_result(call_id, tc.result or "")
                     self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "")
