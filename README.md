@@ -1,180 +1,211 @@
-# CrabCakes PDE
+# CrabCakes — The First Project Development Environment
 
-**The world's first Project Development Environment.**
-
-Where your project is the goup chat. Where the social media style project feed is the dashboard. Where agents are your team.
+**Not an AI assistant. Not a chatbot. A complete development environment where your project is the team.**
 
 ---
 
-## What is this?
+## What is it?
 
-CrabCakes is a **native GTK4 desktop application** that turns multi-agent chat into a project development environment. It connects to an [OpenClaw](https://github.com/openclaw/openclaw) gateway, discovers your agents, and gives them a shared workspace — complete with project group chat, task management, git-backed code review, and automatic convergence detection.
+CrabCakes is a standalone desktop application that reimagines project management as a social feed. Your project has its own group chat. Your agents are team members. Your feed is the dashboard. Everything happens in one window — decisions, code, reviews, tasks — visible in real time, searchable, persistent.
 
-This isn't an IDE with a chatbot bolted on. This is a fundamentally different mental model:
+You can open it right now and start working. **No gateway required.** Coder and Debugger are built in, running locally on your machine with full file and shell access. Connect to OpenClaw and you gain access to your remote agents too — but you don't need to.
 
-> **The project IS the chat. The feed IS the dashboard. Agents are first-class collaborators you manage like a team.**
-
-You create a project. You bring in your agents. You work together in a shared feed. Everything that happens — decisions, code changes, consultations, task completions — appears as structured cards in a real-time project feed. You never switch windows. You never lose context. You just work.
+This is the first PDE. A Project Development Environment.
 
 ---
 
-## Why it exists
+## The core idea
 
-Every AI coding tool makes the same trade-off: either the agent works alone (great for speed, terrible for quality) or a human supervises every action (great for control, terrible for scale). The moment you want two agents to collaborate — one writing, one reviewing, one debugging — you're duct-taping prompts together and hoping the output doesn't confuse the agent
+Every tool today makes the same trade-off: agents work alone (fast, uncontrolled) or humans supervise every action (safe, unscalable). The moment you want two agents to collaborate — one writing, one reviewing — you're duct-taping prompts together and hoping nothing breaks.
 
-The real problem isn't making agents do things. The real problem is **orchestrating agents as a team** — giving them shared context, a shared feed, a shared task system, and a shared review layer. That's what CrabCakes solves.
+The real problem isn't making agents do things. It's **orchestrating them as a team**.
 
-It was designed around one insight: **the model is the commodity. The harness is the differentiator.** CrabCakes is that harness.
+CrabCakes solves this by making the project itself the social context. Not a prompt you feed them. Not a task list you manage. The actual project — its files, its history, its team — is what they operate inside.
+
+> **The project IS the chat. The feed IS the dashboard. Agents are teammates you manage.**
 
 ---
 
-## Features
+## What you get
 
-### 🌊 Project Group Chat
-Your entire project team — human and agents alike — in one tab. Open a project, type a message, and it fans out to every member simultaneously. Responses route back to the project tab. Every exchange is visible to you, so you always know exactly what's happening and why.
+### 🏠 Standalone — Runs With or Without OpenClaw
 
-```
-Project: ManoPea
-Members: QTR, Qaster, Coder, Debugger (you)
+CrabCakes launches and is immediately functional. Two built-in agents — **Coder** and **Debugger** — run locally on your machine. They have full file access, shell execution, and enforcement guards that verify every change: syntax check → test run → lint validation — automatically, after every write.
 
-──────────────────────────────────────────────────────
-You:     @Coder — implement the booking flow endpoint
-Coder:   On it. Starting with the Prisma schema...
-QTR:     @Coder I already have the schema ready in 
-         auth/models.py — check there first
-Coder:   Perfect, using your schema. Consultation 
-         card posted.
-         [Consultation card appears in project feed]
-```
+No gateway. No cloud. No account required.
 
-### 🤖 Special Agents — Coder & Debugger
-Two agents run **locally**, directly on your machine, without a gateway. They have full file access, shell execution, and enforcement guards that verify every write: syntax checks, test runs, and lint validation — automatically, after every change.
+When you do connect to OpenClaw, your remote agents join the project chat seamlessly. The toolbar shows your connection state at all times. Offline mode is a first-class feature, not a degraded fallback.
 
-- **Coder** — reads your architecture docs, writes production code, emits diff cards for every file change
-- **Debugger** — attaches to failed sessions, analyzes errors, proposes and validates fixes
+---
 
-Both agents are project-aware from the first message. They read your `.crabcakes/` project docs (architecture, requirements, context, tasks) and stay aligned with your codebase's conventions at all times.
+### 💬 Project Group Chat — The Project IS the Chat
 
-### 🔍 Convergence Detection
-Agents always respond — that's what LLMs do. The hard problem is knowing when they're *done*. CrabCakes implements a **convergence detection system** trained on 266 real multi-agent conversations. It reads 10 behavioral signals — response length decay, semantic novelty, word entropy, topic stability — and automatically closes consultation threads when the work is naturally finished.
-
-No hard turn limits. No magic keywords. No manual "stop" required.
+Open a project and the team appears. Every member — you, Coder, Debugger, your OpenClaw agents — shares a single conversation. Type a message, it fans out to everyone simultaneously. Responses route back to the project tab.
 
 ```
-Coder:   Ready. Auth flow implemented.
-         [convergence detected → consultation closes 
-          automatically]
+Project: CargoAPI — 4 members online
+
+You:       @Coder — implement the rate limiter
+Coder:     On it. Starting with the token bucket.
+QTR:        @Coder I left a draft in lib/ratelimit.py 
+            from last week — use that as a base
+Coder:     Perfect. Consulting QTR first.
+            [consultation opens with QTR]
 ```
 
-Built on a Random Forest with 200 trees. **99.1% accuracy.** Runs locally in sub-millisecond time. No GPU, no cloud dependency.
+You see everything. You control what gets merged. Agents collaborate with each other and you watch it happen in real time.
 
-### 📋 Task System
-Structured task management baked into the project feed. Create tasks, assign them to agents, track priority and status.
+---
 
-| Command | What it does |
-|---------|-------------|
-| `` `task @Coder — fix the null pointer in user.py `` | Creates a task, assigns to Coder |
-| `` `start #3 `` | Begins work on task #3 |
-| `` `done #3 — resolved with a guard clause `` | Marks task complete with notes |
-| `` `blocked #5 — waiting on API spec `` | Reports a blocker |
-| `` `tasks `` | Shows all tasks in the project feed |
-| `` `priority #2 high `` | Sets priority level |
+### 🐟 Convergence Detection — Agents Know When They're Done
 
-Every task command emits a card to the project feed. The full task history is always visible.
+Agents always respond. The hard part is knowing when they're *finished*.
 
-### 🪵 CrabCards — Structured Project Feed
-Every significant action in the project generates a **CrabCard** — a structured activity card in the feed. Not a wall of chat text. Not a raw terminal dump. A scannable, actionable signal.
+CrabCakes runs a **convergence detection engine** trained on 266 real multi-agent conversations. It reads 10 behavioral signals — response length decay, semantic novelty, word entropy, topic stability — and automatically closes consultation threads when the work is naturally done.
 
-**Types:**
+```
+Coder:   Ready. Auth middleware is passing all tests.
+         [convergence detected → consultation closes]
+QTR:     Confirmed. Reviewing the diff now.
+```
 
-- **`diff`** — a file was changed. Shows additions, deletions, and the actual diff. Click to review.
-  ```
-  ┌─────────────────────────────────────────────┐
-  │ 📄 auth/middleware.py                      │
-  │ +12 −3  ·  Coder                           │
-  │ ─ def old():                               │
-  │ + def new():                               │
-  │ +     if user is None:                     │
-  │ +         raise ValueError(...)             │
-  └─────────────────────────────────────────────┘
-  ```
+No hard turn limits. No magic keywords. No manual "stop" required. Built on a Random Forest with 200 trees. **99.1% accuracy.** Runs locally in sub-millisecond time.
 
-- **`agent_action`** — an agent signaled intent or a decision. Used for consultation starts, consultation closes, and task completions.
-  ```
-  ┌─────────────────────────────────────────────┐
-  │ 💬 Consulting @QTR on token validation     │
-  │ Coder · consultation                        │
-  └─────────────────────────────────────────────┘
-  ```
+---
 
-- **`review_request`** — a block of code is ready for PM review.
+### 📋 Task System — No Context Switching
 
-### 🔬 Enforcement Layer
-When Coder writes a file, three things happen automatically, in sequence:
+Task management baked into the project feed. Create, assign, track, and close tasks without leaving the conversation.
 
-1. **Syntax guard** — `py_compile` / `node --check` / equivalent runs immediately after every write
-2. **Test runner** — detects the test framework, finds relevant tests, runs them against the changed file
-3. **Lint check** — detects the linter, runs it on the changed file
+| Command | Result |
+|---------|--------|
+| `` `task @Coder — implement the auth middleware `` | Creates task, assigns to Coder |
+| `` `start #3 `` | Begins work, emits card to feed |
+| `` `done #3 — all tests passing `` | Closes task with notes |
+| `` `blocked #7 — waiting on API spec `` | Escalates to feed |
+| `` `priority #2 high `` | Reorders work queue |
+| `` `tasks `` | Shows full project task board in feed |
 
-If any step fails, Coder receives the error output and self-corrects before the file is considered done. No prompt reminders. No hoping the model remembers to verify. The enforcement layer *makes* it happen.
+Every action emits a structured card to the project feed. Full history always visible.
 
-### 🦀 CrabWatch — Live Filesystem Monitoring
-Every file in your project is watched in real time. Changes made outside CrabCakes (git operations, manual edits, external tools) are detected and reflected in the feed — no refresh required.
+---
 
-### 📝 Code Review Layer
-Git-backed code review for every agent write:
+### 📰 Project Feed — Your Social Dashboard
 
-1. **Checkpoint** — agent writes trigger a `git add -A` and diff against the last checkpoint
-2. **Review** — you see the full unified diff in the project chat: file by file, hunk by hunk
-3. **Accept/Reject** — Accept commits the changes. Reject resets to the checkpoint SHA
+Every significant action generates a **card** — not a wall of chat text, not a raw terminal dump. A scannable, actionable signal.
 
-Agents can continue working while you review. Nothing is merged until you say so.
+**Diff cards** — a file was changed. Shows additions, deletions, the full diff. Click to review.
+```
+┌──────────────────────────────────────────────────┐
+│ 📄 auth/middleware.py — Coder                  │
+│ +12 −3                                          │
+│  ─ def old():                                  │
+│  + def new():                                  │
+│  +     if user is None:                         │
+│  +         raise ValueError(...)                │
+└──────────────────────────────────────────────────┘
+```
+
+**Task cards** — created, started, completed, blocked.
+
+**Review cards** — checkpoint diff ready for your review. Accept or reject with one click.
+
+**Agent action cards** — consultation opens, consultation closes, agent signals a decision.
+
+---
+
+### 🔍 Git-Backed Code Review
+
+Every agent write is checkpointed before it reaches your codebase:
+
+1. **Checkpoint** — agent writes trigger a `git add -A` against the last clean state
+2. **Diff** — you see the full unified diff: file by file, hunk by hunk
+3. **Accept / Reject** — Accept commits the change. Reject resets to the checkpoint SHA
+
+Agents can keep working while you review. Nothing touches your codebase until you approve it. Multiple agents can be writing simultaneously — each writes to its own branch, and you accept or reject each diff independently.
+
+---
+
+### 🤖 Built-In Coding Agents — Coder & Debugger
+
+**Coder** — reads your architecture docs, your `.crabcakes/` project context, your team roster. Writes production code. Emits a diff card for every file change. Self-corrects on enforcement failures before the file is considered done.
+
+**Debugger** — attaches to failed sessions, analyzes the error, proposes a fix, validates it against your test suite, and reports back.
+
+Both are project-aware from the first message. They know your conventions, your project structure, your .gitignore. They don't start cold — they read your docs first.
+
+Enforcement runs automatically after every write:
+1. **Syntax guard** — `py_compile` / `node --check` runs immediately
+2. **Test runner** — detects your test framework, runs relevant tests
+3. **Lint check** — runs your configured linter on the changed file
+
+If anything fails, the agent receives the error and self-corrects. No prompts. No reminders.
+
+---
 
 ### 🎙️ Voice Input
-Push-to-talk voice dictation powered by [whisper.cpp](https://github.com/ggerganov/whisper.cpp). No cloud. No latency. Hold a key, speak, release — your words appear in the input box. Particularly useful when you're mid-flow and switching from keyboard to voice saves a context switch.
 
-### ✨ Prompt Library
-70+ curated prompt templates organized in a searchable sidebar. Load a prompt into the input with one click. Prompts can include template variables (`{{VARIABLE_NAME}}`) that get filled from the current project context (project name, team roster, current git state, project memory). Use the built-in prompt improver to refine any template via the MiniMax API before loading it.
+Push-to-talk voice dictation powered by faster-whisper. No cloud. No latency. Hold a key, speak, release — your words land in the input box. Particularly useful when you're mid-flow and grabbing the keyboard would break your concentration.
 
-### 🔀 Session Switching
-Every agent maintains multiple concurrent sessions. Right-click any agent tab to open a popover session switcher — create new sessions, rename them, or switch between ongoing threads. Each session is a fully independent conversation context.
+---
+
+### ✨ Prompt Improvement
+
+Every prompt in the library can be refined before loading. The built-in prompt improver sends your template to the MiniMax API and returns a rewritten version with better structure, clearer instructions, and sharper edge cases. Templates can include variables (`{{PROJECT_NAME}}`, `{{TEAM}}`, `{{GIT_STATE}}`) that fill from the current project context.
+
+---
+
+### 💎 Chat Formatting — Readable at a Glance
+
+Chat bubbles are formatted for comprehension, not just display:
+
+- **Pango-aware escaping** — your code and special characters never break the layout
+- **Markdown rendering** — code blocks with syntax highlighting, inline code, bold, italic, links
+- **Segmented rendering** — text, code, URLs, and actions in a single bubble each styled correctly
+- **Action buttons** — forward messages, copy text, reply in-context
+- **Role differentiation** — visual distinction between You, Agent, System, and Error bubbles
+- **Thinking indicator** — animated indicator while agents are processing
+
+---
+
+### 📂 Project Browser — Always in Context
+
+File tree in the left panel shows your project structure. Open any file directly from the tree. Browse directories, see what's changed. The project you're working in is never more than a click away.
+
+Create new projects from the Projects tab. Open existing ones. Member management — add and remove agents from your project team — handled directly in the panel.
+
+---
+
+### 🔗 OpenClaw Integration — Optional
+
+When the gateway is running, CrabCakes connects to it and discovers your remote agents automatically. Remote agents appear alongside your local ones in the project chat. You can chat with them directly, add them to project teams, and collaborate across the full team — local and remote.
+
+When the gateway is offline, local agents keep working. The toolbar shows your connection state. You're never blocked by the gateway.
 
 ---
 
 ## Architecture
 
-CrabCakes is built on strict layer separation — a principle that makes it readable, maintainable, and trustworthy:
+Strict layer separation — makes the codebase readable, trustworthy, and testable:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  ui/                                                  │
-│  GTK4 widgets, handlers, views                        │
+│  ui/                                                   │
+│  GTK4 widgets, handlers, views                         │
 │  Never imports gateway/ or models/                     │
 ├─────────────────────────────────────────────────────────┤
-│  gateway/          models/          agent/            │
-│  WebSocket client  Pure data        Local agent        │
-│  No UI deps       No UI deps        runtime           │
-│                   No gateway deps   No UI deps        │
+│  gateway/        models/           agent/              │
+│  WebSocket       Pure data         Local agent         │
+│  No UI deps      No UI deps        runtime             │
+│                  No gateway deps   No UI deps          │
 ├─────────────────────────────────────────────────────────┤
-│  utils/                                                  │
+│  converge/                                           │
+│  Convergence detection engine — Random Forest          │
+├─────────────────────────────────────────────────────────┤
+│  utils/                                               │
 │  Pure Python — file I/O, prompts, STT, config          │
 └─────────────────────────────────────────────────────────┘
 ```
-
-**The rule:** `gateway/` and `models/` must never import from `ui/`. They are the foundation that the UI depends on — not the other way around. This means the gateway client is testable, the data models are deterministic, and the agent runtime is scriptable — all without loading a single GTK widget.
-
----
-
-## The stack
-
-| Layer | Technology |
-|-------|-----------|
-| UI framework | GTK4 (PyGObject) |
-| Network | `websockets` + `cryptography` (Ed25519 device auth) |
-| Agent runtime | OpenAI / MiniMax / Anthropic APIs |
-| Voice input | [whisper.cpp](https://github.com/ggerganov/whisper.cpp) (local) |
-| Code review | GitPython |
-| Threading | GLib main context dispatch |
 
 ---
 
@@ -184,16 +215,17 @@ CrabCakes is built on strict layer separation — a principle that makes it read
 # Install dependencies
 pip install pygobject websockets cryptography gitpython
 
-# Start the OpenClaw gateway (if not already running)
-openclaw gateway start
-
-# Launch CrabCakes
+# Launch — works immediately, no gateway required
 python main.py
+
+# If you want to connect to OpenClaw agents:
+openclaw gateway start
+# Then click Connect in the toolbar
 ```
 
-Click **Connect** to link to your gateway. Agents appear in the left sidebar — click any one to open a chat tab. Open a project directory to activate project group chat, task management, and the full development environment.
+---
 
-### Environment variables
+## Environment variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -211,61 +243,55 @@ Click **Connect** to link to your gateway. Agents appear in the left sidebar —
 pytest
 ```
 
-95 tests covering agent management, chat routing, gateway lifecycle, project I/O, media handling, and prompt improvement. All passing.
-
 ---
 
-## What's in the box
+## What's inside
 
 ```
 crabcakes/
-├── main.py                      # Entry point
-├── gateway/                     # WebSocket client + v3 device auth
-│   └── client.py                # Threaded, auto-reconnecting
-├── models/                      # Pure data: agents, tasks, feed cards, reviews
-├── agent/                       # Local runtime for Coder + Debugger
-│   ├── runtime.py               # Tool loop, streaming, cost tracking
-│   ├── tools.py                 # read_file, write_file, edit_file, exec_command, ...
-│   ├── context.py               # System prompt builder + project awareness
-│   ├── enforcement.py           # Post-write syntax + test + lint guards
-│   └── special_agents.py        # Coder + Debugger agent definitions
+├── main.py                        # Entry point — creates app, runs Gtk.main()
+├── gateway/                       # WebSocket client — threaded, auto-reconnecting
+│   └── client.py                  # v3 device auth, event dispatch
+├── models/                        # Pure data: agents, tasks, feed cards, routing
+├── agent/                         # Local agent runtime
+│   ├── runtime.py                 # Tool loop, streaming, cost tracking
+│   ├── context.py                 # System prompt builder + project awareness
+│   ├── tools.py                   # read_file, write_file, edit_file, exec_command
+│   ├── enforcement.py            # Post-write syntax + test + lint guards
+│   └── special_agents.py         # Coder + Debugger agent definitions
+├── converge/                      # Convergence detection engine
+│   ├── converge.py                # Random Forest — 200 trees, 10 signals
+│   └── model.pkl                  # Pre-trained model
 ├── ui/
-│   ├── window.py                # Main window — composition root
-│   ├── handlers/                # Extracted logic modules
-│   │   ├── chat_handler.py      # Send, fan-out, routing, convergence
-│   │   ├── collab_handler.py    # ask / delegate / stop / tell commands
-│   │   ├── task_handler.py      # Task CRUD commands
-│   │   ├── review_handler.py    # Review session lifecycle
-│   │   └── agent_runtime_handler.py  # Coder/Debugger UI bridge
-│   └── views/                   # GTK4 widget factories
-│       ├── feed_card.py         # CrabCard renderers
-│       ├── diff_card.py         # Unified diff viewer
-│       └── chat_bubble.py       # Chat bubble factories
-├── converge/                    # Convergence detection engine
-│   ├── converge.py              # Random Forest convergence classifier
-│   └── model.pkl                # Pre-trained model (200 trees)
-├── utils/
-│   ├── prompt_loader.py         # System prompt composition engine
-│   ├── crabcard_parser.py        # CrabCard block parser
-│   ├── feed_store.py            # Feed JSON persistence
-│   ├── git_ops.py               # GitPython wrapper
-│   └── stt.py                   # Whisper.cpp push-to-talk engine
-└── prompts/
-    └── system/                  # 70+ agent prompt templates
-        ├── default.md           # Identity + tool instructions
-        ├── coder.md             # Full engineering methodology
-        ├── debugger.md          # Systematic diagnosis
-        ├── collab.md            # Agent-to-agent collaboration
-        └── ...
+│   ├── window.py                  # Main window — composition root
+│   ├── toolbar.py                 # Connection state + connect button
+│   ├── handlers/                  # Extracted logic
+│   │   ├── chat_handler.py       # Send, fan-out, routing, convergence
+│   │   ├── collab_handler.py     # ask / delegate / stop / tell
+│   │   ├── task_handler.py       # Task CRUD commands
+│   │   ├── review_handler.py     # Review session lifecycle
+│   │   ├── agent_runtime_handler.py  # Coder/Debugger lifecycle bridge
+│   │   └── chat_render_handler.py    # Escape + markdown + bubble pipeline
+│   └── views/
+│       ├── feed_card.py           # Diff, task, review, action card renderers
+│       ├── chat_bubble.py         # Bubble factories + segment rendering
+│       └── diff_card.py           # Unified diff viewer
+└── utils/
+    ├── escaping.py               # Pango-aware XML escape
+    ├── markdown.py               # Markdown → Pango Markup converter
+    ├── stt.py                    # faster-whisper push-to-talk
+    ├── improve.py               # MiniMax prompt improvement API
+    └── git_ops.py               # GitPython wrapper
 ```
 
 ---
 
 ## A note on the name
 
-CrabCakes is named after the Chesapeake Bay delicacy — sweet, rich, and built from parts that other people throw away. The project started as a way to make multi-agent collaboration actually work in practice, not just in demos. It now runs production systems.
+CrabCakes is named after the Chesapeake Bay delicacy — sweet, rich, and built from parts other people throw away. The project started as a way to make multi-agent collaboration actually work in practice, not just in demos. It now runs production systems.
 
 ---
 
 *Part of the Qontinuum Bridge project.*
 *CrabCakes: where your project is the chat.*
+*The first PDE.*
