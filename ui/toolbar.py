@@ -86,7 +86,7 @@ class Toolbar(Gtk.Box):
     def update_connection_state(self, state):
         """
         Update button label and status label based on connection state.
-        state: "disconnected" | "connecting" | "connected"
+        state: "disconnected" | "connecting" | "connected" | "offline"
         """
         if state == "connecting":
             self._connect_btn.set_label("Connecting…")
@@ -98,6 +98,12 @@ class Toolbar(Gtk.Box):
             self._connect_btn.add_css_class("destructive-action")
             self._status_label.set_markup(
                 '<span foreground="#22c55e" font_desc="Sans 10">● Connected</span>')
+        elif state == "offline":
+            self._connect_btn.set_label("Connect")
+            self._connect_btn.remove_css_class("destructive-action")
+            self._connect_btn.add_css_class("suggested-action")
+            self._status_label.set_markup(
+                '<span foreground="#8b8ba0" font_desc="Sans 10">● Offline — local agents available</span>')
         elif state == "disconnected":
             self._connect_btn.set_label("Connect")
             self._connect_btn.remove_css_class("destructive-action")

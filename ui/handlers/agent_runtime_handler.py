@@ -77,6 +77,17 @@ class AgentRuntimeHandler:
         # Used by Phase E to resolve approvals when PM clicks Approve/Deny.
         self._pending_approvals: dict[str, dict] = {}
 
+        self._on_agent_start_cb: Callable[[str], None] | None = None
+        self._on_agent_end_cb: Callable[[str], None] | None = None
+
+    def set_on_agent_start(self, cb: Callable[[str], None]) -> None:
+        """Set callback fired when a local agent starts processing. Signature: cb(session_key)."""
+        self._on_agent_start_cb = cb
+
+    def set_on_agent_end(self, cb: Callable[[str], None]) -> None:
+        """Set callback fired when a local agent finishes processing. Signature: cb(session_key)."""
+        self._on_agent_end_cb = cb
+
     def set_review_handler(self, review_handler) -> None:
         """Set ReviewHandler after construction (deferred to avoid circular deps with window._build)."""
         self._review_handler = review_handler
@@ -323,6 +334,9 @@ class AgentRuntimeHandler:
             chat_box = self._resolve_chat_box(session_key)
             if chat_box is not None:
                 self._crh.start_streaming(session_key, chat_box, "Agent")
+                # Fire lifecycle: agent started → ActivityHandler progress bar
+                if self._on_agent_start_cb:
+                    self._on_agent_start_cb(session_key)
         self._crh.update_streaming(session_key, self._streaming_text[session_key])
 
     def _on_tool_call_start(
@@ -614,6 +628,10 @@ class AgentRuntimeHandler:
                     chat_box.append(bubble)
                 self._mc.scroll_chat_to_bottom()
 
+        # Fire lifecycle: agent finished → ActivityHandler progress bar
+        if self._on_agent_end_cb:
+            self._on_agent_end_cb(session_key)
+
     def _on_token_usage(self, session_key: str, total_tokens: int, cost: float) -> None:
         """AgentRuntime token usage callback. Logged for now."""
         logger.info(
@@ -681,3 +699,7 @@ class AgentRuntimeHandler:
                 if bubble is not None:
                     chat_box.append(bubble)
                 self._mc.scroll_chat_to_bottom()
+
+        # Fire lifecycle: agent finished (error) → ActivityHandler returns to idle
+        if self._on_agent_end_cb:
+            self._on_agent_end_cb(session_key)

@@ -95,6 +95,7 @@ class MainWindow(Gtk.ApplicationWindow):
         # Create UI components
         toolbar = Toolbar(on_connect_clicked=self._on_connect_clicked)
         self._toolbar = toolbar
+        self._toolbar.update_connection_state("offline")
 
         self._main_content = MainContent()
 
@@ -364,6 +365,13 @@ class MainWindow(Gtk.ApplicationWindow):
         self._agent_runtime_handler.set_feed_handler(self._feed_handler)
         # Wire AgentRoutingTable into AgentRuntimeHandler (solo DM response routing)
         self._agent_runtime_handler.set_agent_routing(self._agent_to_project)
+        # Wire local agent lifecycle → ActivityHandler (offline mode progress bar)
+        self._agent_runtime_handler.set_on_agent_start(
+            lambda sk: self._activity_handler.on_agent_start(sk)
+        )
+        self._agent_runtime_handler.set_on_agent_end(
+            lambda sk: self._activity_handler.on_agent_end(sk)
+        )
         # Wire project lifecycle → ReviewHandler
         self._project_handler.set_on_project_opened(
             lambda n, p: (self._review_handler.on_project_opened(n, p))
@@ -611,19 +619,27 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _on_forward_clicked(self, text, anchor_widget, source_session_key=None):
         """Show a popover listing all other agents to forward text to."""
-        if self._gateway_handler is None:
-            return
-        agent_mgr = self._gateway_handler.agent_mgr
-        if agent_mgr is None:
-            return
-
-        # Collect other agent sessions (exclude the source agent)
-        source_name = agent_mgr.get_name(source_session_key) if source_session_key else None
+        # Build list of available agents:
+        #   - Special agents (always available, even offline)
+        #   - Gateway agents (only when connected)
         other_sessions = []
-        for page_idx, sk in self._main_content._tab_sessions.items():
-            name = agent_mgr.get_name(sk)
-            if name and (source_session_key is None or sk != source_session_key):
-                other_sessions.append((sk, name))
+
+        if self._agent_runtime_handler is not None:
+            for sk, name in self._agent_runtime_handler.get_special_agents().items():
+                if source_session_key is None or sk != source_session_key:
+                    other_sessions.append((sk, name))
+
+        agent_mgr = self._gateway_handler.agent_mgr if self._gateway_handler else None
+        if agent_mgr is not None:
+            for page_idx, sk in self._main_content._tab_sessions.items():
+                name = agent_mgr.get_name(sk)
+                if name and (source_session_key is None or sk != source_session_key):
+                    if not any(s == sk for s, _ in other_sessions):
+                        other_sessions.append((sk, name))
+
+
+        if not other_sessions:
+            return  # nobody to forward to — silently skip
 
         popover = Gtk.Popover()
         popover.set_parent(anchor_widget)
@@ -642,11 +658,6 @@ class MainWindow(Gtk.ApplicationWindow):
             btn.connect("clicked", lambda _b, s=sk, t=text, ss=source_session_key, pop=popover: self._forward_to_agent(s, t, ss, pop))
             menu_box.append(btn)
 
-        if not other_sessions:
-            lbl = Gtk.Label(label="No other agents connected")
-            lbl.add_css_class("dim-label")
-            menu_box.append(lbl)
-
         popover.set_child(menu_box)
         popover.popup()
 
@@ -655,14 +666,31 @@ class MainWindow(Gtk.ApplicationWindow):
         popover.popdown()
         if not text:
             return
-        gw = self._gateway_handler._gw if self._gateway_handler else None
-        if gw is None or not gw.is_connected():
-            return
-        gw.send_message(target_session_key, text)
-
-        # Look up source agent name for the forwarded-from header
-        agent_mgr = self._gateway_handler.agent_mgr
-        source_name = agent_mgr.get_name(source_session_key) if agent_mgr and source_session_key else None
+        # Resolve source name from either special agents or gateway
+        source_name = None
+        if (self._agent_runtime_handler is not None
+                and source_session_key in self._agent_runtime_handler.get_special_agents()):
+            source_name = self._agent_runtime_handler.get_special_agents()[source_session_key]
+        if not source_name and self._gateway_handler and self._gateway_handler.agent_mgr:
+            source_name = self._gateway_handler.agent_mgr.get_name(source_session_key)
+        # Route message to special or gateway agent
+        is_special = (
+            self._agent_runtime_handler is not None
+            and target_session_key in self._agent_runtime_handler.get_special_agents()
+        )
+        if is_special:
+            target_name = self._agent_runtime_handler.get_special_agents()[target_session_key]
+            self._agent_runtime_handler.send_to_special_agent(target_session_key, text)
+        else:
+            target_name = (
+                self._gateway_handler.agent_mgr.get_name(target_session_key)
+                if self._gateway_handler and self._gateway_handler.agent_mgr
+                else "Agent"
+            )
+            gw = self._gateway_handler._gw if self._gateway_handler else None
+            if gw is None or not gw.is_connected():
+                return
+            gw.send_message(target_session_key, text)
 
         # Check if target agent already has an open tab
         target_tab_exists = None
@@ -672,8 +700,6 @@ class MainWindow(Gtk.ApplicationWindow):
                 break
 
         if target_tab_exists is None:
-            # No tab for target agent yet — create one
-            target_name = agent_mgr.get_name(target_session_key) if agent_mgr else "Agent"
             target_tab_exists = self._main_content.create_chat_tab(target_session_key, target_name)
         else:
             self._main_content._chat_notebook.set_current_page(target_tab_exists)

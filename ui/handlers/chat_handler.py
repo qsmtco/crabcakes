@@ -185,6 +185,37 @@ class ChatHandler:
 
         # ── Gateway guard ────────────────────────────────────────────────────────
         if self._gw is None or not self._gw.is_connected():
+            # Offline: show user's message + inline error (matches every other send path)
+            def _show_offline_error():
+                chat_box = self._mc.get_chat_box()
+                if chat_box is not None:
+                    if hasattr(chat_box, "record"):
+                        chat_box.record("You", text)
+                    if self._chat_render_handler is not None:
+                        # First: echo what the user typed (same as all other send paths)
+                        def _on_echo(bubble):
+                            if bubble is not None:
+                                chat_box.append(bubble)
+                            self._mc.scroll_chat_to_bottom()
+                        self._chat_render_handler.render_async(
+                            "You", text, session_key,
+                            on_bubble_ready=_on_echo,
+                            on_forward_click=self._on_forward_message,
+                            agent_name="You",
+                        )
+                        # Then: show the error
+                        def _on_error_bubble(bubble):
+                            if bubble is not None:
+                                chat_box.append(bubble)
+                            self._mc.scroll_chat_to_bottom()
+                        self._chat_render_handler.render_async(
+                            "System",
+                            "⚠️ Not connected to gateway. Start the gateway or use a local agent.",
+                            session_key,
+                            on_bubble_ready=_on_error_bubble,
+                        )
+            self._dispatch(_show_offline_error)
+            buf.set_text("")
             return
 
         # ── Command handler check ────────────────────────────────────────────────
