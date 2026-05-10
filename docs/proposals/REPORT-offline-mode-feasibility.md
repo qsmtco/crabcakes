@@ -2,8 +2,7 @@
 
 **Date:** 2026-05-10  
 **Author:** Qaster  
-**Status:** Ready for implementation  
-**Estimated effort:** ~2–3 hours across 5 files  
+**Status:** ✅ Fully implemented — commit `974b121`  
 **Architecture alignment:** ✅ Full compliance with `ARCHITECTURE.md` — no violations
 
 ---
@@ -13,6 +12,23 @@
 Enable CrabCakes to work fully without connecting to the OpenClaw gateway. Users can launch the app, open/create projects, and work with built-in special agents (Coder, Debugger) immediately — no gateway required. The gateway remains available as an optional Connect button.
 
 **Key insight:** The system already works in offline mode for ~90% of the workflow. The changes below are bug fixes and UX polish, not new architecture.
+
+---
+
+## Implementation Status
+
+| Step | Description | Status | Reviewer Notes |
+|------|-------------|--------|----------------|
+| 0 | Verify baseline | ✅ Confirmed | App launches, special agents visible, projects browsable without gateway |
+| 1 | Offline error feedback | ✅ Done | Shows user echo + warning bubble; fixed missing "You" echo during review |
+| 2 | ActivityHandler lifecycle wiring | ✅ Done | Start/end/error callbacks wired; fixed missing error-path callback during review |
+| 3 | Toolbar offline state | ✅ Done | Shows "● Offline — local agents available" on launch |
+| 4 | Forward button offline fix | ✅ Done | Dual-path routing for special + gateway agents; dead code removed |
+| 5 | Integration test | ✅ Passed | Compile clean, zero test regressions, all paths verified |
+
+**Implemented by:** QTR (Coder agent)  
+**Reviewed by:** Qaster (adversarial code review at each step)  
+**Commit:** `974b121` — pushed to `origin/main`
 
 ---
 
