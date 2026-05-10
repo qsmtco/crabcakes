@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import logging
 import os
@@ -779,6 +780,11 @@ class AgentRuntime:
         self._lock = threading.Lock()
         self._running = False
 
+        # §E: Stuck detection — per-session tool call history for detecting loops
+        # session_key → list[dict{"tool", "args_hash", "iteration"}]
+        self._tool_history: dict[str, list[dict]] = {}
+        self._tool_history_lock = threading.Lock()
+
     # ── Dispatch helpers ───────────────────────────────────────────────────────
 
     def _dispatch(self, callback: Callable | None, *args: Any, **kwargs: Any) -> None:
@@ -825,6 +831,7 @@ class AgentRuntime:
         project_path: str | None = None,
         model: str | None = None,
         allowed_tools: list[str] | None = None,  # NEW
+        agent_role: str = "",
     ) -> str:
         """
         Create a new conversation for an agent.
@@ -849,7 +856,7 @@ class AgentRuntime:
         else:
             tools = get_all_tools()
             tool_names = [t.name for t in tools]
-        system_prompt = build_system_prompt(agent_name, project_path, tool_names)
+        system_prompt = build_system_prompt(agent_name, project_path, tool_names, agent_role=agent_role)
 
         conv = Conversation(
             agent_name=agent_name,
@@ -898,6 +905,8 @@ class AgentRuntime:
                     ev.set()
             self._dispatch(self._on_error, session_key, "Cancelled by user")
             logger.info("Cancelled session %s", session_key)
+        # §E: Clean up stuck-detection history when conversation ends
+        self._cleanup_tool_history(session_key)
 
     # ── Tool loop ─────────────────────────────────────────────────────────────
 
@@ -1056,9 +1065,21 @@ class AgentRuntime:
                                 )
                     # === END ENFORCEMENT HOOK ===
 
+                    # §E: Stuck detection — record this tool call and check for loops
+                    stuck_msg = self._check_stuck(session_key, tool_name, args, iteration)
+                    if stuck_msg:
+                        logger.warning("[stuck-detection] sk=%s: %s", session_key, stuck_msg)
+
+                    # Record tool result — ToolResult dataclass stays clean
                     tc.mark_completed(result.output if result.success else result.error or "")
-                    conv.add_tool_result(call_id, tc.result or "")
-                    self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "")
+                    tool_result_text = tc.result or ""
+
+                    # Inject stuck message AFTER tool result recording, with separator
+                    if stuck_msg:
+                        tool_result_text = tool_result_text + "\n\n---\n⚠️ " + stuck_msg
+
+                    conv.add_tool_result(call_id, tool_result_text)
+                    self._dispatch(self._on_tool_call_result, session_key, tool_name, tool_result_text)
 
                 # Check cost/step limits after tool execution
                 if self._check_and_stop_on_limit(session_key, conv):
@@ -1171,6 +1192,57 @@ class AgentRuntime:
             tools=tools if tools else None,
             timeout=float(self._config.tool_timeout_seconds),
         )
+
+    def _check_stuck(self, session_key: str, tool_name: str, args: dict, iteration: int) -> str | None:
+        """
+        §E — Stuck detection.
+
+        Monitor tool call history for signs the agent is looping:
+        - Same tool + same args 3+ times in last 10 calls → intervention
+        - 8+ write_file calls with no exec_command in last 8 → intervention
+
+        Returns an intervention message string, or None if not stuck.
+        """
+        with self._tool_history_lock:
+            history = self._tool_history.setdefault(session_key, [])
+            args_str = str(sorted(args.items()))
+            args_hash = hashlib.md5(args_str.encode()).hexdigest()[:8]
+            history.append({"tool": tool_name, "args_hash": args_hash, "iteration": iteration})
+
+            # Keep only last 20 entries
+            if len(history) > 20:
+                history[:] = history[-20:]
+
+            # Check 1: same tool + same args 3+ times in last 10
+            recent = history[-10:]
+            same_count = sum(
+                1 for e in recent
+                if e["tool"] == tool_name and e["args_hash"] == args_hash
+            )
+            if same_count >= 3:
+                return (
+                    f"[stuck-detection] You've called {tool_name} with the same arguments "
+                    f"{same_count} times in recent iterations. You appear to be stuck. "
+                    f"Consider: re-reading the file, checking the error message carefully, "
+                    f"or trying a completely different approach. "
+                    f"If you've tried 3+ approaches without progress, report as blocked."
+                )
+
+            # Check 2: 8+ write operations with no verification commands
+            recent_tools = [e["tool"] for e in recent]
+            write_ops = recent_tools.count("write_file") + recent_tools.count("edit_file")
+            if write_ops >= 8 and "exec_command" not in recent_tools[-8:]:
+                return (
+                    "[stuck-detection] You've written files 8+ times without running any "
+                    "commands to verify. Run tests or check syntax before continuing."
+                )
+
+            return None
+
+    def _cleanup_tool_history(self, session_key: str) -> None:
+        """Remove tool history for a session when conversation ends."""
+        with self._tool_history_lock:
+            self._tool_history.pop(session_key, None)
 
     def _check_and_stop_on_limit(self, session_key: str, conv: Any) -> bool:
         """

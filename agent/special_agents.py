@@ -23,6 +23,7 @@ class SpecialAgentDef:
     """Definition of a built-in Crabcake Special Agent."""
     conv_id_prefix: str           # e.g. "special:coder" — used as session_key
     display_name: str             # e.g. "Coder"
+    role: str                     # e.g. "coder" — matches prompts/system/{role}.md
     emoji: str                    # e.g. "🛠️"
     color: str                    # hex color from AGENT_COLORS
     tools: list[str]              # tool names this agent can use
@@ -35,6 +36,7 @@ SPECIAL_AGENTS: dict[str, SpecialAgentDef] = {
     "special:coder": SpecialAgentDef(
         conv_id_prefix="special:coder",
         display_name="Coder",
+        role="coder",
         emoji="🛠️",
         color="#6366f1",
         tools=[
@@ -46,6 +48,7 @@ SPECIAL_AGENTS: dict[str, SpecialAgentDef] = {
     "special:debugger": SpecialAgentDef(
         conv_id_prefix="special:debugger",
         display_name="Debugger",
+        role="debugger",
         emoji="🐛",
         color="#f43f5e",
         tools=[

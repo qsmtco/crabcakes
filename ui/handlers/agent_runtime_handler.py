@@ -115,7 +115,8 @@ class AgentRuntimeHandler:
                 from agent.context import build_system_prompt
                 tool_names = agent_def.tools
                 conv.system_prompt = build_system_prompt(
-                    agent_def.display_name, project_path, tool_names
+                    agent_def.display_name, project_path, tool_names,
+                    agent_role=agent_def.role,
                 )
         logger.info("AgentRuntimeHandler: active project set to %s (%s)", project_name, project_path)
 
@@ -217,6 +218,7 @@ class AgentRuntimeHandler:
             on_token_usage=self._on_token_usage,
             on_token_breakdown=self._on_token_breakdown,
             on_error=self._on_error,
+            on_enforcement_status=self._on_enforcement_status,
         )
         rt.start()
         self._runtimes[name] = rt
@@ -264,6 +266,7 @@ class AgentRuntimeHandler:
                 session_key=session_key,
                 project_path=project_path,
                 allowed_tools=agent_def.tools,  # Phase A: filtered tool set per agent
+                agent_role=agent_def.role,       # §7: explicit role from definition
             )
 
         rt.send_message(session_key, text)
@@ -639,6 +642,30 @@ class AgentRuntimeHandler:
             self._GLib.idle_add(self._do_error, session_key, message)
         else:
             self._do_error(session_key, message)
+
+    def _on_enforcement_status(self, session_key: str, tool_name: str, status: dict) -> None:
+        """§F — Enforcement status callback. Log enforcement results to observability log.
+
+        The status dict format is defined by ENFORCEMENT_LAYER_SPEC.md §8.2:
+            {
+                "tier": "syntax" | "tests" | "lint",
+                "file": "src/auth.py",
+                "passed": True | False,
+                "detail": "Syntax check passed for src/auth.py",
+            }
+
+        The UI layer decides how to render this (feed card text, icons, etc.).
+        This callback just provides the data — rendering is handled separately.
+        """
+        icon = "✅" if status["passed"] else "❌"
+        logger.info(
+            "[enforcement:%s] sk=%s %s %s — %s",
+            status["tier"],
+            session_key,
+            tool_name,
+            icon,
+            status["detail"],
+        )
 
     def _do_error(self, session_key: str, message: str) -> None:
         """Main-thread portion of _on_error."""

@@ -507,6 +507,8 @@ def on_prompt_activated(filepath: str):   # load + fire on_prompt_loaded callbac
 
 **Responsibility:** All chat logic — sending, project fan-out, incoming message routing, tab switching. Extracted from `window.py` in Phase 1.
 
+**Special agent routing:** In project fan-out (solo DM + group broadcast), special agents are detected via `AgentRuntimeHandler.get_special_agents()` and routed through `send_to_special_agent()` instead of `gw.send_message()`. Gateway agents receive awareness data via `_build_awareness_prefix()` (raw `build_awareness_block` — no identity injection).
+
 **Key setters:** `set_gateway_client()`, `set_project_handler()`, `set_command_handler()`, `set_chat_render_handler()`, `set_agent_runtime_handler()`, `set_agent_manager()`, `set_on_forward_message()`, `set_on_send_initiated()`, `set_on_res_confirmed()`
 
 ### 3.14a `utils/escaping.py` — Pango-Aware XML Escape
@@ -1098,7 +1100,7 @@ class AgentRuntime:
                  on_tool_call_approval_needed, on_response_complete, on_error, on_token_usage,
                  on_enforcement_status=None)
     def start() / def stop()
-    def create_conversation(agent_name, session_key, project_path, model) -> str
+    def create_conversation(agent_name, session_key, project_path, model, allowed_tools=None, agent_role="") -> str
     def send_message(session_key, text)         # tool loop: user msg → LLM → tool calls → results → LLM → response
     def cancel(session_key)
     def get_conversation(session_key) -> Conversation | None
@@ -1109,13 +1111,17 @@ class AgentRuntime:
 
 **Tool loop:** Append user message → build API messages → call LLM → if tool calls: execute each tool → append results → call LLM again → if text: append assistant message → fire callbacks → check cost/step limits.
 
+**Enforcement hook (§F):** After each `write_file`/`edit_file` tool execution, the enforcement layer runs verification tiers (syntax, tests, lint). Results are appended to the tool result text and dispatched via `on_enforcement_status` callback.
+
+**Stuck detection (§E):** `_check_stuck()` monitors tool call history for loops (same tool+args 3×, or 8+ writes without verification). Intervention messages are appended to the conversation's tool result with a `⚠️` separator. History is per-session, capped at 20 entries, cleaned up on `cancel()`. Thread-safe via `_tool_history_lock`.
+
 **Providers:** OpenAI (`openai/*`), MiniMax (`minimax/*`), Anthropic (`anthropic/*`) — selected by model prefix. Tool calls normalized to internal `ToolCall` format regardless of provider.
 
 **Streaming:** SSE for supported providers. `on_text_delta` fires incrementally. `on_tool_call_start` fires when complete call is received.
 
 **Cost tracking:** Provider-specific pricing tables. Fires `on_token_usage(session_key, tokens, cost)` after each LLM call. Stops loop if `cost_limit` exceeded.
 
-**Thread safety:** All callbacks dispatched via `GLib.idle_add()`.
+**Thread safety:** All callbacks dispatched via `GLib.idle_add()`. `_tool_history` protected by dedicated `_tool_history_lock` (separate from `self._lock` to avoid deadlock with `cancel()`).
 
 ### 3.21i `agent/tools.py` — Tool Definitions + Execution (Phase 1.1)
 
@@ -1166,7 +1172,7 @@ def get_api_key(provider_name) -> str | None
 
 **Public API:**
 ```python
-def build_system_prompt(agent_name, project_path, tools, review_mode) -> str
+def build_system_prompt(agent_name, project_path, tools, review_mode, agent_role="") -> str
 def build_file_context(project_path, query=None) -> str    # respects .gitignore, capped ~50K chars; §4.4a prepends .crabcakes/ docs
 def _read_crabcakes_docs(project_path) -> str               # §4.4a — always include project docs in context
 def _load_crabcakes_doc(doc_name, project_path) -> str | None  # individual doc access
@@ -1177,7 +1183,7 @@ def load_custom_system_prompt(project_path) -> str | None  # .crabcakes/agent-sy
 
 **Public API:**
 ```python
-@dataclass SpecialAgentDef: conv_id_prefix, display_name, emoji, color, tools, can_write
+@dataclass SpecialAgentDef: conv_id_prefix, display_name, role, emoji, color, tools, can_write
 
 SPECIAL_AGENTS: dict[str, SpecialAgentDef]     # "special:coder", "special:debugger"
 def get_special_agents() -> list[SpecialAgentDef]
@@ -1206,6 +1212,8 @@ def check(tool_name, tool_args, tool_result, project_path, config) -> Enforcemen
 2. Test runner (`_check_tests`): detect framework (pytest, jest, make test), find related test file, run it. Skipped if syntax fails.
 3. Lint check (`_check_lint`): detect linter (ruff, mypy, eslint), run on changed file. Skipped if syntax fails.
 
+**Per-project override (§F):** `.crabcakes/enforcement.json` overrides global enforcement config. Loaded via `_load_project_enforcement_config()` with a 30-second TTL cache (`_ENFORCEMENT_CONFIG_CACHE`). Applied BEFORE all tier checks so `syntax_check: false` actually skips syntax.
+
 **Configuration:** `EnforcementConfig` on `AgentConfig` — enabled/syntax_check/test_run/lint_check toggles, timeouts, skip patterns.
 
 ### 3.21m `ui/handlers/agent_runtime_handler.py` — Agent Runtime UI Bridge (Phase 1.4)
@@ -1226,9 +1234,14 @@ class AgentRuntimeHandler:
     def on_project_opened(project_name, project_path)        # bind special agent conversations
     def on_project_closed(project_name)
     def restore_conversations()                                # reload saved from disk on startup
+    def get_special_agents() -> dict[str, str]                # {session_key: display_name} for routing
+    def get_special_agent_def(session_key) -> SpecialAgentDef | None
+    def send_to_special_agent(session_key, text)              # routes through AgentRuntime, not gateway
 ```
 
-**Callback wiring:** All callbacks dispatch to GTK via `GLib.idle_add()`. `_on_tool_call_approval_needed` currently logs the approval request — the Allow/Deny card UI is not yet wired to a PM-clickable action.
+**Callback wiring:** All callbacks dispatch to GTK via `GLib.idle_add()`. `on_enforcement_status` is wired into per-agent runtimes for observability logging. `_on_tool_call_approval_needed` currently logs the approval request — the Allow/Deny card UI is not yet wired to a PM-clickable action.
+
+**Special agent routing:** ChatHandler routes special agents through `send_to_special_agent()` (both solo DM and group broadcast paths). Gateway agents go through `gw.send_message()`. This ensures local AgentRuntime agents never hit the gateway.
 
 ### 3.22 `ui/views/feedbar.py` — Response Status Bar (Phase 6)
 
@@ -2141,9 +2154,9 @@ crabcakes/
 ├── agent/                        # Agent runtime (Phase 1.1–1.5)
 │   ├── __init__.py               # 15 lines — package marker
 │   ├── config.py                 # AgentConfig, LLMProviderConfig, EnforcementConfig, load_agent_config() with chmod check
-│   ├── context.py                # 428 lines — build_system_prompt, build_file_context, _read_crabcakes_docs (§4.4a) + .gitignore parsing
+│   ├── context.py                # 437 lines — build_system_prompt (agent_role), build_file_context, _read_crabcakes_docs (§4.4a) + .gitignore parsing
 │   ├── tools.py                  # 853 lines — 8 tools: read_file, write_file, edit_file, exec_command (§4.13 separate stdout/stderr), list_files, search_files, web_search, web_fetch
-│   └── enforcement.py             # Post-write verification: 3-tier checks (syntax, tests, lint)
+│   └── enforcement.py             # Post-write verification: 3-tier checks (syntax, tests, lint) + per-project override (§F) with 30s TTL cache
 │
 ├── ui/
 │   ├── __init__.py              # 1 line
@@ -2154,7 +2167,7 @@ crabcakes/
 │   │   ├── __init__.py          # 0 lines — package marker
 │   │   ├── activity_handler.py  # 408 lines — 6-state activity machine + two-phase progress (Phase 6)
 │   │   ├── agent_list_handler.py # 118 lines — agent card data (initials, colors, sorting)
-│   │   ├── chat_handler.py       # 430 lines — send, fan-out, routing, tab switching (Phase 1)
+│   │   ├── chat_handler.py       # 639 lines — send, fan-out, routing, special agent routing, tab switching
 │   │   ├── chat_render_handler.py # 421 lines — escape + markdown + highlight + bubble pipeline
 │   │   ├── command_handler.py   # 340 lines — backtick command parser + @mention resolution (Phase 7)
 │   │   ├── gateway_handler.py    # 228 lines — connect, agents, lifecycle (Phase 2)
@@ -2230,11 +2243,11 @@ tests/
     └── test_tools.py             # 334 lines — sandbox, approval, truncation tests (Phase 1.1)
 agent/
     ├── __init__.py            # 1 line — exports AgentRuntime
-    ├── runtime.py             # ~500 lines — AgentRuntime: tool loop, providers, streaming, cost (Phase 1.3a)
+    ├── runtime.py             # ~1331 lines — AgentRuntime: tool loop, enforcement hook (§F), stuck detection (§E), providers, streaming, cost (Phase 1.3a)
     ├── tools.py                # ~380 lines — 8 tools: read/write/exec/list/search/web (Phase 1.1)
     ├── config.py              # ~100 lines — LLM provider config + chmod check (Phase 1.1)
-    ├── context.py             # ~200 lines — build_system_prompt, build_file_context (Phase 1.2)
-    └── special_agents.py     # ~150 lines — Coder + Debugger definitions + prompt templates (Phase 1.4)
+    ├── context.py             # ~437 lines — build_system_prompt (agent_role), build_file_context (Phase 1.2)
+    └── special_agents.py     # ~70 lines — Coder + Debugger definitions (role field for explicit agent_role)
 
 converge/
     ├── __init__.py

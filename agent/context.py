@@ -385,6 +385,7 @@ def build_system_prompt(
     project_path: str | None,
     tools: list[str],
     review_mode: str = "off",
+    agent_role: str = "",
 ) -> str:
     """
     Build the system prompt for an agent.
@@ -397,6 +398,8 @@ def build_system_prompt(
         project_path: Absolute path to the project root.
         tools: List of tool names this agent can use.
         review_mode: "off" | "review" — controls write permission awareness.
+        agent_role: Explicit role override (e.g. "coder"). When empty,
+            derives from agent_name as a fallback.
 
     Returns:
         Formatted system prompt string.
@@ -415,7 +418,10 @@ def build_system_prompt(
         from utils.prompt_loader import compose_system_prompt
         prompt = compose_system_prompt(
             agent_name=agent_name,
-            agent_role="coder" if "coder" in agent_name.lower() else "debugger" if "debugger" in agent_name.lower() else "",
+            agent_role=agent_role or (
+                "coder" if "coder" in agent_name.lower() else
+                "debugger" if "debugger" in agent_name.lower() else ""
+            ),
             project_path=project_path,
             project_awareness=awareness_dict,
             tools=tools,

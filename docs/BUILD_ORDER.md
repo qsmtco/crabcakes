@@ -1,5 +1,7 @@
 # Build Order — Coder Enhancement Roadmap
 
+> **Status: ACTIVE — Phases 1-4, 6-7 DONE, Phase 5 remaining** — Verified in code as of 2026-05-09. Phase 5 (§4.9 graduated compaction) is the only remaining item.
+
 **Date:** 2026-05-08
 **Author:** Qaster
 **Status:** ACTIVE — Agreed build order for Coder agent improvements
@@ -174,6 +176,29 @@ This file (`BUILD_ORDER.md`) is the **agreed execution order** — the single so
 - Phase E: Stuck detection — detect repeated tool calls (same tool + args, 3+ times), detect write-heavy loops (8+ writes without verification), inject intervention messages
 - Phase F: Per-project enforcement configuration (`.crabcakes/enforcement.json`)
 
+**Status:** ✅ Done
+
+**What was implemented:**
+
+**§E — Stuck detection (`agent/runtime.py`):**
+- `_tool_history: dict[str, list[dict]]` — per-session tracking of tool call history (tool name, args hash, iteration)
+- `_check_stuck(session_key, tool_name, args, iteration)` — detects two patterns:
+  - Same tool + same args hash ≥3 times in last 10 entries → `[stuck-detection] You've called {tool} with the same arguments N times...`
+  - 8+ write_file/edit_file calls with no exec_command in the last 8 → `[stuck-detection] You've written files 8+ times without running any commands to verify...`
+- History is pruned to last 20 entries per session
+- Hooked into the tool loop right after enforcement hook, appends intervention message to tool result output if stuck detected
+- `_cleanup_tool_history(session_key)` removes session history on cancel/completion
+- 6 unit tests covering all detection patterns, history pruning, and cleanup
+
+**§F — Per-project enforcement config (`agent/enforcement.py`):**
+- `_load_project_enforcement_config(project_path)` — reads `.crabcakes/enforcement.json` if present, returns dict or None
+- `check()` now loads project override and applies:
+  - Tier enable/disable (`syntax_check`, `test_run`, `lint_check` overrideable per-project)
+  - Skip pattern merging (project patterns added additively to global defaults)
+- Priority: `.crabcakes/enforcement.json` > `agent.json` enforcement section > defaults
+- 5 unit tests covering success/missing/invalid JSON, tier disable, skip-pattern merge
+- `on_enforcement_status` callback wired in `AgentRuntimeHandler` (logged to observability log)
+
 **Estimated:** 3-4 hours
 
 ---
@@ -188,7 +213,7 @@ This file (`BUILD_ORDER.md`) is the **agreed execution order** — the single so
 | 4 | Context assembly | Enhancement Proposal | §4.4a, §4.10 | ✅ Done | 1-2h |
 | 5 | Conversation management (§4.9 remaining) | Enhancement Proposal | §4.9 | 🔲 Next | 3-4h |
 | 6 | Polish & observability (§4.13, §4.15) | Enhancement Proposal | §4.12 defer, §4.13, §4.15 | ✅ Done | 3-5h |
-| 7 | Stuck detection + config | Enforcement Spec | Phases E-F | 🔲 Pending | 3-4h |
+| 7 | Stuck detection + config | Enforcement Spec | Phases E-F | ✅ Done | 3-4h |
 
 **Total estimated remaining:** 21-34 hours
 

@@ -10,7 +10,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import fnmatch
+import json
 import logging
 import os
 import shutil
@@ -78,6 +80,44 @@ def _is_skipped(file_path: str, skip_patterns: list[str]) -> bool:
         if fnmatch.fnmatch(basename, pattern):
             return True
     return False
+
+
+# ── Per-project enforcement config ───────────────────────────────────────────
+
+# TTL cache: project_path → (timestamp, data_or_None)
+_ENFORCEMENT_CONFIG_CACHE: dict[str, tuple[float, dict | None]] = {}
+_ENFORCEMENT_CONFIG_TTL = 30.0  # seconds
+
+
+def _load_project_enforcement_config(project_path: str) -> dict | None:
+    """
+    §F — Load per-project enforcement override from .crabcakes/enforcement.json.
+
+    Results are cached for 30 seconds to avoid reading the file on every write.
+    Priority: .crabcakes/enforcement.json > agent.json enforcement section > defaults.
+
+    Returns parsed dict or None if file doesn't exist / can't be read.
+    """
+    now = time.monotonic()
+    cached = _ENFORCEMENT_CONFIG_CACHE.get(project_path)
+    if cached is not None:
+        ts, data = cached
+        if now - ts < _ENFORCEMENT_CONFIG_TTL:
+            return data
+
+    cfg_path = os.path.join(project_path, ".crabcakes", "enforcement.json")
+    if not os.path.isfile(cfg_path):
+        _ENFORCEMENT_CONFIG_CACHE[project_path] = (now, None)
+        return None
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        _ENFORCEMENT_CONFIG_CACHE[project_path] = (now, data)
+        return data
+    except (OSError, json.JSONDecodeError) as e:
+        logger.debug("[enforcement] per-project config unreadable: %s", e)
+        _ENFORCEMENT_CONFIG_CACHE[project_path] = (now, None)
+        return None
 
 
 # ── Tier 1: Syntax Guard ──────────────────────────────────────────────────────
@@ -498,9 +538,30 @@ def check(
     if not file_path:
         return EnforcementResult()
 
+    # §F — Per-project override: load BEFORE any tier checks so all tiers
+    # see the overridden config (including syntax_check=False if set)
+    project_override = _load_project_enforcement_config(project_path)
+    if project_override is not None:
+        # Merge project-level skip_patterns (additive to global)
+        project_skip = project_override.get("skip_patterns")
+        if project_skip and isinstance(project_skip, list):
+            merged_skip = list(config.skip_patterns) + project_skip
+        else:
+            merged_skip = config.skip_patterns
+
+        # Per-tier overrides: if project config explicitly sets a tier to False, skip it
+        if not project_override.get("syntax_check", True):
+            config = dataclasses.replace(config, syntax_check=False)
+        if not project_override.get("test_run", True):
+            config = dataclasses.replace(config, test_run=False)
+        if not project_override.get("lint_check", True):
+            config = dataclasses.replace(config, lint_check=False)
+        # Use merged skip patterns
+        config = dataclasses.replace(config, skip_patterns=merged_skip)
+
     checks: list[EnforcementCheck] = []
 
-    # Tier 1: Syntax guard
+    # Tier 1: Syntax guard (uses overridden config)
     if config.syntax_check:
         syntax_result = _check_syntax(file_path, project_path, config)
         if syntax_result is not None:

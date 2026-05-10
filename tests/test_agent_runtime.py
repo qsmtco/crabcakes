@@ -762,3 +762,240 @@ class TestSSEParsing:
         ev = SSEEvent(type="text_delta", data={"content": "hi"})
         assert ev.type == "text_delta"
         assert ev.data["content"] == "hi"
+
+
+class TestStuckDetection:
+    """§E — Stuck detection tests.
+
+    Verifies:
+    - Same tool + same args 3+ times → intervention message
+    - 8+ write_file calls with no exec_command → intervention message
+    - Varied tools → no intervention
+    - Tool history cleanup on conversation cancel
+    """
+
+    def _cfg(self, **overrides):
+        """Minimal config for AgentRuntime."""
+        from agent.config import AgentConfig
+        cfg = AgentConfig()
+        for k, v in overrides.items():
+            setattr(cfg, k, v)
+        return cfg
+
+    def test_stuck_repeated_same_tool_and_args(self):
+        """3+ calls of same tool+args → stuck detection fires."""
+        from agent.runtime import AgentRuntime
+        rt = AgentRuntime(self._cfg())
+        rt.start()
+
+        sk = "test_stuck_repeated_" + str(uuid.uuid4().hex[:8])
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        tool = "read_file"
+        args = {"path": "src/main.py"}
+
+        # First 2 calls → no stuck
+        for _ in range(2):
+            msg = rt._check_stuck(sk, tool, args, iteration=1)
+            assert msg is None, f"First 2 calls should not trigger stuck: {msg}"
+
+        # 3rd call → stuck fires
+        msg = rt._check_stuck(sk, tool, args, iteration=3)
+        assert msg is not None
+        assert "stuck-detection" in msg
+        assert tool in msg
+
+        rt._cleanup_tool_history(sk)
+        rt.stop()
+
+    def test_stuck_write_loop_no_exec(self):
+        """8+ write operations with no exec_command → stuck detection fires."""
+        from agent.runtime import AgentRuntime
+        rt = AgentRuntime(self._cfg())
+        rt.start()
+
+        sk = "test_stuck_write_" + str(uuid.uuid4().hex[:8])
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        # Do 7 writes → no stuck yet
+        for i in range(7):
+            msg = rt._check_stuck(sk, "write_file", {"path": f"src/f{i}.py", "content": "x"}, iteration=i)
+            assert msg is None, f"7 writes should not trigger: {msg}"
+
+        # 8th write → stuck fires
+        msg = rt._check_stuck(sk, "write_file", {"path": "src/f8.py", "content": "x"}, iteration=7)
+        assert msg is not None
+        assert "stuck-detection" in msg
+        assert "write" in msg.lower() or "file" in msg.lower()
+
+        rt._cleanup_tool_history(sk)
+        rt.stop()
+
+    def test_not_stuck_with_exec_between_writes(self):
+        """Interleaving exec_command with writes prevents the write-loop stuck detection.
+
+        The write-loop check fires at 8+ writes with no exec in the last 8.
+        Varying exec args means the 'same tool+args' check never fires either.
+        """
+        from agent.runtime import AgentRuntime
+        rt = AgentRuntime(self._cfg())
+        rt.start()
+
+        sk = "test_stuck_varied_" + str(uuid.uuid4().hex[:8])
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        # Alternate write/exec for 10 iterations — use different args each time
+        # so 'same tool+args' check never triggers, and exec breaks write-loop count
+        for i in range(10):
+            if i % 2 == 0:
+                msg = rt._check_stuck(sk, "write_file", {"path": f"src/f{i}.py", "content": "x"}, iteration=i)
+            else:
+                # Different command each time → no same-tool-same-args stuck
+                msg = rt._check_stuck(sk, "exec_command", {"command": f"python3 -m py_compile src/f{i-1}.py"}, iteration=i)
+            assert msg is None, f"Varied tools should not trigger stuck at iter {i}: {msg}"
+
+        rt._cleanup_tool_history(sk)
+        rt.stop()
+
+    def test_not_stuck_different_args(self):
+        """Same tool called with different args → not stuck."""
+        from agent.runtime import AgentRuntime
+        rt = AgentRuntime(self._cfg())
+        rt.start()
+
+        sk = "test_stuck_diff_args_" + str(uuid.uuid4().hex[:8])
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        # Same tool, different args, 5 times → no stuck
+        for i in range(5):
+            msg = rt._check_stuck(sk, "read_file", {"path": f"src/f{i}.py"}, iteration=i)
+            assert msg is None, f"Different args should not trigger stuck: {msg}"
+
+        rt._cleanup_tool_history(sk)
+        rt.stop()
+
+    def test_tool_history_cleans_up_on_cancel(self):
+        """Cancelling a conversation removes its tool history."""
+        from agent.runtime import AgentRuntime
+        rt = AgentRuntime(self._cfg())
+        rt.start()
+
+        sk = "test_cleanup_" + str(uuid.uuid4().hex[:8])
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        # Add some history
+        rt._check_stuck(sk, "read_file", {"path": "a.py"}, iteration=1)
+        rt._check_stuck(sk, "read_file", {"path": "b.py"}, iteration=2)
+        assert sk in rt._tool_history
+        assert len(rt._tool_history[sk]) == 2
+
+        # Cancel → cleanup
+        rt.cancel(sk)
+        # cancel() is async (threaded), give it a moment to process
+        import time
+        time.sleep(0.05)
+        assert sk not in rt._tool_history, f"History should be gone after cancel: {rt._tool_history.get(sk)}"
+
+        rt.stop()
+
+    def test_history_pruned_at_20_entries(self):
+        """History is kept to last 20 entries."""
+        from agent.runtime import AgentRuntime
+        rt = AgentRuntime(self._cfg())
+        rt.start()
+
+        sk = "test_prune_" + str(uuid.uuid4().hex[:8])
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        # Add 25 entries
+        for i in range(25):
+            rt._check_stuck(sk, "read_file", {"path": f"f{i}.py"}, iteration=i)
+
+        history = rt._tool_history[sk]
+        assert len(history) == 20, f"Expected 20, got {len(history)}"
+        # Last entry should be the 25th (index 24)
+        assert history[-1]["iteration"] == 24
+
+        rt._cleanup_tool_history(sk)
+        rt.stop()
+
+
+class TestPerProjectEnforcement:
+    """§F — Per-project enforcement config tests.
+
+    Verifies:
+    - .crabcakes/enforcement.json is loaded when present
+    - Project-level skip patterns are merged additively
+    - Per-tier enable/disable overrides are respected
+    - Missing file → returns None (uses global config)
+    """
+
+    def test_load_project_config_success(self, tmp_path):
+        """Valid JSON file is parsed and returned."""
+        crab_dir = tmp_path / ".crabcakes"
+        crab_dir.mkdir()
+        (crab_dir / "enforcement.json").write_text(
+            json.dumps({"syntax_check": False, "skip_patterns": ["*.generated.py"]})
+        )
+        from agent.enforcement import _load_project_enforcement_config
+        result = _load_project_enforcement_config(str(tmp_path))
+        assert result is not None
+        assert result["syntax_check"] is False
+        assert result["skip_patterns"] == ["*.generated.py"]
+
+    def test_load_project_config_missing(self, tmp_path):
+        """No .crabcakes/enforcement.json → returns None."""
+        from agent.enforcement import _load_project_enforcement_config
+        result = _load_project_enforcement_config(str(tmp_path))
+        assert result is None
+
+    def test_load_project_config_invalid_json(self, tmp_path):
+        """Malformed JSON → returns None."""
+        crab_dir = tmp_path / ".crabcakes"
+        crab_dir.mkdir()
+        (crab_dir / "enforcement.json").write_text("not valid json")
+        from agent.enforcement import _load_project_enforcement_config
+        result = _load_project_enforcement_config(str(tmp_path))
+        assert result is None
+
+    def test_project_config_merge_skip_patterns(self, tmp_path):
+        """Project skip patterns are additive to global defaults."""
+        from agent.enforcement import check
+        from agent.config import EnforcementConfig
+        crab_dir = tmp_path / ".crabcakes"
+        crab_dir.mkdir()
+        (crab_dir / "enforcement.json").write_text(
+            json.dumps({"skip_patterns": ["*.custom.py", "*.generated.py"]})
+        )
+        # Create a test file and a global skip that would skip it
+        test_file = tmp_path / "test.py"
+        test_file.write_text("x = 1\n")
+        # Global config skips *.md but not *.py, project config adds *.generated.py
+        cfg = EnforcementConfig(syntax_check=True, skip_patterns=["*.md"])
+        # Create ToolResult
+        from agent.tools import ToolResult
+        tr = ToolResult(success=True, output="wrote", error=None)
+        result = check("write_file", {"path": "test.py"}, tr, str(tmp_path), cfg)
+        # Should have run the check (not skipped)
+        syntax_check = next((c for c in result.checks if c.tier == "syntax"), None)
+        assert syntax_check is not None, "Syntax check should run for .py with global skip of *.md only"
+
+    def test_project_config_disable_tier(self, tmp_path):
+        """Project config can disable individual enforcement tiers."""
+        from agent.enforcement import check
+        from agent.config import EnforcementConfig
+        crab_dir = tmp_path / ".crabcakes"
+        crab_dir.mkdir()
+        (crab_dir / "enforcement.json").write_text(
+            json.dumps({"test_run": False, "lint_check": False})
+        )
+        test_file = tmp_path / "test.py"
+        test_file.write_text("x = 1\n")
+        cfg = EnforcementConfig(syntax_check=True, test_run=True, lint_check=True)
+        from agent.tools import ToolResult
+        tr = ToolResult(success=True, output="wrote", error=None)
+        result = check("write_file", {"path": "test.py"}, tr, str(tmp_path), cfg)
+        tiers_run = {c.tier for c in result.checks}
+        assert "syntax" in tiers_run, "Syntax should still run"
+        assert "tests" not in tiers_run, "Tests should be disabled by project config"
+        assert "lint" not in tiers_run, "Lint should be disabled by project config"

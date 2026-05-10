@@ -355,8 +355,7 @@ class ChatHandler:
                     else:
                         key = f"{project_name}:{solo_target}"
                         if key not in self._awareness_sent:
-                            agent_display = self._get_agent_display_name(solo_target)
-                            prefix = self._build_awareness_prefix(project_name, agent_display)
+                            prefix = self._build_awareness_prefix(project_name)
                         else:
                             prefix = ""
                         self._gw.send_message(solo_target, prefix + text)
@@ -370,10 +369,19 @@ class ChatHandler:
                     else:
                         members = []
                     for member in members:
+                        # Special agents route through AgentRuntimeHandler,
+                        # not gateway (they have no gateway session)
+                        is_special_member = (
+                            self._agent_runtime_handler is not None
+                            and member in self._agent_runtime_handler.get_special_agents()
+                        )
+                        if is_special_member:
+                            self._agent_runtime_handler.send_to_special_agent(member, text)
+                            continue
+
                         key = f"{project_name}:{member}"
                         if key not in self._awareness_sent:
-                            agent_display = self._get_agent_display_name(member)
-                            prefix = self._build_awareness_prefix(project_name, agent_display)
+                            prefix = self._build_awareness_prefix(project_name)
                         else:
                             prefix = ""
                         self._gw.send_message(member, prefix + text)
@@ -590,24 +598,20 @@ class ChatHandler:
 
     # ── Internal ─────────────────────────────────────────────────────────────
 
-    def _get_agent_display_name(self, session_key: str) -> str:
-        """Resolve session_key to a display name via AgentManager.
-        Falls back to agent name from session key format (agent:name:...).
-        """
-        if self._agent_mgr:
-            name = self._agent_mgr.get_name(session_key)
-            if name:
-                return name
-        # Fallback: extract agent name from session key (agent:name:...)
-        segments = session_key.split(":")
-        if len(segments) >= 2 and segments[0] == "agent":
-            return segments[1]  # e.g. "qtr" from "agent:qtr:telegram:..."
-        # Last resort: last segment
-        return segments[-1]
+    def _build_awareness_prefix(self, project_name: str) -> str:
+        """Build project awareness prefix for a gateway agent message.
 
-    def _build_awareness_prefix(self, project_name: str, agent_name: str = "") -> str:
-        """Build project awareness prefix for first message to an agent.
-        Uses the template system (prompts/system/) for composed system prompt.
+        Returns raw awareness data (build_awareness_block) prefixed with a
+        neutral header. No identity injection, no composed templates — gateway
+        agents already have a real system prompt from OpenClaw.
+
+        Special agents are NOT routed through this method — they go through
+        AgentRuntimeHandler.send_to_special_agent() which has its own prompt
+        pipeline (agent/context.py build_system_prompt()).
+
+        Awareness tracking (send-once-only) is handled by the caller via
+        the _awareness_sent set.
+
         Returns empty string if awareness not available.
         """
         if not self._project_handler:
@@ -616,25 +620,10 @@ class ChatHandler:
         if not project_path:
             return ""
         try:
-            from utils.project_awareness import build_awareness_dict
-            from utils.prompt_loader import compose_system_prompt
-            awareness_dict = build_awareness_dict(project_path)
-            # Read review_mode from awareness snapshot (defaults to "off")
-            review_mode = "off"
-            try:
-                from utils.project_awareness import build_awareness_snapshot
-                snapshot = build_awareness_snapshot(project_path)
-                review_mode = snapshot.get("review_mode", "off")
-            except Exception:
-                pass
-            prompt = compose_system_prompt(
-                agent_name=agent_name,
-                project_path=project_path,
-                project_awareness=awareness_dict,
-                review_mode=review_mode,
-            )
-            if prompt.strip():
-                return f"[System Instructions]\n{prompt}\n\n[User Message]\n"
+            from utils.project_awareness import build_awareness_block
+            block = build_awareness_block(project_path)
+            if block.strip():
+                return f"## Project Context\n\n{block}\n\n"
         except Exception:
             pass
         return ""

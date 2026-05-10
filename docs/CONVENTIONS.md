@@ -1,5 +1,7 @@
 # Project Conventions
 
+> **Status: ACTIVE REFERENCE** — Conventions still followed in codebase as of 2026-05-09.
+
 **Date:** 2026-04-27
 **Author:** Qaster
 **Status:** Active

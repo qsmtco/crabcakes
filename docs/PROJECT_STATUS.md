@@ -1,5 +1,7 @@
 # CrabCakes — Project Status
 
+> **Status: OUTDATED** — Last updated 2026-04-21. Many items marked "planned" or "in progress" are now complete (review layer, agent runtime, enforcement layer). Test count stale (doc says 1112 passing, actual count is ~801 test functions). Consider updating or superseding with BUILD_ORDER.md.
+
 **Last updated:** 2026-04-21
 
 ---
