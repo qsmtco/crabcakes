@@ -154,6 +154,7 @@ class MainWindow(Gtk.ApplicationWindow):
         # Inject into dependents after _agent_runtime_handler is assigned
         self._chat_handler.set_agent_runtime_handler(self._agent_runtime_handler)
         self._left_panel.set_special_agents(self._agent_runtime_handler)
+        self._main_content.set_agent_runtime_handler(self._agent_runtime_handler)
 
 
         # Prompts handler — wired to left_panel after both are created

@@ -160,6 +160,10 @@ class MainContent(Gtk.Box):
         # Agent manager reference — set via set_agent_manager()
         self._agent_mgr = None
 
+        # Agent runtime handler reference — set via set_agent_runtime_handler()
+        # Used for fallback name lookup when _agent_mgr is None (offline mode)
+        self._agent_runtime_handler = None
+
         self._prompt_button.connect("clicked", self._on_prompt_clicked)
         self._improve_button.connect("clicked", self._on_improve_clicked)
 
@@ -542,11 +546,9 @@ class MainContent(Gtk.Box):
         """Right-click on tab label — show appropriate menu."""
         if n_press != 1:
             return
-        if self._agent_mgr is None:
-            return
         tab_widget = ctrl.get_widget()
 
-        # Project tab — show project solo-DM menu
+        # Project tab — show project solo-DM menu (works offline via AgentRuntimeHandler)
         if session_key.startswith("project:"):
             project_name = session_key.replace("project:", "", 1)
             if self._project_handler is None:
@@ -554,10 +556,17 @@ class MainContent(Gtk.Box):
             members = self._project_handler.get_project_members(project_name)
             if not members:
                 return
-            # Build (session_key, display_name) pairs using agent_mgr
+            # Build (session_key, display_name) pairs — use _agent_mgr if available,
+            # otherwise fall back to AgentRuntimeHandler (offline mode)
             member_names = []
             for sk in members:
-                name = self._agent_mgr.get_name(sk) or sk
+                if self._agent_mgr is not None:
+                    name = self._agent_mgr.get_name(sk) or sk
+                elif (self._agent_runtime_handler is not None
+                      and sk in self._agent_runtime_handler.get_special_agents()):
+                    name = self._agent_runtime_handler.get_special_agents()[sk]
+                else:
+                    name = sk
                 member_names.append((sk, name))
             current_solo = self._project_handler.get_solo_target(project_name)
             show_project_menu(
@@ -569,7 +578,9 @@ class MainContent(Gtk.Box):
             )
             return
 
-        # Agent tab — show session switcher (existing behavior)
+        # Agent tab — show session switcher (requires _agent_mgr, gateway-only)
+        if self._agent_mgr is None:
+            return
         agent_name = self._agent_mgr.get_name(session_key)
         if not agent_name:
             return
@@ -726,6 +737,15 @@ class MainContent(Gtk.Box):
     def set_agent_manager(self, agent_mgr):
         """Set the AgentManager for session lookup (used by session switch menu)."""
         self._agent_mgr = agent_mgr
+
+    def set_agent_runtime_handler(self, handler):
+        """
+        Set the AgentRuntimeHandler for offline name lookup.
+
+        Used by _on_tab_right_click to resolve member display names when
+        _agent_mgr is None (offline mode, before gateway has connected).
+        """
+        self._agent_runtime_handler = handler
 
     def _on_prompt_clicked(self, *args):
         """Forward button click to the registered STT callback."""

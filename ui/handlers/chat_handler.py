@@ -183,40 +183,41 @@ class ChatHandler:
                 self._on_send_initiated(session_key)
             return
 
-        # ── Gateway guard ────────────────────────────────────────────────────────
+        # ── Gateway guard (project-tab sends fall through to fan-out) ──────────────
         if self._gw is None or not self._gw.is_connected():
-            # Offline: show user's message + inline error (matches every other send path)
-            def _show_offline_error():
-                chat_box = self._mc.get_chat_box()
-                if chat_box is not None:
-                    if hasattr(chat_box, "record"):
-                        chat_box.record("You", text)
-                    if self._chat_render_handler is not None:
-                        # First: echo what the user typed (same as all other send paths)
-                        def _on_echo(bubble):
-                            if bubble is not None:
-                                chat_box.append(bubble)
-                            self._mc.scroll_chat_to_bottom()
-                        self._chat_render_handler.render_async(
-                            "You", text, session_key,
-                            on_bubble_ready=_on_echo,
-                            on_forward_click=self._on_forward_message,
-                            agent_name="You",
-                        )
-                        # Then: show the error
-                        def _on_error_bubble(bubble):
-                            if bubble is not None:
-                                chat_box.append(bubble)
-                            self._mc.scroll_chat_to_bottom()
-                        self._chat_render_handler.render_async(
-                            "System",
-                            "⚠️ Not connected to gateway. Start the gateway or use a local agent.",
-                            session_key,
-                            on_bubble_ready=_on_error_bubble,
-                        )
-            self._dispatch(_show_offline_error)
-            buf.set_text("")
-            return
+            # Only block direct gateway-agent sends when offline.
+            # Project-tab sends reach _show_and_send() which handles fan-out locally.
+            if not session_key.startswith("project:"):
+                def _show_offline_error():
+                    chat_box = self._mc.get_chat_box()
+                    if chat_box is not None:
+                        if hasattr(chat_box, "record"):
+                            chat_box.record("You", text)
+                        if self._chat_render_handler is not None:
+                            def _on_echo(bubble):
+                                if bubble is not None:
+                                    chat_box.append(bubble)
+                                self._mc.scroll_chat_to_bottom()
+                            self._chat_render_handler.render_async(
+                                "You", text, session_key,
+                                on_bubble_ready=_on_echo,
+                                on_forward_click=self._on_forward_message,
+                                agent_name="You",
+                            )
+                            def _on_error_bubble(bubble):
+                                if bubble is not None:
+                                    chat_box.append(bubble)
+                                self._mc.scroll_chat_to_bottom()
+                            self._chat_render_handler.render_async(
+                                "System",
+                                "⚠️ Not connected to gateway. Start the gateway or use a local agent.",
+                                session_key,
+                                on_bubble_ready=_on_error_bubble,
+                            )
+                self._dispatch(_show_offline_error)
+                buf.set_text("")
+                return
+            # else: project-tab — fall through to _show_and_send for fan-out
 
         # ── Command handler check ────────────────────────────────────────────────
         if self._command_handler is not None:
@@ -384,13 +385,17 @@ class ChatHandler:
                     if is_special:
                         self._agent_runtime_handler.send_to_special_agent(solo_target, text)
                     else:
-                        key = f"{project_name}:{solo_target}"
-                        if key not in self._awareness_sent:
-                            prefix = self._build_awareness_prefix(project_name)
+                        # Skip gateway-agent sends when offline (no crash)
+                        if self._gw is None or not self._gw.is_connected():
+                            pass  # silently skip — gateway agent unavailable offline
                         else:
-                            prefix = ""
-                        self._gw.send_message(solo_target, prefix + text)
-                        self._awareness_sent.add(key)
+                            key = f"{project_name}:{solo_target}"
+                            if key not in self._awareness_sent:
+                                prefix = self._build_awareness_prefix(project_name)
+                            else:
+                                prefix = ""
+                            self._gw.send_message(solo_target, prefix + text)
+                            self._awareness_sent.add(key)
                 else:
                     # Group broadcast — fan out to all members
                     if self._project_handler:
@@ -410,6 +415,9 @@ class ChatHandler:
                             self._agent_runtime_handler.send_to_special_agent(member, text)
                             continue
 
+                        # Gateway agent — skip silently when offline (no crash)
+                        if self._gw is None or not self._gw.is_connected():
+                            continue
                         key = f"{project_name}:{member}"
                         if key not in self._awareness_sent:
                             prefix = self._build_awareness_prefix(project_name)
