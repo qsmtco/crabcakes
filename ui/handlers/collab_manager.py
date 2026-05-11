@@ -81,6 +81,9 @@ class CollabManager:
     def set_agent_mgr(self, agent_mgr) -> None:
         self._agent_mgr = agent_mgr
 
+    def set_feed_handler(self, feed_handler) -> None:
+        self._feed_handler = feed_handler
+
     # ── Thread Identity ─────────────────────────────────────────────────────
 
     @staticmethod
