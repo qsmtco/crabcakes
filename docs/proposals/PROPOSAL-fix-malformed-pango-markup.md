@@ -2,10 +2,27 @@
 
 **Date:** 2026-05-10
 **Author:** Qaster
+**Status:** ✅ Fully implemented — commit `91813ab`
 **Severity:** High — corrupts all chat display for the session
-**Files to modify:** 2 (`utils/markdown.py`, `ui/styles.py`)
-**Estimated effort:** ~30 minutes
+**Files modified:** 3 (`utils/markdown.py`, `utils/escaping.py`, `ui/styles.py`)
 **Architecture alignment:** ✅ Full compliance with ARCHITECTURE.md — no violations
+
+**Implemented by:** QTR (Coder agent)
+**Reviewed by:** Qaster (adversarial code review)
+**Additional fix by:** Qaster (loop regression fix + CSS removal + HTML entity decoding)
+
+---
+
+---
+
+**Status:** ✅ IMPLEMENTED — 2026-05-10
+
+*This proposal was implemented in commit `91813ab` on 2026-05-10.*
+
+**Changes committed:**
+- `utils/escaping.py` — Added `escape_for_pango()` for XML/Pango escaping
+- `utils/markdown.py` — Fixed `format_markdown()` with ZWSP strategy to prevent cross-boundary bold matching; added `pango_escape()` wrapper
+- `docs/proposals/PROPOSAL-fix-malformed-pango-markup.md` — This document
 
 ---
 
