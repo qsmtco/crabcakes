@@ -84,6 +84,44 @@ class CollabManager:
     def set_feed_handler(self, feed_handler) -> None:
         self._feed_handler = feed_handler
 
+    # ── Text Sanitization ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _strip_thinking_tokens(text: str) -> str:
+        """Remove <thinking>...</thinking> blocks from LLM response text.
+
+        These blocks contain internal reasoning that should never be relayed
+        to other agents or written to feed cards."""
+        import re
+        cleaned = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL)
+        # Collapse multiple whitespace into single space, strip edges
+        return re.sub(r'\s+', ' ', cleaned).strip()
+
+    @staticmethod
+    def _strip_thread_mentions(text: str, thread: 'A2AThread') -> str:
+        """Remove @mentions of agents already participating in this thread.
+
+        Prevents echo loops: when Coder's response mentions @Debugger (the
+        other participant), that mention is stripped so it doesn't trigger
+        a new relay. Mentions of agents NOT in the thread are preserved,
+        allowing multi-agent chains.
+        """
+        import re
+        # Collect names of both participants
+        names = set()
+        for name in (thread.initiator_name, thread.target_name):
+            if name:
+                names.add(name)
+                # Also add the lowercase form for case-insensitive matching
+                names.add(name.lower())
+
+        if not names:
+            return text
+
+        # Build pattern matching any participant name after @
+        pattern = r'@(' + '|'.join(re.escape(n) for n in names) + r')\b'
+        return re.sub(pattern, r'\1', text)
+
     # ── Thread Identity ─────────────────────────────────────────────────────
 
     @staticmethod
@@ -153,10 +191,11 @@ class CollabManager:
             self._sk_to_thread[target_sk] = thread_id
 
         # Post intent card (outside lock — GTK)
-        self._post_intent_card(thread, question_text)
+        clean_question = self._strip_thinking_tokens(question_text)
+        self._post_intent_card(thread, clean_question)
 
-        # Send relay message
-        relay_text = self._build_relay_message(initiator_sk, question_text, project_name)
+        # Send relay message (stripped of thinking tokens)
+        relay_text = self._build_relay_message(initiator_sk, clean_question, project_name)
         self._send_relay(target_sk, relay_text)
 
         return thread_id
@@ -168,9 +207,9 @@ class CollabManager:
         Actions:
           1. Look up thread via _sk_to_thread
           2. Append response to thread.responses, increment turn
-          3. If turn >= 3: check should_stop()
-          4. If converged or turn >= 15: close thread
-          5. If not converged: relay response back to initiator
+          3. Sanitize relay text: strip thinking tokens + in-thread mentions
+          4. If turn >= 15 or convergence: close thread
+          5. If not converged: relay sanitized response back to initiator
         """
         from converge.converge import should_stop
 
@@ -186,16 +225,20 @@ class CollabManager:
             if thread is None or not thread.active:
                 return
 
-            thread.responses.append({"text": text, "from": session_key})
+            # Sanitize: strip thinking tokens, then strip mentions of thread participants
+            clean_text = self._strip_thinking_tokens(text)
+            clean_text = self._strip_thread_mentions(clean_text, thread)
+
+            thread.responses.append({"text": clean_text, "from": session_key})
             thread.turn += 1
 
             if thread.turn >= 15 or should_stop(thread.responses, thread.turn):
                 self._close_thread_internal(thread_id)
                 return
 
-            # Not converged — relay response back to initiator for next turn
+            # Not converged — relay sanitized response back to initiator for next turn
             initiator = thread.initiator_sk
-            relay_text = self._build_relay_message(session_key, text, thread.project_name)
+            relay_text = self._build_relay_message(session_key, clean_text, thread.project_name)
 
             # Add initiator to pending relays
             self._pending_relays.add(initiator)
@@ -272,7 +315,9 @@ class CollabManager:
     # ── Feed Cards ──────────────────────────────────────────────────────────
 
     def _post_intent_card(self, thread: A2AThread, question_text: str) -> None:
-        """Post an intent card to the project feed showing consultation start."""
+        """Post an intent card to the project feed showing consultation start.
+
+        question_text is pre-sanitized by the caller (start_relay)."""
         if self._feed_handler is None:
             return
 
