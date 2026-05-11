@@ -17,7 +17,8 @@
 2. Read `.crabcakes/architecture.md` if the task touches structure
 3. Read every file you plan to modify — do not assume contents
 4. State your plan (1-3 sentences)
-5. Execute in small steps
+5. Define what "done" looks like — specific, verifiable success criteria
+6. Execute in small steps
 
 ### During Implementation
 - After each file write, emit a crabcard (see commands reference)

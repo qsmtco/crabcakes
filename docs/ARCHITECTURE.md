@@ -102,6 +102,7 @@ crabcakes/
 │   │   ├── command_handler.py   # CommandHandler — backtick command parser (Phase 7)
 │   │   ├── review_handler.py    # ReviewHandler — review session lifecycle (Phase 7)
 │   │   ├── task_handler.py      # TaskHandler — task commands: task/done/start/blocked/cancel/tasks/assign/priority (Phase 7)
+│   │   ├── collab_manager.py   # CollabManager — A2A consultation thread lifecycle (Phase 4)
 │   │   ├── collab_handler.py   # CollabHandler — collaboration commands: ask/delegate/stop/tell (Phase 7)
 │   │   ├── session_handler.py  # SessionHandler — session switching in project tabs (Phase 7)
 │   │   ├── agent_runtime_handler.py  # AgentRuntimeHandler — local agent UI bridge (Phase 1.4)
@@ -1243,6 +1244,53 @@ class AgentRuntimeHandler:
 
 **Special agent routing:** ChatHandler routes special agents through `send_to_special_agent()` (both solo DM and group broadcast paths). Gateway agents go through `gw.send_message()`. This ensures local AgentRuntime agents never hit the gateway.
 
+### 3.21n `ui/handlers/collab_manager.py` — A2A Consultation Threads (Phase 4)
+
+**Responsibility:** Manages agent-to-agent consultation thread lifecycle — relay, response capture, convergence detection, cleanup. Follows the handler pattern (§8.6): zero imports from other handlers, all dependencies via constructor/setters.
+
+**Owns:** A2A thread state (`_threads`), pending relay registry (`_pending_relays`), reverse lookup (`_sk_to_thread`).
+
+**Thread lifecycle:**
+1. `start_relay()` — create thread, post intent card, send relay message to target agent
+2. `capture_response()` — append response, check convergence, relay back or close
+3. `close_thread()` — set inactive, clean up registries, post closing card
+
+**Public API:**
+```python
+class CollabManager:
+    def __init__(self, *, GLib, feed_handler, agent_runtime_handler=None, gw=None)
+    def set_agent_runtime_handler(handler) -> None
+    def set_gateway_client(gw) -> None
+    def set_agent_mgr(agent_mgr) -> None
+    def start_relay(project_name, initiator_sk, target_sk, question_text) -> str | None
+    def capture_response(session_key, text) -> None
+    def close_thread(thread_id) -> None
+    def is_pending_relay(session_key) -> bool
+    def clear_project(project_name) -> None          # called from ProjectHandler.on_project_closed()
+    @staticmethod def detect_a2a_mention(text, session_key, project_name, command_handler) -> dict | None
+```
+
+**Thread safety:** All GTK via `GLib.idle_add()`. State protected by `_lock`.
+
+
+**A2A data flow:**
+```
+Agent A responds "@AgentB question"
+  → ChatHandler._handle_final_response() detects @mention
+  → CollabManager.start_relay()
+    → posts intent card to project feed
+    → sends relay via _send_relay() (gateway or special agent transport)
+    → adds target_sk to _pending_relays
+
+Agent B responds
+  → ChatHandler/AgentRuntimeHandler captures via is_pending_relay()
+  → capture_response() appends to thread, checks convergence
+  → if not converged: relays response back to Agent A
+  → if converged: posts closing card, cleans up
+```
+
+**Handler pattern compliance:** CollabManager never imports `ui/handlers/` submodules. All routing dependencies are received via constructor or setter.
+
 ### 3.22 `ui/views/feedbar.py` — Response Status Bar (Phase 6)
 
 **Responsibility:** Horizontal bar between toolbar and main content. Pure view — no business logic.
@@ -1730,6 +1778,57 @@ FeedBar → GTK widgets:
   _progress_bar (Gtk.ProgressBar)       → animated fill / pulse
 ```
 
+### 4.11 Agent-to-Agent (A2A) Consultation Flow (Phase 4)
+
+```
+Project tab: user sends "@Coder implement auth"
+         │
+         ▼
+ChatHandler sends to AgentRuntime (via send_to_special_agent)
+AgentRuntime → Coder responds with "@Debugger — is empty string valid?"
+         │
+         ▼
+ChatHandler._handle_final_response() detects @mention in response
+         │
+         ▼
+CollabManager.start_relay(project_name, initiator_sk, target_sk, question_text)
+  → posts intent card to project feed
+  → _send_relay(target_sk, "[A2A relay from Coder in manopea] @Debugger — is empty string valid?")
+  → adds target_sk to _pending_relays + _sk_to_thread
+
+Debugger responds via AgentRuntimeHandler._do_response_complete()
+         │
+         ▼
+is_pending_relay(Debugger_sk) → True → capture_response(Debugger_sk, text)
+  → appends {text, from: Debugger_sk} to thread.responses
+  → thread.turn += 1
+  → should_stop(responses, turn=1) → False (turn < 3)
+  → relays Debugger's response back to Coder (next turn prep)
+  → adds Coder_sk to _pending_relays + _sk_to_thread
+
+Coder responds (with Debugger's answer as context)
+         │
+         ▼
+capture_response(Coder_sk, text)
+  → appends {text, from: Coder_sk}
+  → thread.turn = 2
+  → should_stop(responses, turn=2) → False (turn ≤ 2 always returns False)
+  → relays Coder response back to Debugger
+
+Debugger responds again
+         │
+         ▼
+capture_response(Debugger_sk, text)
+  → thread.turn = 3
+  → should_stop(responses, turn=3) → Random Forest decides
+  → if converged: close_thread() → posts closing card, clears registries
+  → if not converged: continues until turn ≥ 15 (hard wall)
+```
+
+**Thread safety:** All GTK via `GLib.idle_add()`. State updates in `capture_response()` under `_lock`. `_send_relay()` called outside lock.
+
+**Convergence integration:** `from converge.converge import should_stop` — Random Forest on 10 conversational signals. Always `False` for turn ≤ 2, always `True` for turn ≥ 15.
+
 ## 5. Callback Pattern
 
 **Primary pattern for all component communication.** A callback is a function reference passed to a component at construction time or via a setter. The component calls it when something happens. The component does NOT know what happens after.
@@ -2169,6 +2268,7 @@ crabcakes/
 │   │   ├── agent_list_handler.py # 118 lines — agent card data (initials, colors, sorting)
 │   │   ├── chat_handler.py       # 639 lines — send, fan-out, routing, special agent routing, tab switching
 │   │   ├── chat_render_handler.py # 421 lines — escape + markdown + highlight + bubble pipeline
+│   │   ├── collab_manager.py     # 362 lines — A2A consultation threads: relay, response capture, convergence (Phase 4)
 │   │   ├── command_handler.py   # 340 lines — backtick command parser + @mention resolution (Phase 7)
 │   │   ├── gateway_handler.py    # 228 lines — connect, agents, lifecycle (Phase 2)
 │   │   ├── media_handler.py      # 89 lines — STT + improve (Phase 4)
@@ -2206,6 +2306,16 @@ crabcakes/
     ├── stt.py                   # 182 lines — STTEngine (faster-whisper push-to-talk, Phase 4)
     └── syntax_highlight.py      # 164 lines — highlight() — Pygments → Pango markup (Phase 2)
 
+prompts/                         # System prompt templates for agent runtime
+    └── system/
+        ├── collab.md            # 28 lines — A2A collaboration protocol for all agents (Phase 4)
+        ├── default.md           # Default system prompt
+        ├── coder.md             # Coder agent system prompt
+        ├── debugger.md         # Debugger agent system prompt
+        ├── project-awareness.md # Project context awareness prompt
+        ├── improve.md           # Prompt improvement template
+        └── ...                  # Other system prompts
+
 tests/
     ├── conftest.py              # pytest fixtures
     ├── test_agents.py
@@ -2229,6 +2339,7 @@ tests/
     ├── test_markdown.py
     ├── test_media_handler.py
     ├── test_crabwatch_handler.py  # CrabWatchHandler: init, watch, ignore patterns, debounce (Phase 5)
+    ├── test_collab_manager.py     # CollabManager: thread lifecycle, relay, convergence (Phase 4)
     ├── test_feed_handler.py        # FeedHandler: add/clear cards, gateway/fs event routing (Phase 5)
     ├── test_feed_card.py           # feed_card view: card type rendering, CSS class mapping
     ├── test_feed_store.py          # feed_store: load/save/append/update feed.json persistence

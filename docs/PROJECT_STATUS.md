@@ -47,6 +47,18 @@
 - `Send ↵` button with `.suggested-action` CSS (solid indigo)
 - Input area with `.input-bubble` CSS (dark background, rounded corners)
 
+### Phase 6 — Agent-to-Agent Communication ✅ (2026-05-11)
+- `ui/handlers/collab_manager.py` — A2A consultation thread lifecycle: relay, response capture, convergence (Phase 4 code)
+- `prompts/system/collab.md` — A2A collaboration protocol injected into all agent system prompts
+- `CommandHandler` — extended `_resolve_mention()` to search special agents (Phase 4 @mention fix)
+- `ChatHandler` — A2A @mention detection + response capture hooks (Phase 4 routing)
+- `AgentRuntimeHandler` — A2A detection + capture for special agent responses (Phase 4 routing)
+- `utils/prompt_loader.py` — `compose_system_prompt()` loads `collab.md` for all agents
+- `ui/window.py` — CollabManager wiring: set_collab_manager(), set_command_handler()
+- `tests/test_collab_manager.py` — 38 passing tests (thread lifecycle, convergence, edge cases)
+- **Bug fixed:** `_command_handler` not initialized in `AgentRuntimeHandler.__init__` (Qaster review)
+- ARCHITECTURE.md updated: §2 (dir structure), §3.21n (CollabManager), §4.11 (A2A data flow), §12 (file inventory)
+
 ---
 
 ## In Progress

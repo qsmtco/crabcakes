@@ -139,6 +139,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # AgentRuntime handler — owns AgentRuntime instances for special agents (Phase 1.4)
         from ui.handlers.agent_runtime_handler import AgentRuntimeHandler
+        from ui.handlers.collab_manager import CollabManager
         self._agent_runtime_handler = AgentRuntimeHandler(
             main_content=self._main_content,
             chat_render_handler=self._chat_render_handler,
@@ -157,6 +158,20 @@ class MainWindow(Gtk.ApplicationWindow):
         self._main_content.set_agent_runtime_handler(self._agent_runtime_handler)
         self._command_handler.set_special_agents(self._agent_runtime_handler.get_special_agents())
 
+        # CollabManager — wired to ChatHandler, AgentRuntimeHandler, and CommandHandler (Phase 4)
+        self._collab_manager = CollabManager(
+            GLib=GLib,
+            feed_handler=self._feed_handler,
+            agent_runtime_handler=self._agent_runtime_handler,
+            gw=None,  # set after gateway connect in _on_ws_connect()
+            agent_mgr=None,  # set after gateway connect in _on_ws_connect()
+        )
+        self._collab_manager.set_agent_mgr(self._gateway_handler.agent_mgr)
+
+        # Wire CollabManager into ChatHandler and AgentRuntimeHandler
+        self._chat_handler.set_collab_manager(self._collab_manager)
+        self._agent_runtime_handler.set_collab_manager(self._collab_manager)
+        self._agent_runtime_handler.set_command_handler(self._command_handler)
 
         # Prompts handler — wired to left_panel after both are created
         from ui.handlers.prompts_handler import PromptsHandler
@@ -593,6 +608,10 @@ class MainWindow(Gtk.ApplicationWindow):
             self._left_panel.refresh_agents_with_project(
                 self._project_handler.get_active_project_name()
             )
+        # Wire CollabManager with live references after connect
+        self._collab_manager.set_gateway_client(gw)
+        self._collab_manager.set_agent_mgr(self._gateway_handler.agent_mgr)
+
         # Wire CommandHandler with live references after connect
         self._command_handler.set_gateway_client(gw)
         self._command_handler.set_agent_manager(self._gateway_handler.agent_mgr)
