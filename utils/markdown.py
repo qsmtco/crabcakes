@@ -78,6 +78,17 @@ def format_markdown(text: str) -> str:
     if not text:
         return ""
 
+    # ── Step 0: Isolate adjacent bold boundaries ──────────────────────────────
+    # The pattern **** (closing ** immediately followed by opening **) causes
+    # the bold+italic regex (Step 2) to match across what should be two separate
+    # bold blocks. Insert ZWSP between adjacent ** pairs to prevent cross-boundary
+    # matching. ZWSP is invisible in rendered output. Removed after all substitutions.
+    _ZWSP = '\u200b'
+    prev = None
+    while text != prev:
+        prev = text
+        text = text.replace('****', f'**{_ZWSP}**')
+
     # ── Step 1: Protect inline code spans ────────────────────────────────────
     code_spans: list[str] = []
 
@@ -221,5 +232,8 @@ def format_markdown(text: str) -> str:
         return m.group(0)
 
     protected = _ANCHOR_PLACEHOLDER_RE.sub(_restore_anchor, protected)
+
+    # ── Step 7: Remove zero-width spaces (added in Step 0) ────────────────────
+    protected = protected.replace(_ZWSP, '')
 
     return protected
