@@ -65,6 +65,26 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt("Debugger", "/tmp", [])
         assert "Debugger" in prompt  # name appears
 
+    def test_collab_prompt_in_all_agents(self):
+        """collab.md is composed into all agents regardless of role."""
+        p_coder = build_system_prompt("Coder", "/tmp", [])
+        p_gateway = build_system_prompt("QTR", "/tmp", [], agent_role="")
+        p_debugger = build_system_prompt("Debugger", "/tmp", [], agent_role="debugger")
+        for p, label in [(p_coder, "coder"), (p_gateway, "gateway"), (p_debugger, "debugger")]:
+            assert "Agent Collaboration" in p, f"collab missing in {label} prompt"
+
+    def test_collab_comes_after_default(self):
+        """collab.md loads after default.md in the composition order."""
+        prompt = build_system_prompt("Coder", "/tmp", [])
+        default_pos = prompt.find("You are")
+        collab_pos = prompt.find("Agent Collaboration")
+        assert 0 <= default_pos < collab_pos, "collab should come after default"
+
+    def test_collab_in_no_project_prompt(self):
+        """collab.md applies even when no project is active."""
+        prompt = build_system_prompt("Coder", None, [])
+        assert "Agent Collaboration" in prompt, "collab should be in no-project prompt"
+
 
 # ═══════════════════════════════════════════════════════════════════
 #  build_file_context — gitignore

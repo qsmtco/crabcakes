@@ -155,6 +155,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self._chat_handler.set_agent_runtime_handler(self._agent_runtime_handler)
         self._left_panel.set_special_agents(self._agent_runtime_handler)
         self._main_content.set_agent_runtime_handler(self._agent_runtime_handler)
+        self._command_handler.set_special_agents(self._agent_runtime_handler.get_special_agents())
 
 
         # Prompts handler — wired to left_panel after both are created

@@ -66,6 +66,7 @@ class CommandHandler:
         self._on_display_text = on_display_text
         self._prefix = COMMAND_PREFIX   # BUG #9 fix: read from config at construction
         self._registry = CommandRegistry()
+        self._special_agents: dict[str, str] = {}  # {session_key: display_name}
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -76,6 +77,12 @@ class CommandHandler:
     def set_agent_manager(self, agent_mgr) -> None:
         """Inject the live AgentManager after connect. Called by window.py."""
         self._agent_mgr = agent_mgr
+
+    def set_special_agents(self, agents: dict[str, str]) -> None:
+        """Set special agent registry for @mention resolution.
+        Called by window.py after AgentRuntimeHandler is created.
+        Dict format: {session_key: display_name} e.g. {"special:coder": "Coder"}"""
+        self._special_agents = agents
 
     def register_command(
         self,
@@ -420,6 +427,22 @@ class CommandHandler:
                         handled=True,
                         response_text=f"Multiple agents match @{name}: {', '.join(names)}",
                     )
+
+        # Search special agents (Coder, Debugger, etc.)
+        for sk, display_name in self._special_agents.items():
+            if display_name.lower() == name.lower():
+                return sk
+        if len(name) >= 2:
+            matches = [sk for sk, dn in self._special_agents.items()
+                       if dn.lower().startswith(name.lower())]
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                names = [self._special_agents[sk] for sk in matches]
+                return CommandResult(
+                    handled=True,
+                    response_text=f"Multiple agents match @{name}: {', '.join(names)}",
+                )
 
         return CommandResult(
             handled=True,

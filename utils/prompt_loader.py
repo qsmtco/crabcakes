@@ -104,6 +104,11 @@ def compose_system_prompt(
     if default:
         parts.append(default)
 
+    # 1b. Collaboration protocol (all agents — applies regardless of project/role)
+    collab = load_prompt_template("collab")
+    if collab:
+        parts.append(collab)
+
     # 2. Project awareness (when project active)
     if project_path:
         pa = load_prompt_template("project-awareness")

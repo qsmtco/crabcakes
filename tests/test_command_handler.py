@@ -257,6 +257,11 @@ class TestSetters:
         empty_handler.set_agent_manager(am)
         assert empty_handler._agent_mgr is am
 
+    def test_set_special_agents(self, empty_handler):
+        agents = {"special:coder": "Coder", "special:debugger": "Debugger"}
+        empty_handler.set_special_agents(agents)
+        assert empty_handler._special_agents == agents
+
 
 # ═══════════════════════════════════════════════════════════════════
 #  Command flow end-to-end
@@ -390,8 +395,92 @@ class TestResolveInlineMention:
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  Bug fixes — backtick command path
+#  Special Agent @mention resolution (Phase A2A Step 1.4)
 # ═══════════════════════════════════════════════════════════════════
+
+class TestSpecialAgentMentionResolution:
+    """Tests for @mention resolution of special agents (Coder, Debugger).
+    These live in AgentRuntimeHandler, not AgentManager — verified via
+    set_special_agents() registry in CommandHandler."""
+
+    def test_exact_special_agent_resolves(self):
+        """@Coder → special:coder via special agents registry."""
+        agnt = FakeAgentManager({"QTR": "agent:qtr:telegram:direct:7478874934"})
+        h = CommandHandler(None, agnt, None)
+        h.set_special_agents({"special:coder": "Coder", "special:debugger": "Debugger"})
+        resolved = h._resolve_mention("@Coder")
+        assert resolved == "special:coder"
+
+    def test_exact_debugger_resolves(self):
+        """@Debugger → special:debugger via special agents registry."""
+        agnt = FakeAgentManager({})
+        h = CommandHandler(None, agnt, None)
+        h.set_special_agents({"special:coder": "Coder", "special:debugger": "Debugger"})
+        resolved = h._resolve_mention("@Debugger")
+        assert resolved == "special:debugger"
+
+    def test_prefix_match_special_agent(self):
+        """@Co → special:coder via prefix match (min 2 chars)."""
+        agnt = FakeAgentManager({})
+        h = CommandHandler(None, agnt, None)
+        h.set_special_agents({"special:coder": "Coder", "special:debugger": "Debugger"})
+        resolved = h._resolve_mention("@Co")
+        assert resolved == "special:coder"
+
+    def test_single_char_no_partial_match(self):
+        """@C (single char) → no prefix match, falls through to unknown."""
+        agnt = FakeAgentManager({})
+        h = CommandHandler(None, agnt, None)
+        h.set_special_agents({"special:coder": "Coder", "special:debugger": "Debugger"})
+        resolved = h._resolve_mention("@C")
+        assert isinstance(resolved, CommandResult)
+        assert "Unknown" in resolved.response_text
+
+    def test_unknown_special_agent_returns_error(self):
+        """@NotAnAgent → error via special agents registry."""
+        agnt = FakeAgentManager({})
+        h = CommandHandler(None, agnt, None)
+        h.set_special_agents({"special:coder": "Coder", "special:debugger": "Debugger"})
+        resolved = h._resolve_mention("@NotAnAgent")
+        assert isinstance(resolved, CommandResult)
+        assert "Unknown" in resolved.response_text
+
+    def test_special_and_gateway_coexist_no_collision(self):
+        """Special agent and gateway agent with same name — special wins (checked first)."""
+        # Gateway agent named "Coder" (unusual but possible)
+        agnt = FakeAgentManager({"Coder": "agent:coder:gateway:1"})
+        h = CommandHandler(None, agnt, None)
+        # Special agent registry also has Coder
+        h.set_special_agents({"special:coder": "Coder"})
+        # Currently special agents are checked AFTER gateway agents in _resolve_mention
+        # This test documents current behavior: gateway wins (checked first)
+        # Build plan decides order — for now verify current (gateway-first) behavior
+        resolved = h._resolve_mention("@Coder")
+        # Gateway agent checked first → returns gateway sk
+        assert resolved == "agent:coder:gateway:1"
+
+    def test_mixed_resolve_via_resolve_inline_mention(self):
+        """resolve_inline_mention works for both gateway and special agents."""
+        agnt = FakeAgentManager({"QTR": "agent:qtr:telegram:direct:7478874934"})
+        h = CommandHandler(None, agnt, None)
+        h.set_special_agents({"special:coder": "Coder", "special:debugger": "Debugger"})
+
+        # Gateway agent
+        r1 = h.resolve_inline_mention("@QTR hello", "project:testproj")
+        assert r1.target_session_key == "agent:qtr:telegram:direct:7478874934"
+
+        # Special agent
+        r2 = h.resolve_inline_mention("@Coder hello", "project:testproj")
+        assert r2.target_session_key == "special:coder"
+
+    def test_resolve_inline_mention_debugger(self):
+        """resolve_inline_mention for @Debugger → special:debugger."""
+        agnt = FakeAgentManager({})
+        h = CommandHandler(None, agnt, None)
+        h.set_special_agents({"special:debugger": "Debugger"})
+        r = h.resolve_inline_mention("@Debugger fix this", "project:testproj")
+        assert r.target_session_key == "special:debugger"
+        assert r.clean_text == "fix this"
 
 class TestBugFixes:
     """Regression tests for bugs found during adversarial audit."""
