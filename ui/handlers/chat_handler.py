@@ -244,7 +244,12 @@ class ChatHandler:
                                     on_forward_click=self._on_forward_message,
                                     agent_name="You",
                                 )
-                        if self._gw is not None and self._gw.is_connected():
+                        # Route through AgentRuntime for special agents, gateway for others
+                        is_special = (self._agent_runtime_handler is not None
+                                      and result.forward_to in self._agent_runtime_handler.get_special_agents())
+                        if is_special:
+                            self._agent_runtime_handler.send_to_special_agent(result.forward_to, result.forward_text)
+                        elif self._gw is not None and self._gw.is_connected():
                             self._gw.send_message(result.forward_to, result.forward_text)
                     self._dispatch(_show_echo_and_forward)
                 elif result.broadcast_targets and result.forward_text:
@@ -266,9 +271,17 @@ class ChatHandler:
                                     on_forward_click=self._on_forward_message,
                                     agent_name="You",
                                 )
-                        if self._gw is not None and self._gw.is_connected():
-                            for target in result.broadcast_targets:
-                                self._gw.send_message(target, result.forward_text)
+                        for target in result.broadcast_targets:
+                            # Special agents route through AgentRuntimeHandler, not gateway
+                            is_special = (self._agent_runtime_handler is not None
+                                          and target in self._agent_runtime_handler.get_special_agents())
+                            if is_special:
+                                self._agent_runtime_handler.send_to_special_agent(target, result.forward_text)
+                                continue
+                            # Gateway agent — skip silently when offline
+                            if self._gw is None or not self._gw.is_connected():
+                                continue
+                            self._gw.send_message(target, result.forward_text)
                     self._dispatch(_show_broadcast_and_forward)
                 # Commands with response_text/card: CommandHandler already dispatched via callbacks
                 return

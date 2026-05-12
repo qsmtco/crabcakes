@@ -1,6 +1,8 @@
 # BUG: `forward_to` commands silently fail for special agents
 
-**Status:** Open
+**Status:** Fixed (2026-05-12)
+
+**Fix applied:** `ui/handlers/chat_handler.py` — `_show_echo_and_forward()` block and `_show_broadcast_and_forward()` block both updated with `is_special` check.
 **Discovered:** 2026-05-12
 **Severity:** Medium — `ask`/`delegate`/`stop`/`tell` commands don't work when targeting local special agents (Coder, Debugger)
 **Introduced:** Phase 1.4 (AgentRuntime) — `forward_to` path never updated for special agent routing
