@@ -561,7 +561,11 @@ class ChatHandler:
                 self._collab_manager.capture_response(session_key, final_text)
 
         # ── A2A relay detection ─────────────────────────────────────────────
-        # Check if this response contains an @mention that starts a new consultation.
+        # Skip relay detection on A2A relay messages — prevents relay-triggered-relay loops.
+        # Gateway agents responding to a relay come back through _handle_final_response.
+        # Re-triggering A2A on those responses creates an infinite loop.
+        if self._collab_manager is not None and final_text and final_text.startswith("[A2A relay from"):
+            return
         if self._collab_manager is not None and session_key and final_text:
             project_name = self._agent_to_project.get_project(session_key)
             if project_name:

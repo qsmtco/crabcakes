@@ -648,7 +648,10 @@ class AgentRuntimeHandler:
                 self._collab_manager.capture_response(session_key, text)
 
         # ── A2A relay detection ────────────────────────────────────────────
+        # Skip relay detection on A2A relay messages — prevents relay-triggered-relay loops.
         if self._collab_manager is not None and self._active_project:
+            if text.startswith("[A2A relay from"):
+                return
             project_name = self._active_project[0]
             from ui.handlers.collab_manager import CollabManager
             relay = CollabManager.detect_a2a_mention(text, session_key, project_name, self._command_handler)
