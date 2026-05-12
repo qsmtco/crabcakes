@@ -674,12 +674,11 @@ class ChatHandler:
         """Build project awareness prefix for a gateway agent message.
 
         Returns raw awareness data (build_awareness_block) prefixed with a
-        neutral header. No identity injection, no composed templates — gateway
-        agents already have a real system prompt from OpenClaw.
+        neutral header, plus the collaboration protocol (collab.md).
 
         Special agents are NOT routed through this method — they go through
         AgentRuntimeHandler.send_to_special_agent() which has its own prompt
-        pipeline (agent/context.py build_system_prompt()).
+        pipeline (agent/context.py build_system_prompt() via prompt_loader).
 
         Awareness tracking (send-once-only) is handled by the caller via
         the _awareness_sent set.
@@ -691,13 +690,28 @@ class ChatHandler:
         project_path = self._project_handler.get_active_project_path()
         if not project_path:
             return ""
+        parts = []
         try:
             from utils.project_awareness import build_awareness_block
             block = build_awareness_block(project_path)
             if block.strip():
-                return f"## Project Context\n\n{block}\n\n"
+                parts.append(f"## Project Context\n\n{block}")
         except Exception:
             pass
+
+        # Inject collaboration protocol — same collab.md injected into special
+        # agents via prompt_loader. Gateway agents need it too so they understand
+        # how to use mentions correctly in project chats.
+        try:
+            from utils.prompt_loader import load_prompt_template
+            collab = load_prompt_template("collab")
+            if collab and collab.strip():
+                parts.append(collab)
+        except Exception:
+            pass
+
+        if parts:
+            return "\n\n".join(parts) + "\n\n"
         return ""
 
     def _dispatch(self, fn: Callable):
