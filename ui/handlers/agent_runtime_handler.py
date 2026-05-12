@@ -79,8 +79,6 @@ class AgentRuntimeHandler:
 
         self._on_agent_start_cb: Callable[[str], None] | None = None
         self._on_agent_end_cb: Callable[[str], None] | None = None
-        self._command_handler = None  # injected via set_command_handler()
-        self._collab_manager = None  # injected via set_collab_manager()
 
     def set_on_agent_start(self, cb: Callable[[str], None]) -> None:
         """Set callback fired when a local agent starts processing. Signature: cb(session_key)."""
@@ -89,14 +87,6 @@ class AgentRuntimeHandler:
     def set_on_agent_end(self, cb: Callable[[str], None]) -> None:
         """Set callback fired when a local agent finishes processing. Signature: cb(session_key)."""
         self._on_agent_end_cb = cb
-
-    def set_collab_manager(self, manager) -> None:
-        """Set CollabManager for A2A relay. Called by window.py._build()."""
-        self._collab_manager = manager
-
-    def set_command_handler(self, handler) -> None:
-        """Set CommandHandler for A2A @mention resolution. Called by window.py._build()."""
-        self._command_handler = handler
 
     def set_review_handler(self, review_handler) -> None:
         """Set ReviewHandler after construction (deferred to avoid circular deps with window._build)."""
@@ -641,27 +631,6 @@ class AgentRuntimeHandler:
         # Fire lifecycle: agent finished → ActivityHandler progress bar
         if self._on_agent_end_cb:
             self._on_agent_end_cb(session_key)
-
-        # ── A2A response capture ──────────────────────────────────────────
-        if self._collab_manager is not None:
-            if self._collab_manager.is_pending_relay(session_key):
-                self._collab_manager.capture_response(session_key, text)
-
-        # ── A2A relay detection ────────────────────────────────────────────
-        # Skip relay detection on A2A relay messages — prevents relay-triggered-relay loops.
-        if self._collab_manager is not None and self._active_project:
-            if text.startswith("[A2A relay from"):
-                return
-            project_name = self._active_project[0]
-            from ui.handlers.collab_manager import CollabManager
-            relay = CollabManager.detect_a2a_mention(text, session_key, project_name, self._command_handler)
-            if relay is not None:
-                self._collab_manager.start_relay(
-                    project_name=project_name,
-                    initiator_sk=session_key,
-                    target_sk=relay["target_sk"],
-                    question_text=relay["question"],
-                )
 
     def _on_token_usage(self, session_key: str, total_tokens: int, cost: float) -> None:
         """AgentRuntime token usage callback. Logged for now."""

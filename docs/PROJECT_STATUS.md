@@ -59,6 +59,17 @@
 - **Bug fixed:** `_command_handler` not initialized in `AgentRuntimeHandler.__init__` (Qaster review)
 - ARCHITECTURE.md updated: §2 (dir structure), §3.21n (CollabManager), §4.11 (A2A data flow), §12 (file inventory)
 
+### Phase 6.1 — A2A Simplification ✅ (2026-05-12)
+- `ui/handlers/collab_manager.py` — **DELETED** (automatic relay engine removed)
+- `tests/test_collab_manager.py` — **DELETED**
+- `ChatHandler` — A2A response capture + @mention detection hooks **REMOVED**
+- `AgentRuntimeHandler` — A2A response capture + detection hooks **REMOVED**; `set_command_handler()` removed
+- `ui/window.py` — CollabManager construction + all wiring **REMOVED**; `set_special_agents()` restored for ask/delegate/stop/tell commands
+- `prompts/system/collab.md` — **REWRITTEN** (Phase 2 — command-based A2A via `` `ask` ``)
+- `docs/ARCHITECTURE.md` — §2, §3.21n, §4.11, §12 CollabManager entries **REMOVED**; new §4.11 documents command-based A2A
+- A2A is now purely command-based via `` `ask` `` / `` `delegate` `` / `` `stop` `` / `` `tell` `` commands
+- Phase 3 (no new code — `ask` command pipeline already existed and was wired)
+
 ---
 
 ## In Progress

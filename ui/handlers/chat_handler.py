@@ -15,8 +15,6 @@
 from typing import Callable
 import logging
 
-from ui.handlers.collab_manager import CollabManager
-
 _logger = logging.getLogger(__name__)
 
 
@@ -63,7 +61,6 @@ class ChatHandler:
         self._pending_req_id: str | None = None  # tracks last sent req_id for res correlation
         self._on_res_confirmed: Callable[[str], None] | None = None  # pre-flight confirm via res
         self._agent_runtime_handler = None  # injected via set_agent_runtime_handler()
-        self._collab_manager = None               # injected via set_collab_manager()
         self._awareness_sent: set[str] = set()  # track "project:agent" pairs that received awareness
         self._agent_mgr = None  # injected via set_agent_manager() after gateway connect
 
@@ -74,10 +71,6 @@ class ChatHandler:
     def set_agent_runtime_handler(self, handler):
         """Inject AgentRuntimeHandler. Called by window.py._build()."""
         self._agent_runtime_handler = handler
-
-    def set_collab_manager(self, manager) -> None:
-        """Set CollabManager for A2A relay. Called by window.py._build()."""
-        self._collab_manager = manager
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -553,32 +546,6 @@ class ChatHandler:
                 self._mc.scroll_chat_to_bottom()
         if chat_box is not None and hasattr(chat_box, 'record'):
             chat_box.record("Agent", final_text)
-
-        # ── A2A response capture ────────────────────────────────────────────
-        # Route response to CollabManager if it's part of an active A2A thread.
-        if self._collab_manager is not None:
-            if self._collab_manager.is_pending_relay(session_key):
-                self._collab_manager.capture_response(session_key, final_text)
-
-        # ── A2A relay detection ─────────────────────────────────────────────
-        # Skip relay detection on A2A relay messages — prevents relay-triggered-relay loops.
-        # Gateway agents responding to a relay come back through _handle_final_response.
-        # Re-triggering A2A on those responses creates an infinite loop.
-        if self._collab_manager is not None and final_text and final_text.startswith("[A2A relay from"):
-            return
-        if self._collab_manager is not None and session_key and final_text:
-            project_name = self._agent_to_project.get_project(session_key)
-            if project_name:
-                relay = CollabManager.detect_a2a_mention(
-                    final_text, session_key, project_name, self._command_handler
-                )
-                if relay is not None:
-                    self._collab_manager.start_relay(
-                        project_name=project_name,
-                        initiator_sk=session_key,
-                        target_sk=relay["target_sk"],
-                        question_text=relay["question"],
-                    )
 
     def _extract_text(self, msg_obj) -> str:
         """Extract plain text from a gateway message object.

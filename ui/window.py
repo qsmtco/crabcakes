@@ -139,7 +139,6 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # AgentRuntime handler — owns AgentRuntime instances for special agents (Phase 1.4)
         from ui.handlers.agent_runtime_handler import AgentRuntimeHandler
-        from ui.handlers.collab_manager import CollabManager
         self._agent_runtime_handler = AgentRuntimeHandler(
             main_content=self._main_content,
             chat_render_handler=self._chat_render_handler,
@@ -156,20 +155,6 @@ class MainWindow(Gtk.ApplicationWindow):
         self._chat_handler.set_agent_runtime_handler(self._agent_runtime_handler)
         self._left_panel.set_special_agents(self._agent_runtime_handler)
         self._main_content.set_agent_runtime_handler(self._agent_runtime_handler)
-
-        # CollabManager — wired to ChatHandler, AgentRuntimeHandler, and CommandHandler (Phase 4)
-        # Note: feed_handler, gw, agent_mgr set later after their constructors run
-        self._collab_manager = CollabManager(
-            GLib=GLib,
-            feed_handler=None,  # set after FeedHandler is created below
-            agent_runtime_handler=self._agent_runtime_handler,
-            gw=None,  # set after gateway connect in _on_ws_connect()
-            agent_mgr=None,  # set after gateway connect in _on_ws_connect()
-        )
-
-        # Wire CollabManager into ChatHandler and AgentRuntimeHandler
-        self._chat_handler.set_collab_manager(self._collab_manager)
-        self._agent_runtime_handler.set_collab_manager(self._collab_manager)
 
         # Prompts handler — wired to left_panel after both are created
         from ui.handlers.prompts_handler import PromptsHandler
@@ -267,9 +252,6 @@ class MainWindow(Gtk.ApplicationWindow):
             on_approve_exec=self._agent_runtime_handler.approve_exec,  # Phase E
         )
 
-        # Wire FeedHandler into CollabManager (deferred from constructor — feed_handler created here)
-        self._collab_manager.set_feed_handler(self._feed_handler)
-
         # CrabWatch — filesystem watcher for project feed
         from ui.handlers.crabwatch_handler import CrabWatchHandler
         self._crabwatch_handler = CrabWatchHandler(
@@ -365,11 +347,8 @@ class MainWindow(Gtk.ApplicationWindow):
         self._command_handler.set_prefix(COMMAND_PREFIX)   # BUG #9 fix: read prefix from config
         # Inject CommandHandler into ChatHandler (ChatHandler calls process_input before send)
         self._chat_handler.set_command_handler(self._command_handler)
-
-        # Wire CommandHandler with special agents for @mention resolution (Phase 4)
+        # Populate CommandHandler with special agent names for @mention resolution in ask/delegate/stop/tell commands
         self._command_handler.set_special_agents(self._agent_runtime_handler.get_special_agents())
-        # Wire CommandHandler into AgentRuntimeHandler for A2A relay detection (Phase 4)
-        self._agent_runtime_handler.set_command_handler(self._command_handler)
 
         # Review handler — owns review session lifecycle (Phase 3)
         from ui.handlers.review_handler import ReviewHandler
@@ -614,10 +593,6 @@ class MainWindow(Gtk.ApplicationWindow):
             self._left_panel.refresh_agents_with_project(
                 self._project_handler.get_active_project_name()
             )
-        # Wire CollabManager with live references after connect
-        self._collab_manager.set_gateway_client(gw)
-        self._collab_manager.set_agent_mgr(self._gateway_handler.agent_mgr)
-
         # Wire CommandHandler with live references after connect
         self._command_handler.set_gateway_client(gw)
         self._command_handler.set_agent_manager(self._gateway_handler.agent_mgr)
