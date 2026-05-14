@@ -163,8 +163,10 @@ class AgentCommandHandler:
                     )
                     break
 
-                # Reconstruct with backtick prefix for process_input
-                candidate = f"`{raw_match}"
+                # Reconstruct in canonical command format for process_input.
+                # Canonical form: `cmd @Agent — body text
+                # This prevents em-dashes in the body from being misinterpreted
+                # as the body separator.
                 first_word = raw_match.strip().split()[0].lower() if raw_match.strip() else ""
 
                 # Implicit ask: @AgentName → treat as "ask"
@@ -173,6 +175,27 @@ class AgentCommandHandler:
 
                 if first_word not in known_commands:
                     continue  # Not a recognized command — skip
+
+                # Parse the raw match into command + @agent + rest, then
+                # rebuild with explicit em-dash separator.
+                match_tokens = raw_match.strip().split()
+                cmd_token = match_tokens[0]  # e.g. "ask" or "tell"
+                rest_tokens = match_tokens[1:]
+
+                # Find the @agent token and separate it from the body text
+                agent_token = ""
+                body_tokens = []
+                for tok in rest_tokens:
+                    if not agent_token and tok.startswith("@"):
+                        agent_token = tok
+                    else:
+                        body_tokens.append(tok)
+
+                if agent_token:
+                    body_text = " ".join(body_tokens)
+                    candidate = f"`{cmd_token} {agent_token} — {body_text}"
+                else:
+                    candidate = f"`{raw_match}"
 
                 result = self._command_handler.process_input(session_key, candidate,
                                                              skip_dispatch=True)
