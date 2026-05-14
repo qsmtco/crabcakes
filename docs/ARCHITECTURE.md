@@ -1048,7 +1048,7 @@ class SessionHandler:
     def cmd_session(cmd) -> CommandResult
 ```
 
-### 3.21f `ui/views/diff_card.py` — Diff Card Widget Factories (Phase 7)
+### 3.21g `ui/views/diff_card.py` — Diff Card Widget Factories (Phase 7)
 
 **Responsibility:** GTK widget factories for diff display in project chat tabs.
 
@@ -1063,7 +1063,7 @@ build_diff_summary_card(parsed_diff, on_accept_all=None, on_reject_all=None) -> 
 
 **Public API:**
 ```python
-parse_diff(diff_text) -> ParsedDiff        # unified diff → FileDiff/ParsedDiff
+parse_diff(diff_text) -> ParsedDiff
 parse_diff_stat(stat_text) -> list[(file_path, additions, deletions)]
 
 @dataclass DiffLine: type, content, old_line_no, new_line_no
@@ -1092,7 +1092,7 @@ status(project_path) -> GitResult
 @dataclass GitResult: success, stdout, error, sha
 ```
 
-### 3.21i `utils/config.py` — Config Path Helpers (Phase 7)
+### 3.21j `utils/config.py` — Config Path Helpers (Phase 7)
 
 **Public API:**
 ```python
@@ -1106,7 +1106,7 @@ get_identity_dir() -> str                       # ~/.openclaw/identity/
 COMMAND_PREFIX = "`"                            # backtick command trigger
 ```
 
-### 3.3f `models/conversation.py` — Conversation Data Models (Agent Runtime Phase 1.1)
+### 3.21k `models/conversation.py` — Conversation Data Models (Agent Runtime Phase 1.1)
 
 **Responsibility:** Dataclasses for agent conversation state. Pure data — no GTK, no network, no LLM calls.
 
@@ -1132,7 +1132,7 @@ class ToolCallStatus(str, Enum): PENDING = "pending" | EXECUTING = "executing" |
 
 **Rules:** No imports from `ui/`, `agent/`, `gateway/`, `subprocess`.
 
-### 3.21h `agent/runtime.py` — Agent Runtime (Phase 1.3a)
+### 3.21l `agent/runtime.py` — Agent Runtime (Phase 1.3a)
 
 **Responsibility:** Core agent loop — conversation management, LLM API calls, tool execution, streaming SSE responses, cost tracking, conversation persistence.
 
@@ -1168,7 +1168,7 @@ class AgentRuntime:
 
 **Thread safety:** All callbacks dispatched via `GLib.idle_add()`. `_tool_history` protected by dedicated `_tool_history_lock` (separate from `self._lock` to avoid deadlock with `cancel()`).
 
-### 3.21i `agent/tools.py` — Tool Definitions + Execution (Phase 1.1)
+### 3.21m `agent/tools.py` — Tool Definitions + Execution (Phase 1.1)
 
 **Responsibility:** 8 tools for local file/exec/web operations, sandboxed to `project_path`, with PM approval gating for `exec_command`.
 
@@ -1201,7 +1201,7 @@ def set_approval_callback(cb) -> None              # cb(session_key, tool_name, 
 
 **Blocklist:** `rm -rf /`, `mkfs`, `dd if=/dev/zero of=/dev/sda` — always denied before approval callback fires.
 
-### 3.21j `agent/config.py` — LLM Provider Config (Phase 1.1)
+### 3.21n `agent/config.py` — LLM Provider Config (Phase 1.1)
 
 **Public API:**
 ```python
@@ -1213,7 +1213,7 @@ def load_agent_config() -> AgentConfig      # reads <config_dir>/agent.json; che
 def get_api_key(provider_name) -> str | None
 ```
 
-### 3.21k `agent/context.py` — System Prompt + File Context Builder (Phase 1.2)
+### 3.21o `agent/context.py` — System Prompt + File Context Builder (Phase 1.2)
 
 **Public API:**
 ```python
@@ -1224,7 +1224,7 @@ def _load_crabcakes_doc(doc_name, project_path) -> str | None  # individual doc 
 def load_custom_system_prompt(project_path) -> str | None  # .crabcakes/agent-system-prompt.md → AGENTS.md → None
 ```
 
-### 3.21l `agent/special_agents.py` — Special Agent Definitions (Phase 1.4)
+### 3.21p `agent/special_agents.py` — Special Agent Definitions (Phase 1.4)
 
 **Public API:**
 ```python
@@ -1238,7 +1238,7 @@ def get_special_agent(prefix) -> SpecialAgentDef | None
 **Coder:** tools=`[read_file, write_file, edit_file, exec_command, list_files, search_files, web_search, web_fetch]`, `can_write=True`
 **Debugger:** tools=`[read_file, exec_command, list_files, search_files, web_search, web_fetch]`, `can_write=False`
 
-### 3.21m `agent/enforcement.py` — Post-Write Verification (Phase 3)
+### 3.21q `agent/enforcement.py` — Post-Write Verification (Phase 3)
 
 **Responsibility:** Run automatic verification checks after every file write (write_file / edit_file). Three tiers: syntax guard, test runner, lint check. Pure logic — no UI imports, no GTK.
 
@@ -1261,7 +1261,7 @@ def check(tool_name, tool_args, tool_result, project_path, config) -> Enforcemen
 
 **Configuration:** `EnforcementConfig` on `AgentConfig` — enabled/syntax_check/test_run/lint_check toggles, timeouts, skip patterns.
 
-### 3.21m `ui/handlers/agent_runtime_handler.py` — Agent Runtime UI Bridge (Phase 1.4)
+### 3.21r `ui/handlers/agent_runtime_handler.py` — Agent Runtime UI Bridge (Phase 1.4)
 
 **Responsibility:** Bridge between CrabCakes UI and `AgentRuntime`. Creates conversations, routes messages, renders streamed responses in chat tabs.
 
@@ -2269,6 +2269,7 @@ crabcakes/
 │   │   ├── agent_list_handler.py # 118 lines — agent card data (initials, colors, sorting)
 │   │   ├── chat_handler.py       # 639 lines — send, fan-out, routing, special agent routing, tab switching
 │   │   ├── chat_render_handler.py # 421 lines — escape + markdown + highlight + bubble pipeline
+│   │   ├── agent_command_handler.py # 340 lines — agent response command parser + relay (Phase 6.2)
 │   │   ├── command_handler.py   # 340 lines — backtick command parser + @mention resolution (Phase 7)
 │   │   ├── gateway_handler.py    # 228 lines — connect, agents, lifecycle (Phase 2)
 │   │   ├── media_handler.py      # 89 lines — STT + improve (Phase 4)
@@ -2319,6 +2320,7 @@ prompts/                         # System prompt templates for agent runtime
 tests/
     ├── conftest.py              # pytest fixtures
     ├── test_agents.py
+    ├── test_agent_command_handler.py  # 713 lines — agent command parser, relay, chain depth, routing (Phase 6.2)
     ├── test_architecture.py     # architecture compliance tests
     ├── test_block_parser.py
     ├── test_chat_handler.py
