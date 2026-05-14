@@ -911,7 +911,7 @@ show_project_menu(parent, project_name, member_names, current_solo, on_select)
 ```python
 CommandHandler(gateway_client, agent_manager, project_handler, GLib_module, on_display_card, on_display_text)
 
-def process_input(session_key, text) -> CommandResult    # parse + execute command
+def process_input(session_key, text, skip_dispatch=False) -> CommandResult    # parse + execute command
 def set_gateway_client(gw) -> None
 def set_agent_manager(agent_mgr) -> None
 def register_command(name, handler, aliases=None, help_text="") -> None
@@ -1009,7 +1009,7 @@ class CollabHandler:
 **Public API:**
 ```python
 class AgentCommandHandler:
-    def __init__(self)
+    def __init__(self, *, GLib_module=None)
 
     # Setters (wired by window.py)
     def set_command_handler(handler)             # CommandHandler — process_input() + get_command_names()
@@ -1029,9 +1029,15 @@ class AgentCommandHandler:
 **Constants:**
 - `_MAX_CHAIN_DEPTH = 3` — max nested command hops before cutoff
 - `_MAX_COMMANDS_PER_RESPONSE = 3` — max commands parsed per response
-- `_BACKTICK_COMMAND` regex — single-backtick content, fenced blocks stripped first
+- `_BACKTICK_COMMAND` regex — matches both paired (`` `cmd` ``) and single (`` `cmd ``) backtick forms; fenced blocks stripped first
 
 **Relay mechanism:** `` `ask @B question` `` from A → `_pending_asks[B] = A`. When B responds → `_relay_response(A, B, text)` delivers B's answer wrapped as `"[{B} responded]: {text}"`. Only `` `ask` `` and `` `delegate` `` create pending asks — `` `tell` `` is one-way.
+
+**Sender identity:** Outbound messages to target agents are prefixed with `"[{sender_name} asks]: {question}"` so the target knows who's consulting them — not the human.
+
+**Command canonicalization:** Raw backtick matches are parsed into canonical `cmd @Agent — body` format before calling `process_input()`. This prevents em-dashes in the body text from being misinterpreted as the body separator.
+
+**Dispatch suppression:** `process_input()` is called with `skip_dispatch=True` to prevent GTK UI side effects (error bubbles) from background agent-to-agent routing.
 
 **Chain depth:** Each hop increments `_chain_depth[target_sk]`. At `_MAX_CHAIN_DEPTH`, commands dropped and depth cleared. Relay messages do NOT count as hops.
 
