@@ -121,6 +121,15 @@ class CommandHandler:
         """Return help text for a command, or None if not registered."""
         return self._registry.get_help(name)
 
+    def get_command_names(self) -> set[str]:
+        """Return registered command names as a set.
+
+        Used by AgentCommandHandler to determine if a scanned backtick token
+        is a known command (vs. arbitrary quoted text that looks like a command).
+        Spec §4.4: returns set[str] for O(1) membership checks.
+        """
+        return set(self._registry.list_commands())
+
     def resolve_inline_mention(self, text: str, session_key: str = "") -> "MentionResolution":
         """Resolve @mentions from plain text (no backtick prefix required).
 

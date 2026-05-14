@@ -992,7 +992,52 @@ class CollabHandler:
     def cmd_tell(cmd) -> CommandResult
 ```
 
-### 3.21e `ui/handlers/session_handler.py` — Session Switching (Phase 7)
+### 3.21e `ui/handlers/agent_command_handler.py` — Agent Response Command Parser (Phase 6.2)
+
+**Responsibility:** Scan agent response text for backtick commands, route them through `CommandHandler.process_input()`, and relay agent-to-agent answers back to the asking agent via pending-ask tracking.
+
+**Owns:** `_pending_asks` (target_sk → source_sk), `_chain_depth` (session_key → depth counter).
+
+**Wiring:** `window.py` creates the handler and wires callbacks into both response pipelines:
+- `ChatHandler.set_on_agent_response(ach.on_agent_response)` — gateway agent responses
+- `AgentRuntimeHandler.set_on_agent_response(ach.on_agent_response)` — special agent responses
+
+**Architecture:** Follows §8.6 handler pattern — receives all dependencies via setters, never imports from `ui/handlers/`.
+
+**Thread safety:** `on_agent_response()` is called from main thread via `GLib.idle_add()` in both pipelines — no additional dispatch needed.
+
+**Public API:**
+```python
+class AgentCommandHandler:
+    def __init__(self)
+
+    # Setters (wired by window.py)
+    def set_command_handler(handler)             # CommandHandler — process_input() + get_command_names()
+    def set_agent_runtime_handler(handler)       # AgentRuntimeHandler — for special agent routing
+    def set_gateway_client(gw)                  # GatewayClient — gateway agent routing (may be None)
+    def set_agent_manager(mgr)                  # AgentManager — display name resolution
+    def set_agent_routing(routing_table)         # AgentRoutingTable — project→agent lookups
+    def set_project_handler(handler)             # ProjectHandler — project_path for awareness prefix
+    def set_awareness_sent(awareness_set)       # Shared set[str] from ChatHandler — deduplicate awareness
+
+    # Entry point (wired into both response pipelines)
+    def on_agent_response(session_key, text, project_name) -> None
+        # Step 1: RELAY — if agent has pending ask, deliver response to asking agent
+        # Step 2: SCAN — parse backtick commands, route through CommandHandler.process_input()
+```
+
+**Constants:**
+- `_MAX_CHAIN_DEPTH = 3` — max nested command hops before cutoff
+- `_MAX_COMMANDS_PER_RESPONSE = 3` — max commands parsed per response
+- `_BACKTICK_COMMAND` regex — single-backtick content, fenced blocks stripped first
+
+**Relay mechanism:** `` `ask @B question` `` from A → `_pending_asks[B] = A`. When B responds → `_relay_response(A, B, text)` delivers B's answer wrapped as `"[{B} responded]: {text}"`. Only `` `ask` `` and `` `delegate` `` create pending asks — `` `tell` `` is one-way.
+
+**Chain depth:** Each hop increments `_chain_depth[target_sk]`. At `_MAX_CHAIN_DEPTH`, commands dropped and depth cleared. Relay messages do NOT count as hops.
+
+**Routing priority:** direct special agent session key → display name reverse-lookup → gateway send. Gateway sends inject project awareness prefix on first "project:agent" pair.
+
+### 3.21f `ui/handlers/session_handler.py` — Session Switching (Phase 7)
 
 **Public API:**
 ```python
@@ -1781,7 +1826,9 @@ before routing via gateway.
 
 **Architecture rule:** Agents that need another agent's input include a backtick command
 in their response text. The backtick command is parsed by CommandHandler like any other
-human input — no special casing, no detection, no loops.
+human input — no special casing, no detection, no loops. Agent-initiated parsing is
+handled by `AgentCommandHandler` (Phase 6.2) which hooks into the response pipeline
+and routes commands through CommandHandler.process_input().
 
 ## 5. Callback Pattern
 

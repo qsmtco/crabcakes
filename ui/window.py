@@ -374,6 +374,18 @@ class MainWindow(Gtk.ApplicationWindow):
         self._agent_runtime_handler.set_on_agent_end(
             lambda sk: self._activity_handler.on_agent_end(sk)
         )
+
+        # ── Agent Command Handler (Phase 6.2) ─────────────────────────────────────
+        # Scans agent responses for backtick commands, routes to target agents,
+        # and relays answers back to the asking agent via pending-ask tracking.
+        from ui.handlers.agent_command_handler import AgentCommandHandler
+        self._agent_command_handler = AgentCommandHandler(GLib_module=GLib)
+        self._agent_command_handler.set_command_handler(self._command_handler)
+        self._agent_command_handler.set_agent_runtime_handler(self._agent_runtime_handler)
+        # Wire callbacks into both agent response pipelines
+        self._chat_handler.set_on_agent_response(self._agent_command_handler.on_agent_response)
+        self._agent_runtime_handler.set_on_agent_response(self._agent_command_handler.on_agent_response)
+
         # Wire project lifecycle → ReviewHandler
         self._project_handler.set_on_project_opened(
             lambda n, p: (self._review_handler.on_project_opened(n, p))
@@ -600,6 +612,12 @@ class MainWindow(Gtk.ApplicationWindow):
         self._project_handler.set_agent_manager(self._gateway_handler.agent_mgr)
         # Wire ProjectHandler → ReviewHandler for cmd_status review state queries
         self._project_handler.set_review_handler(self._review_handler)
+        # Wire AgentCommandHandler with live references after connect
+        self._agent_command_handler.set_gateway_client(gw)
+        self._agent_command_handler.set_agent_manager(self._gateway_handler.agent_mgr)
+        self._agent_command_handler.set_agent_routing(self._agent_to_project)
+        self._agent_command_handler.set_awareness_sent(self._chat_handler._awareness_sent)
+        self._agent_command_handler.set_project_handler(self._project_handler)
         # Wire SessionHandler with live AgentManager for session lookups
         self._session_handler.set_agent_manager(self._gateway_handler.agent_mgr)
         # Wire ChatHandler with AgentManager for display name resolution

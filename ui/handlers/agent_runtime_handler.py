@@ -79,6 +79,7 @@ class AgentRuntimeHandler:
 
         self._on_agent_start_cb: Callable[[str], None] | None = None
         self._on_agent_end_cb: Callable[[str], None] | None = None
+        self._on_agent_response: Callable[[str, str, str | None], None] | None = None  # Phase 6.2
 
     def set_on_agent_start(self, cb: Callable[[str], None]) -> None:
         """Set callback fired when a local agent starts processing. Signature: cb(session_key)."""
@@ -87,6 +88,14 @@ class AgentRuntimeHandler:
     def set_on_agent_end(self, cb: Callable[[str], None]) -> None:
         """Set callback fired when a local agent finishes processing. Signature: cb(session_key)."""
         self._on_agent_end_cb = cb
+
+    def set_on_agent_response(self, cb: Callable[[str, str, str | None], None]) -> None:
+        """Set callback for agent response command parsing hook (Phase 6.2).
+
+        Called after an agent's final response is rendered, with the agent's
+        session key, full response text, and active project name.
+        """
+        self._on_agent_response = cb
 
     def set_review_handler(self, review_handler) -> None:
         """Set ReviewHandler after construction (deferred to avoid circular deps with window._build)."""
@@ -627,6 +636,11 @@ class AgentRuntimeHandler:
                 if bubble is not None:
                     chat_box.append(bubble)
                 self._mc.scroll_chat_to_bottom()
+
+        # Agent command parsing hook (Phase 6.2) — fire after bubble render, before lifecycle
+        if self._on_agent_response is not None and text:
+            project_name = self._active_project[0] if self._active_project else None
+            self._on_agent_response(session_key, text, project_name)
 
         # Fire lifecycle: agent finished → ActivityHandler progress bar
         if self._on_agent_end_cb:

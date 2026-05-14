@@ -59,6 +59,7 @@ class ChatHandler:
         self._command_handler = None     # injected via set_command_handler() — for backtick commands
         self._on_send_initiated = None    # injected via set_on_send_initiated()
         self._pending_req_id: str | None = None  # tracks last sent req_id for res correlation
+        self._on_agent_response: Callable[[str, str, str | None], None] | None = None  # agent response hook (Phase 6.2)
         self._on_res_confirmed: Callable[[str], None] | None = None  # pre-flight confirm via res
         self._agent_runtime_handler = None  # injected via set_agent_runtime_handler()
         self._awareness_sent: set[str] = set()  # track "project:agent" pairs that received awareness
@@ -102,6 +103,14 @@ class ChatHandler:
     def set_on_send_initiated(self, cb):
         """Set callback for send-initiated: cb(session_key). Called before message is sent."""
         self._on_send_initiated = cb
+
+    def set_on_agent_response(self, cb: Callable[[str, str, str | None], None]) -> None:
+        """Set callback for agent response command parsing hook (Phase 6.2).
+
+        Called after an agent's final response is rendered, with the agent's
+        session key, full response text, and active project name.
+        """
+        self._on_agent_response = cb
 
     def set_on_res_confirmed(self, cb):
         """Set callback for pre-flight res confirmation: cb(session_key)."""
@@ -559,6 +568,17 @@ class ChatHandler:
                 self._mc.scroll_chat_to_bottom()
         if chat_box is not None and hasattr(chat_box, 'record'):
             chat_box.record("Agent", final_text)
+
+        # Agent command parsing hook (Phase 6.2) — fire after bubble render.
+        # Resolve project from routing table (authoritative for this session),
+        # fall back to active project if routing table has no entry.
+        if self._on_agent_response is not None and final_text:
+            project_name = None
+            if self._agent_to_project is not None:
+                project_name = self._agent_to_project.get_project(session_key)
+            if not project_name and self._project_handler is not None:
+                project_name = self._project_handler.get_active_project_name()
+            self._on_agent_response(session_key, final_text, project_name)
 
     def _extract_text(self, msg_obj) -> str:
         """Extract plain text from a gateway message object.
