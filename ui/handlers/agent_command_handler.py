@@ -37,7 +37,7 @@ _MAX_CHAIN_DEPTH = 3
 _MAX_COMMANDS_PER_RESPONSE = 3
 
 # Regex for single-backtick-quoted content: `command text`
-_BACKTICK_COMMAND = re.compile(r"`([^`\n]+)`")
+_BACKTICK_COMMAND = re.compile(r"`([^`\n]+?)(?:`|$)")
 
 
 class AgentCommandHandler:
@@ -47,7 +47,7 @@ class AgentCommandHandler:
     Wired via window.py. Receives all dependencies through setters.
     """
 
-    def __init__(self):
+    def __init__(self, *, GLib_module=None):
         self._command_handler = None       # CommandHandler
         self._agent_runtime_handler = None  # AgentRuntimeHandler
         self._gw = None                     # GatewayClient
