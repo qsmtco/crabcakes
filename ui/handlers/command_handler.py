@@ -188,7 +188,8 @@ class CommandHandler:
         # Shouldn't reach here, but defensive
         return MentionResolution(clean_text=text, error="Unexpected resolution result")
 
-    def process_input(self, session_key: str, text: str) -> CommandResult:
+    def process_input(self, session_key: str, text: str,
+                       skip_dispatch: bool = False) -> CommandResult:
         """Parse and execute a command from input text.
 
         Decision tree:
@@ -319,7 +320,8 @@ class CommandHandler:
             )
 
         # Dispatch GTK side effects via GLib if needed
-        if result.handled:
+        # (skip when called from AgentCommandHandler — it handles routing itself)
+        if result.handled and not skip_dispatch:
             self._dispatch_result(result, session_key)
 
         return result
