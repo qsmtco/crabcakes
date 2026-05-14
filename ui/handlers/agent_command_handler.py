@@ -241,9 +241,12 @@ class AgentCommandHandler:
         # Increment chain depth for the target
         self._chain_depth[depth_key] = current_depth + 1
 
-        # Route the message to the target
+        # Route the message to the target — prefix with asking agent's identity
+        # so the target knows who's asking (not the human, but another agent)
         route_key = resolved_sk if is_special else target_sk
-        self._route_to_target(route_key, result.forward_text, project_name)
+        sender_name = self._resolve_display_name(source_sk)
+        forward_text = f"[{sender_name} asks]: {result.forward_text}"
+        self._route_to_target(route_key, forward_text, project_name)
 
     def _route_to_target(self, target_sk: str, text: str,
                          project_name: str | None) -> None:
