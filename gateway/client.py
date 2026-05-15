@@ -376,13 +376,13 @@ class GatewayClient:
         # 2. Build v3 auth payload
         v3_payload = (
             f"v3|{self._id['device_id']}"
-            f"|cli|cli"
+            f"|cli|ui"
             f"|operator"
             f"|{ALL_SCOPES}"
             f"|{ts}"
             f"|{self._id['device_token']}"
             f"|{nonce}"
-            f"|linux|"
+            f"|linux|linux"
         )
 
         # 3. Sign with Ed25519 private key
