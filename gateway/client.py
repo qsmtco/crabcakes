@@ -401,6 +401,7 @@ class GatewayClient:
                     "id": "cli",
                     "version": "2026.5.14",
                     "platform": "linux",
+                    "deviceFamily": "linux",
                     "mode": "ui",
                     "displayName": "crabcakes",
                 },
