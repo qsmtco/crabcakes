@@ -168,6 +168,10 @@ class GatewayHandler:
                         session_key = entry.get("key", "")
                         if session_key:
                             self._agent_mgr.register(session_key, name)
+                    # Ensure agent is registered even with no sessions
+                    # Uses a synthetic :main key so the agent appears in the sidebar
+                    if not self._agent_mgr.get_sessions(name):
+                        self._agent_mgr.register(f"agent:{agent_id}:main", name)
 
             # Sync live gateway to ChatHandler (via window's callback)
             # MUST run before set_agents so AgentListHandler has agent_mgr
