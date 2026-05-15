@@ -396,12 +396,12 @@ class GatewayClient:
             "method": "connect",
             "params": {
                 "minProtocol": 3,
-                "maxProtocol": 3,
+                "maxProtocol": 4,
                 "client": {
                     "id": "cli",
-                    "version": "2026.3.23",
+                    "version": "2026.5.14",
                     "platform": "linux",
-                    "mode": "cli",
+                    "mode": "operator",
                     "displayName": "crabcakes",
                 },
                 "role": "operator",
