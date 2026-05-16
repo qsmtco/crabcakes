@@ -31,7 +31,7 @@ class FakeCommandHandler:
         """Set explicit forward mapping for tests: text → CommandResult."""
         self._forward_map = mapping
 
-    def process_input(self, session_key, text):
+    def process_input(self, session_key, text, skip_dispatch=False):
         self.processed.append((session_key, text))
         if text in self._forward_map:
             return self._forward_map[text]
@@ -522,7 +522,7 @@ class TestMultipleCommands:
         # on_agent_response sets first_word="ask". process_input receives "`@Debugger ...".
         # FakeCommandHandler.process_input needs to handle the @debugger case.
         class AtAwareCommandHandler(FakeCommandHandler):
-            def process_input(self, sk, text):
+            def process_input(self, sk, text, skip_dispatch=False):
                 if text.startswith("`@"):
                     # Treat as ask
                     rest = text[2:]  # strip leading backtick and @
@@ -531,7 +531,7 @@ class TestMultipleCommands:
                     msg = parts[1] if len(parts) > 1 else ""
                     from models.command import CommandResult
                     return CommandResult(handled=True, forward_to=target, forward_text=msg)
-                return super().process_input(sk, text)
+                return super().process_input(sk, text, skip_dispatch=skip_dispatch)
 
         fake_rt = FakeAgentRuntimeHandler(special_agents={"special:debugger": "Debugger"})
         fake_cmd = AtAwareCommandHandler(commands={"ask"})

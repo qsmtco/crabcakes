@@ -31,7 +31,7 @@ from models.command import Command, CommandResult, CommandRegistry
 from utils.config import COMMAND_PREFIX   # BUG #9 fix: config is source of truth
 
 
-_BODY_SEP = re.compile(r'\s+[-—–]\s+')   # hyphen/em-dash/en-dash with spaces — body separator
+_BODY_SEP = re.compile(r'\s+[—–]\s+')   # em-dash/en-dash with spaces — body separator (NOT regular hyphen)
 
 
 class CommandHandler:

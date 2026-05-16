@@ -36,8 +36,105 @@ _MAX_CHAIN_DEPTH = 3
 # Max commands parsed from a single agent response.
 _MAX_COMMANDS_PER_RESPONSE = 3
 
-# Regex for single-backtick-quoted content: `command text`
-_BACKTICK_COMMAND = re.compile(r"`([^`\n]+?)(?:`|$)")
+# Command keywords recognized in backtick-enclosed agent responses.
+# Used by _extract_backtick_commands() to identify and parse A2A commands.
+_COMMAND_KEYWORDS = frozenset({'ask', 'delegate', 'stop', 'tell'})
+
+
+def _extract_backtick_commands(text: str) -> list[str]:
+    """Extract backtick-delimited A2A commands from agent response text.
+
+    Handles internal backtick pairs (e.g., code references like `match()`)
+    inside commands while correctly separating multiple commands on one line.
+
+    Algorithm:
+    1. Split text by backtick characters into alternating segments
+    2. Walk segments looking for ones that start with a known command keyword
+    3. When found, accumulate subsequent segments (rejoining with backticks)
+       until reaching a natural command boundary
+
+    Returns list of command text strings (without outer backticks).
+    """
+    parts = text.split('`')
+    if len(parts) < 2:
+        return []
+
+    commands: list[str] = []
+    i = 0
+
+    while i < len(parts):
+        # Segments at odd indices are "inside" backtick pairs
+        if i % 2 == 0:
+            i += 1
+            continue
+
+        segment = parts[i]
+        stripped = segment.strip()
+        if not stripped:
+            i += 1
+            continue
+
+        first_word = stripped.split()[0].lower()
+        if first_word.startswith('@'):
+            first_word = 'ask'
+
+        if first_word not in _COMMAND_KEYWORDS:
+            i += 2  # skip this segment and its trailing "outside" text
+            continue
+
+        # Found a command start at segment i. Accumulate segments.
+        accumulated_parts: list[str] = [segment]
+        j = i + 1
+
+        while j < len(parts):
+            if j % 2 == 0:
+                # Even index = "outside" text (between closing and next opening backtick)
+                outside_text = parts[j]
+
+                if j + 1 >= len(parts):
+                    # No more segments — command continues to end
+                    if outside_text:
+                        accumulated_parts.append(outside_text)
+                    break
+
+                next_segment = parts[j + 1]
+                next_stripped = next_segment.strip()
+                next_first = next_stripped.split()[0].lower() if next_stripped.split() else ""
+                if next_first.startswith('@'):
+                    next_first = 'ask'
+
+                # Next segment starts a new command — current command ends
+                if next_first in _COMMAND_KEYWORDS:
+                    break
+
+                # Heuristic: is the outside text an internal boundary?
+                outside_stripped = outside_text.strip()
+                if not outside_stripped:
+                    # Empty between backticks — internal (e.g., `match()`)
+                    accumulated_parts.append('`')
+                    accumulated_parts.append(next_segment)
+                    j += 2
+                elif (not re.search(r'[.!?]', outside_stripped)
+                      and len(outside_stripped.split()) <= 2):
+                    # Short connector without sentence-ending punctuation — internal
+                    accumulated_parts.append('`')
+                    accumulated_parts.append(outside_text)
+                    accumulated_parts.append('`')
+                    accumulated_parts.append(next_segment)
+                    j += 2
+                else:
+                    # Substantial text with sentence endings — command ends
+                    break
+            else:
+                # Odd index during accumulation — append and continue
+                accumulated_parts.append(parts[j])
+                j += 1
+
+        command_text = ''.join(accumulated_parts)
+        commands.append(command_text)
+        i = j + 1 if j % 2 == 0 else j
+
+    return commands
 
 
 class AgentCommandHandler:
@@ -148,7 +245,7 @@ class AgentCommandHandler:
         clean_text = self._strip_fenced_blocks(text)
 
         # Extract and filter backtick commands
-        matches = _BACKTICK_COMMAND.findall(clean_text)
+        matches = _extract_backtick_commands(clean_text)
 
         # Process commands if any are found
         if matches:

@@ -905,6 +905,8 @@ show_project_menu(parent, project_name, member_names, current_solo, on_select)
 
 **Responsibility:** Parse backtick commands, resolve `@mentions`, dispatch to command handlers.
 
+**Body separator:** `_BODY_SEP` matches em-dash (`—`) or en-dash (`–`) with surrounding whitespace. Regular hyphens (`-`) are intentionally excluded to prevent false splits on hyphens in command body text (e.g., `watcher.py - fix`). The canonical `cmd @Agent — body` format uses em-dash.
+
 **Owns:** CommandRegistry, command prefix, `@mention` resolution.
 
 **Public API:**
@@ -1029,7 +1031,7 @@ class AgentCommandHandler:
 **Constants:**
 - `_MAX_CHAIN_DEPTH = 3` — max nested command hops before cutoff
 - `_MAX_COMMANDS_PER_RESPONSE = 3` — max commands parsed per response
-- `_BACKTICK_COMMAND` regex — matches both paired (`` `cmd` ``) and single (`` `cmd ``) backtick forms; fenced blocks stripped first
+- `_extract_backtick_commands()` function — replaces regex; splits text by backtick characters, walks segments to find command-keyword-started spans, accumulates across internal backtick pairs (e.g., code refs like `match()`), and correctly separates multiple commands on one line. Handles both paired (`` `cmd` ``) and single (`` `cmd ``) backtick forms; fenced blocks stripped first.
 
 **Relay mechanism:** `` `ask @B question` `` from A → `_pending_asks[B] = A`. When B responds → `_relay_response(A, B, text)` delivers B's answer wrapped as `"[{B} responded]: {text}"`. Only `` `ask` `` and `` `delegate` `` create pending asks — `` `tell` `` is one-way.
 
@@ -2275,8 +2277,8 @@ crabcakes/
 │   │   ├── agent_list_handler.py # 118 lines — agent card data (initials, colors, sorting)
 │   │   ├── chat_handler.py       # 639 lines — send, fan-out, routing, special agent routing, tab switching
 │   │   ├── chat_render_handler.py # 421 lines — escape + markdown + highlight + bubble pipeline
-│   │   ├── agent_command_handler.py # 340 lines — agent response command parser + relay (Phase 6.2)
-│   │   ├── command_handler.py   # 340 lines — backtick command parser + @mention resolution (Phase 7)
+│   │   ├── agent_command_handler.py # 464 lines — agent response command parser + relay (Phase 6.2)
+│   │   ├── command_handler.py   # 514 lines — backtick command parser + @mention resolution (Phase 7)
 │   │   ├── gateway_handler.py    # 228 lines — connect, agents, lifecycle (Phase 2)
 │   │   ├── media_handler.py      # 89 lines — STT + improve (Phase 4)
 │   │   ├── project_handler.py    # 281 lines — active project + agent-to-project routing + session switching
