@@ -175,7 +175,7 @@ class TestAskCommand:
 
         handler.on_agent_response(
             "special:coder",
-            "`ask @Debugger should I use observer or polling?`",
+            "`ask @Debugger \"should I use observer or polling?\"`",
             "crabwatch"
         )
 
@@ -194,7 +194,7 @@ class TestAskCommand:
 
         handler.on_agent_response(
             "special:coder",
-            "`ask @Debugger should I use X or Y?`",
+            "`ask @Debugger \"should I use X or Y?\"`",
             "crabwatch"
         )
 
@@ -215,7 +215,7 @@ class TestAskCommand:
 
         handler.on_agent_response(
             "special:coder",
-            "`ask @Qaster is X compatible with the gateway?`",
+            "`ask @Qaster \"is X compatible with the gateway?\"`",
             "crabwatch"
         )
 
@@ -236,7 +236,7 @@ class TestTellCommand:
 
         handler.on_agent_response(
             "special:coder",
-            "`tell @Debugger the feed.json has been cleared`",
+            "`tell @Debugger \"the feed.json has been cleared\"`",
             "crabwatch"
         )
 
@@ -254,7 +254,7 @@ class TestTellCommand:
 
         handler.on_agent_response(
             "special:coder",
-            "`delegate @Debugger review the parser logic`",
+            "`delegate @Debugger \"review the parser logic\"`",
             "crabwatch"
         )
 
@@ -379,7 +379,7 @@ class TestMultiHop:
         handler._chain_depth["special:coder"] = 0
         handler.on_agent_response(
             "special:coder",
-            "`ask @Debugger is X compatible?`",
+            "`ask @Debugger \"is X compatible?\"`",
             "crabwatch"
         )
 
@@ -402,7 +402,7 @@ class TestMultiHop:
 
         handler.on_agent_response(
             "special:coder",
-            "`ask @Debugger is X compatible?`",
+            "`ask @Debugger \"is X compatible?\"`",
             "crabwatch"
         )
 
@@ -449,7 +449,7 @@ class TestFencedBlocks:
 
         handler.on_agent_response(
             "special:coder",
-            "Here's the fix:\n\n```python\nresult = `ask @Debugger`  # not a command\n```\n\nBut `ask @Debugger is this right?` ← IS a command",
+            "Here's the fix:\n\n```python\nresult = `ask @Debugger`  # not a command\n```\n\nBut `ask @Debugger \"is this right?\"` ← IS a command",
             "crabwatch"
         )
 
@@ -508,7 +508,7 @@ class TestMultipleCommands:
 
         handler.on_agent_response(
             "special:coder",
-            "`ask @Debugger q1` `ask @Coder q2` `ask @Debugger q3` `ask @Coder q4` `ask @Debugger q5`",
+            "`ask @Debugger \"q1\"` `ask @Coder \"q2\"` `ask @Debugger \"q3\"` `ask @Coder \"q4\"` `ask @Debugger \"q5\"``",
             "crabwatch"
         )
 
@@ -540,7 +540,7 @@ class TestMultipleCommands:
 
         handler.on_agent_response(
             "special:coder",
-            "`@Debugger is this edge case valid?`",
+            "`@Debugger \"is this edge case valid?\"`",
             "crabwatch"
         )
 
@@ -582,7 +582,7 @@ class TestOfflineGateway:
         # Should not raise — gateway target skipped
         handler.on_agent_response(
             "special:coder",
-            "`ask @Qaster is X compatible?`",
+            "`ask @Qaster \"is X compatible?\"`",
             "crabwatch"
         )
 
@@ -617,7 +617,7 @@ class TestAwarenessPrefix:
 
         handler.on_agent_response(
             "special:coder",
-            "`ask @Qaster is X compatible?`",
+            "`ask @Qaster \"is X compatible?\"`",
             "crabwatch"
         )
 
@@ -654,7 +654,7 @@ class TestAwarenessPrefix:
 
         handler.on_agent_response(
             "special:coder",
-            "`ask @Qaster is X compatible?`",
+            "`ask @Qaster \"is X compatible?\"`",
             "crabwatch"
         )
 
@@ -712,3 +712,73 @@ class TestDisplayNameResolution:
         _, relay_text = fake_rt.sent[0]
         # Fallback: session_key.split("/")[-1] = "12345"
         assert relay_text.startswith("[12345 responded]:")
+
+# ═══════════════════════════════════════════════════════════════════
+#  §7.2 — Missing agent-extractor tests
+# ═══════════════════════════════════════════════════════════════════
+
+class TestExtractorQuotedPayloads:
+    """Tests for _extract_quoted_commands() — spec §7.2 edge cases."""
+
+    def test_unquoted_payload_silently_skipped(self):
+        """§7.2 #5: `ask @QTR unquoted → 0 commands (no quotes)."""
+        from ui.handlers.agent_command_handler import _extract_quoted_commands
+        cmds = _extract_quoted_commands('`ask @QTR unquoted`')
+        assert len(cmds) == 0
+
+    def test_no_space_before_quote_skipped(self):
+        """§7.2 #7: `ask @QTR"no space" → 0 commands (no space before quote)."""
+        from ui.handlers.agent_command_handler import _extract_quoted_commands
+        cmds = _extract_quoted_commands('`ask @QTR"no space"`')
+        assert len(cmds) == 0
+
+    def test_stop_without_payload(self):
+        """§7.2 #9: `stop @QTR → 1 command with empty payload."""
+        from ui.handlers.agent_command_handler import _extract_quoted_commands
+        cmds = _extract_quoted_commands('`stop @QTR`')
+        assert len(cmds) == 1
+        assert cmds[0].command == "stop"
+        assert cmds[0].payload == ""
+
+    def test_escaped_quotes_in_payload(self):
+        """§7.2 #11: `ask @QTR "she said \\"hi\\"" → payload = she said "hi"."""
+        from ui.handlers.agent_command_handler import _extract_quoted_commands
+        cmds = _extract_quoted_commands('`ask @QTR "she said \\"hi\\""`')
+        assert len(cmds) == 1
+        assert cmds[0].payload == 'she said "hi"'
+
+    def test_auto_close_unclosed_quote(self):
+        """§4.4: opening quote found, no closing quote → auto-close."""
+        from ui.handlers.agent_command_handler import _extract_quoted_commands
+        cmds = _extract_quoted_commands('`ask @QTR "this is unclosed`')
+        assert len(cmds) == 1
+        assert cmds[0].payload == "this is unclosed"
+
+    def test_auto_close_empty_dropped(self):
+        """§4.4: opening quote with nothing after → silently drop."""
+        from ui.handlers.agent_command_handler import _extract_quoted_commands
+        cmds = _extract_quoted_commands('`ask @QTR "`')
+        assert len(cmds) == 0
+
+    def test_truncation_with_ellipsis(self):
+        """§4.5: payload > 4096 chars → truncated with ellipsis marker."""
+        from ui.handlers.agent_command_handler import _extract_quoted_commands
+        big = "x" * 4100
+        text = f'`ask @QTR "{big}"`'
+        cmds = _extract_quoted_commands(text)
+        assert len(cmds) == 1
+        assert len(cmds[0].payload) == 4097  # 4096 + 1 char ellipsis
+        assert cmds[0].payload.endswith("…")
+
+    def test_empty_payload_double_quote_skipped(self):
+        """Spec 7.2 #6: empty quoted payload (two double quotes) is silently dropped."""
+        from ui.handlers.agent_command_handler import _extract_quoted_commands
+        cmds = _extract_quoted_commands('`ask @QTR ""`')
+        assert len(cmds) == 0
+
+    def test_fenced_block_ignored(self):
+        """§7.2 #10: command inside fenced block → 0 commands."""
+        from ui.handlers.agent_command_handler import _extract_quoted_commands
+        text = '```\n`ask @QTR "hi"`\n```'
+        cmds = _extract_quoted_commands(text)
+        assert len(cmds) == 0

@@ -29,9 +29,7 @@ from typing import Callable
 
 from models.command import Command, CommandResult, CommandRegistry
 from utils.config import COMMAND_PREFIX   # BUG #9 fix: config is source of truth
-
-
-_BODY_SEP = re.compile(r'\s+[—–]\s+')   # em-dash/en-dash with spaces — body separator (NOT regular hyphen)
+from utils.quoting import _parse_quoted_payload, _PAYLOAD_MAX_CHARS   # A2A_QUOTED_PAYLOAD_SPEC §5.1
 
 
 class CommandHandler:
@@ -216,93 +214,106 @@ class CommandHandler:
         if not raw:
             return CommandResult(handled=False)
 
-        # Split off body (after " — " em-dash separator)
-        body = ""
-        parts = _BODY_SEP.split(raw, maxsplit=1)
-        if len(parts) == 2:
-            raw, body = parts[0], parts[1].strip()
-
-        # First token = command name
+        # ── A2A quoted payload parsing (A2A_QUOTED_PAYLOAD_SPEC §5.3) ──
+        # Canonical format: `cmd @Agent "payload"
+        # No em-dash fallback. No unquoted body. Strict format = strict validation.
         tokens = raw.split()
         if not tokens:
             return CommandResult(handled=False)
         cmd_name = tokens[0].lower()
         rest_tokens = tokens[1:]
 
-        # Bug #1 fix: if first token starts with @, treat as implicit "ask" command.
-        # This allows `@Agent message` to work like `ask @Agent — message.
+        # Bug #1 fix: implicit ask — `@Agent message` → `ask @Agent message`
         if cmd_name.startswith("@"):
             rest_tokens = [cmd_name] + rest_tokens
             cmd_name = "ask"
 
-        # Look up handler
+        # Look up handler first — unknown command → pass through
         handler = self._registry.get(cmd_name)
         if handler is None:
             return CommandResult(handled=False)
 
-        # Parse --flags from remaining tokens
-        flags, remaining_args = self._parse_flags(rest_tokens)
-
-        # Build Command — body is the text after the em-dash separator.
-        # @mentions are resolved and stripped from args during mention parsing.
-        cmd = Command(
-            name=cmd_name,
-            args=remaining_args,      # @mention tokens stripped by _parse_mentions
-            flags=flags,
-            raw_text=text[len(self._prefix):].strip(),
-            body=body,               # BUG #1 fix: store body in Command
-            source_session_key=session_key,
-            target_session_key=None,
-        )
-
-        # BUG #6 fix: strip @mentions from args.
-        # _parse_flags splits --flags from args but leaves @tokens.
-        # _parse_mentions returns args with @tokens removed (remaining).
-        # Use 'remaining' as cmd.args after mention resolution.
-        pre_body_mentions, post_mention_args = self._parse_mentions(rest_tokens)
-        cmd.args = post_mention_args
-        if len(pre_body_mentions) > 1:
-            # Bug #3 fix: reject multiple @mentions explicitly
+        # Parse @mentions from rest_tokens (strips @tokens, returns remaining)
+        mentions_from_rest, args_after_mentions = self._parse_mentions(rest_tokens)
+        # BUG #6 fix: reject multiple @mentions explicitly
+        if len(mentions_from_rest) > 1:
             return CommandResult(
                 handled=True,
-                response_text=f"Only one @mention allowed. Found: {', '.join(pre_body_mentions)}",
+                response_text=f"Only one @mention allowed. Found: {', '.join(mentions_from_rest)}",
             )
-        if pre_body_mentions:
-            resolved = self._resolve_mention(pre_body_mentions[0], session_key)
+
+        # Resolve single @mention
+        target_sk = None
+        is_broadcast = False
+        broadcast_targets = None
+        if mentions_from_rest:
+            resolved = self._resolve_mention(mentions_from_rest[0], session_key)
             if isinstance(resolved, str):
-                cmd.target_session_key = resolved
+                target_sk = resolved
             elif isinstance(resolved, list):
-                # BUG #4 fix: empty @ → broadcast to all project members.
-                # Store first as target and set broadcast_targets so ChatHandler fans out.
-                if resolved:
-                    cmd.target_session_key = resolved[0]
-                    cmd.is_broadcast = True
-                    cmd.broadcast_targets = resolved   # full list for fan-out
+                is_broadcast = True
+                broadcast_targets = resolved
+                target_sk = resolved[0] if resolved else None
             else:
-                return resolved
+                return resolved  # CommandResult error from _resolve_mention
 
-        # Body-position @mentions (after — separator) only if no pre-body mentions.
-        if body and not pre_body_mentions:
-            body_mentions, _ = self._parse_mentions(body.split())
-            if len(body_mentions) > 1:
-                return CommandResult(
-                    handled=True,
-                    response_text=f"Only one @mention allowed. Found: {', '.join(body_mentions)}",
-                )
-            if body_mentions:
-                resolved = self._resolve_mention(body_mentions[0], session_key)
-                if isinstance(resolved, str):
-                    cmd.target_session_key = resolved
-                elif isinstance(resolved, list):
-                    if resolved:
-                        cmd.target_session_key = resolved[0]
+        # Payload-free commands per spec §3.2: stop, done, start, blocked, cancel,
+        # tasks, review, check, accept, reject, status, agents, cost, help
+        _PAYLOAD_FREE = frozenset({
+            'stop', 'tasks', 'review', 'check', 'accept', 'reject',
+            'status', 'agents', 'cost', 'help',
+            'done', 'start', 'blocked', 'cancel',
+        })
+
+        # After @mention, require quoted payload (unless command is payload-free)
+        rest_text = " ".join(args_after_mentions)
+        ws_end = 0
+        while ws_end < len(rest_text) and rest_text[ws_end].isspace():
+            ws_end += 1
+        after_ws = rest_text[ws_end:]
+
+        body = ""
+        error_msg = None
+
+        if after_ws and after_ws[0] == '"':
+            payload, q_pos = _parse_quoted_payload(after_ws, 0)
+            if payload is None:
+                # "" → empty payload error; missing closing " → unclosed quote error
+                if len(after_ws) >= 2 and after_ws[1] == '"':
+                    error_msg = 'Empty payload — provide a message: `' + cmd_name + ' @Agent "your message"`'
                 else:
-                    return resolved
+                    error_msg = 'Unclosed quote — missing closing ": `' + cmd_name + ' @Agent "your message"`'
+            else:
+                body = payload
+                # Enforce 4K payload cap per spec §4.5
+                if len(body) > _PAYLOAD_MAX_CHARS:
+                    body = body[:_PAYLOAD_MAX_CHARS] + '…'
+        elif cmd_name in _PAYLOAD_FREE:
+            # Payload-free command: no payload required, no error
+            pass
+        else:
+            error_msg = 'Malformed command — payload must be quoted: `' + cmd_name + ' @Agent "your message"`'
 
-        # Bug #2 fix: if no em-dash body was extracted but args remain after
-        # @mention stripping, use them as the body text.
-        if not cmd.body and cmd.args:
-            cmd.body = " ".join(cmd.args)
+        if error_msg:
+            return CommandResult(handled=True, response_text=error_msg)
+
+        # Build Command object
+        cmd = Command(
+            name=cmd_name,
+            args=args_after_mentions,  # stripped of @mentions, used for --flags etc.
+            flags={},                 # filled below
+            raw_text=text[len(self._prefix):].strip(),
+            body=body,                # A2A quoted payload
+            source_session_key=session_key,
+            target_session_key=target_sk,
+            is_broadcast=is_broadcast,
+            broadcast_targets=broadcast_targets,
+        )
+
+        # Re-parse flags from args_after_mentions for the Command object
+        flags, remaining_args = self._parse_flags(args_after_mentions)
+        cmd.flags = flags
+        cmd.args = remaining_args
 
         # Execute handler — guard against non-CommandResult returns
         try:

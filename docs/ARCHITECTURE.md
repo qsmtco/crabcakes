@@ -136,6 +136,7 @@ crabcakes/
     ├── diff_parser.py         # parse_diff() — unified diff → FileDiff/ParsedDiff data (Phase 7)
     ├── git_ops.py              # GitPython wrapper — git add/commit/diff/checkout via GitResult (Phase 7)
     ├── prompt_loader.py         # System prompt template loader — loads/fills/composes prompts/system/*.md
+    ├── quoting.py               # _parse_quoted_payload() — quoted-payload parsing with escape handling (A2A_QUOTED_PAYLOAD_SPEC)
     └── icons.py               # Gdk.Texture SVG rendering (agent avatars + folder icons)
 ```
 
@@ -905,7 +906,7 @@ show_project_menu(parent, project_name, member_names, current_solo, on_select)
 
 **Responsibility:** Parse backtick commands, resolve `@mentions`, dispatch to command handlers.
 
-**Body separator:** `_BODY_SEP` matches em-dash (`—`) or en-dash (`–`) with surrounding whitespace. Regular hyphens (`-`) are intentionally excluded to prevent false splits on hyphens in command body text (e.g., `watcher.py - fix`). The canonical `cmd @Agent — body` format uses em-dash.
+**Quoted payloads:** A2A commands use quoted payloads per `A2A_QUOTED_PAYLOAD_SPEC` — the payload is wrapped in double quotes (`"payload"`). The parser (`_parse_quoted_payload()` in `utils/quoting.py`) handles `\"` and `\\` escapes. The canonical format is `` `cmd @Agent "payload" ``.
 
 **Owns:** CommandRegistry, command prefix, `@mention` resolution.
 
@@ -1031,13 +1032,13 @@ class AgentCommandHandler:
 **Constants:**
 - `_MAX_CHAIN_DEPTH = 3` — max nested command hops before cutoff
 - `_MAX_COMMANDS_PER_RESPONSE = 3` — max commands parsed per response
-- `_extract_backtick_commands()` function — replaces regex; splits text by backtick characters, walks segments to find command-keyword-started spans, accumulates across internal backtick pairs (e.g., code refs like `match()`), and correctly separates multiple commands on one line. Handles both paired (`` `cmd` ``) and single (`` `cmd ``) backtick forms; fenced blocks stripped first.
+- `_extract_quoted_commands()` function — extracts A2A commands in quoted-payload format (`` `cmd @Agent "payload" ``) from agent response text. Uses `_parse_quoted_payload()` from `utils/quoting.py` for escape-aware payload extraction. Fenced code blocks (```` ```...``` ````) stripped first. Returns `ParsedCommand` namedtuples. Maximum 3 commands per response.
 
-**Relay mechanism:** `` `ask @B question` `` from A → `_pending_asks[B] = A`. When B responds → `_relay_response(A, B, text)` delivers B's answer wrapped as `"[{B} responded]: {text}"`. Only `` `ask` `` and `` `delegate` `` create pending asks — `` `tell` `` is one-way.
+**Relay mechanism:** `` `ask @B "question"` `` from A → `_pending_asks[B] = A`. When B responds → `_relay_response(A, B, text)` delivers B's answer wrapped as `"[{B} responded]: {text}"`. Only `` `ask` `` and `` `delegate` `` create pending asks — `` `tell` `` is one-way.
 
 **Sender identity:** Outbound messages to target agents are prefixed with `"[{sender_name} asks]: {question}"` so the target knows who's consulting them — not the human.
 
-**Command canonicalization:** Raw backtick matches are parsed into canonical `cmd @Agent — body` format before calling `process_input()`. This prevents em-dashes in the body text from being misinterpreted as the body separator.
+**Command canonicalization:** `ParsedCommand` results from `_extract_quoted_commands()` are rebuilt into canonical quoted-payload format (`` `cmd @Agent "escaped_payload" ``) before calling `process_input()`. Backslashes and quotes in the payload are escaped (`\` → `\\`, `"` → `\"`) per A2A_QUOTED_PAYLOAD_SPEC §5.4. Payload-free commands (e.g. `stop`) omit the payload.
 
 **Dispatch suppression:** `process_input()` is called with `skip_dispatch=True` to prevent GTK UI side effects (error bubbles) from background agent-to-agent routing.
 
@@ -1788,20 +1789,20 @@ FeedBar → GTK widgets:
 Agent-to-agent consultation is entirely command-based. There are no automatic @mention
 detectors, no relay threads, no convergence loops, and no capture_response cycles.
 
-**The only mechanism:** `` `ask @AgentName question` `` — typed by a human or emitted
+**The only mechanism:** `` `ask @AgentName "question"` `` — typed by a human or emitted
 by an agent in its response text.
 
 **Commands** (see §3.21d for CollabHandler):
 | Command | Effect |
 |---------|--------|
-| `` `ask @Agent question` `` | Forward question to target agent; response appears in same tab |
-| `` `delegate @Agent task` `` | Assign a task to an agent |
+| `` `ask @Agent "question"` `` | Forward question to target agent; response appears in same tab |
+| `` `delegate @Agent "task"` `` | Assign a task to an agent |
 | `` `stop @Agent` `` | Send stop signal to a collaboration |
-| `` `tell @Agent info` `` | Share information with an agent |
+| `` `tell @Agent "info"` `` | Share information with an agent |
 
-**Data flow — `` `ask @Coder is this edge case valid?` `` in a project tab:**
+**Data flow — `` `ask @Coder "is this edge case valid?"` `` in a project tab:**
 ```
-User types `ask @Coder is this edge case valid?`
+User types `ask @Coder "is this edge case valid?"`
          │
          ▼
 ChatHandler.on_send() → CommandHandler.process_input()
@@ -2312,6 +2313,7 @@ crabcakes/
     ├── markdown.py              # 220 lines — format_markdown() — inline markdown → Pango (Phase 1)
     ├── projects.py              # 77 lines — load_projects(), scan_directory(), load/save_members()
     ├── prompts.py               # 25 lines — load_prompts() — reads .md from prompts/
+    ├── quoting.py               # ~50 lines — _parse_quoted_payload() — escape-aware quoted-payload parsing (A2A_QUOTED_PAYLOAD_SPEC)
     ├── stt.py                   # 182 lines — STTEngine (faster-whisper push-to-talk, Phase 4)
     └── syntax_highlight.py      # 164 lines — highlight() — Pygments → Pango markup (Phase 2)
 

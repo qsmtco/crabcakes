@@ -25,6 +25,9 @@
 
 import re
 import logging
+from collections import namedtuple
+
+from utils.quoting import _parse_quoted_payload
 
 logger = logging.getLogger(__name__)
 
@@ -37,104 +40,93 @@ _MAX_CHAIN_DEPTH = 3
 _MAX_COMMANDS_PER_RESPONSE = 3
 
 # Command keywords recognized in backtick-enclosed agent responses.
-# Used by _extract_backtick_commands() to identify and parse A2A commands.
 _COMMAND_KEYWORDS = frozenset({'ask', 'delegate', 'stop', 'tell'})
 
+# Maximum characters in a quoted A2A payload (per spec §5.4).
+_QUOTED_PAYLOAD_MAX = 4096
 
-def _extract_backtick_commands(text: str) -> list[str]:
-    """Extract backtick-delimited A2A commands from agent response text.
+# Parsed A2A command from quoted-payload format.
+# Fields: command, agent, payload, raw_start, raw_end
+ParsedCommand = namedtuple('ParsedCommand', ['command', 'agent', 'payload', 'raw_start', 'raw_end'])
 
-    Handles internal backtick pairs (e.g., code references like `match()`)
-    inside commands while correctly separating multiple commands on one line.
 
-    Algorithm:
-    1. Split text by backtick characters into alternating segments
-    2. Walk segments looking for ones that start with a known command keyword
-    3. When found, accumulate subsequent segments (rejoining with backticks)
-       until reaching a natural command boundary
-
-    Returns list of command text strings (without outer backticks).
+def _extract_quoted_commands(text: str) -> list[ParsedCommand]:
+    """Extract A2A commands in quoted-payload format: `cmd @Agent "payload"`
+    
+    Per A2A_QUOTED_PAYLOAD_SPEC §3:
+    - `ask`, `tell`, `delegate` require quoted payloads ("payload")
+    - `stop` is payload-free (no quotes needed)
+    - Unquoted payloads for cmd requiring quotes are silently skipped (§4.3)
+    - Bare `@Agent` at command position → implicit `ask` (§3.1)
+    - Inner quotes in payload are parsed until closing " (§3.2)
+    
+    Returns list of ParsedCommand namedtuples.
     """
-    parts = text.split('`')
-    if len(parts) < 2:
-        return []
-
-    commands: list[str] = []
-    i = 0
-
-    while i < len(parts):
-        # Segments at odd indices are "inside" backtick pairs
-        if i % 2 == 0:
-            i += 1
+    results = []
+    
+    for m in re.finditer(r'`([^`]+)`', text):
+        inner = m.group(1)
+        tokens = inner.split()
+        if not tokens:
             continue
-
-        segment = parts[i]
-        stripped = segment.strip()
-        if not stripped:
-            i += 1
-            continue
-
-        first_word = stripped.split()[0].lower()
-        if first_word.startswith('@'):
-            first_word = 'ask'
-
-        if first_word not in _COMMAND_KEYWORDS:
-            i += 2  # skip this segment and its trailing "outside" text
-            continue
-
-        # Found a command start at segment i. Accumulate segments.
-        accumulated_parts: list[str] = [segment]
-        j = i + 1
-
-        while j < len(parts):
-            if j % 2 == 0:
-                # Even index = "outside" text (between closing and next opening backtick)
-                outside_text = parts[j]
-
-                if j + 1 >= len(parts):
-                    # No more segments — command continues to end
-                    if outside_text:
-                        accumulated_parts.append(outside_text)
+        
+        cmd = tokens[0]
+        rest = tokens[1:]
+        
+        # Implicit ask: `@Agent ...` → treat as `ask @Agent ...`
+        if cmd.startswith('@'):
+            agent = cmd      # @Agent token
+            cmd = 'ask'      # implicit ask command
+            # rest stays as payload tokens (already after @Agent)
+        else:
+            # Normal: find @Agent in rest
+            agent = None
+            for i, tok in enumerate(rest):
+                if tok.startswith('@'):
+                    agent = tok
+                    rest = rest[i + 1:]
                     break
+            if agent is None:
+                continue  # No @Agent → skip
+        
+        # Parse payload using the shared escape-aware scanner (spec §5.2)
+        # After @Agent, rejoin remaining tokens and find the quoted payload.
+        payload_text = ' '.join(rest)
+        if cmd in ('ask', 'tell', 'delegate'):
+            # Find the opening quote in the rejoined text after @Agent
+            q_pos = 0
+            while q_pos < len(payload_text) and payload_text[q_pos] != '"':
+                q_pos += 1
+            if q_pos >= len(payload_text):
+                continue  # No opening quote → skip per spec §4.3
+            payload, after_q = _parse_quoted_payload(payload_text, q_pos)
+            if payload is None:
+                # Distinguish empty payload vs unclosed quote (agent auto-close §4.4)
+                after_open = payload_text[q_pos + 1:]  # text after opening "
+                if not after_open or after_open[0] == '"':
+                    continue  # Empty (closed-but-empty or bare ") → silently drop
+                # Auto-close: treat end of text as closing quote
+                payload = after_open
+                if len(payload) > _QUOTED_PAYLOAD_MAX:
+                    payload = payload[:_QUOTED_PAYLOAD_MAX] + '…'
+            elif len(payload) > _QUOTED_PAYLOAD_MAX:
+                payload = payload[:_QUOTED_PAYLOAD_MAX] + '…'
+        elif cmd == 'stop':
+            payload = ''
+        else:
+            continue  # Unknown command → skip
+        
+        results.append(ParsedCommand(
+            command=cmd,
+            agent=agent,
+            payload=payload,
+            raw_start=m.start(),
+            raw_end=m.end()
+        ))
+    
+    return results
 
-                next_segment = parts[j + 1]
-                next_stripped = next_segment.strip()
-                next_first = next_stripped.split()[0].lower() if next_stripped.split() else ""
-                if next_first.startswith('@'):
-                    next_first = 'ask'
 
-                # Next segment starts a new command — current command ends
-                if next_first in _COMMAND_KEYWORDS:
-                    break
-
-                # Heuristic: is the outside text an internal boundary?
-                outside_stripped = outside_text.strip()
-                if not outside_stripped:
-                    # Empty between backticks — internal (e.g., `match()`)
-                    accumulated_parts.append('`')
-                    accumulated_parts.append(next_segment)
-                    j += 2
-                elif (not re.search(r'[.!?]', outside_stripped)
-                      and len(outside_stripped.split()) <= 2):
-                    # Short connector without sentence-ending punctuation — internal
-                    accumulated_parts.append('`')
-                    accumulated_parts.append(outside_text)
-                    accumulated_parts.append('`')
-                    accumulated_parts.append(next_segment)
-                    j += 2
-                else:
-                    # Substantial text with sentence endings — command ends
-                    break
-            else:
-                # Odd index during accumulation — append and continue
-                accumulated_parts.append(parts[j])
-                j += 1
-
-        command_text = ''.join(accumulated_parts)
-        commands.append(command_text)
-        i = j + 1 if j % 2 == 0 else j
-
-    return commands
 
 
 class AgentCommandHandler:
@@ -244,15 +236,14 @@ class AgentCommandHandler:
         # Strip fenced code blocks to avoid false positives
         clean_text = self._strip_fenced_blocks(text)
 
-        # Extract and filter backtick commands
-        matches = _extract_backtick_commands(clean_text)
+        # Extract A2A commands in quoted-payload format (A2A_QUOTED_PAYLOAD_SPEC §5.2)
+        parsed_commands = _extract_quoted_commands(clean_text)
 
         # Process commands if any are found
-        if matches:
-            known_commands = self._command_handler.get_command_names()
+        if parsed_commands:
             command_count = 0
 
-            for raw_match in matches:
+            for pc in parsed_commands:
                 if command_count >= _MAX_COMMANDS_PER_RESPONSE:
                     logger.warning(
                         "[agent-cmd] Per-response command limit (%d) reached — skipping remaining",
@@ -260,45 +251,21 @@ class AgentCommandHandler:
                     )
                     break
 
-                # Reconstruct in canonical command format for process_input.
-                # Canonical form: `cmd @Agent — body text
-                # This prevents em-dashes in the body from being misinterpreted
-                # as the body separator.
-                first_word = raw_match.strip().split()[0].lower() if raw_match.strip() else ""
-
-                # Implicit ask: @AgentName → treat as "ask"
-                if first_word.startswith("@"):
-                    first_word = "ask"
-
-                if first_word not in known_commands:
-                    continue  # Not a recognized command — skip
-
-                # Parse the raw match into command + @agent + rest, then
-                # rebuild with explicit em-dash separator.
-                match_tokens = raw_match.strip().split()
-                cmd_token = match_tokens[0]  # e.g. "ask" or "tell"
-                rest_tokens = match_tokens[1:]
-
-                # Find the @agent token and separate it from the body text
-                agent_token = ""
-                body_tokens = []
-                for tok in rest_tokens:
-                    if not agent_token and tok.startswith("@"):
-                        agent_token = tok
-                    else:
-                        body_tokens.append(tok)
-
-                if agent_token:
-                    body_text = " ".join(body_tokens)
-                    candidate = f"`{cmd_token} {agent_token} — {body_text}"
+                # Rebuild in canonical quoted-payload format for process_input.
+                # Spec §5.4: escape backslashes then quotes before wrapping.
+                # Order matters — escape \\ first to avoid double-escaping.
+                # Payload-free commands (e.g. stop) get no payload.
+                if pc.payload:
+                    escaped = pc.payload.replace('\\', '\\\\').replace('"', '\\"')
+                    candidate = f"`{pc.command} {pc.agent} \"{escaped}\""
                 else:
-                    candidate = f"`{raw_match}"
+                    candidate = f"`{pc.command} {pc.agent}"
 
                 result = self._command_handler.process_input(session_key, candidate,
                                                              skip_dispatch=True)
                 if result.handled and result.forward_to and result.forward_text:
                     self._route_command(result, project_name, depth, source_sk=session_key,
-                                        command_name=first_word)
+                                        command_name=pc.command)
                     command_count += 1
                 elif result.handled and result.broadcast_targets and result.forward_text:
                     for target in result.broadcast_targets:

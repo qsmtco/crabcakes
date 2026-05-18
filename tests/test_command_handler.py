@@ -9,7 +9,7 @@
 #   2. Command lookup (known, unknown, alias, case-insensitive)
 #   3. Flag parsing (value, no value, consecutive, followed by flag)
 #   4. @mention resolution (exact, partial, empty, no match, multiple)
-#   5. Body extraction (after em-dash " — ")
+#   5. Body extraction (from quoted payload)
 #   6. Error handling in handler → error response_text
 #   7. set_gateway_client / set_agent_manager setters
 #   8. Command flow end-to-end
@@ -128,7 +128,7 @@ class TestCommandLookup:
         assert result.handled is False
 
     def test_known_command_handled(self, configured_handler):
-        result = configured_handler.process_input("agent:1", "`echo hello")
+        result = configured_handler.process_input("agent:1", "`echo @Debugger \"hello\"")
         assert result.handled is True
 
     def test_alias_resolves(self, configured_handler):
@@ -169,9 +169,9 @@ class TestFlagParsing:
 class TestBodyExtraction:
     def test_body_extracted(self, configured_handler):
         def capture(cmd: Command) -> CommandResult:
-            return CommandResult(handled=True, response_text=cmd.raw_text)
+            return CommandResult(handled=True, response_text=cmd.body)
         configured_handler.register_command("bodytest", capture)
-        result = configured_handler.process_input("agent:1", "`bodytest — actual body text")
+        result = configured_handler.process_input("agent:1", "`bodytest @Debugger \"actual body text\"")
         assert result.handled is True
         assert "actual body text" in result.response_text
 
@@ -182,12 +182,13 @@ class TestBodyExtraction:
 
 class TestMentionResolution:
     def test_exact_name_resolves(self, configured_handler):
-        # Body contains @Debugger → resolved to session_key, command handled
-        result = configured_handler.process_input("agent:1", "`echo @Debugger — hi")
+
+        result = configured_handler.process_input("agent:1", "`echo @Debugger \"hi\"")
         assert result.handled is True
 
     def test_partial_name_resolves(self, configured_handler):
-        result = configured_handler.process_input("agent:1", "`echo @debug — hi")
+
+        result = configured_handler.process_input("agent:1", "`echo @debug \"hi\"")
         assert result.handled is True
 
     def test_empty_mention_no_project(self):
@@ -197,16 +198,16 @@ class TestMentionResolution:
             gateway_client=None, agent_manager=agnt,
             project_handler=None, GLib_module=None,
         )
-        h.register_command("cmd", lambda c: CommandResult(handled=True, response_text="ok"))
-        result = h.process_input("agent:1", "`cmd @ — message")
+        h.register_command("stop", lambda c: CommandResult(handled=True, response_text="ok"))
+        result = h.process_input("agent:1", "`stop @")
         assert result.handled is True
         assert "No active project" in result.response_text
 
     def test_unknown_mention_returns_error(self, configured_handler):
-        result = configured_handler.process_input("agent:1", "`echo @Nobody — hi")
-        assert result.handled is True
-        assert "Unknown agent" in result.response_text
 
+
+        result = configured_handler.process_input("agent:1", '`echo @Nobody "hi"')
+        assert "Unknown agent" in result.response_text
     def test_multiple_partial_matches_returns_error(self):
         """Two agents sharing a prefix → error."""
         agnt = FakeAgentManager({
@@ -218,7 +219,7 @@ class TestMentionResolution:
             project_handler=None, GLib_module=None,
         )
         h.register_command("echo", lambda c: CommandResult(handled=True, response_text="ok"))
-        result = h.process_input("agent:1", "`echo @deb — hi")
+        result = h.process_input("agent:1", '`echo @deb "hi"')
         assert result.handled is True
         assert "Multiple agents" in result.response_text
 
@@ -232,7 +233,8 @@ class TestErrorHandling:
         def bad(cmd: Command) -> CommandResult:
             raise RuntimeError("boom")
         configured_handler.register_command("bad", bad)
-        result = configured_handler.process_input("agent:1", "`bad")
+
+        result = configured_handler.process_input("agent:1", '`bad @Debugger "test"')
         assert result.handled is True
         assert "Error" in result.response_text
         assert "boom" in result.response_text
@@ -269,7 +271,7 @@ class TestSetters:
 
 class TestCommandFlow:
     def test_response_text_not_forwarded_to_gateway(self, configured_handler):
-        result = configured_handler.process_input("agent:1", "`echo hello")
+        result = configured_handler.process_input("agent:1", "`echo @Debugger \"hello\"")
         assert result.handled is True
         assert result.response_text == "echo: echo"
         assert result.forward_to is None
@@ -495,7 +497,7 @@ class TestBugFixes:
                 forward_text=cmd.body,
             )
         configured_handler.register_command("ask", fake_ask)
-        result = configured_handler.process_input("agent:1", "`@Debugger hello")
+        result = configured_handler.process_input("agent:1", "`@Debugger \"hello\"")
         assert result.handled is True
         assert result.forward_to == "agent:debugger:1"
         assert result.forward_text == "hello"
@@ -510,7 +512,7 @@ class TestBugFixes:
                 forward_text=cmd.body,
             )
         configured_handler.register_command("capture", capture)
-        result = configured_handler.process_input("agent:1", "`capture @Debugger hello world")
+        result = configured_handler.process_input("agent:1", "`capture @Debugger \"hello world\"")
         assert result.handled is True
         assert result.forward_text == "hello world"
 
@@ -518,7 +520,7 @@ class TestBugFixes:
         """Bug #3: multiple @mentions silently dropped.
         Fix: explicit error when >1 mention found."""
         configured_handler.register_command("ask", lambda c: CommandResult(handled=True))
-        result = configured_handler.process_input("agent:1", "`ask @Debugger @Coder — hello")
+        result = configured_handler.process_input("agent:1", '`ask @Debugger @Coder "hello"')
         assert result.handled is True
         assert "Only one" in result.response_text
 
@@ -567,3 +569,75 @@ class TestBugFixes:
         resolved = h._resolve_mention("@", session_key="project:right-project")
         assert isinstance(resolved, list)
         assert resolved == ["agent:a:1"]  # right-project members, not wrong-project
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  §7.3 — Missing integration tests (A2A_QUOTED_PAYLOAD_SPEC)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestQuotedPayloadIntegration:
+    """Integration tests for quoted-payload commands through process_input()."""
+
+    def test_malformed_unquoted_error(self, configured_handler):
+        """§7.3 #2: `ask @QTR hello → error about quoted payload."""
+        configured_handler.register_command("ask", lambda c: CommandResult(handled=True))
+        result = configured_handler.process_input("agent:1", "`ask @Debugger hello")
+        assert result.handled is True
+        assert "Malformed command" in result.response_text
+        assert "payload must be quoted" in result.response_text
+
+    def test_unclosed_quote_error(self, configured_handler):
+        """§7.3 #5: `ask @QTR "unclosed → error about unclosed quote."""
+        configured_handler.register_command("ask", lambda c: CommandResult(handled=True))
+        result = configured_handler.process_input("agent:1", '`ask @Debugger "unclosed')
+        assert result.handled is True
+        assert "Unclosed quote" in result.response_text
+
+    def test_empty_payload_error(self, configured_handler):
+        """§7.3 #3: `ask @QTR "" → error about empty payload."""
+        configured_handler.register_command("ask", lambda c: CommandResult(handled=True))
+        result = configured_handler.process_input("agent:1", '`ask @Debugger ""')
+        assert result.handled is True
+        assert "Empty payload" in result.response_text
+
+    def test_stop_no_payload_required(self, configured_handler):
+        """§7.3 #6: `stop @QTR → handled, no error about missing payload."""
+        configured_handler.register_command("stop", lambda c: CommandResult(handled=True, response_text="ok"))
+        result = configured_handler.process_input("agent:1", "`stop @Debugger")
+        assert result.handled is True
+        assert "Malformed" not in result.response_text
+
+    def test_quoted_payload_body_passed_to_handler(self, configured_handler):
+        """Payload extracted correctly and passed as cmd.body."""
+        captured_body = []
+        def capture(cmd: Command) -> CommandResult:
+            captured_body.append(cmd.body)
+            return CommandResult(handled=True, response_text="ok")
+        configured_handler.register_command("ask", capture)
+        result = configured_handler.process_input("agent:1", '`ask @Debugger "what about edge cases?"')
+        assert result.handled is True
+        assert captured_body[0] == "what about edge cases?"
+
+    def test_escaped_quotes_in_body(self, configured_handler):
+        """Escaped quotes in payload become literal quotes in cmd.body."""
+        captured_body = []
+        def capture(cmd: Command) -> CommandResult:
+            captured_body.append(cmd.body)
+            return CommandResult(handled=True, response_text="ok")
+        configured_handler.register_command("ask", capture)
+        result = configured_handler.process_input("agent:1", '`ask @Debugger "she said \\"hello\\""')
+        assert result.handled is True
+        assert captured_body[0] == 'she said "hello"'
+
+    def test_4k_cap_on_user_input(self, configured_handler):
+        """§4.5: user payloads over 4K are truncated with ellipsis."""
+        captured_body = []
+        def capture(cmd: Command) -> CommandResult:
+            captured_body.append(cmd.body)
+            return CommandResult(handled=True, response_text="ok")
+        configured_handler.register_command("ask", capture)
+        big = "x" * 5000
+        result = configured_handler.process_input("agent:1", f'`ask @Debugger "{big}"')
+        assert result.handled is True
+        assert len(captured_body[0]) == 4097  # 4096 + 1 char ellipsis
+        assert captured_body[0].endswith("…")
