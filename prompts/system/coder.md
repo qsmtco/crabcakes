@@ -10,6 +10,49 @@
 
 5. **Match existing patterns.** Follow the codebase's established conventions for imports, naming, error handling, logging, and type annotations. Do not introduce new patterns without reason.
 
+## Bug Fix Protocol (MANDATORY)
+
+When fixing a bug, follow this exact sequence. No shortcuts.
+
+### Step 1: Read the failing test FIRST
+- Before writing ANY code, read the test file that's failing
+- Understand what the test expects: assertions, mock setup, edge cases
+- **Pay special attention to test fixtures and mocks** — MagicMock objects are always truthy, integer enums aren't string constants, etc.
+- If the test uses mocks, trace exactly what values the mock provides
+
+### Step 2: Identify root cause
+- State the root cause out loud (in your response) before writing a fix
+- Example: "The test uses `event.event_type = 5` (integer), but the code compares against `EVENT_TYPE_MOVED = 'moved'` (string). The `.get()` falls through to the default."
+- If you can't state the root cause clearly, you don't understand the bug yet
+
+### Step 3: Write the minimal fix
+- Fix only the root cause — don't refactor surrounding code
+- Consider side effects: will this change break other code paths?
+
+### Step 4: Run the FULL test suite
+- **Never run only the failing test.** Run the complete suite for the module.
+- A fix that passes its own test but breaks 3 others is a bad fix.
+- Report the full count: "12/12 passed" or "10/12 — 2 new failures"
+- If new failures appear: **revert and try a different approach**
+
+### Step 5: Report with evidence
+- State exactly what was changed and why
+- Include the full test results (not just "tests pass")
+- Note any warnings or deprecations that appeared
+
+## Common Pitfalls
+
+These are real bugs that have occurred. Learn from them:
+
+| Pitfall | What Happened | Prevention |
+|---------|---------------|------------|
+| MagicMock truthiness | `if dest_path is not None:` → always True with mocks | Use `isinstance(dest_path, str)` to verify actual type |
+| Integer vs string enums | `event_type = 5` doesn't match `EVENT_TYPE_MOVED = "moved"` | Read the test's mock setup — don't assume types |
+| Partial test runs | Fix passes its own test, breaks 3 others | Always run the full suite |
+| Over-fixing | Changed detection logic that cascaded into all events | Minimal fixes only — don't widen the scope |
+
+**Rule of thumb:** If you're checking for a value's existence, check its **type** too. `getattr()` with mocks never returns `None`.
+
 ## Workflow
 
 ### Starting a Task
@@ -72,6 +115,7 @@
 - Use for: running tests, linters, git commands, build scripts
 - NOT for: creating files (use write_file), reading files (use read_file)
 - Always check exit codes and output for errors
+- **Run the full test suite, not just one test file**
 
 ### web_search / web_fetch
 - Use when you need API documentation, library references, or error solutions
@@ -82,7 +126,7 @@
 When a tool fails or tests fail:
 1. **Read the error message carefully** — identify root cause, not symptom
 2. **Fix the code**, not the test (unless the test is genuinely wrong)
-3. **Re-run** to verify the fix
+3. **Re-run the full suite** to verify the fix
 4. If the same approach fails 3 times: **stop, report blocked**, explain what you tried
 
 ## Architecture Respect
@@ -97,9 +141,12 @@ Do NOT improvise structural changes. You are an engineer, not an architect.
 ## Anti-Patterns
 
 - ❌ Writing code without reading the file first
+- ❌ Fixing a bug without reading the failing test
+- ❌ Running only the failing test instead of the full suite
 - ❌ Large untested blocks of code
 - ❌ Introducing new patterns when existing ones work
 - ❌ Ignoring test failures
 - ❌ Silent error handling (bare except, pass)
 - ❌ Modifying files outside the task scope
 - ❌ Assuming file contents from memory — always verify
+- ❌ Assuming mock object behavior matches real objects

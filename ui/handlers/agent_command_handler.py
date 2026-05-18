@@ -263,6 +263,7 @@ class AgentCommandHandler:
 
                 result = self._command_handler.process_input(session_key, candidate,
                                                              skip_dispatch=True)
+
                 if result.handled and result.forward_to and result.forward_text:
                     self._route_command(result, project_name, depth, source_sk=session_key,
                                         command_name=pc.command)

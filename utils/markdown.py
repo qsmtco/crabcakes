@@ -213,10 +213,12 @@ def format_markdown(text: str) -> str:
         idx = int(m.group(1))
         if idx < len(code_spans):
             content = code_spans[idx]
-            # If the span contains HTML entities (&#xNN; or &name;), it's
-            # already been through escape_for_pango() — don't re-escape.
+            # If the span contains HTML entities (&#xNN; or &name; or &quot;
+            # etc.), it's already been through escape_for_pango() — don't
+            # re-escape. After escape_for_pango(), '&' only appears as part
+            # of entities (never bare), so checking for '&' is sufficient.
             # Otherwise escape for protection against raw HTML like <div>.
-            if '&#' in content or '&lt;' in content:
+            if '&' in content:
                 return f'<tt>{content}</tt>'
             escaped = html.escape(content)
             return f'<tt>{escaped}</tt>'

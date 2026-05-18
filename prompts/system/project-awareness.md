@@ -25,7 +25,7 @@ Keep suggestions brief — one line. Don't repeat if already suggested this sess
 
 ## Agent Communication (A2A)
 
-When consulting other agents via `` `ask @Agent "question" ````, payloads are capped at **4,096 characters**. Use `\"` for literal quotes and `\\` for literal backslashes. For large content, write to a file and reference the path instead. See `prompts/system/collab.md` for the full protocol.
+When consulting other agents via `ask @Agent "question"`, payloads are capped at **4,096 characters**. Use `\"` for literal quotes and `\\` for literal backslashes. **The command must have both opening and closing backticks** — without the closing backtick, the parser will not detect the command. For large content, write to a file and reference the path instead. See `prompts/system/collab.md` for the full protocol.
 
 ## Current State
 {{CURRENT_STATE}}
