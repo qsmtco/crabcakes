@@ -22,7 +22,11 @@
 # If so, it calls load_members() and sends to each member independently.
 # Responses from agents are routed back to the project tab via _agent_to_project lookup.
 
+import logging
+
 import gi
+
+logger = logging.getLogger(__name__)
 # Require GTK 4.0 — must be called before importing Gtk
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gdk

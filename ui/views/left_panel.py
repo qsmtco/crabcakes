@@ -368,7 +368,21 @@ class LeftPanel(Gtk.Box):
         row_box.append(plus_lbl)
         row_box.append(text_lbl)
         row.set_child(row_box)
+
+        # Single-click gesture — list box activate_on_single_click is False
+        # (agent rows need double-click to avoid accidental opens),
+        # but this button-like card should respond immediately.
+        click = Gtk.GestureClick()
+        click.set_button(1)
+        click.connect("pressed", lambda *_: self._on_create_agent_click())
+        row.add_controller(click)
+
         return row
+
+    def _on_create_agent_click(self) -> None:
+        """Handle single-click on Create Agent card."""
+        if self._on_create_agent:
+            self._on_create_agent()
 
     def _build_agent_row(self, session_key, name, in_project=False, session_count=1):
         """
