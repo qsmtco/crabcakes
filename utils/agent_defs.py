@@ -1,0 +1,562 @@
+# utils/agent_defs.py
+# Agent definition file I/O for user-defined local agents.
+#
+# Manifest:
+#   - Reads/writes YAML and JSON files from <config_dir>/agents/
+#   - Validates required fields, tool names, prompt file existence
+#   - No GTK, no network
+#
+# Architecture: pure utility following utils/projects.py pattern.
+# Path resolution uses utils/config.get_config_dir().
+# One exception: get_available_tools() imports agent/tools.py for
+# tool metadata — a read-only call for UI dropdown population.
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import shutil
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# ── Path helpers ──────────────────────────────────────────────────────────────
+
+
+def _get_agents_dir() -> str:
+    """Return the agent definitions directory."""
+    from utils.config import get_config_dir
+    return os.path.join(get_config_dir(), "agents")
+
+
+def _get_default_agents_src() -> str:
+    """Return the source directory for built-in default agent YAML files."""
+    # prompts/default_agents/ ships with CrabCakes
+    return os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts", "default_agents")
+
+
+# ── Parsing ──────────────────────────────────────────────────────────────────
+
+
+def _parse_agent_file(filepath: str) -> dict | None:
+    """Parse a single agent definition file (YAML or JSON).
+
+    Tries YAML first, falls back to JSON if pyyaml is not installed.
+    Returns None on any parse failure.
+    """
+    # Try YAML first
+    if filepath.endswith((".yaml", ".yml")):
+        try:
+            import yaml
+            with open(filepath, encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+            if isinstance(data, dict):
+                return data
+            logger.warning("Agent file %s did not contain a mapping — skipping", filepath)
+            return None
+        except ImportError:
+            # pyyaml not installed — try JSON fallback for .yaml/.yml files
+            # only if the file is also valid JSON
+            try:
+                with open(filepath, encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    logger.info(
+                        "pyyaml not installed — parsed %s as JSON fallback", filepath
+                    )
+                    return data
+            except (json.JSONDecodeError, OSError):
+                pass
+            logger.warning(
+                "pyyaml not installed — cannot parse %s. Install with: pip install pyyaml",
+                filepath,
+            )
+            return None
+
+    # JSON files
+    if filepath.endswith(".json"):
+        try:
+            with open(filepath, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+            logger.warning("Agent file %s did not contain a mapping — skipping", filepath)
+            return None
+        except (json.JSONDecodeError, OSError) as e:
+            logger.debug("Failed to parse agent file %s: %s", filepath, e)
+            return None
+
+    return None
+
+
+def _derive_role(agent_def: dict) -> str:
+    """Derive the role identifier from an agent definition.
+
+    Uses explicit 'role' field if present. Otherwise derives from 'name':
+    lowercase, spaces replaced with hyphens.
+    """
+    if agent_def.get("role"):
+        return agent_def["role"].lower().strip()
+    name = agent_def.get("name", "agent")
+    return name.lower().replace(" ", "-")
+
+
+# ── Default seeding ──────────────────────────────────────────────────────────
+
+
+def _seed_defaults_if_empty() -> None:
+    """Copy built-in default agent YAML files if the agents dir is empty/missing.
+
+    Copies from prompts/default_agents/ to <config_dir>/agents/.
+    Only runs if the target directory has no .yaml/.yml/.json files.
+    """
+    agents_dir = _get_agents_dir()
+    src_dir = _get_default_agents_src()
+
+    # Check if agents dir already has definitions
+    if os.path.isdir(agents_dir):
+        existing = [
+            f for f in os.listdir(agents_dir)
+            if f.endswith((".yaml", ".yml", ".json"))
+        ]
+        if existing:
+            return  # User has definitions — don't overwrite
+
+    # Check if source defaults exist
+    if not os.path.isdir(src_dir):
+        return
+
+    # Copy default files
+    try:
+        os.makedirs(agents_dir, exist_ok=True)
+    except OSError as e:
+        logger.warning("Cannot create agents directory %s: %s", agents_dir, e)
+        return
+
+    for fname in sorted(os.listdir(src_dir)):
+        if fname.endswith((".yaml", ".yml", ".json")):
+            src = os.path.join(src_dir, fname)
+            dst = os.path.join(agents_dir, fname)
+            if not os.path.isfile(dst):
+                try:
+                    shutil.copy2(src, dst)
+                    logger.info("Seeded default agent definition: %s", fname)
+                except OSError as e:
+                    logger.warning("Failed to seed default agent %s: %s", fname, e)
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+
+def get_default_si_config(can_write: bool = False) -> dict:
+    """Return the canonical self-improvement defaults dict.
+
+    Single source of truth — used by prompt_loader.py, feedback_processor.py,
+    and SpecialAgentDef.get_self_improvement_config().
+
+    Args:
+        can_write: Whether the agent has write tools. Affects enforcement default.
+
+    Returns:
+        Dict with all self_improvement keys and their default values.
+    """
+    return {
+        "bug_journal": True,
+        "project_rules": True,
+        "enforcement": can_write,
+        "structured_feedback": False,
+        "dream_consolidation": False,
+    }
+
+
+def load_agent_defs() -> list[dict]:
+    """Scan ~/.config/crabcakes/agents/ for definition files. Parse and validate.
+
+    Seeds built-in defaults (Coder, Debugger) if directory is empty.
+    Returns list of agent definition dicts. Empty list if dir missing.
+    Skips files that fail to parse.
+    """
+    _seed_defaults_if_empty()
+
+    agents_dir = _get_agents_dir()
+    if not os.path.isdir(agents_dir):
+        return []
+
+    # Scan in deterministic order: .yaml first, then .yml, then .json
+    filenames: list[str] = []
+    for fname in sorted(os.listdir(agents_dir)):
+        if fname.endswith((".yaml", ".yml", ".json")):
+            filenames.append(fname)
+
+    # Sort: .yaml before .yml before .json, then alphabetically
+    ext_order = {".yaml": 0, ".yml": 1, ".json": 2}
+    filenames.sort(key=lambda f: (ext_order.get(os.path.splitext(f)[1], 3), f))
+
+    defs: list[dict] = []
+    seen_names: set[str] = set()
+    for fname in filenames:
+        filepath = os.path.join(agents_dir, fname)
+        agent_def = _parse_agent_file(filepath)
+        if agent_def is None:
+            continue
+
+        # Ensure role field is populated
+        if "role" not in agent_def:
+            agent_def["role"] = _derive_role(agent_def)
+
+        # Track the source file
+        agent_def["_source_file"] = fname
+
+        # Deduplicate by name (first file wins)
+        name = agent_def.get("name", "")
+        if name and name in seen_names:
+            logger.warning(
+                "Duplicate agent name '%s' in %s — skipping (first definition wins)",
+                name, fname,
+            )
+            continue
+        if name:
+            seen_names.add(name)
+
+        defs.append(agent_def)
+
+    return defs
+
+
+def load_agent_def(name: str) -> dict | None:
+    """Load a single agent definition by display name.
+
+    Returns the first matching definition, or None if not found.
+    """
+    for agent_def in load_agent_defs():
+        if agent_def.get("name") == name:
+            return agent_def
+    return None
+
+
+def load_agent_def_by_role(role: str) -> dict | None:
+    """Load an agent definition by its role field.
+
+    Used by self-improvement code to look up config by role identifier.
+    Returns None if not found.
+    """
+    role_lower = role.lower()
+    for agent_def in load_agent_defs():
+        if agent_def.get("role", "").lower() == role_lower:
+            return agent_def
+    return None
+
+
+def save_agent_def(agent_def: dict) -> str:
+    """Write an agent definition to ~/.config/crabcakes/agents/<name>.yaml.
+
+    Creates directory if needed. Returns file path.
+    Uses YAML if pyyaml is available, otherwise JSON.
+    """
+    agents_dir = _get_agents_dir()
+    os.makedirs(agents_dir, exist_ok=True)
+
+    name = agent_def.get("name", "unnamed-agent")
+    # Sanitize filename: lowercase, replace spaces with hyphens
+    safe_name = name.lower().replace(" ", "-")
+    # Remove any non-alphanumeric characters except hyphens and underscores
+    safe_name = "".join(c for c in safe_name if c.isalnum() or c in "-_")
+
+    filepath = os.path.join(agents_dir, f"{safe_name}.yaml")
+
+    # Try YAML first
+    try:
+        import yaml
+        # Build a clean copy without internal keys
+        export = {k: v for k, v in agent_def.items() if not k.startswith("_")}
+        with open(filepath, "w", encoding="utf-8") as f:
+            yaml.dump(export, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        return filepath
+    except ImportError:
+        pass
+
+    # Fallback to JSON
+    filepath = os.path.join(agents_dir, f"{safe_name}.json")
+    export = {k: v for k, v in agent_def.items() if not k.startswith("_")}
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(export, f, indent=2, ensure_ascii=False)
+    return filepath
+
+
+def delete_agent_def(name: str) -> bool:
+    """Delete an agent definition file by name.
+
+    Finds the file by scanning all definitions, then removes it.
+    Returns True if a file was deleted.
+    """
+    agents_dir = _get_agents_dir()
+    if not os.path.isdir(agents_dir):
+        return False
+
+    for fname in os.listdir(agents_dir):
+        if not fname.endswith((".yaml", ".yml", ".json")):
+            continue
+        filepath = os.path.join(agents_dir, fname)
+        agent_def = _parse_agent_file(filepath)
+        if agent_def and agent_def.get("name") == name:
+            try:
+                os.remove(filepath)
+                logger.info("Deleted agent definition: %s (%s)", name, fname)
+                return True
+            except OSError as e:
+                logger.warning("Failed to delete agent file %s: %s", filepath, e)
+                return False
+    return False
+
+
+def validate_agent_def(agent_def: dict) -> list[str]:
+    """Validate an agent definition dict.
+
+    Checks required fields, prompt file existence, tool name validity.
+    Returns list of error strings (empty if valid).
+    """
+    errors: list[str] = []
+
+    # Required fields
+    if not agent_def.get("name"):
+        errors.append("Missing required field: name")
+    if not agent_def.get("prompts"):
+        errors.append("Missing required field: prompts (must be a non-empty list)")
+    if not agent_def.get("tools"):
+        errors.append("Missing required field: tools (must be a non-empty list)")
+    if not agent_def.get("provider"):
+        errors.append("Missing required field: provider")
+
+    # Type checks
+    prompts = agent_def.get("prompts")
+    if prompts is not None and not isinstance(prompts, list):
+        errors.append("Field 'prompts' must be a list")
+    if prompts is not None and isinstance(prompts, list):
+        for p in prompts:
+            if not isinstance(p, str):
+                errors.append(f"Prompt entry must be a string, got: {type(p).__name__}")
+                break
+
+    tools = agent_def.get("tools")
+    if tools is not None and not isinstance(tools, list):
+        errors.append("Field 'tools' must be a list")
+
+    # Validate tool names against known tools
+    if isinstance(tools, list) and tools:
+        known_names = {t["name"] for t in get_available_tools()}
+        for tool_name in tools:
+            if tool_name not in known_names:
+                errors.append(f"Unknown tool: {tool_name}")
+
+    # Validate prompt files exist
+    if isinstance(prompts, list):
+        prompts_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts")
+        for p in prompts:
+            if isinstance(p, str):
+                # Check prompts/ directory (could be system/ or root)
+                candidates = [
+                    os.path.join(prompts_dir, p),
+                    os.path.join(prompts_dir, "system", p),
+                ]
+                if not any(os.path.isfile(c) for c in candidates):
+                    errors.append(f"Prompt file not found: {p}")
+
+    # Validate provider exists in agent.json
+    provider = agent_def.get("provider")
+    if provider:
+        providers = get_available_providers()
+        provider_names = {p["name"] for p in providers}
+        if provider_names and provider not in provider_names:
+            errors.append(
+                f"Unknown provider: {provider}. Available: {', '.join(sorted(provider_names))}"
+            )
+
+    # Validate model is present (could come from provider default)
+    if not agent_def.get("model") and provider:
+        providers = get_available_providers()
+        for p in providers:
+            if p["name"] == provider:
+                if not p.get("default_model"):
+                    errors.append(f"No model specified and provider '{provider}' has no default")
+                break
+
+    # Check for filename collision (sanitized names may collide)
+    name = agent_def.get("name", "")
+    if name:
+        safe_name = name.lower().replace(" ", "-")
+        safe_name = "".join(c for c in safe_name if c.isalnum() or c in "-_")
+        agents_dir = _get_agents_dir()
+        if os.path.isdir(agents_dir):
+            for fname in os.listdir(agents_dir):
+                if fname.endswith((".yaml", ".yml", ".json")):
+                    stem = os.path.splitext(fname)[0]
+                    if stem == safe_name:
+                        # Check if this file belongs to a different agent
+                        existing = _parse_agent_file(os.path.join(agents_dir, fname))
+                        if existing and existing.get("name") != name:
+                            errors.append(
+                                f"Name collision: '{name}' and '{existing.get('name')}' "
+                                f"would both write to {fname}. Choose a different name."
+                            )
+                        break
+
+    return errors
+
+
+def get_available_tools() -> list[dict]:
+    """Return available tool names and descriptions.
+
+    Wraps agent/tools.py get_all_tools() → [{name, description}].
+    Used by the UI to show tool checkboxes.
+    """
+    try:
+        from agent.tools import get_all_tools
+        return [{"name": t.name, "description": t.description} for t in get_all_tools()]
+    except ImportError:
+        logger.warning("Cannot import agent.tools — returning empty tool list")
+        return []
+
+
+def get_available_prompts() -> list[dict]:
+    """Scan prompts/ directory for .md files → [{name, filepath}].
+
+    Used by the UI to show prompt selector.
+    """
+    prompts_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts")
+    if not os.path.isdir(prompts_dir):
+        return []
+
+    results: list[dict] = []
+
+    # Scan prompts/system/ first (these are the main system prompts)
+    system_dir = os.path.join(prompts_dir, "system")
+    if os.path.isdir(system_dir):
+        for fname in sorted(os.listdir(system_dir)):
+            if fname.endswith(".md"):
+                filepath = os.path.join(system_dir, fname)
+                if os.path.isfile(filepath):
+                    results.append({
+                        "name": fname,
+                        "filepath": os.path.join("system", fname),
+                    })
+
+    # Also scan prompts/ root level
+    for fname in sorted(os.listdir(prompts_dir)):
+        if fname.endswith(".md") and os.path.isfile(os.path.join(prompts_dir, fname)):
+            results.append({
+                "name": fname,
+                "filepath": fname,
+            })
+
+    return results
+
+
+def get_available_providers() -> list[dict]:
+    """Load agent.json providers → [{name, base_url, default_model}].
+
+    Used by the UI to show provider dropdown.
+    """
+    try:
+        from agent.config import load_agent_config
+        config = load_agent_config()
+        return [
+            {
+                "name": name,
+                "base_url": prov.base_url,
+                "default_model": prov.default_model,
+            }
+            for name, prov in config.providers.items()
+        ]
+    except Exception as e:
+        logger.debug("Cannot load agent config for providers: %s", e)
+        return []
+
+
+def _get_agent_json_path() -> str:
+    """Return path to agent.json config file."""
+    from utils.config import get_config_dir
+    return os.path.join(get_config_dir(), "agent.json")
+
+
+def save_provider(name: str, config: dict) -> bool:
+    """Add or update a provider in agent.json.
+
+    Args:
+        name: Provider name (e.g. "openai", "local-ollama").
+        config: Dict with base_url, api_key, default_model.
+
+    Returns True on success.
+    """
+    path = _get_agent_json_path()
+    if not os.path.isfile(path):
+        logger.warning("agent.json not found at %s — cannot save provider", path)
+        return False
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.error("Cannot read agent.json: %s", e)
+        return False
+
+    providers = raw.get("providers", {})
+    providers[name] = {
+        "base_url": config.get("base_url", ""),
+        "api_key": config.get("api_key", ""),
+        "default_model": config.get("default_model", ""),
+        "supports_tools": config.get("supports_tools", True),
+        "supports_streaming": config.get("supports_streaming", True),
+        "max_tokens": config.get("max_tokens", 128_000),
+    }
+    raw["providers"] = providers
+
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(raw, f, indent=4, ensure_ascii=False)
+        logger.info("Saved provider: %s", name)
+        return True
+    except OSError as e:
+        logger.error("Cannot write agent.json: %s", e)
+        return False
+
+
+def delete_provider(name: str) -> bool:
+    """Remove a provider from agent.json.
+
+    Returns True if deleted, False if not found or error.
+    """
+    path = _get_agent_json_path()
+    if not os.path.isfile(path):
+        return False
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return False
+
+    providers = raw.get("providers", {})
+    if name not in providers:
+        return False
+
+    del providers[name]
+    raw["providers"] = providers
+
+    # Update default_provider if it was the deleted one
+    if raw.get("default_provider") == name:
+        remaining = list(providers.keys())
+        raw["default_provider"] = remaining[0] if remaining else "openai"
+        raw["default_model"] = (
+            f"{remaining[0]}/{providers[remaining[0]].get('default_model', '')}"
+            if remaining else "openai/gpt-4o"
+        )
+
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(raw, f, indent=4, ensure_ascii=False)
+        logger.info("Deleted provider: %s", name)
+        return True
+    except OSError as e:
+        logger.error("Cannot write agent.json: %s", e)
+        return False

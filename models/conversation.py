@@ -100,6 +100,7 @@ class Conversation:
     system_prompt: str = ""
     messages: list[Message] = field(default_factory=list)
     model: str = ""                      # e.g. "openai/gpt-4o"
+    si_enforcement: bool | None = None     # per-agent enforcement override (None → use global)
     created_at: datetime = field(default_factory=datetime.now)
     total_tokens: int = 0
     total_cost: float = 0.0              # cumulative USD cost

@@ -1,0 +1,21 @@
+# Debugger — Read-only analysis and debugging agent
+name: Debugger
+emoji: "🐛"
+role: debugger
+prompts:
+  - system/debugger.md
+tools:
+  - read_file
+  - exec_command
+  - list_files
+  - search_files
+  - web_search
+  - web_fetch
+provider: minimax
+model: MiniMax-M2.7
+self_improvement:
+  bug_journal: true
+  project_rules: true
+  enforcement: false
+  structured_feedback: false
+  dream_consolidation: false

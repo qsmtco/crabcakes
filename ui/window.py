@@ -156,6 +156,18 @@ class MainWindow(Gtk.ApplicationWindow):
         self._left_panel.set_special_agents(self._agent_runtime_handler)
         self._main_content.set_agent_runtime_handler(self._agent_runtime_handler)
 
+        # Agent builder handler — manages create/edit/delete for user-defined agents
+        from ui.handlers.agent_builder_handler import AgentBuilderHandler
+        self._agent_builder_handler = AgentBuilderHandler(
+            on_agent_saved=lambda name: self._on_agent_saved(name),
+            on_agent_deleted=lambda name: self._on_agent_deleted(name),
+        )
+
+        # Wire left panel agent builder callbacks
+        self._left_panel.set_on_create_agent(lambda: self._open_agent_builder())
+        self._left_panel.set_on_edit_agent(lambda name: self._open_agent_builder(name))
+        self._left_panel.set_on_delete_agent(lambda name: self._confirm_delete_agent(name))
+
         # Prompts handler — wired to left_panel after both are created
         from ui.handlers.prompts_handler import PromptsHandler
         self._prompts_handler = PromptsHandler(
@@ -634,6 +646,94 @@ class MainWindow(Gtk.ApplicationWindow):
     def _on_agent_selected(self, session_key, agent_name):
         """Called when an agent row is clicked — create/open chat tab."""
         self._main_content.create_chat_tab(session_key, agent_name)
+
+    # ── Agent Builder integration ──────────────────────────────────────────
+
+    def _open_agent_builder(self, edit_name: str | None = None) -> None:
+        """Open the Agent Builder dialog for creating or editing an agent."""
+        from ui.views.agent_builder import AgentBuilderDialog
+
+        if edit_name:
+            agent_def = self._agent_builder_handler.load_for_edit(edit_name)
+            if agent_def is None:
+                logger.warning("Agent not found for editing: %s", edit_name)
+                return
+        else:
+            # New agent — use template with sensible defaults
+            agent_def = self._agent_builder_handler.create_new()
+
+        self._builder_dialog = AgentBuilderDialog(
+            self,
+            handler=self._agent_builder_handler,
+            agent_def=agent_def,
+            on_save=lambda values: self._on_builder_save(values),
+            on_cancel=lambda: self._on_builder_cancel(),
+        )
+        self._builder_dialog.show()
+
+    def _on_builder_save(self, values: dict) -> None:
+        """Called when the builder dialog fires save."""
+        ok, errors = self._agent_builder_handler.save(values)
+        if not ok:
+            self._builder_dialog.show_errors(errors)
+            return
+        self._builder_dialog.close()
+
+    def _on_builder_cancel(self) -> None:
+        """Called when the builder dialog is cancelled."""
+        pass  # dialog already closes itself
+
+    def _on_agent_saved(self, name: str) -> None:
+        """Called after an agent is saved — reload registry and refresh UI."""
+        from agent.special_agents import reload_registry, get_special_agents
+        reload_registry()
+
+        # Re-register all agents with the runtime handler
+        # Clear existing and re-add
+        self._agent_runtime_handler._agents.clear()
+        for agent_def in get_special_agents():
+            self._agent_runtime_handler.add_special_agent(agent_def)
+
+        # Refresh left panel
+        self._left_panel.set_special_agents(self._agent_runtime_handler)
+        logger.info("Agent saved and UI refreshed: %s", name)
+
+    def _on_agent_deleted(self, name: str) -> None:
+        """Called after an agent is deleted — reload registry and refresh UI."""
+        from agent.special_agents import reload_registry, get_special_agents
+        reload_registry()
+
+        # Re-register all agents
+        self._agent_runtime_handler._agents.clear()
+        for agent_def in get_special_agents():
+            self._agent_runtime_handler.add_special_agent(agent_def)
+
+        # Refresh left panel
+        self._left_panel.set_special_agents(self._agent_runtime_handler)
+        logger.info("Agent deleted and UI refreshed: %s", name)
+
+    def _confirm_delete_agent(self, name: str) -> None:
+        """Show confirmation dialog, then delete agent if confirmed."""
+        from gi.repository import Gtk
+
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text=f"Delete agent \"{name}\"?",
+        )
+        dialog.set_property("secondary-text", "This cannot be undone. The agent definition file will be removed.")
+
+        def on_response(_dialog, response_id):
+            dialog.close()
+            if response_id == Gtk.ResponseType.YES:
+                success = self._agent_builder_handler.delete(name)
+                if not success:
+                    logger.warning("Failed to delete agent: %s", name)
+
+        dialog.connect("response", on_response)
+        dialog.show()
 
     # ── Forward message ────────────────────────────────────────────────────
 

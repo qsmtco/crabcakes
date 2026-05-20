@@ -1,0 +1,145 @@
+# ui/handlers/agent_builder_handler.py
+# Agent Builder handler — form logic for creating and editing user-defined agents.
+#
+# Owns: form state, validation, persistence for the Create/Edit Agent flow.
+# Does NOT own: GTK widgets, other handlers.
+#
+# Architecture rule: does NOT import other handlers. Window wires callbacks.
+# Does NOT import GTK — purely logic and data.
+
+from __future__ import annotations
+
+import logging
+from typing import Callable
+
+from utils.agent_defs import (
+    delete_agent_def,
+    get_available_prompts,
+    get_available_providers,
+    get_available_tools,
+    get_default_si_config,
+    load_agent_def,
+    save_agent_def,
+    validate_agent_def,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class AgentBuilderHandler:
+    """
+    Logic handler for the Create/Edit Agent flow.
+
+    Per Section 8.6: all UI logic lives in a handler, not in views or window.
+    Delegates I/O to utils/agent_defs.py. No GTK imports.
+
+    Args:
+        on_agent_saved: Called after a successful save. Receives the agent name.
+        on_agent_deleted: Called after a successful delete. Receives the agent name.
+    """
+
+    def __init__(
+        self,
+        *,
+        on_agent_saved: Callable[[str], None] | None = None,
+        on_agent_deleted: Callable[[str], None] | None = None,
+    ):
+        self._on_agent_saved = on_agent_saved
+        self._on_agent_deleted = on_agent_deleted
+        self._editing_name: str | None = None  # track original name for rename detection
+
+    # ── Form templates ──────────────────────────────────────────────────────
+
+    def create_new(self) -> dict:
+        """Return a blank agent definition template for the form.
+
+        Populates defaults for self_improvement based on can_write assumption.
+        """
+        return {
+            "name": "",
+            "emoji": "🤖",
+            "role": "",
+            "prompts": [],
+            "tools": ["read_file", "list_files", "search_files"],
+            "provider": "",
+            "model": "",
+            "self_improvement": get_default_si_config(can_write=False),
+        }
+
+    def load_for_edit(self, name: str) -> dict | None:
+        """Load an existing agent definition for editing.
+
+        Tracks the original name for rename detection on save.
+        Returns the agent def dict, or None if not found.
+        """
+        self._editing_name = name
+        return load_agent_def(name)
+
+    # ── Persistence ──────────────────────────────────────────────────────────
+
+    def save(self, agent_def: dict) -> tuple[bool, list[str]]:
+        """Validate and save an agent definition.
+
+        If the name changed since load_for_edit(), deletes the old file.
+        Returns (success, errors). On success, fires on_agent_saved callback.
+        """
+        errors = validate_agent_def(agent_def)
+        if errors:
+            return False, errors
+
+        try:
+            # Detect rename — delete old file if name changed
+            new_name = agent_def.get("name", "")
+            if (self._editing_name
+                    and self._editing_name != new_name
+                    and load_agent_def(self._editing_name) is not None):
+                delete_agent_def(self._editing_name)
+                logger.info("Renamed agent: %s → %s", self._editing_name, new_name)
+
+            save_agent_def(agent_def)
+        except Exception as e:
+            logger.exception("Failed to save agent definition")
+            return False, [f"Save failed: {e}"]
+
+        self._editing_name = new_name  # update for next save
+        if self._on_agent_saved:
+            self._on_agent_saved(new_name)
+        logger.info("Agent saved: %s", new_name)
+        return True, []
+
+    def delete(self, name: str) -> bool:
+        """Delete an agent definition file.
+
+        Returns True if deleted. Fires on_agent_deleted callback on success.
+        """
+        from utils.agent_defs import delete_agent_def as _delete
+        success = _delete(name)
+        if success and self._on_agent_deleted:
+            self._on_agent_deleted(name)
+        if success:
+            logger.info("Agent deleted: %s", name)
+        return success
+
+    # ── Options for UI dropdowns ─────────────────────────────────────────────
+
+    def get_tool_options(self) -> list[dict]:
+        """Available tools with descriptions. For UI checkboxes."""
+        return get_available_tools()
+
+    def get_prompt_options(self) -> list[dict]:
+        """Available prompts from prompts/ directory. For UI selector."""
+        return get_available_prompts()
+
+    def get_provider_options(self) -> list[dict]:
+        """Available providers from agent.json. For UI dropdown."""
+        return get_available_providers()
+
+    def save_provider(self, name: str, config: dict) -> bool:
+        """Add or update a provider in agent.json."""
+        from utils.agent_defs import save_provider as _save
+        return _save(name, config)
+
+    def delete_provider(self, name: str) -> bool:
+        """Remove a provider from agent.json."""
+        from utils.agent_defs import delete_provider as _del
+        return _del(name)

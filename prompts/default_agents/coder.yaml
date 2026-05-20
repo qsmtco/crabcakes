@@ -1,0 +1,23 @@
+# Coder — Full-stack code writing agent
+name: Coder
+emoji: "🛠️"
+role: coder
+prompts:
+  - system/coder.md
+tools:
+  - read_file
+  - write_file
+  - edit_file
+  - exec_command
+  - list_files
+  - search_files
+  - web_search
+  - web_fetch
+provider: minimax
+model: MiniMax-M2.7
+self_improvement:
+  bug_journal: true
+  project_rules: true
+  enforcement: true
+  structured_feedback: true
+  dream_consolidation: true

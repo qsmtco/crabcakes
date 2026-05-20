@@ -39,6 +39,11 @@ class LeftPanel(Gtk.Box):
         self._on_project_opened = None
         self._toggle_agent_callback = None  # set via set_toggle_agent_callback()
 
+        # Agent builder callbacks — wired by window.py
+        self._on_create_agent = None  # set via set_on_create_agent()
+        self._on_edit_agent = None    # set via set_on_edit_agent()
+        self._on_delete_agent = None  # set via set_on_delete_agent()
+
         # Prompts tab state — built once in _build_prompts_tab()
         self._prompts_handler = None     # set via set_prompts_handler()
         self._prompts_list_box = None   # rebuilt on search/refresh
@@ -148,6 +153,18 @@ class LeftPanel(Gtk.Box):
     def set_toggle_agent_callback(self, cb):
         """Set the toggle_agent callback (from ProjectHandler)."""
         self._toggle_agent_callback = cb
+
+    def set_on_create_agent(self, cb):
+        """Set callback for when user clicks the Create Agent card."""
+        self._on_create_agent = cb
+
+    def set_on_edit_agent(self, cb):
+        """Set callback for editing a local agent (right-click → Edit)."""
+        self._on_edit_agent = cb
+
+    def set_on_delete_agent(self, cb):
+        """Set callback for deleting a local agent (right-click → Delete)."""
+        self._on_delete_agent = cb
 
     def set_prompts_handler(self, handler):
         """Set the PromptsHandler and refresh the prompts tab."""
@@ -307,6 +324,10 @@ class LeftPanel(Gtk.Box):
             placeholder.show()
             self._agents_list_box.append(placeholder)
         else:
+            # Create Agent card (always first row)
+            create_row = self._build_create_agent_row()
+            self._agents_list_box.append(create_row)
+
             for session_key, name, in_project, session_count in sorted_agents:
                 row = self._build_agent_row(session_key, name, in_project, session_count)
                 self._agents_list_box.append(row)
@@ -317,6 +338,37 @@ class LeftPanel(Gtk.Box):
 
         scroll.set_child(self._agents_list_box)
         self._agents_list_box.show()
+
+    def _build_create_agent_row(self) -> Gtk.ListBoxRow:
+        """Build the '+ Create Agent' card row. Follows _build_new_prompt_row() pattern."""
+        row = Gtk.ListBoxRow()
+        row._is_create_agent_card = True
+        row.set_selectable(False)
+        row.set_activatable(True)
+
+        row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        row_box.set_halign(Gtk.Align.FILL)
+        row_box.set_margin_start(4)
+        row_box.set_margin_end(4)
+        row_box.set_margin_top(4)
+        row_box.set_margin_bottom(4)
+        row_box.add_css_class("agent-row")
+
+        plus_lbl = Gtk.Label(label="+")
+        plus_lbl.set_size_request(44, 44)
+        plus_lbl.set_halign(Gtk.Align.CENTER)
+        plus_lbl.set_valign(Gtk.Align.CENTER)
+        plus_lbl.add_css_class("new-prompt-plus")
+
+        text_lbl = Gtk.Label(label="Create Agent")
+        text_lbl.set_halign(Gtk.Align.START)
+        text_lbl.set_valign(Gtk.Align.CENTER)
+        text_lbl.add_css_class("dim-label")
+
+        row_box.append(plus_lbl)
+        row_box.append(text_lbl)
+        row.set_child(row_box)
+        return row
 
     def _build_agent_row(self, session_key, name, in_project=False, session_count=1):
         """
@@ -417,17 +469,34 @@ class LeftPanel(Gtk.Box):
 
     def _on_agent_row_activated(self, list_box, row):
         """Called when an agent row is clicked — open/create chat tab."""
+        # Check if this is the Create Agent card
+        if getattr(row, '_is_create_agent_card', False):
+            if self._on_create_agent:
+                self._on_create_agent()
+            return
+
         if self._on_agent_selected is not None:
             self._on_agent_selected(row._session_key, row._agent_name)
 
     def _on_agent_right_click(self, gesture, n_press, x, y, session_key, name):
-        """Show session switcher menu on right-click over an agent row."""
+        """Show context menu on right-click over an agent row.
+
+        For gateway agents with multiple sessions: show session switcher.
+        For local (special) agents: show Edit/Delete options.
+        """
+        row_widget = gesture.get_widget()
+        is_special = session_key.startswith("special:")
+
+        if is_special:
+            self._show_local_agent_menu(row_widget, name)
+            return
+
+        # Gateway agent — show session switcher if multiple sessions
         if self._agent_list_handler is None:
             return
         sessions = self._agent_list_handler.get_all_sessions_for_agent(name)
         if len(sessions) <= 1:
             return  # nothing to switch between
-        row_widget = gesture.get_widget()
         current_active = (
             self._main_content.get_current_session_key()
             if hasattr(self, "_main_content") and self._main_content
@@ -440,6 +509,41 @@ class LeftPanel(Gtk.Box):
             on_select=lambda sk: self._on_agent_selected(sk, name),
             current_session_key=current_active,
         )
+
+    def _show_local_agent_menu(self, parent: Gtk.Widget, name: str) -> None:
+        """Show Edit/Delete popover for a local (special) agent."""
+        popover = Gtk.Popover()
+        popover.set_parent(parent)
+        popover.set_position(Gtk.PositionType.BOTTOM)
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        vbox.set_margin_start(8)
+        vbox.set_margin_end(8)
+        vbox.set_margin_top(6)
+        vbox.set_margin_bottom(6)
+
+        edit_btn = Gtk.Button(label="Edit")
+        edit_btn.add_css_class("flat")
+        edit_btn.connect("clicked", lambda *_: self._do_edit_agent(popover, name))
+        vbox.append(edit_btn)
+
+        delete_btn = Gtk.Button(label="Delete")
+        delete_btn.add_css_class("flat")
+        delete_btn.connect("clicked", lambda *_: self._do_delete_agent(popover, name))
+        vbox.append(delete_btn)
+
+        popover.set_child(vbox)
+        popover.popup()
+
+    def _do_edit_agent(self, popover: Gtk.Popover, name: str) -> None:
+        popover.popdown()
+        if self._on_edit_agent:
+            self._on_edit_agent(name)
+
+    def _do_delete_agent(self, popover: Gtk.Popover, name: str) -> None:
+        popover.popdown()
+        if self._on_delete_agent:
+            self._on_delete_agent(name)
 
     def _on_agent_toggle_clicked(self, button):
         """Add or remove an agent from the active project via toggle_agent callback."""

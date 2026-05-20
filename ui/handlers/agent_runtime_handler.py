@@ -207,6 +207,49 @@ class AgentRuntimeHandler:
 
     # ── AgentRuntime lifecycle ────────────────────────────────────────────────
 
+    def _resolve_agent_model(self, agent_def: Any) -> str | None:
+        """Resolve the model string for an agent definition.
+
+        Uses agent-specific provider/model overrides if set, otherwise
+        falls back to the global default.
+
+        Returns:
+            Full model string like "minimax/MiniMax-M2.7", or None to use
+            the runtime's default_model.
+        """
+        provider = getattr(agent_def, "provider", None)
+        model = getattr(agent_def, "model", None)
+
+        # No overrides → use global default
+        if not provider and not model:
+            return None
+
+        # Model already has provider prefix → use as-is
+        if model and "/" in model:
+            return model
+
+        # Both set → combine "provider/model"
+        if provider and model:
+            return f"{provider}/{model}"
+
+        # Only provider set → use provider's default model
+        if provider:
+            try:
+                from agent.config import load_agent_config
+                config = load_agent_config()
+                prov_cfg = config.providers.get(provider)
+                if prov_cfg and prov_cfg.default_model:
+                    return f"{provider}/{prov_cfg.default_model}"
+            except Exception:
+                logger.warning("Cannot resolve provider default model for %s", provider)
+            return f"{provider}"  # fallback — runtime will try to resolve
+
+        # Only model set → use with global default provider
+        if model:
+            return model
+
+        return None
+
     def _get_runtime(self, name: str) -> Any:
         """
         Get or create the AgentRuntime for a named agent.
@@ -279,14 +322,25 @@ class AgentRuntimeHandler:
         logger.debug("[handler] send_to_special_agent: sk=%s agent=%s project=%s text_len=%d",
                      session_key, agent_def.display_name, project_name, len(text))
 
+        # Resolve per-agent model override (Step 4 — user-defined agents)
+        agent_model = self._resolve_agent_model(agent_def)
+
+        # Resolve per-agent SI enforcement flag
+        si_enforcement = None
+        if hasattr(agent_def, 'get_self_improvement_config'):
+            si_cfg = agent_def.get_self_improvement_config()
+            si_enforcement = si_cfg.get('enforcement')
+
         # Create conversation if it doesn't exist yet, with project context and filtered tools
         if rt.get_conversation(session_key) is None:
             rt.create_conversation(
                 agent_name=agent_def.display_name,
                 session_key=session_key,
                 project_path=project_path,
+                model=agent_model,               # Per-agent provider/model override
                 allowed_tools=agent_def.tools,  # Phase A: filtered tool set per agent
                 agent_role=agent_def.role,       # §7: explicit role from definition
+                si_enforcement=si_enforcement,   # Per-agent enforcement gating
             )
 
         rt.send_message(session_key, text)

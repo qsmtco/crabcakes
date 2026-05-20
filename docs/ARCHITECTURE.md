@@ -1233,21 +1233,88 @@ def _load_crabcakes_doc(doc_name, project_path) -> str | None  # individual doc 
 def load_custom_system_prompt(project_path) -> str | None  # .crabcakes/agent-system-prompt.md → AGENTS.md → None
 ```
 
-### 3.21p `agent/special_agents.py` — Special Agent Definitions (Phase 1.4)
+### 3.21p `agent/special_agents.py` — Special Agent Definitions (Phase 1.4 → User-Defined Agents)
+
+**Responsibility:** Agent definition registry — loads agent definitions from `~/.config/crabcakes/agents/*.yaml` (or `.json`). Built-in defaults (Coder, Debugger) are seeded from `prompts/default_agents/` on first launch. New agents are created via the Agent Builder UI.
 
 **Public API:**
 ```python
-@dataclass SpecialAgentDef: conv_id_prefix, display_name, role, emoji, color, tools, can_write
+@dataclass SpecialAgentDef:
+    conv_id_prefix, display_name, role, emoji, color, tools, can_write,
+    provider: str | None, model: str | None, self_improvement: dict
+    def get_self_improvement_config() -> dict
 
-SPECIAL_AGENTS: dict[str, SpecialAgentDef]     # "special:coder", "special:debugger"
 def get_special_agents() -> list[SpecialAgentDef]
 def get_special_agent(prefix) -> SpecialAgentDef | None
+def reload_registry() -> None   # force reload after create/edit/delete
 ```
 
-**Coder:** tools=`[read_file, write_file, edit_file, exec_command, list_files, search_files, web_search, web_fetch]`, `can_write=True`
-**Debugger:** tools=`[read_file, exec_command, list_files, search_files, web_search, web_fetch]`, `can_write=False`
+**Lazy loading:** Registry loads from config files on first access. `reload_registry()` clears and reloads.
 
-### 3.21q `agent/enforcement.py` — Post-Write Verification (Phase 3)
+**Self-improvement:** Each agent carries `self_improvement` toggles (bug_journal, project_rules, enforcement, structured_feedback, dream_consolidation). Defaults from `utils/agent_defs.get_default_si_config()`. Override via YAML.
+
+**Per-agent model:** `provider` and `model` fields override the global default for this agent. Resolved in `AgentRuntimeHandler._resolve_agent_model()`.
+
+**Default agents:**
+- **Coder:** Full tool set, `can_write=True`, all SI layers on
+- **Debugger:** Read-only tools, `can_write=False`, context-only SI
+
+### 3.21q `utils/agent_defs.py` — Agent Definition I/O (User-Defined Agents)
+
+**Responsibility:** Load, validate, save, and list agent definition files from `~/.config/crabcakes/agents/`. Pure Python — no GTK, no network. Follows the `utils/projects.py` pattern.
+
+**Public API:**
+```python
+def load_agent_defs() -> list[dict]             # scan agents dir, seed defaults if empty
+def load_agent_def(name: str) -> dict | None    # load by display name
+def load_agent_def_by_role(role: str) -> dict | None  # load by role identifier
+def save_agent_def(agent_def: dict) -> str      # write to YAML (or JSON fallback)
+def delete_agent_def(name: str) -> bool         # remove definition file
+def validate_agent_def(agent_def: dict) -> list[str]  # check required fields, tools, prompts
+def get_available_tools() -> list[dict]         # [{name, description}] from agent/tools.py
+def get_available_prompts() -> list[dict]       # [{name, filepath}] from prompts/ directory
+def get_available_providers() -> list[dict]     # [{name, base_url, default_model}] from agent.json
+def get_default_si_config(can_write: bool) -> dict  # canonical SI defaults — single source of truth
+```
+
+**Default seeding:** If the agents config dir is empty, copies YAML files from `prompts/default_agents/`.
+
+**Validation:** Checks required fields (name, prompts, tools, provider), verifies tool names against `agent/tools.py`, prompt file existence, and provider availability.
+
+### 3.21r `ui/handlers/agent_builder_handler.py` — Agent Builder Logic (User-Defined Agents)
+
+**Responsibility:** Form logic for the Create/Edit Agent flow. No GTK imports. Delegates I/O to `utils/agent_defs.py`.
+
+**Public API:**
+```python
+class AgentBuilderHandler:
+    def __init__(*, on_agent_saved: Callable, on_agent_deleted: Callable)
+    def create_new() -> dict          # blank template with defaults
+    def load_for_edit(name) -> dict | None
+    def save(agent_def) -> (bool, list[str])  # validate + persist
+    def delete(name) -> bool
+    def get_tool_options() -> list[dict]
+    def get_prompt_options() -> list[dict]
+    def get_provider_options() -> list[dict]
+```
+
+### 3.21s `ui/views/agent_builder.py` — Agent Builder Dialog (User-Defined Agents)
+
+**Responsibility:** GTK4 modal dialog for creating and editing agents. Pure view — receives data from `AgentBuilderHandler`, emits user actions via callbacks.
+
+**Layout:** Name, Emoji, Role, Provider dropdown, Model, Prompts multi-select, Tools checkboxes with presets (Full Access / Read Only / Custom).
+
+**Public API:**
+```python
+class AgentBuilderDialog:
+    def __init__(parent, *, handler, agent_def=None, on_save=None, on_cancel=None)
+    def get_values() -> dict
+    def show() -> None
+    def close() -> None
+    def show_errors(errors: list[str]) -> None
+```
+
+### 3.21t `agent/enforcement.py` — Post-Write Verification (Phase 3)
 
 **Responsibility:** Run automatic verification checks after every file write (write_file / edit_file). Three tiers: syntax guard, test runner, lint check. Pure logic — no UI imports, no GTK.
 
@@ -1270,7 +1337,7 @@ def check(tool_name, tool_args, tool_result, project_path, config) -> Enforcemen
 
 **Configuration:** `EnforcementConfig` on `AgentConfig` — enabled/syntax_check/test_run/lint_check toggles, timeouts, skip patterns.
 
-### 3.21r `ui/handlers/agent_runtime_handler.py` — Agent Runtime UI Bridge (Phase 1.4)
+### 3.21u `ui/handlers/agent_runtime_handler.py` — Agent Runtime UI Bridge (Phase 1.4)
 
 **Responsibility:** Bridge between CrabCakes UI and `AgentRuntime`. Creates conversations, routes messages, renders streamed responses in chat tabs.
 

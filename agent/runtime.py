@@ -832,6 +832,7 @@ class AgentRuntime:
         model: str | None = None,
         allowed_tools: list[str] | None = None,  # NEW
         agent_role: str = "",
+        si_enforcement: bool | None = None,      # per-agent enforcement override
     ) -> str:
         """
         Create a new conversation for an agent.
@@ -841,6 +842,8 @@ class AgentRuntime:
         Args:
             allowed_tools: If provided, only these tool names are available to
                           the agent. If None, all tools are available.
+            si_enforcement: If True/False, overrides global enforcement for this
+                           agent. If None, uses global config.
         """
         from agent.context import build_system_prompt
         from models.conversation import Conversation
@@ -864,6 +867,7 @@ class AgentRuntime:
             allowed_tools=allowed_tools,
             model=model,
             system_prompt=system_prompt,
+            si_enforcement=si_enforcement,
         )
 
         with self._lock:
@@ -1041,7 +1045,10 @@ class AgentRuntime:
                                  session_key, tool_name, result.success, len(result.output or ""))
 
                     # === ENFORCEMENT LAYER HOOK ===
-                    if tool_name in ("write_file", "edit_file") and self._config.enforcement.enabled:
+                    # Two-level gate: (1) global config enabled, (2) per-agent SI override
+                    global_enabled = self._config.enforcement.enabled
+                    agent_enabled = conv.si_enforcement if conv.si_enforcement is not None else True
+                    if tool_name in ("write_file", "edit_file") and global_enabled and agent_enabled:
                         enf_result = _enforcement_check(
                             tool_name, args, result,
                             conv.project_path or "/tmp",
