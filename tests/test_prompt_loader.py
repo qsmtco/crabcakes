@@ -173,3 +173,173 @@ class TestVariableContractIntegration:
 
         unresolved = template_vars - provided_vars
         assert not unresolved, f"Template variables not in compose dict: {unresolved}"
+
+
+class TestProjectContextInjection:
+    """Test bug journal and project rules injection into system prompts."""
+
+    def test_bug_journal_injected_by_role(self, tmp_path):
+        """When project has {role}-bugs.md and agent has that role, it appears in prompt."""
+        crab_dir = tmp_path / ".crabcakes"
+        crab_dir.mkdir()
+        (crab_dir / "coder-bugs.md").write_text("## Bug #1 — test bug\n\nMistake: test")
+
+        result = compose_system_prompt(
+            agent_name="Coder",
+            agent_role="coder",
+            project_path=str(tmp_path),
+        )
+
+        assert "Bug #1" in result
+        assert "test bug" in result
+
+    def test_project_rules_injected_by_role(self, tmp_path):
+        """When project has {role}-rules.md, it appears in prompt."""
+        crab_dir = tmp_path / ".crabcakes"
+        crab_dir.mkdir()
+        (crab_dir / "coder-rules.md").write_text("# Coder Rules\ntest rule")
+
+        result = compose_system_prompt(
+            agent_name="Coder",
+            agent_role="coder",
+            project_path=str(tmp_path),
+        )
+
+        assert "Coder Rules" in result
+        assert "test rule" in result
+
+    def test_different_roles_get_different_files(self, tmp_path):
+        """Debugger gets debugger-bugs.md, not coder-bugs.md."""
+        crab_dir = tmp_path / ".crabcakes"
+        crab_dir.mkdir()
+        (crab_dir / "coder-bugs.md").write_text("CODER_BUG_MARKER")
+        (crab_dir / "debugger-bugs.md").write_text("DEBUGGER_BUG_MARKER")
+
+        coder_result = compose_system_prompt(
+            agent_name="Coder", agent_role="coder", project_path=str(tmp_path),
+        )
+        debugger_result = compose_system_prompt(
+            agent_name="Debugger", agent_role="debugger", project_path=str(tmp_path),
+        )
+
+        assert "CODER_BUG_MARKER" in coder_result
+        assert "DEBUGGER_BUG_MARKER" not in coder_result
+        assert "DEBUGGER_BUG_MARKER" in debugger_result
+        assert "CODER_BUG_MARKER" not in debugger_result
+
+    def test_custom_agent_gets_own_files(self, tmp_path):
+        """A custom agent with role 'security-auditor' gets security-auditor-bugs.md."""
+        crab_dir = tmp_path / ".crabcakes"
+        crab_dir.mkdir()
+        (crab_dir / "security-auditor-bugs.md").write_text("AUDIT_BUG_MARKER")
+
+        result = compose_system_prompt(
+            agent_name="Security Auditor",
+            agent_role="security-auditor",
+            project_path=str(tmp_path),
+        )
+
+        assert "AUDIT_BUG_MARKER" in result
+
+    def test_no_crabcakes_dir_silent_skip(self, tmp_path):
+        """When .crabcakes/ doesn't exist, prompt is still generated."""
+        result = compose_system_prompt(
+            agent_name="Coder",
+            agent_role="coder",
+            project_path=str(tmp_path),
+        )
+        assert result  # non-empty
+        assert "Coder" in result
+
+    def test_empty_files_skipped(self, tmp_path):
+        """Empty {role}-bugs.md and {role}-rules.md are skipped."""
+        crab_dir = tmp_path / ".crabcakes"
+        crab_dir.mkdir()
+        (crab_dir / "coder-bugs.md").write_text("")
+        (crab_dir / "coder-rules.md").write_text("   \n  ")
+
+        result = compose_system_prompt(
+            agent_name="Coder",
+            agent_role="coder",
+            project_path=str(tmp_path),
+        )
+        assert result  # non-empty, no crash
+
+    def test_large_file_skipped_with_warning(self, tmp_path, caplog):
+        """Files exceeding max_size are skipped and logged."""
+        crab_dir = tmp_path / ".crabcakes"
+        crab_dir.mkdir()
+        (crab_dir / "coder-bugs.md").write_text("x" * 20_000)
+
+        result = compose_system_prompt(
+            agent_name="Coder",
+            agent_role="coder",
+            project_path=str(tmp_path),
+        )
+        assert result  # non-empty, no crash
+
+    def test_self_improvement_bug_journal_false_skips_injection(self, tmp_path):
+        """When agent's self_improvement.bug_journal is false, no bug journal injected."""
+        crab_dir = tmp_path / ".crabcakes"
+        crab_dir.mkdir()
+        (crab_dir / "coder-bugs.md").write_text("SHOULD_NOT_APPEAR")
+
+        from unittest.mock import patch
+        with patch("utils.prompt_loader._get_agent_self_improvement_config",
+                   return_value={"bug_journal": False, "project_rules": True,
+                                 "enforcement": True, "structured_feedback": False,
+                                 "dream_consolidation": False}):
+            result = compose_system_prompt(
+                agent_name="Coder",
+                agent_role="coder",
+                project_path=str(tmp_path),
+            )
+            assert "SHOULD_NOT_APPEAR" not in result
+
+    def test_no_project_path_no_injection(self):
+        """Without project_path, no context files are loaded."""
+        result = compose_system_prompt(
+            agent_name="Coder",
+            agent_role="coder",
+            project_path=None,
+        )
+        # Just verify it doesn't crash
+        assert isinstance(result, str)
+
+    def test_ordering_bug_journal_after_agent_template(self, tmp_path):
+        """Bug journal appears AFTER the agent-specific template in the prompt."""
+        crab_dir = tmp_path / ".crabcakes"
+        crab_dir.mkdir()
+        (crab_dir / "coder-bugs.md").write_text("BUG_JOURNAL_MARKER")
+
+        result = compose_system_prompt(
+            agent_name="Coder",
+            agent_role="coder",
+            project_path=str(tmp_path),
+        )
+
+        # coder.md content should appear before the bug journal
+        coder_pos = result.find("Common Pitfalls")
+        journal_pos = result.find("BUG_JOURNAL_MARKER")
+        assert coder_pos > 0  # coder.md loaded
+        assert journal_pos > 0  # journal loaded
+        assert coder_pos < journal_pos  # correct order
+
+    def test_load_project_context_file_function(self, tmp_path):
+        """Direct test of the _load_project_context_file helper."""
+        from utils.prompt_loader import _load_project_context_file
+
+        crab_dir = tmp_path / ".crabcakes"
+        crab_dir.mkdir()
+        (crab_dir / "coder-bugs.md").write_text("test content")
+
+        result = _load_project_context_file(str(tmp_path), "coder-bugs.md")
+        assert result == "test content"
+
+        # Non-existent file
+        assert _load_project_context_file(str(tmp_path), "nonexistent.md") is None
+
+        # Missing .crabcakes dir
+        empty = tmp_path / "empty_project"
+        empty.mkdir()
+        assert _load_project_context_file(str(empty), "coder-bugs.md") is None

@@ -1318,22 +1318,50 @@ class AgentBuilderDialog:
 
 **Responsibility:** Run automatic verification checks after every file write (write_file / edit_file). Three tiers: syntax guard, test runner, lint check. Pure logic — no UI imports, no GTK.
 
-**Owns:** EnforcementCheck, EnforcementResult, SYNTAX_CHECKERS map, DEFAULT_SKIP_PATTERNS, tier detection logic.
+**Owns:** EnforcementCheck, EnforcementResult, TestConfig, SYNTAX_CHECKERS map, DEFAULT_SKIP_PATTERNS, tier detection logic, venv detection, test config loading.
 
 **Public API:**
 ```python
 @dataclass EnforcementCheck: tier, tool, file, passed, detail, output, duration_ms
 @dataclass EnforcementResult: checks, appended_message
+@dataclass TestConfig: command, full_suite_command, test_dir, naming_pattern, venv_path, run_full_suite, timeout_seconds, extra_args
+    from_dict(data) -> TestConfig
 
 def check(tool_name, tool_args, tool_result, project_path, config) -> EnforcementResult
 ```
 
+**Internal functions:**
+```python
+def _detect_venv_prefix(project_path, venv_path) -> str   # POSIX "." activation prefix or ""
+def _load_test_config(project_path) -> TestConfig | None   # TTL-cached loader from .crabcakes/enforcement.json test section
+def _find_related_test(file_path, project_path, test_dir, naming_pattern) -> str | None
+def _check_tests(file_path, project_path, config, syntax_passed) -> EnforcementCheck | None
+```
+
 **Tiers:**
 1. Syntax guard (`_check_syntax`): py_compile, node --check, bash -n, etc. Per-extension mapping.
-2. Test runner (`_check_tests`): detect framework (pytest, jest, make test), find related test file, run it. Skipped if syntax fails.
+2. Test runner (`_check_tests`): detect framework (pytest, jest, make test), find related test file, run it. Skipped if syntax fails. Uses per-project `TestConfig` for custom command templates, venv activation (`_detect_venv_prefix`), configurable test directory and naming patterns, and timeout overrides.
 3. Lint check (`_check_lint`): detect linter (ruff, mypy, eslint), run on changed file. Skipped if syntax fails.
 
-**Per-project override (§F):** `.crabcakes/enforcement.json` overrides global enforcement config. Loaded via `_load_project_enforcement_config()` with a 30-second TTL cache (`_ENFORCEMENT_CONFIG_CACHE`). Applied BEFORE all tier checks so `syntax_check: false` actually skips syntax.
+**Per-project override (§F):** `.crabcakes/enforcement.json` overrides global enforcement config. Two caches:
+- `_ENFORCEMENT_CONFIG_CACHE` — tier toggles (syntax_check, test_run, lint_check, skip_patterns)
+- `_TEST_CONFIG_CACHE` — per-project test configuration (command, venv, naming, timeout)
+Both use 30-second TTL. Applied BEFORE all tier checks so `syntax_check: false` actually skips syntax.
+
+**Test config schema (`.crabcakes/enforcement.json` → `test` section):**
+```json
+"test": {
+  "command": ". .venv/bin/activate && python3 -m pytest {test_file} -v --tb=short",
+  "full_suite_command": ". .venv/bin/activate && python3 -m pytest tests/ -v --tb=short",
+  "test_dir": "tests",
+  "naming_pattern": "test_{module}.py",
+  "venv_path": ".venv",
+  "run_full_suite": false,
+  "timeout_seconds": 30,
+  "extra_args": "-x -q"
+}
+```
+**Note:** venv activation uses POSIX `.` command (not `source`) with `shlex.quote()` on the activate path for `/bin/sh` compatibility and safe handling of spaces in venv paths.
 
 **Configuration:** `EnforcementConfig` on `AgentConfig` — enabled/syntax_check/test_run/lint_check toggles, timeouts, skip patterns.
 
@@ -2332,7 +2360,7 @@ crabcakes/
 │   ├── config.py                 # AgentConfig, LLMProviderConfig, EnforcementConfig, load_agent_config() with chmod check
 │   ├── context.py                # 437 lines — build_system_prompt (agent_role), build_file_context, _read_crabcakes_docs (§4.4a) + .gitignore parsing
 │   ├── tools.py                  # 853 lines — 8 tools: read_file, write_file, edit_file, exec_command (§4.13 separate stdout/stderr), list_files, search_files, web_search, web_fetch
-│   └── enforcement.py             # Post-write verification: 3-tier checks (syntax, tests, lint) + per-project override (§F) with 30s TTL cache
+│   └── enforcement.py             # Post-write verification: 3-tier checks (syntax, tests, lint) + per-project override (§F) with 30s TTL cache + TestConfig + venv detection
 │
 ├── ui/
 │   ├── __init__.py              # 1 line
@@ -2429,7 +2457,8 @@ tests/
     ├── test_streaming.py
     ├── test_syntax_highlight.py
     ├── test_tasks.py
-    └── test_tools.py             # 334 lines — sandbox, approval, truncation tests (Phase 1.1)
+    ├── test_tools.py             # 334 lines — sandbox, approval, truncation tests (Phase 1.1)
+    └── test_enforcement.py        # SPEC-2: TestConfig, venv detection, configurable test discovery, custom command, timeout, cache
 agent/
     ├── __init__.py            # 1 line — exports AgentRuntime
     ├── runtime.py             # ~1331 lines — AgentRuntime: tool loop, enforcement hook (§F), stuck detection (§E), providers, streaming, cost (Phase 1.3a)

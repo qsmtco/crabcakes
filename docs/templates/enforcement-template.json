@@ -1,0 +1,19 @@
+{
+  "_comment": "Per-project enforcement configuration for CrabCakes agents",
+  "syntax_check": true,
+  "test_run": true,
+  "lint_check": false,
+
+  "test": {
+    "command": "python3 -m pytest {test_file} -v --tb=short",
+    "full_suite_command": "python3 -m pytest tests/ -v --tb=short",
+    "test_dir": "tests",
+    "naming_pattern": "test_{module}.py",
+    "venv_path": ".venv",
+    "run_full_suite": false,
+    "timeout_seconds": 30,
+    "extra_args": "-x -q"
+  },
+
+  "skip_patterns": ["*.md", "*.txt", "*.json", "*.yaml", "*.yml", "*.toml"]
+}

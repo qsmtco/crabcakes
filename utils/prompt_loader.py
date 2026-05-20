@@ -64,6 +64,56 @@ def fill_template(template: str, variables: dict[str, str]) -> str:
     return result
 
 
+def _load_project_context_file(project_path: str, filename: str, max_size: int = 10_000) -> str | None:
+    """Load a per-project context file from .crabcakes/ directory.
+
+    Args:
+        project_path: Absolute path to the project root.
+        filename: Name of the file in .crabcakes/ (e.g. "coder-bugs.md").
+        max_size: Maximum file size in bytes. Skip larger files.
+
+    Returns:
+        File content as string, or None if file doesn't exist / too large / unreadable.
+    """
+    filepath = os.path.join(project_path, ".crabcakes", filename)
+    if not os.path.isfile(filepath):
+        return None
+    try:
+        size = os.path.getsize(filepath)
+        if size > max_size:
+            _logger.warning(
+                "Project context file %s is too large (%d bytes, max %d) — skipping",
+                filename, size, max_size,
+            )
+            return None
+        with open(filepath, encoding="utf-8", errors="replace") as f:
+            content = f.read().strip()
+        return content if content else None
+    except OSError as e:
+        _logger.debug("Failed to read project context file %s: %s", filename, e)
+        return None
+
+
+def _get_agent_self_improvement_config(agent_role: str) -> dict:
+    """Get the self_improvement config for an agent from its YAML definition.
+
+    Delegates to utils.agent_defs for the base defaults, then merges
+    with the agent's YAML-defined overrides.
+    """
+    from utils.agent_defs import load_agent_def_by_role, get_default_si_config
+    try:
+        agent_def = load_agent_def_by_role(agent_role)
+        if agent_def:
+            can_write = "write_file" in agent_def.get("tools", [])
+            defaults = get_default_si_config(can_write=can_write)
+            config = agent_def.get("self_improvement", {})
+            return {**defaults, **config}
+    except Exception:
+        pass
+    # Fallback — safe defaults
+    return get_default_si_config(can_write=False)
+
+
 def compose_system_prompt(
     agent_name: str = "",
     agent_role: str = "",
@@ -80,6 +130,7 @@ def compose_system_prompt(
     3. If review_mode != "off": code-review.md
     4. If agent_role == "coder": coder.md
     5. If agent_role == "debugger": debugger.md
+    6. If project active + agent_role: {role}-bugs.md, {role}-rules.md (self-improvement)
 
     Templates are concatenated with double-newline separators.
     Missing templates are silently skipped.
@@ -147,6 +198,22 @@ def compose_system_prompt(
         dt = load_prompt_template("debugger")
         if dt:
             parts.append(dt)
+
+    # 7. Per-agent self-improvement context files (bug journal + project rules)
+    if project_path and agent_role:
+        si_config = _get_agent_self_improvement_config(agent_role)
+
+        if si_config.get("bug_journal", True):
+            bugs_file = f"{agent_role}-bugs.md"
+            bug_journal = _load_project_context_file(project_path, bugs_file)
+            if bug_journal:
+                parts.append(bug_journal)
+
+        if si_config.get("project_rules", True):
+            rules_file = f"{agent_role}-rules.md"
+            project_rules = _load_project_context_file(project_path, rules_file)
+            if project_rules:
+                parts.append(project_rules)
 
     if not parts:
         _logger.warning("No system prompt templates found in %s", SYSTEM_DIR)

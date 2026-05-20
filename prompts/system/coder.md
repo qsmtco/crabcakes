@@ -20,6 +20,12 @@ When fixing a bug, follow this exact sequence. No shortcuts.
 - **Pay special attention to test fixtures and mocks** — MagicMock objects are always truthy, integer enums aren't string constants, etc.
 - If the test uses mocks, trace exactly what values the mock provides
 
+### Step 1a: Check Your Bug Journal
+- If your context includes a Bug Journal section, read it before starting any fix
+- Look for patterns matching the current bug (check the **Pattern:** tag)
+- If you've made this exact mistake before on this project, DON'T repeat it
+- Example: if Bug #3 has Pattern: mock-truthiness and you're about to check `if value is not None` on a mock, stop and use `isinstance()` instead
+
 ### Step 2: Identify root cause
 - State the root cause out loud (in your response) before writing a fix
 - Example: "The test uses `event.event_type = 5` (integer), but the code compares against `EVENT_TYPE_MOVED = 'moved'` (string). The `.get()` falls through to the default."

@@ -15,6 +15,7 @@ import fnmatch
 import json
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import time
@@ -82,11 +83,112 @@ def _is_skipped(file_path: str, skip_patterns: list[str]) -> bool:
     return False
 
 
+@dataclass
+class TestConfig:
+    """Per-project test configuration, loaded from .crabcakes/enforcement.json.
+
+    Provides configurable test discovery, venv activation, command templates,
+    and timeout overrides. All fields have safe defaults so projects without
+    a test section in enforcement.json work out of the box.
+    """
+    command: str | None = None               # Override test command template ({test_file} placeholder)
+    full_suite_command: str | None = None    # Override full suite command
+    test_dir: str = "tests"                  # Test directory (relative to project root)
+    naming_pattern: str = "test_{module}.py"  # Test file naming pattern ({module} placeholder)
+    venv_path: str = ".venv"                 # Venv directory (relative to project root)
+    run_full_suite: bool = False             # If true, always run full suite instead of related test
+    timeout_seconds: int = 60                # Per-project test timeout override
+    extra_args: str = "-x -q"                # Extra pytest/jest arguments
+
+    @classmethod
+    def from_dict(cls, data: dict) -> TestConfig:
+        """Create TestConfig from enforcement.json test section.
+
+        All numeric and boolean fields are coerced to their correct types.
+        Bad values are logged and replaced with defaults rather than crashing
+        or silently misbehaving (e.g. string "false" → bool False).
+        """
+        if not isinstance(data, dict):
+            return cls()
+
+        def _bool(key: str, default: bool) -> bool:
+            val = data.get(key)
+            if isinstance(val, bool):
+                return val
+            if isinstance(val, str):
+                return val.lower() in ("true", "1", "yes")
+            return default
+
+        def _int(key: str, default: int) -> int:
+            val = data.get(key)
+            if isinstance(val, bool):   # bool is subclass of int — check first
+                return default
+            if isinstance(val, int):
+                return val
+            if isinstance(val, str):
+                try:
+                    return int(val)
+                except ValueError:
+                    logger.debug("[enforcement] TestConfig: %s=%r is not int, using default %d", key, val, default)
+                    return default
+            return default
+
+        return cls(
+            command=data.get("command"),
+            full_suite_command=data.get("full_suite_command"),
+            test_dir=data.get("test_dir", "tests"),
+            naming_pattern=data.get("naming_pattern", "test_{module}.py"),
+            venv_path=data.get("venv_path", ".venv"),
+            run_full_suite=_bool("run_full_suite", False),
+            timeout_seconds=_int("timeout_seconds", 60),
+            extra_args=data.get("extra_args", "-x -q"),
+        )
+
+
 # ── Per-project enforcement config ───────────────────────────────────────────
 
 # TTL cache: project_path → (timestamp, data_or_None)
 _ENFORCEMENT_CONFIG_CACHE: dict[str, tuple[float, dict | None]] = {}
 _ENFORCEMENT_CONFIG_TTL = 30.0  # seconds
+
+# TTL cache for per-project test config: project_path → (timestamp, TestConfig | None)
+_TEST_CONFIG_CACHE: dict[str, tuple[float, TestConfig | None]] = {}
+
+
+def _load_test_config(project_path: str) -> TestConfig | None:
+    """Load per-project test configuration from .crabcakes/enforcement.json.
+
+    Separately cached from the enforcement tier toggles so each can evolve
+    independently. Shares the same TTL as the enforcement config.
+
+    Returns TestConfig or None if no test section in config.
+    """
+    now = time.monotonic()
+    cached = _TEST_CONFIG_CACHE.get(project_path)
+    if cached is not None:
+        ts, data = cached
+        if now - ts < _ENFORCEMENT_CONFIG_TTL:
+            return data
+
+    cfg_path = os.path.join(project_path, ".crabcakes", "enforcement.json")
+    if not os.path.isfile(cfg_path):
+        _TEST_CONFIG_CACHE[project_path] = (now, None)
+        return None
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        test_section = data.get("test")
+        if test_section and isinstance(test_section, dict):
+            tc = TestConfig.from_dict(test_section)
+            _TEST_CONFIG_CACHE[project_path] = (now, tc)
+            return tc
+        _TEST_CONFIG_CACHE[project_path] = (now, None)
+        return None
+    except (OSError, json.JSONDecodeError) as e:
+        logger.debug("[enforcement] test config unreadable: %s", e)
+        _TEST_CONFIG_CACHE[project_path] = (now, None)
+        return None
+
 
 
 def _load_project_enforcement_config(project_path: str) -> dict | None:
@@ -118,6 +220,26 @@ def _load_project_enforcement_config(project_path: str) -> dict | None:
         logger.debug("[enforcement] per-project config unreadable: %s", e)
         _ENFORCEMENT_CONFIG_CACHE[project_path] = (now, None)
         return None
+
+
+def _detect_venv_prefix(project_path: str, venv_path: str = ".venv") -> str:
+    """Detect if a project has a virtual environment and return activation prefix.
+
+    Returns empty string if no venv detected, or the activation command prefix
+    (e.g. ". .venv/bin/activate && ") if the activate script exists.
+
+    Uses POSIX dot command (.) instead of bash-specific 'source' for
+    compatibility with /bin/sh used by subprocess.run(shell=True).
+
+    Args:
+        project_path: Absolute path to the project root.
+        venv_path: Relative path to venv directory from project root.
+    """
+    venv_abs = os.path.join(project_path, venv_path)
+    activate_script = os.path.join(venv_abs, "bin", "activate")
+    if os.path.isfile(activate_script):
+        return f". {shlex.quote(os.path.join(venv_path, 'bin', 'activate'))} && "
+    return ""
 
 
 # ── Tier 1: Syntax Guard ──────────────────────────────────────────────────────
@@ -253,22 +375,36 @@ def _detect_test_framework(project_path: str) -> tuple[str, str] | None:
     return None
 
 
-def _find_related_test(file_path: str, project_path: str) -> str | None:
+def _find_related_test(
+    file_path: str,
+    project_path: str,
+    test_dir: str = "tests",
+    naming_pattern: str = "test_{module}.py",
+) -> str | None:
     """
     Find the test file corresponding to a source file.
-    Checks Python convention: tests/test_{basename}.py first.
+    Uses configurable naming pattern. {module} is replaced with the source
+    file's basename (without extension).
+
+    Args:
+        file_path: Relative path of the source file within the project.
+        project_path: Absolute path to the project root.
+        test_dir: Directory containing test files (relative to project root).
+        naming_pattern: Pattern for test file names. {module} is replaced with
+            the source file's basename without extension.
     """
     basename = os.path.splitext(os.path.basename(file_path))[0]
+    pattern = naming_pattern.replace("{module}", basename)
 
     candidates = [
-        os.path.join(project_path, "tests", f"test_{basename}.py"),
-        os.path.join(project_path, "tests", f"{basename}_test.py"),
+        os.path.join(project_path, test_dir, pattern),
+        os.path.join(project_path, test_dir, f"{basename}_test.py"),  # Jest/Vitest convention
     ]
 
     # Also check if there's a mirror in the same directory
     src_dir = os.path.dirname(os.path.join(project_path, file_path))
     candidates.extend([
-        os.path.join(src_dir, f"test_{basename}.py"),
+        os.path.join(src_dir, pattern),
         os.path.join(src_dir, "__tests__", f"{basename}.py"),
     ])
 
@@ -288,6 +424,9 @@ def _check_tests(
     """
     Run Tier 2 test runner.
     Returns None if skipped.
+
+    Uses per-project TestConfig from .crabcakes/enforcement.json when available,
+    falling back to auto-detection defaults otherwise.
     """
     # Skip if syntax failed — no point running tests on broken code
     if not syntax_passed:
@@ -295,36 +434,67 @@ def _check_tests(
 
     # Skip test files themselves
     basename = os.path.basename(file_path)
-    if "test_" in basename or basename.endswith("_test.py"):
+    if basename.startswith("test_") or basename.endswith("_test.py"):
         return None
 
     # Skip files matching skip patterns (markdown, configs, etc.)
     if _is_skipped(file_path, config.skip_patterns):
         return None
 
-    # Detect test framework
-    framework = _detect_test_framework(project_path)
-    if framework is None:
-        return None
+    # Load per-project test configuration
+    test_config = _load_test_config(project_path) or TestConfig()
 
-    framework_name, base_cmd = framework
+    # Detect venv and build activation prefix
+    venv_prefix = _detect_venv_prefix(project_path, test_config.venv_path)
 
-    # Find related test
-    related_test = _find_related_test(file_path, project_path)
+    # Determine test timeout (project override or config default)
+    test_timeout = test_config.timeout_seconds if test_config.timeout_seconds is not None else config.test_timeout_seconds
 
-    start = time.monotonic()
-    try:
-        if related_test:
-            # Run related test file
+    # If a custom command template is provided, use it directly
+    if test_config.command:
+        related_test = _find_related_test(
+            file_path, project_path,
+            test_config.test_dir, test_config.naming_pattern,
+        )
+        if related_test is None and not test_config.run_full_suite:
+            return None  # No related test and not running full suite
+
+        if test_config.run_full_suite and test_config.full_suite_command:
+            command = venv_prefix + test_config.full_suite_command
+        elif related_test:
             abs_test = os.path.join(project_path, related_test)
-            command = f"{base_cmd} {abs_test} -x -q --tb=short"
+            command = venv_prefix + test_config.command.replace("{test_file}", abs_test)
+        elif test_config.full_suite_command:
+            # No related test, no run_full_suite flag, but full_suite_command defined
+            command = venv_prefix + test_config.full_suite_command
         else:
-            # Run full suite (no related test found)
-            command = f"{base_cmd} -x -q --tb=short"
+            logger.debug("[enforcement] No related test and no full_suite_command — skipping")
+            return None
+    else:
+        # Auto-detect test framework
+        framework = _detect_test_framework(project_path)
+        if framework is None:
+            return None
+        framework_name, base_cmd = framework
 
-        result, duration_ms = _run_timed_command(command, project_path, config.test_timeout_seconds)
+        related_test = _find_related_test(
+            file_path, project_path,
+            test_config.test_dir, test_config.naming_pattern,
+        )
+
+        if test_config.run_full_suite:
+            command = f"{venv_prefix}{base_cmd} {test_config.extra_args} --tb=short"
+        elif related_test:
+            abs_test = os.path.join(project_path, related_test)
+            command = f"{venv_prefix}{base_cmd} {abs_test} {test_config.extra_args} --tb=short"
+        else:
+            # No related test found — skip unless run_full_suite is true
+            return None
+
+    try:
+        result, duration_ms = _run_timed_command(command, project_path, test_timeout)
         output = (result.stdout + result.stderr).decode("utf-8", errors="replace")
-        # pytest returns exit code 5 when no tests collected — treat as "nothing to run"
+        # pytest returns exit code 5 when no tests collected
         if result.returncode == 5:
             return EnforcementCheck(
                 tier="tests",
@@ -356,8 +526,8 @@ def _check_tests(
         return EnforcementCheck(
             tier="tests", tool="write_file", file=file_path,
             passed=False,
-            detail=f"Test run timed out for {file_path}",
-            output="", duration_ms=config.test_timeout_seconds * 1000,
+            detail=f"Test run timed out ({test_timeout}s) for {file_path}",
+            output="", duration_ms=test_timeout * 1000,
         )
     except Exception as e:
         logger.debug("[enforcement] test check raised %s: %s", type(e).__name__, e)
