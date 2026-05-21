@@ -26,7 +26,9 @@
 import re
 import logging
 from collections import namedtuple
+from typing import Any
 
+from utils.audit_parser import extract_audit_reports
 from utils.quoting import _parse_quoted_payload
 
 logger = logging.getLogger(__name__)
@@ -155,6 +157,10 @@ class AgentCommandHandler:
         # one-way and does NOT create a pending ask.
         self._pending_asks: dict[str, str] = {}
 
+        # For audit report processing — see _process_audit_reports()
+        self._project_path_provider: Any = None   # Callable[] → str | None
+        self._agent_defs_loader: Any = None     # Callable[] → list[dict]
+
     # ── Setters (wired by window.py) ─────────────────────────────────────────
 
     def set_command_handler(self, handler) -> None:
@@ -183,9 +189,17 @@ class AgentCommandHandler:
         self._project_handler = handler
 
     def set_awareness_sent(self, awareness_set: set[str]) -> None:
-        """Shared _awareness_sent set from ChatHandler — for first-time
+        """"Shared _awareness_sent set from ChatHandler — for first-time
         project awareness prefix injection on gateway agent sends."""
         self._awareness_sent = awareness_set
+
+    def set_project_path_provider(self, provider: Any) -> None:
+        """Callable that returns the active project path, or None."""
+        self._project_path_provider = provider
+
+    def set_agent_defs_loader(self, loader: Any) -> None:
+        """Callable that loads agent definitions for self_improvement lookup."""
+        self._agent_defs_loader = loader
 
     # ── Core entry point ──────────────────────────────────────────────────────
 
@@ -193,11 +207,10 @@ class AgentCommandHandler:
                           project_name: str | None) -> None:
         """Called after an agent's final response is rendered.
 
-        Two responsibilities:
-        1. RELAY: If this agent has a pending ask (someone asked it a question),
-           relay its response back to the asking agent.
-        2. COMMAND SCAN: Scan the response text for backtick commands.
-           If found, parse and route them to target agents.
+        Three responsibilities:
+        1. AUDIT: Detect and process structured audit reports (SPEC-3).
+        2. RELAY: If this agent has a pending ask, relay response to asker.
+        3. COMMAND: Scan for backtick A2A commands.
 
         Args:
             session_key: The responding agent's session key
@@ -208,7 +221,11 @@ class AgentCommandHandler:
         if not text:
             return
 
+        # ── Step 0: Process structured audit reports (SPEC-3) ───────────────
+        self._process_audit_reports(session_key, text)
+
         # ── Step 1: Relay answer back to asking agent ────────────────────────
+
 
         source_sk = self._pending_asks.pop(session_key, None)
         if source_sk is not None:
@@ -379,6 +396,68 @@ class AgentCommandHandler:
         specials = self._agent_runtime_handler.get_special_agents()
         display_to_sk = {v: k for k, v in specials.items()}
         return display_to_sk.get(display_name)
+
+    def _process_audit_reports(self, session_key: str, text: str) -> None:
+        """Detect and process structured audit reports in an agent message.
+
+        Delegates to utils.feedback_processor for all file I/O.
+        Side effects (never raises): log to review-log.jsonl,
+        optionally append to {role}-bugs.md.
+        """
+        from utils.feedback_processor import process_audit_reports
+
+        # Strip fenced blocks BEFORE extraction (prevent false positives from
+        # audit report examples inside ```...``` code blocks)
+        clean_text = self._strip_fenced_blocks(text)
+        reports = extract_audit_reports(clean_text)
+        if not reports:
+            return
+
+        project_path = None
+        if self._project_path_provider is not None:
+            project_path = self._project_path_provider()
+
+        if not project_path:
+            logger.debug(
+                "[agent-cmd] Audit reports found but no active project — skipping"
+            )
+            return
+
+        reviewer = self._resolve_display_name(session_key)
+        target_role = self._resolve_target_role(session_key)
+
+        process_audit_reports(
+            project_path=project_path,
+            reports=reports,
+            reviewer=reviewer,
+            target_role=target_role,
+        )
+
+    def _resolve_target_role(self, reviewer_session_key: str) -> str:
+        """Determine the target agent role from the review context.
+
+        Strategy:
+        1. If there's a pending ask for this reviewer, the target is the asker.
+        2. Otherwise delegate to feedback_processor for agent-def lookup.
+        3. Fallback to 'unknown'.
+
+        Args:
+            reviewer_session_key: Session key of the agent that sent the audit.
+        """
+        from utils.feedback_processor import (
+            resolve_default_target_role,
+            resolve_role_from_session,
+        )
+
+        # Check if there's a pending ask — the reviewer was asked by someone
+        if reviewer_session_key in self._pending_asks:
+            asker_sk = self._pending_asks[reviewer_session_key]
+            return resolve_role_from_session(
+                asker_sk, self._agent_runtime_handler
+            )
+
+        # No pending ask — delegate to utility for agent-def lookup
+        return resolve_default_target_role()
 
     def _resolve_display_name(self, session_key: str) -> str:
         """Resolve a session key to a human-readable display name."""

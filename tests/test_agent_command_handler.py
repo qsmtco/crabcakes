@@ -782,3 +782,145 @@ class TestExtractorQuotedPayloads:
         text = '```\n`ask @QTR "hi"`\n```'
         cmds = _extract_quoted_commands(text)
         assert len(cmds) == 0
+
+
+class TestAuditReportProcessing:
+    """SPEC-3 §7.3 — Structured audit report processing via on_agent_response()."""
+
+    def test_audit_report_logged_to_review_log(self, tmp_path):
+        """Structured audit report in agent message is written to review-log.jsonl."""
+        from ui.handlers.agent_command_handler import AgentCommandHandler
+
+        handler = AgentCommandHandler()
+        handler.set_project_path_provider(lambda: str(tmp_path))
+
+        # Build text without triple backticks (avoid quoting issues)
+        lb = chr(10)
+        text = (
+            "## Audit Report" + lb +
+            "**Task:** Test task" + lb +
+            "**File:** test.py:10" + lb +
+            "**Severity:** bug" + lb +
+            "**Bug:** off by one error" + lb +
+            "**Expected:** correct index" + lb +
+            "**Actual:** wrong index" + lb +
+            "**Pattern:** off-by-one" + lb
+        )
+
+        handler.on_agent_response("session:qaster:123", text, "test-project")
+        log = tmp_path / ".crabcakes" / "review-log.jsonl"
+        assert log.exists()
+        import json
+        entries = [json.loads(line) for line in log.read_text().strip().split(lb)]
+        assert len(entries) == 1
+        assert entries[0]["bug"] == "off by one error"
+        assert entries[0]["target_role"] == "unknown"
+
+    def test_bug_severity_appended_to_journal(self, tmp_path, monkeypatch):
+        """Bug-severity report is appended to {role}-bugs.md when structured_feedback=True."""
+        from ui.handlers.agent_command_handler import AgentCommandHandler
+
+        crab = tmp_path / ".crabcakes"
+        crab.mkdir()
+        lb = chr(10)
+        journal_content = (
+            "# Coder Bug Journal" + lb + lb +
+            "---" + lb + lb +
+            "## Bug #1 — 2026-05-17 — old.py" + lb + lb +
+            "**Task:** old" + lb
+        )
+        (crab / "coder-bugs.md").write_text(journal_content)
+
+        handler = AgentCommandHandler()
+        handler.set_project_path_provider(lambda: str(tmp_path))
+
+        # Monkeypatch load_agent_defs so feedback_processor sees structured_feedback=True
+        def fake_defs():
+            return [
+                {
+                    "role": "coder",
+                    "tools": ["write_file"],
+                    "self_improvement": {"structured_feedback": True},
+                }
+            ]
+
+        monkeypatch.setattr("utils.agent_defs.load_agent_defs", fake_defs)
+        text = (
+            "## Audit Report" + lb +
+            "**Task:** New task" + lb +
+            "**File:** new.py:20" + lb +
+            "**Severity:** bug" + lb +
+            "**Bug:** new mistake" + lb +
+            "**Expected:** correct" + lb +
+            "**Actual:** wrong" + lb +
+            "**Pattern:** test-pattern" + lb
+        )
+
+        handler.on_agent_response("session:qaster:123", text, "test-project")
+
+        journal = crab / "coder-bugs.md"
+        content = journal.read_text()
+        assert "## Bug #2" in content
+        assert "new.py" in content
+        assert "test-pattern" in content
+
+    def test_suggestion_severity_not_appended_to_journal(self, tmp_path, monkeypatch):
+        """Suggestion-severity report is logged but NOT appended to bug journal."""
+        from ui.handlers.agent_command_handler import AgentCommandHandler
+
+        crab = tmp_path / ".crabcakes"
+        crab.mkdir()
+        handler = AgentCommandHandler()
+        handler.set_project_path_provider(lambda: str(tmp_path))
+
+        def fake_defs():
+            return [
+                {
+                    "role": "coder",
+                    "tools": ["write_file"],
+                    "self_improvement": {"structured_feedback": True},
+                }
+            ]
+
+        monkeypatch.setattr("utils.agent_defs.load_agent_defs", fake_defs)
+        lb = chr(10)
+        text = (
+            "## Audit Report" + lb +
+            "**Task:** Task" + lb +
+            "**File:** file.py" + lb +
+            "**Severity:** suggestion" + lb +
+            "**Bug:** could be improved" + lb +
+            "**Expected:** better" + lb +
+            "**Actual:** current" + lb
+        )
+
+        handler.on_agent_response("session:qaster:123", text, "test-project")
+
+        log = crab / "review-log.jsonl"
+        assert log.exists()
+        import json
+        entry = json.loads(log.read_text().strip().split(lb)[0])
+        assert entry["severity"] == "suggestion"
+        journal = crab / "coder-bugs.md"
+        assert not journal.exists()
+
+    def test_no_project_path_skips_without_crash(self):
+        """No project path provider set → reports detected but no crash."""
+        from ui.handlers.agent_command_handler import AgentCommandHandler
+
+        handler = AgentCommandHandler()
+        # No project path provider set
+
+        lb = chr(10)
+        text = (
+            "## Audit Report" + lb +
+            "**Task:** Task" + lb +
+            "**File:** file.py" + lb +
+            "**Severity:** bug" + lb +
+            "**Bug:** something wrong" + lb +
+            "**Expected:** correct" + lb +
+            "**Actual:** wrong" + lb
+        )
+
+        # Must not raise — graceful skip
+        handler.on_agent_response("session:qaster:123", text, None)

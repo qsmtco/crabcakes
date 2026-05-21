@@ -634,6 +634,15 @@ class MainWindow(Gtk.ApplicationWindow):
         self._agent_command_handler.set_agent_routing(self._agent_to_project)
         self._agent_command_handler.set_awareness_sent(self._chat_handler._awareness_sent)
         self._agent_command_handler.set_project_handler(self._project_handler)
+        self._agent_command_handler.set_project_path_provider(
+            lambda: self._project_handler.get_active_project_path()
+            if self._project_handler else None
+        )
+        try:
+            from utils.agent_defs import load_agent_defs
+            self._agent_command_handler.set_agent_defs_loader(load_agent_defs)
+        except Exception:
+            pass  # agent_defs optional at startup
         # Wire SessionHandler with live AgentManager for session lookups
         self._session_handler.set_agent_manager(self._gateway_handler.agent_mgr)
         # Wire ChatHandler with AgentManager for display name resolution
