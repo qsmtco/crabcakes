@@ -86,9 +86,30 @@ Agents keep working while you review. Multiple agents can write simultaneously �
 
 Agents always respond. The hard part is knowing when they're *done*.
 
-CrabCakes runs a convergence engine trained on 266 real multi-agent conversations. It reads 10 behavioral signals — response length decay, semantic novelty, word entropy, topic stability — and automatically closes consultation threads when the work is naturally complete.
+CrabCakes runs a **Random Forest classifier** (200 trees) trained on 266 real multi-agent conversations. After every agent response, it extracts 10 behavioral signals from the conversation and runs them through the model to get a stop probability:
 
-**99.1% accuracy.** Sub-millisecond inference. No hard turn limits, no magic keywords, no manual stop.
+| Signal | What it measures |
+|--------|-----------------|
+| **Shannon entropy** | Vocabulary diversity — diverse words = substantive response |
+| **Perplexity proxy** | Entropy × word diversity combined |
+| **Average diversity** | Unique-to-total word ratio across all turns |
+| **Length trend** | Is the last response shorter than average? (winding down) |
+| **Content ratio** | Fraction of non-stopword words (task-focused vs. filler) |
+| **Polite fraction** | "Thanks", "confirmed", "done" — closing signals |
+| **Last sentence shape** | Short final sentences = strong stop signal |
+| **TF-IDF vs. previous** | Did the vocabulary shift from the last response? |
+| **TF-IDF vs. history** | Did the vocabulary shift from the whole conversation? |
+| **Last sentence dominance** | Is most of the response in one short closing line? |
+
+The model doesn't use hard turn limits or magic keywords. It reads the *shape* of the conversation — are responses getting shorter? Is the vocabulary shifting? Is the last response mostly politeness? — and decides based on patterns learned from real data.
+
+Three stacked layers make the final call:
+
+1. **Turns ≤ 2:** always continue — a conversation needs at least question → answer → acknowledge
+2. **Turns 3–14:** Random Forest decides — stop if P(stop) ≥ 0.50
+3. **Turn ≥ 15:** hard stop — safety valve against runaway loops
+
+**99.1% accuracy.** Sub-millisecond inference. Runs entirely locally, no cloud API. The model and TF-IDF vectorizer ship as `.pkl` files — loaded once at import time, no training on startup.
 
 ### 📋 Task System
 
