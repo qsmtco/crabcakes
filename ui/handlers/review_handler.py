@@ -344,6 +344,8 @@ class ReviewHandler:
         if not sk.startswith("project:"):
             return CommandResult(handled=True, response_text="Open a project tab first.")
         project_name = sk.split(":", 1)[1]
+        # Enable review mode first — can_checkpoint() requires review_mode == "review"
+        self.set_review_mode(project_name, "review")
         self.start_review(project_name, sk)
         return CommandResult(handled=True, response_text="Starting review...")
 

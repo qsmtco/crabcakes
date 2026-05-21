@@ -141,6 +141,7 @@ class TestCssClassForType:
         ("agent_action", "feed-card-agent"),
         ("task", "feed-card-task"),
         ("system", "feed-card-system"),
+        ("audit_report", "feed-card-audit"),
     ])
     def test_known_types_return_correct_class(self, card_type, expected):
         assert FeedCardData.css_class_for_type(card_type) == expected
@@ -167,6 +168,7 @@ class TestAllCardTypes:
         "agent_action",
         "task",
         "system",
+        "audit_report",
     ])
     def test_card_type_constructable(self, card_type):
         ts = datetime.now(timezone.utc)

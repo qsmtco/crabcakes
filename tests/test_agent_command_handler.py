@@ -924,3 +924,59 @@ class TestAuditReportProcessing:
 
         # Must not raise — graceful skip
         handler.on_agent_response("session:qaster:123", text, None)
+
+    def test_audit_report_emits_feed_card_callback(self, tmp_path):
+        """Feed card callback is fired with correct report data."""
+        from ui.handlers.agent_command_handler import AgentCommandHandler
+
+        handler = AgentCommandHandler()
+        handler.set_project_path_provider(lambda: str(tmp_path))
+
+        received = []
+        handler.set_on_audit_report(lambda r: received.append(r))
+
+        lb = chr(10)
+        text = (
+            "## Audit Report" + lb +
+            "**Task:** Feed card test" + lb +
+            "**File:** main.py:42" + lb +
+            "**Severity:** bug" + lb +
+            "**Bug:** null dereference" + lb +
+            "**Expected:** safe access" + lb +
+            "**Actual:** crash" + lb +
+            "**Pattern:** null-check" + lb
+        )
+
+        handler.on_agent_response("session:qaster:123", text, "test-project")
+
+        assert len(received) == 1
+        report = received[0]
+        assert report["severity"] == "bug"
+        assert report["file_path"] == "main.py:42"
+        assert report["bug_description"] == "null dereference"
+        assert report["pattern"] == "null-check"
+        assert report["reviewer"] == "session:qaster:123"  # falls back to session key without AgentManager
+        assert report["target_role"] == "unknown"
+
+    def test_no_callback_set_still_works(self, tmp_path):
+        """No crash when callback is not set."""
+        from ui.handlers.agent_command_handler import AgentCommandHandler
+
+        handler = AgentCommandHandler()
+        handler.set_project_path_provider(lambda: str(tmp_path))
+        # No set_on_audit_report called
+
+        lb = chr(10)
+        text = (
+            "## Audit Report" + lb +
+            "**Task:** No callback" + lb +
+            "**File:** x.py:1" + lb +
+            "**Severity:** suggestion" + lb +
+            "**Bug:** style" + lb +
+            "**Expected:** pretty" + lb +
+            "**Actual:** ugly" + lb
+        )
+
+        handler.on_agent_response("session:qaster:123", text, "test-project")
+        # If we get here without exception, test passes
+        assert (tmp_path / ".crabcakes" / "review-log.jsonl").exists()

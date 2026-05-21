@@ -57,6 +57,7 @@ class MainContent(Gtk.Box):
         # Track chat boxes per page_index so we can append to them
         self._tab_chat_boxes = {}  # page_index -> chat_box widget
         self._tab_scrolls = {}   # page_index -> ScrolledWindow widget
+        self._tab_overlays = {}  # page_index -> chat_overlay widget (top-level page widget)
         # Phase 5b: scroll-to-bottom button — single floating button overlay on current tab
         self._scroll_to_bottom_btn = None
         self._scroll_to_bottom_overlay = None  # per-tab overlay holding the button
@@ -336,6 +337,7 @@ class MainContent(Gtk.Box):
         self._tab_sessions[page_idx] = session_key
         self._tab_chat_boxes[page_idx] = chat_box
         self._tab_scrolls[page_idx] = chat_scroll
+        self._tab_overlays[page_idx] = chat_overlay
         # Phase 5b: wire scroll adjustment callback for scroll-to-bottom button
         vadj = chat_scroll.get_vadjustment()
         if vadj is not None:
@@ -458,6 +460,7 @@ class MainContent(Gtk.Box):
         self._tab_sessions.pop(page_idx, None)
         self._tab_chat_boxes.pop(page_idx, None)
         self._tab_scrolls.pop(page_idx, None)
+        self._tab_overlays.pop(page_idx, None)
         if not self._bulk_closing:
             self._reindex_tabs()
 
@@ -466,35 +469,41 @@ class MainContent(Gtk.Box):
         Rebuild _tab_sessions and _tab_chat_boxes to reflect current notebook page order.
 
         Correct algorithm: iterate current GTK pages (which are the authoritative order),
-        look up each page's widget, then find the matching session_key by scanning
-        the saved snapshot. This avoids index-stale issues when multiple tabs are removed.
+        look up each page's widget (the GtkOverlay), then find the matching session_key
+        by scanning the saved snapshot. Uses _tab_overlays (page widget = GtkOverlay)
+        for the lookup, NOT _tab_chat_boxes (child of ScrolledWindow inside the overlay).
         """
         # Snapshot current state before rebuilding
         saved_sessions = dict(self._tab_sessions)
         saved_chat_boxes = dict(self._tab_chat_boxes)
         saved_scrolls = dict(self._tab_scrolls)
+        saved_overlays = dict(self._tab_overlays)
 
-        # Build widget -> old_page_idx map from snapshot
-        widget_to_idx = {}
-        for old_idx, sk in saved_sessions.items():
-            if old_idx in self._tab_chat_boxes:
-                widget_to_idx[self._tab_chat_boxes[old_idx]] = old_idx
+        # Build overlay widget -> old_page_idx map from snapshot
+        # get_nth_page() returns the GtkOverlay (top-level page widget),
+        # so we must key by overlay, not by chat_box.
+        overlay_to_idx = {}
+        for old_idx, overlay in saved_overlays.items():
+            overlay_to_idx[overlay] = old_idx
 
         new_sessions = {}
         new_chat_boxes = {}
         new_scrolls = {}
+        new_overlays = {}
         n_pages = self._chat_notebook.get_n_pages()
         for new_idx in range(n_pages):
-            page_widget = self._chat_notebook.get_nth_page(new_idx)
-            old_idx = widget_to_idx.get(page_widget)
+            page_widget = self._chat_notebook.get_nth_page(new_idx)  # GtkOverlay
+            old_idx = overlay_to_idx.get(page_widget)
             if old_idx is not None:
                 new_sessions[new_idx] = saved_sessions[old_idx]
                 new_chat_boxes[new_idx] = saved_chat_boxes[old_idx]
                 new_scrolls[new_idx] = saved_scrolls[old_idx]
+                new_overlays[new_idx] = page_widget
 
         self._tab_sessions = new_sessions
         self._tab_chat_boxes = new_chat_boxes
         self._tab_scrolls = new_scrolls
+        self._tab_overlays = new_overlays
 
     def close_tabs(self, page_indices):
         """
@@ -515,6 +524,7 @@ class MainContent(Gtk.Box):
                 self._tab_sessions.pop(idx, None)
                 self._tab_chat_boxes.pop(idx, None)
                 self._tab_scrolls.pop(idx, None)
+                self._tab_overlays.pop(idx, None)
         finally:
             self._bulk_closing = False
         self._reindex_tabs()
@@ -798,9 +808,9 @@ class MainContent(Gtk.Box):
         top_box = paned.get_start_child()
         if top_box is None:
             return
-        # Insert at the very top of top_box (position 0 = above notebook)
-        top_box.pack_start(bar, 0, 0, 0)
-        bar.show()
+        # Insert at the very top of top_box (above the notebook).
+        # GTK4: use prepend() — pack_start() was removed in GTK4.
+        top_box.prepend(bar)
 
     def get_review_bar(self) -> Gtk.Widget | None:
         """Return the current review bar widget, or None.

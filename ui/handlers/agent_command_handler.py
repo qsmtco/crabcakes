@@ -160,6 +160,7 @@ class AgentCommandHandler:
         # For audit report processing — see _process_audit_reports()
         self._project_path_provider: Any = None   # Callable[] → str | None
         self._agent_defs_loader: Any = None     # Callable[] → list[dict]
+        self._on_audit_report: Any = None         # Callable(dict) → None
 
     # ── Setters (wired by window.py) ─────────────────────────────────────────
 
@@ -200,6 +201,14 @@ class AgentCommandHandler:
     def set_agent_defs_loader(self, loader: Any) -> None:
         """Callable that loads agent definitions for self_improvement lookup."""
         self._agent_defs_loader = loader
+
+    def set_on_audit_report(self, callback: Any) -> None:
+        """Callback for audit report feed cards. Signature: callback(report_dict) -> None.
+
+        report_dict keys: severity, file_path, task, bug_description, pattern,
+        reviewer, target_role, project_path, logged (bool), journal_appended (bool).
+        """
+        self._on_audit_report = callback
 
     # ── Core entry point ──────────────────────────────────────────────────────
 
@@ -432,6 +441,23 @@ class AgentCommandHandler:
             reviewer=reviewer,
             target_role=target_role,
         )
+
+        # Emit feed card(s) for each processed report
+        if self._on_audit_report is not None:
+            for report in reports:
+                try:
+                    self._on_audit_report({
+                        "severity": report.severity,
+                        "file_path": report.file_path,
+                        "task": report.task,
+                        "bug_description": report.bug_description,
+                        "pattern": report.pattern,
+                        "reviewer": reviewer,
+                        "target_role": target_role,
+                        "project_path": project_path,
+                    })
+                except Exception as e:
+                    logger.warning("[agent-cmd] Failed to emit audit report feed card: %s", e)
 
     def _resolve_target_role(self, reviewer_session_key: str) -> str:
         """Determine the target agent role from the review context.

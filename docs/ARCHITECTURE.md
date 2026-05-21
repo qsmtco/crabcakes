@@ -510,7 +510,22 @@ def on_prompt_activated(filepath: str):   # load + fire on_prompt_loaded callbac
 
 **Special agent routing:** In project fan-out (solo DM + group broadcast), special agents are detected via `AgentRuntimeHandler.get_special_agents()` and routed through `send_to_special_agent()` instead of `gw.send_message()`. Gateway agents receive awareness data via `_build_awareness_prefix()` (raw `build_awareness_block` — no identity injection).
 
-**Key setters:** `set_gateway_client()`, `set_project_handler()`, `set_command_handler()`, `set_chat_render_handler()`, `set_agent_runtime_handler()`, `set_agent_manager()`, `set_on_forward_message()`, `set_on_send_initiated()`, `set_on_res_confirmed()`
+**Key setters:** `set_gateway_client()`, `set_project_handler()`, `set_command_handler()`, `set_chat_render_handler()`, `set_agent_runtime_handler()`, `set_agent_manager()`, `set_on_forward_message()`, `set_on_send_initiated()`, `set_on_res_confirmed()`, `set_on_activity_bubble()`
+
+**Bug fix (Phase 1 of SPEC-smarter-chat-ux) — missing message recovery:**
+
+New state variables:
+- `_assistant_text_buffer[session_key] → str`: last assistant text per session (populated by `_buffer_assistant_text()` callback from ActivityHandler)
+- `_chat_final_rendered[session_key] → bool`: True when a final response has rendered — prevents double-render. Cleared on each new agent round via `_clear_render_guard()`.
+
+New methods:
+- `_buffer_assistant_text(session_key, text)`: callback target for ActivityHandler's `set_on_assistant_buffer()` — populates `_assistant_text_buffer`
+- `_clear_render_guard(session_key)`: callback target for ActivityHandler's `set_on_agent_start()` — clears `_chat_final_rendered` so subsequent responses render
+- `_handle_lifecycle_completed(session_key, text)`: fallback render path — called when ActivityHandler fires lifecycle end/error but no chat final has rendered; renders buffered assistant text via `_handle_final_response()` guarded by `_chat_final_rendered`
+- `_render_activity_bubble(bubble)`: called by ActivityHandler via `set_on_activity_bubble()` — dispatches to `_render_activity_bubble_impl` on main thread. Activity bubbles are NOT guarded by `_chat_final_rendered`.
+- `_render_activity_bubble_impl(session_key, text)`: thread-unsafe internal render — calls `render_sync(role="System", text=..., tight=True)`, appends to chat box, scrolls.
+
+**Architecture:** ChatHandler owns all render decisions. ActivityHandler only tracks state. The lifecycle-completed callback is the fallback path when the gateway sends `stream=assistant` text but the corresponding `chat final` event carries no message body. The render guard is cleared when a new agent round starts (lifecycle phase=start) so that multiple responses per session work correctly. Activity bubbles are separate from the conversation message flow — they don't interact with `_chat_final_rendered`.
 
 ### 3.14a `utils/escaping.py` — Pango-Aware XML Escape
 
@@ -924,9 +939,11 @@ def get_help(name) -> str | None
 
 **Thread safety:** All GTK via `GLib.idle_add()`.
 
-### 3.21b `ui/handlers/review_handler.py` — Review Session Handler (Phase 7)
+### 3.21b `ui/handlers/review_handler.py` — Review Session Handler (Phase 7) — *Superseded by Feed Cards*
 
 **Responsibility:** Review session lifecycle — checkpoint, check changes, accept, reject. Coordinates git_ops, diff_parser, and GTK views.
+
+**Status:** **Superseded by the project feed card system + SPEC-3 structured feedback protocol.** The `` `review``/`check`/`accept`/`reject`` commands and ReviewBar are kept in the codebase for potential future use, but the primary review workflow is now: enforcement layer catches issues on write → feed cards surface events in the feed bar → audit reports (`## Audit Report` blocks) log bugs to the target agent's bug journal. This is more intuitive and always-on compared to the mode-gated checkpoint flow. See `docs/specs/SPEC-3-structured-feedback.md`.
 
 **Owns:** Per-project `ReviewState` dict.
 
@@ -950,9 +967,11 @@ def set_gateway_client(gw)
 
 **Thread safety:** All GTK via `GLib.idle_add()`. All git calls in background threads.
 
-### 3.21c `ui/views/review_bar.py` — Review Bar Widget (Phase 7)
+### 3.21c `ui/views/review_bar.py` — Review Bar Widget (Phase 7) — *Superseded by Feed Cards*
 
 **Responsibility:** GTK widget for review mode controls — dropdown, status, action buttons.
+
+**Status:** **Superseded.** See 3.21b. The ReviewBar was non-functional from creation (GTK3 `pack_start` call) until 2026-05-21 (fixed to `prepend()`). It works now but is not the primary review mechanism — feed cards serve that role.
 
 **Public API:**
 ```python
@@ -1542,6 +1561,39 @@ on_res_confirmed(session_key)                     # gateway res confirmed → re
 on_gateway_event(event, payload)                 # universal entry — routes agent/chat/tool_call/res events
 on_chat_final(session_key)                       # chat final (no-op; on_agent_end handles completion)
 ```
+
+**Bug fix (Phase 1 of SPEC-smarter-chat-ux) — missing message recovery:**
+
+State tracked for recovery when chat final arrives with no message body:
+- `_assistant_text_buffer[session_key] → str`: last assistant text per session
+
+Public setters for the recovery callbacks:
+```python
+set_on_assistant_buffer(cb)                     # cb(session_key, text) — forward each assistant delta
+set_on_lifecycle_completed(cb)                 # cb(session_key, text) — lifecycle end/error fires this; ChatHandler renders fallback
+set_on_activity_bubble(cb)                     # cb(ActivityBubble) — tool/plan/approval/command_output/patch events; Phase 2 of SPEC-smarter-chat-ux
+
+**Activity Bubbles (Phase 2 of SPEC-smarter-chat-ux):**
+
+ActivityHandler fires `_activity_bubble_callback` for each gateway event that warrants a visible status indicator in the chat:
+- `stream=lifecycle phase=start` → ⏳ Agent started...
+- `stream=tool phase=start` → 🔧 Running {name}...
+- `stream=tool phase=end` → ✅ {name} ({durationMs}ms)  or  ❌ {name} — error
+- `stream=plan` → 📋 Plan: {title} ({n} steps)
+- `stream=approval phase=requested` → 🔒 Approval needed: {command}
+- `stream=command_output phase=end` → 💻 {name}: exit {exitCode} ({durationMs}ms)
+- `stream=patch phase=end` → ✏️ {name}: +{added} ~{modified} -{deleted} files
+
+Architecture: ActivityHandler only creates ActivityBubble dataclass instances and fires the callback. ChatHandler owns all rendering decisions — `_render_activity_bubble()` calls `_render_activity_bubble_impl()` which calls `render_sync(role="System", text=...)`.set_on_agent_start(cb)                          # cb(session_key) — clears ChatHandler render guard for next round
+set_on_activity_bubble(cb)                      # cb(ActivityBubble, target_tab) — fires for tool/plan/approval/command_output/patch events; ChatHandler renders activity bubble
+```
+
+Activity bubbles (Phase 2 of SPEC-smarter-chat-ux):
+- `on_gateway_event()` parses `stream` values `tool`, `plan`, `approval`, `command_output`, `patch`
+- Constructs `ActivityBubble` (from `models/activity.py`) and fires the callback
+- ChatHandler's `render_activity_bubble()` renders via `ChatRenderHandler.render_activity()`
+- Tab routing uses `agent_to_project` (AgentRoutingTable) passed via constructor
+- Lazy import of `models.activity` inside method body to avoid circular deps
 
 **Two-phase progress tracking:**
 - Phase 1 (send-initiated): Time-driven progress bar — on_send_initiated starts 30s timer

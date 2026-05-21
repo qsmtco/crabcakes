@@ -501,6 +501,50 @@ class MainWindow(Gtk.ApplicationWindow):
         self._chat_render_handler.render_event_card(card["type"], chat_box, **card)
         self._main_content.scroll_chat_to_bottom()
 
+    def _on_audit_report_card(self, report: dict) -> None:
+        """Emit a feed card when a structured audit report is processed (SPEC-3).
+
+        report keys: severity, file_path, task, bug_description, pattern,
+        reviewer, target_role, project_path.
+        """
+        from datetime import datetime, timezone
+        from models.feed_card import FeedCardData
+
+        severity = report.get("severity", "issue")
+        icons = {"bug": "🔴", "issue": "🟡", "suggestion": "🔵"}
+        icon = icons.get(severity, "⚪")
+
+        file_path = report.get("file_path", "?")
+        pattern = report.get("pattern")
+        reviewer = report.get("reviewer", "unknown")
+        target = report.get("target_role", "unknown")
+        desc = report.get("bug_description", "")
+
+        pattern_suffix = f" ({pattern})" if pattern else ""
+        title = f"{icon} {severity.upper()}: {file_path}{pattern_suffix}"
+        body = f"**{reviewer}** reviewed **{target}**: {desc}"
+
+        project_name = self._project_handler.get_active_project_name() if self._project_handler else None
+        if not project_name:
+            return
+
+        card = FeedCardData(
+            card_type="audit_report",
+            source="agent",
+            title=title,
+            body=body,
+            author=reviewer,
+            timestamp=datetime.now(timezone.utc),
+            project_name=project_name,
+            file_path=file_path,
+            metadata={
+                "severity": severity,
+                "pattern": pattern,
+                "target_role": target,
+            },
+        )
+        self._feed_handler.add_card(card)
+
     def _register_stub_commands(self):
             """Wire all commands to their handler methods (Phase 7)."""
             # Collaboration — CollabHandler
@@ -643,6 +687,10 @@ class MainWindow(Gtk.ApplicationWindow):
             self._agent_command_handler.set_agent_defs_loader(load_agent_defs)
         except Exception:
             pass  # agent_defs optional at startup
+        # Wire audit report feed card emission
+        self._agent_command_handler.set_on_audit_report(
+            self._on_audit_report_card
+        )
         # Wire SessionHandler with live AgentManager for session lookups
         self._session_handler.set_agent_manager(self._gateway_handler.agent_mgr)
         # Wire ChatHandler with AgentManager for display name resolution
@@ -653,6 +701,19 @@ class MainWindow(Gtk.ApplicationWindow):
         self._chat_handler.set_on_send_initiated(self._activity_handler.on_send_initiated)
         # Wire res confirmation → ActivityHandler pre-flight end
         self._chat_handler.set_on_res_confirmed(self._activity_handler.on_res_confirmed)
+        # Wire lifecycle completed → ChatHandler fallback render (missing message bug fix)
+        # Architecture: ActivityHandler tracks state; ChatHandler makes render decisions.
+        self._activity_handler.set_on_lifecycle_completed(
+            self._chat_handler._handle_lifecycle_completed
+        )
+        # Wire assistant text buffer so ChatHandler can populate its own buffer.
+        # ChatHandler needs its own buffer for the recovery path when lifecycle
+        # ends before any chat final arrives.
+        self._activity_handler.set_on_assistant_buffer(self._chat_handler._buffer_assistant_text)
+        # Wire agent start → clear render guard so subsequent responses render
+        self._activity_handler.set_on_agent_start(self._chat_handler._clear_render_guard)
+        # Wire activity bubbles: ActivityHandler → ChatHandler (Phase 2 of SPEC-smarter-chat-ux)
+        self._activity_handler.set_on_activity_bubble(self._chat_handler._render_activity_bubble)
 
     # ── Agent selection callback ────────────────────────────────────────────
 

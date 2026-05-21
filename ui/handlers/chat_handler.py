@@ -12,7 +12,10 @@
 # If GLib is None (e.g. in tests), GTK calls are made directly — only safe
 # when the caller is already on the main thread.
 
-from typing import Callable
+from typing import Callable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from models.activity import ActivityBubble
 import logging
 
 _logger = logging.getLogger(__name__)
@@ -61,16 +64,20 @@ class ChatHandler:
         self._pending_req_id: str | None = None  # tracks last sent req_id for res correlation
         self._on_agent_response: Callable[[str, str, str | None], None] | None = None  # agent response hook (Phase 6.2)
         self._on_res_confirmed: Callable[[str], None] | None = None  # pre-flight confirm via res
+        self._activity_bubble_callback: Callable[['ActivityBubble'], None] | None = None  # activity bubble render from ActivityHandler
         self._agent_runtime_handler = None  # injected via set_agent_runtime_handler()
         self._awareness_sent: set[str] = set()  # track "project:agent" pairs that received awareness
         self._agent_mgr = None  # injected via set_agent_manager() after gateway connect
+        # Bug fix: state for missing message recovery (Phase 1 of SPEC-smarter-chat-ux)
+        self._assistant_text_buffer: dict[str, str] = {}  # session_key → last assistant text
+        self._chat_final_rendered: dict[str, bool] = {}  # session_key → True when final rendered (guard)
 
     def set_chat_render_handler(self, handler):
         """"Inject ChatRenderHandler. Called by window.py._build()."""
         self._chat_render_handler = handler
 
     def set_agent_runtime_handler(self, handler):
-        """Inject AgentRuntimeHandler. Called by window.py._build()."""
+        """"Inject AgentRuntimeHandler. Called by window.py._build()."""
         self._agent_runtime_handler = handler
 
     # ── Public API ───────────────────────────────────────────────────────────
@@ -122,6 +129,84 @@ class ChatHandler:
             return
         if self._on_res_confirmed is not None:
             self._on_res_confirmed(session_key)
+
+    def _buffer_assistant_text(self, session_key: str, text: str):
+        """Buffer assistant text from ActivityHandler for missing-message recovery.
+
+        Called by ActivityHandler's on_assistant_buffer callback after every
+        stream=assistant event. ChatHandler uses this to recover when a chat
+        final arrives with no message body.
+        """
+        self._assistant_text_buffer[session_key] = text
+
+    def _clear_render_guard(self, session_key: str):
+        """Clear the render guard for a session — called when a new agent round starts.
+
+        ActivityHandler calls this via set_on_agent_start when lifecycle phase=start
+        fires. Without this cleanup, the guard blocks ALL subsequent responses
+        for the same session after the first render.
+        """
+        self._chat_final_rendered.pop(session_key, None)
+
+    def _render_activity_bubble(self, bubble: 'ActivityBubble'):
+        """Render an activity bubble for a tool/plan/approval event.
+
+        Called by ActivityHandler via set_on_activity_bubble callback.
+        Uses build_role_bubble with role='System' and bubble.format_text().
+        Activity bubbles are NOT guarded by _chat_final_rendered — they're
+        ephemeral status indicators that appear during the round.
+        """
+        text = bubble.format_text()
+        if not text:
+            return
+        session_key = bubble.session_key
+        if self._chat_render_handler is None:
+            return
+        # Dispatch to main thread if needed (may be called from gateway thread)
+        self._dispatch(lambda sk=session_key, txt=text, at=bubble.type: (
+            self._render_activity_bubble_impl(sk, txt, at)
+        ))
+
+    def _render_activity_bubble_impl(self, session_key: str, text: str, activity_type: str = ""):
+        """Thread-unsafe internal render — must be called on GTK main thread."""
+        if self._chat_render_handler is None:
+            return
+        chat_box = self._mc.get_chat_box_for_session(session_key)
+        if chat_box is None:
+            return
+        bubble = self._chat_render_handler.render_activity(text, activity_type)
+        if bubble is not None:
+            chat_box.append(bubble)
+            self._mc.scroll_chat_to_bottom()
+
+    def set_on_activity_bubble(self, cb: Callable[['ActivityBubble'], None]):
+        """Set callback for activity bubble events from ActivityHandler.
+
+        ChatHandler renders each ActivityBubble via build_role_bubble(role='System').
+        """
+        self._activity_bubble_callback = cb
+
+    def _handle_lifecycle_completed(self, session_key: str, buffered_text: str):
+        """Render fallback bubble when lifecycle ended without a chat final.
+
+        Called by ActivityHandler's on_lifecycle_completed callback when the agent
+        round-trip ends (phase=end or phase=error) but no chat final event with
+        a message has arrived yet.
+
+        Architecture: only one render per session. Uses _chat_final_rendered
+        guard to prevent double-render. All rendering lives in ChatHandler.
+        """
+        if not session_key or not buffered_text:
+            return
+        # Guard: do not double-render if chat final already handled this session.
+        if self._chat_final_rendered.get(session_key):
+            return
+        _logger.info("[fallback] Rendering fallback for session=%r (lifecycle ended)", session_key)
+        # Determine the tab for this session — use the session key's agent prefix.
+        target_tab = session_key
+        self._dispatch(lambda t=target_tab, sk=session_key, txt=buffered_text: (
+            self._handle_final_response(t, sk, txt)
+        ))
 
     def set_project_handler(self, handler):
         """Inject ProjectHandler. Called by window.py._build()."""
@@ -539,9 +624,14 @@ class ChatHandler:
         so end_streaming() is a no-op. In that case we fall back to render_sync()
         to create the final bubble directly.
 
-        Note: tab switching removed — user stays in their current tab. A unread
-        indicator on the tab label signals that another tab has new messages.
+        Architecture: _chat_final_rendered guard prevents double-render from both
+        the chat final path and the lifecycle-completed fallback path.
         """
+        # Guard: do not double-render if chat final already handled this session.
+        if self._chat_final_rendered.get(session_key):
+            return
+        self._chat_final_rendered[session_key] = True
+
         current_sk = self._mc.get_current_session_key()
         chat_box = self._mc.get_chat_box_for_session(tab)
         # Always record the message in the chat box (data plane), regardless of
@@ -550,8 +640,6 @@ class ChatHandler:
             chat_box.record('Agent', final_text)
         # If this tab is not currently visible, increment unread count so the
         # tab label dot turns yellow to signal pending messages.
-        current_sk = self._mc.get_current_session_key()
-        _logger.debug("[tab-dot] _handle_final_response: tab=%r, current_sk=%r, tab!=current_sk=%r", tab, current_sk, tab != current_sk)
         if tab != current_sk:
             self._mc.increment_unread(tab)
 
@@ -566,8 +654,6 @@ class ChatHandler:
             if bubble is not None and chat_box is not None:
                 chat_box.append(bubble)
                 self._mc.scroll_chat_to_bottom()
-        if chat_box is not None and hasattr(chat_box, 'record'):
-            chat_box.record("Agent", final_text)
 
         # Agent command parsing hook (Phase 6.2) — fire after bubble render.
         # Resolve project from routing table (authoritative for this session),

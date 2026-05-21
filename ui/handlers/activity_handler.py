@@ -18,7 +18,14 @@ Thread safety: all GTK calls via GLib.idle_add().
 
 from __future__ import annotations
 
+import logging
 import time
+from typing import Callable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from models.activity import ActivityBubble
+
+_logger = logging.getLogger(__name__)
 
 
 class ActivityHandler:
@@ -50,6 +57,14 @@ class ActivityHandler:
         self._phase: dict[str, int] = {}  # session_key → 1 (time-driven) or 2 (event-driven)
         self._event_hop_count: dict[str, int] = {}  # session_key → number of gateway events received
 
+        # Bug fix: state tracking for missing message recovery (Phase 1 of SPEC-smarter-chat-ux)
+        self._assistant_text_buffer: dict[str, str] = {}    # session_key → last assistant text
+        self._lifecycle_ended: dict[str, bool] = {}       # run_id → True when lifecycle end fired
+        self._on_assistant_buffer: Callable[[str, str], None] | None = None  # buffer fwd callback
+        self._lifecycle_completed_callback: Callable[[str, str], None] | None = None  # cb(sk, text)
+        self._activity_bubble_callback: Callable[['ActivityBubble'], None] | None = None  # cb(bubble)
+        self._on_agent_start_callback: Callable[[str], None] | None = None  # cb(sk) — clears render guard
+
     # ── Public entry points (called from gateway event handlers in window) ──
 
     def on_agent_start(self, session_key, data=None):
@@ -60,6 +75,9 @@ class ActivityHandler:
         self._first_delta_seen = False
         self._current_tool_name = ""
         self._set_state("reasoning", sk)
+        # Clear render guard from previous round so new responses can render
+        if self._on_agent_start_callback:
+            self._on_agent_start_callback(sk)
 
     def on_agent_end(self, session_key, data=None):
         """agent phase=end — enter done state, auto-idle after 5s."""
@@ -97,6 +115,43 @@ class ActivityHandler:
     def on_chat_final(self, session_key):
         """chat final — no state change here; on_agent_end handles completion."""
         pass
+
+    def set_on_assistant_buffer(self, cb):
+        """Set callback for buffering assistant text: cb(session_key, text).
+        ActivityHandler calls this after every stream=assistant event so ChatHandler
+        can maintain its own buffer for the missing-message recovery path.
+        """
+        self._on_assistant_buffer = cb
+
+    def set_on_lifecycle_completed(self, cb):
+        """Set callback for lifecycle end: cb(session_key, buffered_text).
+
+        ActivityHandler calls this when the agent round-trip ends (phase=end or
+        phase=error). ChatHandler uses this to render the fallback bubble when
+        no chat final arrived with a message body.
+
+        Architecture: ActivityHandler only tracks state — it never renders.
+        ChatHandler makes the render decision via this callback.
+        """
+        self._lifecycle_completed_callback = cb
+
+    def set_on_agent_start(self, cb):
+        """Set callback for agent round start: cb(session_key).
+
+        ActivityHandler calls this when lifecycle phase=start fires. ChatHandler
+        uses this to clear the render guard from the previous round so that
+        subsequent responses for the same session are not blocked.
+        """
+        self._on_agent_start_callback = cb
+
+    def set_on_activity_bubble(self, cb: Callable[['ActivityBubble'], None]):
+        """Set callback for activity bubbles: cb(activity_bubble).
+
+        ActivityHandler calls this for each tool/plan/approval/command_output/patch
+        event to generate a system bubble in the chat. ChatHandler renders via
+        build_role_bubble(role='System', text=bubble.format_text()).
+        """
+        self._activity_bubble_callback = cb
 
     def on_send_initiated(self, session_key: str):
         """Send button pressed — enter pre-flight (sending) state with 30s timeout.
@@ -147,7 +202,123 @@ class ActivityHandler:
             # TODO: Uncomment the line below once throttling is implemented.
             # self._update_feedbar()
 
-        # Route to state-transition handlers
+        # ── Bug fix: buffer assistant text for fallback rendering ──────────
+        if event == "agent":
+            stream = payload.get("stream", "")
+            if stream == "assistant":
+                text = payload.get("data", {}).get("text", "")
+                if text:
+                    sk = payload.get("sessionKey", "") or session_key
+                    if sk:
+                        self._assistant_text_buffer[sk] = text
+                        if self._on_assistant_buffer:
+                            self._on_assistant_buffer(sk, text)
+            if stream == "lifecycle":
+                phase = payload.get("data", {}).get("phase", "")
+                # Track lifecycle end for missing-message recovery.
+                # Cleanup runs on both end and error — fixes memory leak.
+                if phase in ("end", "error"):
+                    run_id = payload.get("runId", "") or ""
+                    sk = payload.get("sessionKey", "") or session_key
+                    # Fire lifecycle-completed callback so ChatHandler can render fallback.
+                    # text is the last buffered assistant text for this session.
+                    if sk and self._lifecycle_completed_callback:
+                        text = self._assistant_text_buffer.get(sk, "")
+                        self._lifecycle_completed_callback(sk, text)
+                    if sk:
+                        self._assistant_text_buffer.pop(sk, None)
+                    if run_id:
+                        self._lifecycle_ended.pop(run_id, None)
+                elif phase == "start":
+                    # ── Activity bubble: lifecycle start ──────────────────
+                    sk = payload.get("sessionKey", "") or session_key
+                    if sk and self._activity_bubble_callback:
+                        from models.activity import ActivityBubble, ToolStatus
+                        bubble = ActivityBubble(type="lifecycle_start", session_key=sk, icon="⏳")
+                        self._activity_bubble_callback(bubble)
+            elif stream == "item":
+                # ── Activity bubble: item events (tool/command/patch) ────────
+                # NOTE: stream="tool" events are NOT broadcast to clients — only sent to
+                # toolEventRecipients. But stream="item" events ARE broadcast and carry
+                # kind="tool" / kind="command" / kind="patch" with phase, name, title, status.
+                # This is why exec bubbles worked (command_output is also broadcast) but
+                # tool_start/tool_end never appeared (stream="tool" never reaches us).
+                data = payload.get("data", {})
+                kind = data.get("kind", "")
+                item_phase = data.get("phase", "")
+                item_name = data.get("name", "") or ""
+                item_status = data.get("status", "")
+                started_at = data.get("startedAt")
+                ended_at = data.get("endedAt")
+                sk = payload.get("sessionKey", "") or session_key
+
+                if kind == "tool" and self._activity_bubble_callback:
+                    from models.activity import ActivityBubble, ToolStatus
+                    if item_phase == "start":
+                        self._activity_bubble_callback(
+                            ActivityBubble(type="tool_start", session_key=sk, tool_name=item_name,
+                                           icon="🔧", status=ToolStatus.RUNNING)
+                        )
+                    elif item_phase == "end":
+                        is_error = item_status == "failed"
+                        icon = "❌" if is_error else "✅"
+                        btype = "tool_error" if is_error else "tool_end"
+                        duration_ms = 0
+                        if started_at and ended_at:
+                            duration_ms = ended_at - started_at
+                        self._activity_bubble_callback(
+                            ActivityBubble(type=btype, session_key=sk, tool_name=item_name,
+                                           duration_ms=duration_ms, icon=icon,
+                                           status=ToolStatus.ERROR if is_error else ToolStatus.SUCCESS)
+                        )
+            elif stream == "plan":
+                # ── Activity bubble: plan update ───────────────────────────
+                data = payload.get("data", {})
+                title = data.get("title", "") or ""
+                steps_raw = data.get("steps", []) or []
+                steps = [s.get("title", "") or str(s) for s in steps_raw]
+                sk = payload.get("sessionKey", "") or session_key
+                if title and self._activity_bubble_callback:
+                    from models.activity import ActivityBubble, ToolStatus
+                    bubble = ActivityBubble(type="plan", session_key=sk, icon="📋", title=title, steps=steps)
+                    self._activity_bubble_callback(bubble)
+            elif stream == "approval":
+                # ── Activity bubble: approval request ─────────────────────
+                data = payload.get("data", {})
+                if data.get("phase") == "requested":
+                    cmd = data.get("command", "") or ""
+                    reason = data.get("reason", "") or ""
+                    approval_id = data.get("approvalId", "") or ""
+                    sk = payload.get("sessionKey", "") or session_key
+                    if cmd and self._activity_bubble_callback:
+                        from models.activity import ActivityBubble, ToolStatus
+                        bubble = ActivityBubble(type="approval_request", session_key=sk, icon="🔒", command=cmd, reason=reason, approval_id=approval_id)
+                        self._activity_bubble_callback(bubble)
+            elif stream == "command_output":
+                # ── Activity bubble: shell command output ──────────────────
+                data = payload.get("data", {})
+                if data.get("phase") == "end":
+                    name = data.get("name", "") or ""
+                    exit_code = data.get("exitCode", 0)
+                    duration_ms = data.get("durationMs", 0)
+                    sk = payload.get("sessionKey", "") or session_key
+                    if name and self._activity_bubble_callback:
+                        from models.activity import ActivityBubble, ToolStatus
+                        bubble = ActivityBubble(type="command_output", session_key=sk, tool_name=name, exit_code=exit_code, duration_ms=duration_ms, icon="💻")
+                        self._activity_bubble_callback(bubble)
+            elif stream == "patch":
+                # ── Activity bubble: file edit summary ────────────────────
+                data = payload.get("data", {})
+                if data.get("phase") == "end":
+                    name = data.get("name", "") or ""
+                    added = len(data.get("added", []) or [])
+                    modified = len(data.get("modified", []) or [])
+                    deleted = len(data.get("deleted", []) or [])
+                    sk = payload.get("sessionKey", "") or session_key
+                    if name and self._activity_bubble_callback:
+                        from models.activity import ActivityBubble, ToolStatus
+                        bubble = ActivityBubble(type="patch", session_key=sk, tool_name=name, added=added, modified=modified, deleted=deleted, icon="✏️")
+                        self._activity_bubble_callback(bubble)
         if event == "agent":
             # BUG FIX: lifecycle events (stream="lifecycle") nest phase in data.phase.
             # Item-level events (stream="item") put phase directly in payload.phase.

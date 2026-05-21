@@ -242,6 +242,20 @@ button.lib-fav-star {
     padding: 6px 10px 8px 10px;
     margin: 2px 12px 2px 8px;
 }
+
+/* System activity bubbles — Phase 2 of SPEC-smarter-chat-ux */
+.chat-bubble-System {
+    background: rgba(255, 255, 255, 0.03);
+    border-left: 2px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px 6px 6px 2px;
+    padding: 4px 10px 4px 10px;
+    margin: 1px 12px 1px 8px;
+}
+.chat-bubble-System .chat-msg-label {
+    font-family: monospace;
+    font-size: 12px;
+    color: #9090a8;
+}
 .chat-bubble-header {
     margin: 0 0 2px 0;
     padding: 0;
@@ -406,6 +420,42 @@ notebook > header > tabs > tab {
 .bubble-error           { border-left: 3px solid #ef4444; background: rgba(239,68,68,0.08); }
 .bubble-thinking        { border-left: 3px solid #f59e0b; }
 .bubble-streaming       { border-left: 3px solid #6366f1; }
+
+/* -- Activity bubbles (Phase 2 SPEC-smarter-chat-ux) -------------------- */
+.activity-bubble {
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px;
+    padding: 5px 14px;
+}
+.activity-bubble-text {
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 0.82em;
+    letter-spacing: 0.02em;
+}
+.activity-tool_start .activity-bubble-text {
+    color: rgba(255, 255, 255, 0.50);
+}
+.activity-tool_end .activity-bubble-text {
+    color: rgba(255, 255, 255, 0.35);
+}
+.activity-tool_error .activity-bubble-text {
+    color: rgba(239, 68, 68, 0.7);
+}
+.activity-approval_request {
+    background-color: rgba(245, 158, 11, 0.08);
+    border-color: rgba(245, 158, 11, 0.25);
+}
+.activity-approval_request .activity-bubble-text {
+    color: rgba(245, 158, 11, 0.8);
+}
+.activity-lifecycle_start {
+    background-color: rgba(139, 92, 246, 0.08);
+    border-color: rgba(139, 92, 246, 0.2);
+}
+.activity-lifecycle_start .activity-bubble-text {
+    color: rgba(139, 92, 246, 0.6);
+}
 
 /* -- Terminal blocks ---------------------------------------------------- */
 .terminal-block {
@@ -725,6 +775,8 @@ notebook > header > tabs > tab {
 .feed-card-task .feed-card-body { background: #3d3d1a; }
 .feed-card-system .feed-card-header { background: #3a3a3a; color: #b0b0b0; }
 .feed-card-system .feed-card-body { background: #2a2a2a; }
+.feed-card-audit .feed-card-header { background: #2d5a5a; color: #a8e6e6; }
+.feed-card-audit .feed-card-body { background: #1a3d3d; }
 
 /* Feed action buttons */
 .feed-btn-review,

@@ -173,7 +173,11 @@ def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool =
     # ── Bubble box: vertical stack of segments + optional role label ───
     bubble = Gtk.Box(
         orientation=Gtk.Orientation.VERTICAL,
-        css_classes=["chat-bubble-you" if role == "You" else "chat-bubble-agent"],
+        css_classes=[
+            "chat-bubble-System" if role == "System"
+            else "chat-bubble-you" if role == "You"
+            else "chat-bubble-agent"
+        ],
     )
     bubble.set_margin_top(1 if tight else 4)
     bubble.set_margin_bottom(4)

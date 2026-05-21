@@ -32,6 +32,7 @@ CardType = Literal[
     "agent_action",
     "task",
     "system",
+    "audit_report",
 ]
 
 # Supported sources
@@ -82,6 +83,7 @@ class FeedCardData:
             "agent_action": "feed-card-agent",
             "task": "feed-card-task",
             "system": "feed-card-system",
+            "audit_report": "feed-card-audit",
         }
         return mapping.get(card_type, "feed-card-system")
 

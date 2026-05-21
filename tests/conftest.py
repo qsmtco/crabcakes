@@ -71,3 +71,25 @@ def test_handlers_do_not_import_each_other():
                         violations.append(f"{os.path.basename(filepath)} imports ui.handlers.{imported}")
 
     assert violations == [], f"Handler coupling violations:\n  " + "\n  ".join(violations)
+
+
+@pytest.fixture
+def fake_glib():
+    """Provide a GLib-like object for handler tests that need it.
+    Provides timeout_add and source_remove with immediate execution (no delay).
+    """
+    class FakeGLib:
+        def timeout_add(self, *args, **kwargs):
+            return 1
+
+        def timeout_add_seconds(self, *args, **kwargs):
+            return 1
+
+        def source_remove(self, timer_id):
+            pass
+
+        def idle_add(self, fn, *args, **kwargs):
+            fn(*args)
+            return 1
+
+    return FakeGLib()
