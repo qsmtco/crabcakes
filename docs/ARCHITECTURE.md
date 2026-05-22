@@ -137,7 +137,8 @@ crabcakes/
     ├── git_ops.py              # GitPython wrapper — git add/commit/diff/checkout via GitResult (Phase 7)
     ├── prompt_loader.py         # System prompt template loader — loads/fills/composes prompts/system/*.md
     ├── quoting.py               # _parse_quoted_payload() — quoted-payload parsing with escape handling (A2A_QUOTED_PAYLOAD_SPEC)
-    └── icons.py               # Gdk.Texture SVG rendering (agent avatars + folder icons)
+    ├── icons.py               # Gdk.Texture SVG rendering (agent avatars + folder icons)
+    └── image_utils.py         # convert_logo_to_icons() — JPG to multi-size PNG conversion for app icons
 ```
 
 **Top-level packages and their rules:**

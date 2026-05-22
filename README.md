@@ -1,5 +1,7 @@
 <div align="center">
 
+![CrabCakes Logo](icons/256.png)
+
 # 🦀 CrabCakes
 
 ### The Project Development Environment
@@ -185,31 +187,11 @@ Your Coder agent configured with the GitHub MCP server gets `create_issue`, `sea
 
 *Spec: [`docs/proposals/PROPOSAL-mcp-client-integration.md`](docs/proposals/PROPOSAL-mcp-client-integration.md)*
 
-### 🧬 Self-Improving Agents
-
-A layered system where agents get progressively better through accumulated bug knowledge, project-specific rules, system-enforced verification, and autonomous prompt evolution. The natural output of a multi-agent adversarial review loop becomes the evolution signal.
-
-Nobody else is doing this. We're using the review loop itself as the fitness function.
-
-*Spec: [`docs/proposals/CODER_SELF_IMPROVEMENT_PROPOSAL.md`](docs/proposals/CODER_SELF_IMPROVEMENT_PROPOSAL.md)*
-
 ### 🏗️ Implementation Engine
 
 The task system becomes a deterministic build cycle: **PICK → BUILD → TEST → REVIEW → RECORD → repeat**. One agent or many, the engine runs the same way. Tasks are persisted to `.crabcakes/` and survive app restarts. Any agent can resume where another left off.
 
 *Spec: [`docs/proposals/PROPOSAL-implementation-engine.md`](docs/proposals/PROPOSAL-implementation-engine.md)*
-
-### 🎓 Project Onboarding
-
-When an agent first joins a new project, it interviews you — one or two questions at a time, conversationally — and writes the answers into `.crabcakes/` so all future sessions start with real context. No more cold starts.
-
-*Spec: [`docs/proposals/PROPOSAL-project-onboarding.md`](docs/proposals/PROPOSAL-project-onboarding.md)*
-
-### 👤 User-Defined Agents
-
-Create, edit, and delete local agents through the UI. Security Auditor, Documentation Writer, Test Engineer — spin one up in 30 seconds. Each agent gets its own YAML config: name, prompts, tools, LLM provider. Works offline with a local endpoint.
-
-*Spec: [`docs/proposals/PROPOSAL-user-defined-local-agents.md`](docs/proposals/PROPOSAL-user-defined-local-agents.md)*
 
 ---
 

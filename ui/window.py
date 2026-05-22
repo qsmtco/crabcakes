@@ -60,6 +60,9 @@ class MainWindow(Gtk.ApplicationWindow):
         super().__init__(application=application, title="Crabcakes")
         self.set_default_size(800, 600)
 
+        # Connect realize signal — set_icon_list requires a valid surface
+        self.connect("realize", self._on_realize)
+
         # Chat handler — owns message sending, fan-out, and response routing (Phase 1)
         self._chat_handler = None
         # Gateway handler — owns GatewayClient + AgentManager (Phase 2)
@@ -440,6 +443,22 @@ class MainWindow(Gtk.ApplicationWindow):
         self.set_child(main_box)
 
     # ── Keyboard shortcuts ───────────────────────────────────────────────────
+
+    def _set_window_icon(self):
+        """Set the window icon from the PNG icon set (GTK4 via GdkSurface approach)."""
+        icon_path = "/home/q/projects/crabcakes/icons/256.png"
+        surface = self.get_surface()
+        if surface is None:
+            return
+        try:
+            texture = Gdk.Texture.new_from_filename(icon_path)
+            surface.set_icon_list([texture])
+        except Exception as e:
+            logger.warning(f"Could not load window icon: {e}")
+
+    def _on_realize(self, widget):
+        """Called when the widget surface is created. Set the window icon here."""
+        self._set_window_icon()
 
     def _setup_keyboard_shortcuts(self):
         """Bind Shift+Enter in the input box to send."""
