@@ -1,8 +1,6 @@
 <div align="center">
 
-![CrabCakes Logo](icons/256.png)
-
-# 🦀 CrabCakes
+<img src="icons/256.png" alt="CrabCakes" style="border-radius: 24px;">
 
 ### The Project Development Environment
 
