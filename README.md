@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="icons/256.png" alt="CrabCakes" style="border-radius: 24px;">
+<img src="icons/256.png" alt="CrabCakes">
 
 ### The Project Development Environment
 
