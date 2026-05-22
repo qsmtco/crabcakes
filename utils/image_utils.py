@@ -24,17 +24,24 @@ def convert_logo_to_icons(jpg_path: str, output_dir: str) -> list[str]:
     sizes = [16, 32, 48, 64, 128, 256]
     outputs = []
 
+    def _add_white_background(img: Image.Image) -> Image.Image:
+        """Composite logo onto a solid white background."""
+        bg = Image.new("RGBA", img.size, (255, 255, 255, 255))  # white canvas
+        if img.mode != "RGBA":
+            img = img.convert("RGBA")
+        if img.mode in ("RGB", "RGBA") and img.size == bg.size:
+            bg.paste(img, (0, 0))  # paste uses alpha if RGBA
+        return bg
+
     def _add_rounded_corners(img: Image.Image, radius: int) -> Image.Image:
         """Add rounded corners to an image using an alpha mask.
 
         Mask: 0 = transparent (corners), 255 = opaque (body).
-        Uses direct pixel loop with circle equation — reliable, no PIL ellipse quirks.
+        Uses direct pixel loop with circle equation.
         """
-        img = img.convert("RGBA")
         w, h = img.size
         r = min(radius, min(w, h) // 2)
 
-        # Build mask: 255 = keep, 0 = cut (corner circle)
         mask = Image.new("L", (w, h), 255)
         for x in range(r):
             for y in range(r):
@@ -48,16 +55,15 @@ def convert_logo_to_icons(jpg_path: str, output_dir: str) -> list[str]:
         return img
 
     with Image.open(jpg_path) as img:
-        # Convert to RGBA (handles transparency + palette modes)
         if img.mode not in ("RGB", "RGBA"):
             img = img.convert("RGBA")
 
         for size in sizes:
             out_path = os.path.join(output_dir, f"{size}.png")
-            # High-quality resize using LANCZOS
+            # Resize, add white background, then round corners
             resized = img.resize((size, size), Image.LANCZOS)
-            # Add rounded corners — radius scales with size
-            rounded = _add_rounded_corners(resized, radius=max(2, size // 10))
+            with_bg = _add_white_background(resized)
+            rounded = _add_rounded_corners(with_bg, radius=max(2, size // 8))
             rounded.save(out_path, format="PNG")
             outputs.append(out_path)
             print(f"  Saved: {out_path}")
