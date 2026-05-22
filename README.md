@@ -3,11 +3,8 @@
 <img src="icons/256.png" alt="CrabCakes">
 
 ### The Project Development Environment
-
-**Not an AI chatbot. Not an IDE plugin. A new category of tool.**
-
 Your project has its own group chat. Your agents are team members.
-Your feed is the dashboard.
+Your social media style feed is the dashboard.
 
 [![GTK4](https://img.shields.io/badge/GTK4-native-blue)](https://docs.gtk.org/gtk4/)
 [![Python](https://img.shields.io/badge/Python-3.12-yellow)](https://www.python.org/)
