@@ -170,6 +170,82 @@ File tree in the left panel. Open any file, browse directories, see what's chang
 
 ---
 
+## 📚 Prompt Library
+
+Every template in your `prompts/` directory is one click away. Star the ones you reach for — they float to the top. Browse, search, filter. Click once to preview. **Double-click** to load into the input box, edit freely, then send. Variables like `{{PROJECT_NAME}}`, `{{TEAM}}`, and `{{GIT_STATE}}` fill automatically from your current project context.
+
+Last-used tracking means your most-fired prompts surface first. No hunting.
+
+## 🔎 Agent Discovery
+
+Connect to an OpenClaw gateway and CrabCakes pulls the full agent roster — every connected agent becomes a tab, ready to chat. Remote agents blend seamlessly into project group chats alongside your local Coder and Debugger. The split between local and remote is invisible to the user. It just works.
+
+## 👥 Membership Toggles
+
+Who do you need on this project? The Agents tab has +/− buttons for every agent. Add someone mid-sprint. Remove them when the work is done. Membership changes fan out immediately — the project group chat updates in real time, no restart, no reconfigure.
+
+## 🤝 Collaboration Commands
+
+The same command surface humans and agents use. Drop one of these into any chat and watch it route:
+
+- `` `ask @Debugger — is this edge case covered? `` → Debugger gets the ping, responds inline
+- `` `delegate @Coder — refactor the auth layer `` → work assigned, tracked
+- `` `stop @Coder `` → graceful halt
+- `` `tell @Coder — the spec changed, check the new ARCHITECTURE.md `` → context injection
+
+Agents see these commands the same way humans do. They respond the same way. The collaboration layer is uniform.
+
+## 🏗️ Custom Agent Builder
+
+Coder and Debugger are just the starting point. Drop a YAML file into `~/.config/crabcakes/agents/` and a new agent appears — with your choice of provider, model, system prompt role, emoji, color, and tool set. Or use the built-in Agent Builder UI to configure one visually. No code required. No fork needed. Agents load at startup, no restart.
+
+## 🏷️ Feed Card Taxonomy
+
+Every event in the project feed is a card — typed, structured, scannable. Eleven types, each with a distinct visual signature:
+
+| Card | What it signals |
+|------|----------------|
+| `git_commit` | Agent committed a change — shows message + author |
+| `diff` | File edited — +/− counts, full unified diff, one-click review |
+| `file_created` | New file landed in the project |
+| `file_modified` | Existing file touched |
+| `file_deleted` | Something was removed |
+| `dir_created` | Directory added |
+| `dir_deleted` | Directory removed |
+| `task` | Created, started, completed, or blocked |
+| `agent_action` | Consultation opened/closed, key decision logged |
+| `audit_report` | Post-write enforcement result — syntax, test, lint verdict |
+| `system` | Lifecycle events — connect, disconnect, agent join |
+
+Agents emit cards. You read the feed. Nothing slips through.
+
+## 📂 Project Creation & Onboarding
+
+New project? Create it from the sidebar. It scaffolds `AGENTS.md` and `.crabcakes/` for you. From that point on, every time you open it, the system builds context automatically:
+
+- Scans all project files (respecting `.gitignore`), caps at ~50K characters
+- Loads `prompts/system/{role}.md` for each agent's role template
+- Injects `.crabcakes/` documentation into every context window
+- If `.crabcakes/agent-system-prompt.md` exists, it overrides the default — fully custom per-project instructions
+- Falls back to the project's own `AGENTS.md` if no custom prompt is found
+
+Agents don't start cold. They start knowing your codebase.
+
+## 🎨 Pango Markup Rendering
+
+Chat messages pass through a two-stage render pipeline: `escape_for_pango()` first (XML-aware, preserves known Pango tags, rejects anything else), then `format_markdown()` which converts inline markdown to GTK Pango Markup:
+
+- `**bold**` → `<b>bold</b>`
+- `*italic*` → `<i>italic</i>`
+- `` `code` `` → `<tt>code</tt>`
+- `~~strike~~` → `<s>strike</s>`
+- `[text](url)` → clickable `<a href="url"><u>text</u></a>`
+- Bare URLs → auto-linked
+
+Output is safe, structured, and native GTK — no HTML iframe, no webview, no sanitization theatre.
+
+---
+
 ## 🚀 Coming Soon
 
 These features are designed, specified, and ready to build:
