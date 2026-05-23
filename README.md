@@ -231,6 +231,20 @@ New project? Create it from the sidebar. It scaffolds `AGENTS.md` and `.crabcake
 
 Agents don't start cold. They start knowing your codebase.
 
+**The Onboarding Flow**
+
+When Coder or Debugger first touches a new project, it detects an empty manifest (`project.md` still a skeleton of HTML comments, `context.md` blank) and triggers an onboarding interview — defined entirely in `prompts/system/project-onboarding.md`, not in code. Edit the template to change the experience.
+
+The interview asks one or two questions at a time, conversationally. It never blocks work — if you say "skip it, help me with this," it helps and circles back. After the interview, it writes answers back to `project.md` (`Purpose`, `Stack`, `Entry Points`, `Conventions` sections) and appends a dated entry to `context.md`.
+
+Once `project.md` has real content, the onboarding template stops loading automatically. The system prompt composition order:
+
+1. `default.md`
+2. `project-awareness.md` (if project active)
+3. `project-onboarding.md` (if project active AND not yet onboarded)
+4. `code-review.md` (if review mode on)
+5. Role template — `coder.md` / `debugger.md` / etc.
+
 ## 🎨 Pango Markup Rendering
 
 Chat messages pass through a two-stage render pipeline: `escape_for_pango()` first (XML-aware, preserves known Pango tags, rejects anything else), then `format_markdown()` which converts inline markdown to GTK Pango Markup:
