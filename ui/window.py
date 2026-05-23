@@ -446,7 +446,8 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _set_window_icon(self):
         """Set the window icon from the PNG icon set (GTK4 via GdkSurface approach)."""
-        icon_path = "/home/q/projects/crabcakes/icons/256.png"
+        from pathlib import Path
+        icon_path = str(Path(__file__).resolve().parent.parent / "icons" / "256.png")
         surface = self.get_surface()
         if surface is None:
             return

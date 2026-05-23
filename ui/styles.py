@@ -237,7 +237,9 @@ button.lib-fav-star {
 
 /* -- Chat bubbles (Phase 1) --------------------------------------------- */
 .chat-bubble-agent {
-    background: rgba(255, 255, 255, 0.07);
+    background: linear-gradient(135deg,
+        rgba(34, 197, 94, 0.70) 0%,
+        rgba(255, 255, 255, 0.20) 100%);
     border-radius: 12px 12px 12px 4px;
     padding: 6px 10px 8px 10px;
     margin: 2px 12px 2px 8px;
@@ -308,7 +310,9 @@ notebook > header > tabs > tab {
     color: #707088;
 }
 .chat-bubble-you {
-    background: rgba(99, 102, 241, 0.22);
+    background: linear-gradient(135deg,
+        rgba(99, 102, 241, 0.40) 0%,
+        rgba(79, 85, 210, 0.12) 100%);
     border-radius: 12px 12px 4px 12px;
     padding: 6px 10px 8px 10px;
     margin: 2px 8px 2px 12px;
@@ -364,12 +368,17 @@ notebook > header > tabs > tab {
     color: #7aa2f7;
     font-family: monospace;
 }
+.code-lang-label {
+    letter-spacing: 0;
+    font-size: 11px;
+    font-weight: bold;
+}
 .code-copy-btn {
     background: transparent;
     color: #565f89;
     border: none;
     border-radius: 4px;
-    padding: 1px 6px;
+    padding: 0;
     font-size: 11px;
 }
 .code-copy-btn:hover {
@@ -433,25 +442,39 @@ notebook > header > tabs > tab {
     font-size: 0.82em;
     letter-spacing: 0.02em;
 }
-.activity-tool_start .activity-bubble-text {
-    color: rgba(255, 255, 255, 0.50);
+.activity-tool_start {
+    border-left: 3px solid #3b82f6;
 }
-.activity-tool_end .activity-bubble-text {
-    color: rgba(255, 255, 255, 0.35);
+.activity-tool_end {
+    border-left: 3px solid #22c55e;
+}
+.activity-tool_error {
+    border-left: 3px solid #ef4444;
 }
 .activity-tool_error .activity-bubble-text {
     color: rgba(239, 68, 68, 0.7);
 }
+.activity-plan {
+    border-left: 3px solid #6366f1;
+}
+.activity-command_output {
+    border-left: 3px solid #94a3b8;
+}
+.activity-patch {
+    border-left: 3px solid #a855f7;
+}
 .activity-approval_request {
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    border-left: 3px solid #f59e0b;
     background-color: rgba(245, 158, 11, 0.08);
-    border-color: rgba(245, 158, 11, 0.25);
 }
 .activity-approval_request .activity-bubble-text {
     color: rgba(245, 158, 11, 0.8);
 }
 .activity-lifecycle_start {
+    border: 1px solid rgba(139, 92, 246, 0.2);
+    border-left: 3px solid #6366f1;
     background-color: rgba(139, 92, 246, 0.08);
-    border-color: rgba(139, 92, 246, 0.2);
 }
 .activity-lifecycle_start .activity-bubble-text {
     color: rgba(139, 92, 246, 0.6);

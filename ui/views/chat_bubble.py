@@ -277,7 +277,7 @@ def _build_code_from_markup(lang: str, code_markup: str, raw_content: str) -> Gt
     header, _ = _make_block_header(
         lang or "code",
         raw_content,
-        "code-header",
+        "code-block-header",
     )
     outer.append(header)
 
@@ -469,9 +469,10 @@ def _make_block_header(
     header.add_css_class(header_css)
 
     label = Gtk.Label()
-    label.set_text(label_text)
+    label.set_text(f"\u2007{label_text}")  #   = figure space ≈ 1 char width
     label.set_xalign(0)
     label.set_hexpand(True)
+    label.add_css_class("code-lang-label")
 
     copy_btn = Gtk.Button(label="Copy")
     copy_btn.add_css_class(copy_btn_css)
