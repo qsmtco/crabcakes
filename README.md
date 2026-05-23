@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="icons/logo10.png" alt="CrabCakes">
+<img src="icons/logo11.png" alt="CrabCakes">
 
 ### The Project Development Environment
 Your project has its own group chat. Your agents are team members.
