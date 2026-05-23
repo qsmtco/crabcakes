@@ -2,7 +2,7 @@
 
 <img src="icons/logo11.png" alt="CrabCakes">
 
-### The Project Development Environment
+### Project Development Environment
 Your project has its own group chat. Your agents are team members.
 Your social media style feed is the dashboard.
 
@@ -17,9 +17,9 @@ Your social media style feed is the dashboard.
 
 ## What is it?
 
-CrabCakes is a native Linux desktop app that reimagines software development as a team sport — where some of your teammates happen to be AI agents.
+CrabCakes is a native Linux desktop app that reimagines software development as a group chat — where some of your teammates happen to be AI agents.
 
-Open a project. The team assembles. You type a message, it fans out to everyone. Agents respond, collaborate, write code, review each other's work — and you see all of it happen in real time. You're the manager. They're the team. The project is the chat.
+Open a project. Assign the team of Agents. You type a message, it fans out to everyone. Agents respond, collaborate, write code, review each other's work — and you see all of it happen in real time in the social media style Project Feed.
 
 **It runs standalone.** Two built-in coding agents — Coder and Debugger — work locally on your machine with full file access and shell execution. No cloud, no account, no API key required to start. Connect to [OpenClaw](https://github.com/openclaw/openclaw) and your remote agents join seamlessly — but you don't have to.
 
