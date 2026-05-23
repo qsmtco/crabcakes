@@ -246,6 +246,61 @@ Output is safe, structured, and native GTK — no HTML iframe, no webview, no sa
 
 ---
 
+## 🧠 Self-Improvement System
+
+Coder learns. Not metaphorically — structurally. The self-improvement system is a five-layer feedback engine that makes Coder measurably better every time it gets something wrong.
+
+### Layer 1 — Bug Journal
+
+Every mistake Coder makes is recorded in `.crabcakes/coder-bugs.md` — a per-project, git-tracked journal. Each entry captures the bug, the root cause, the fix, and the lesson. This isn't a generic pitfalls list. It's Coder's actual scar tissue.
+
+Format:
+```markdown
+## Bug #7 — 2026-05-18 — watcher.py
+**Task:** Fix moved event detection in DebouncedHandler
+**Mistake:** Used `if dest_path is not None` — MagicMock objects are always truthy
+**Fix:** Changed to `isinstance(dest_path, str) and dest_path`
+**Pattern:** mock-truthiness
+```
+
+This file is injected into Coder's system prompt at the start of every task. The pattern tags (`mock-truthiness`, `sed-overmatch`, `partial-test-run`) are the seed data that upper layers consume.
+
+### Layer 2 — Project Rules
+
+Like Claude Code's `CLAUDE.md` — a per-project rules file that tells Coder how this specific codebase is wired. Python version, venv activation, test naming conventions, known gotchas. Injected alongside the bug journal so Coder starts every session knowing the terrain.
+
+### Layer 3 — Auto-Test Enforcement
+
+Not a prompt request. A structural guarantee. After Coder writes any `.py` file, the system automatically finds and runs the associated test file, injects the result into Coder's tool output, and forces a response before the task can close. Coder physically cannot forget to run tests. Infrastructure enforces what prompts cannot.
+
+### Layer 4 — Structured Feedback Protocol
+
+When a reviewer finds a bug, the report follows a machine-parseable format:
+
+```
+## Audit Report
+**File:** install.sh:57
+**Severity:** bug
+**Bug:** sed replaces all "python3" including inside venv path
+**Pattern:** sed-overmatch
+```
+
+This format auto-populates the bug journal, appends to the review log (`.crabcakes/review-log.jsonl`), and feeds directly into Layer 5. Feedback becomes a data artifact, not a conversation that scrolls away.
+
+### Layer 5 — Dream Consolidation
+
+The system runs a nightly autonomous cycle during idle time. It reads the accumulated bug journal, review log, and recent session data, identifies patterns across reviews, and evolves Coder's prompts accordingly:
+
+- Recurring `mock-truthiness` bugs → new Common Pitfall entry in `coder.md`
+- Repeated `sed-overmatch` → new gotcha in `coder-rules.md`
+- Resolved patterns → archived, not deleted
+
+Proposed changes to `coder.md` require human approval. Project rules and bug journal updates apply automatically. The system gets smarter while everyone sleeps.
+
+**Research basis:** This system draws from OpenAI's self-evolving agents cookbook (grade → meta-prompt → rewrite), Imbue's Darwinian evolver (failure-driven mutations outperform random perturbation by 2–3x), and VILA-Lab's finding that 98.4% of a capable agent is deterministic infrastructure, not the model itself.
+
+---
+
 ## 🚀 Coming Soon
 
 These features are designed, specified, and ready to build:
