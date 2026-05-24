@@ -921,6 +921,38 @@ notebook > header > tabs > tab {
     font-style: italic;
     padding: 8px;
 }
+
+/* -- Inline chat images ----------------------------------------------- */
+.chat-image {
+    border-radius: 8px;
+    margin: 4px 0;
+}
+.chat-image:hover {
+    filter: brightness(1.1);
+}
+
+/* -- Welcome bubble -------------------------------------------------- */
+.welcome-bubble {
+    border-radius: 12px;
+    background: linear-gradient(135deg, rgba(20, 74, 127, 0.5), rgba(70, 25, 80, 0.4));
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 14px 20px;
+    margin: 6px 0;
+    min-width: 180px;
+}
+.welcome-bubble-title {
+    font-size: 1.0em;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.88);
+}
+.welcome-tagline {
+    font-size: 0.82em;
+    color: rgba(255, 255, 255, 0.5);
+    margin-top: 4px;
+    letter-spacing: 0.03em;
+}
+.welcome-logo {
+}
 """
 
 

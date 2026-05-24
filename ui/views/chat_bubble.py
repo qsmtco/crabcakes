@@ -1,8 +1,9 @@
 # ui/views/chat_bubble.py
 # Chat bubble widget factories — Phase 1 (inline) + Phase 2 (block-level).
 #
-# Security: No secrets, no file I/O, no network calls.
+# Security: No secrets, no network calls.
 # Pure GTK widget construction; no GTK calls until after app activation.
+# Image blocks use os.path.isfile() for validation and subprocess for click-to-open.
 #
 # Public API:
 #   build_role_bubble(role, text) -> Gtk.Widget
@@ -27,6 +28,8 @@
 #   container Gtk.Box that sets alignment via halign.
 #   CSS classes: .chat-bubble-you  /  .chat-bubble-agent
 
+import os
+
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Pango', '1.0')
@@ -42,6 +45,18 @@ from utils.crabcard_parser import is_crabcards_placeholder, get_placeholder_inde
 # Maps card_index → (FeedCardData, on_tab_switch callback)
 _crabcards_registry: dict[int, tuple] = {}
 from utils.syntax_highlight import highlight
+
+
+def _open_in_viewer(file_path: str) -> None:
+    """Open file_path in the system's default image viewer."""
+    import subprocess, shutil
+    if not os.path.isfile(file_path):
+        return
+    opener = shutil.which("xdg-open") or shutil.which("open") or "xdg-open"
+    try:
+        subprocess.Popen([opener, file_path])
+    except Exception:
+        pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -128,13 +143,20 @@ def _process_text_chunk(text_chunk: str, processed: list) -> None:
             if seg_type == "code":
                 lang = seg.get("lang", "")
                 raw = seg.get("content", "")
-                code_markup = highlight(raw, lang)
-                processed.append({
-                    "type": "code",
-                    "code_markup": code_markup,
-                    "lang": lang,
-                    "raw_content": raw,
-                })
+                if lang == "image":
+                    # Image block — path is the content, no syntax highlighting
+                    processed.append({
+                        "type": "image",
+                        "file_path": raw.strip(),
+                    })
+                else:
+                    code_markup = highlight(raw, lang)
+                    processed.append({
+                        "type": "code",
+                        "code_markup": code_markup,
+                        "lang": lang,
+                        "raw_content": raw,
+                    })
             else:
                 # quote, terminal, heading, task — pass through raw content
                 processed.append({
@@ -251,6 +273,12 @@ def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool =
             block = _build_code_from_markup(lang, code_markup, raw_content)
             if block is not None:
                 bubble.append(block)
+        elif seg_type == "image":
+            # Build image block — same container as code block, image instead of text
+            file_path = pseg.get("file_path", "")
+            block = _build_image_block(file_path)
+            if block is not None:
+                bubble.append(block)
         else:
             # quote, terminal, heading, task — use original segment builders
             seg_dict = {"type": seg_type, "content": pseg.get("content", "")}
@@ -294,6 +322,44 @@ def _build_code_from_markup(lang: str, code_markup: str, raw_content: str) -> Gt
     code_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
 
     content.append(code_label)
+    outer.append(content)
+    return outer
+
+
+def _build_image_block(file_path: str) -> Gtk.Widget | None:
+    """Build an image block widget — same container as code blocks, image instead of text.
+
+    Uses the same code-block header (shows 'image') and content area structure.
+    Content area contains a Gtk.Image instead of syntax-highlighted text.
+    Click to open in system viewer.
+    """
+    if not file_path or not os.path.isfile(file_path):
+        return None
+
+    outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    outer.add_css_class("code-block")
+
+    header, _ = _make_block_header(
+        "image",
+        file_path,
+        "code-block-header",
+    )
+    outer.append(header)
+
+    # Content box — same style as code blocks
+    content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    content.add_css_class("code-block-content")
+
+    img = Gtk.Image.new_from_file(file_path)
+    img.add_css_class("chat-image")
+    img.set_size_request(-1, 280)
+    img.set_tooltip_text(os.path.basename(file_path))
+    # Click to open in system viewer
+    controller = Gtk.GestureClick()
+    controller.connect("pressed", lambda _c, _n, _x, _y: _open_in_viewer(file_path))
+    img.add_controller(controller)
+
+    content.append(img)
     outer.append(content)
     return outer
 
@@ -815,6 +881,47 @@ def _copy_to_clipboard(text: str):
         return
     clipboard = display.get_clipboard()
     clipboard.set(text)
+
+
+def build_welcome_bubble() -> Gtk.Widget | None:
+    """Build a centered logo bubble shown at the bottom of new chat tabs.
+
+    Shows the CrabCakes logo with rounded corners. Scrolled away naturally
+    as messages arrive. Returns None if the logo file is not found.
+    """
+    logo_path = "/home/q/projects/crabcakes/icons/logo-rounded.png"
+    if not os.path.isfile(logo_path):
+        return None
+    try:
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        outer.set_halign(Gtk.Align.CENTER)
+        outer.set_valign(Gtk.Align.END)
+        outer.set_hexpand(False)
+        outer.add_css_class("welcome-bubble")
+        outer.set_margin_top(20)
+        outer.set_margin_bottom(20)
+        outer.set_spacing(4)
+
+        # Logo with rounded corners applied directly to the image widget
+        icon = Gtk.Image.new_from_file(logo_path)
+        icon.set_pixel_size(144)
+        icon.add_css_class("welcome-logo")
+        icon.set_margin_bottom(6)
+
+        title = Gtk.Label(label="Crabcakes")
+        title.add_css_class("welcome-bubble-title")
+        title.set_halign(Gtk.Align.CENTER)
+
+        tagline = Gtk.Label(label="Project Development Environment")
+        tagline.add_css_class("welcome-tagline")
+        tagline.set_halign(Gtk.Align.CENTER)
+
+        outer.append(icon)
+        outer.append(title)
+        outer.append(tagline)
+        return outer
+    except Exception:
+        return None
 
 
 def html_escape(text: str) -> str:

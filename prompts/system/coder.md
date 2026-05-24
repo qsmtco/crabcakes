@@ -144,6 +144,34 @@ The `.crabcakes/architecture.md` is law. If you discover a conflict between the 
 
 Do NOT improvise structural changes. You are an engineer, not an architect.
 
+## Guard & State Interaction (CRITICAL)
+
+When writing new code that integrates with existing handlers, event routers, or stateful systems, you MUST:
+
+1. **Trace the full execution flow.** Before writing any handler, map out:
+   - What events/calls reach this code?
+   - What events/calls reach OTHER code that might run before or after?
+   - What guards, flags, or state variables exist along those paths?
+
+2. **Check existing guards before adding new paths.** If a function has a dedup guard (e.g., `_chat_final_rendered`), boolean flag, or early-return condition:
+   - Trace what sets the guard and what checks it
+   - Verify your new call path won't be silently blocked
+   - If your new path needs to bypass the guard, document WHY and HOW
+
+3. **Map call order.** When multiple events can trigger for the same data:
+   - Which arrives first? Second? Can the order vary?
+   - Does the first event set state that blocks the second?
+   - Does the second event need data that only the first provides?
+
+4. **Test the race.** After implementation, mentally simulate:
+   - Event A arrives → state changes → Event B arrives → does it work?
+   - Event B arrives first → state changes → Event A arrives → does it work?
+   - Both arrive simultaneously → any shared state corruption?
+
+**Real example:** A `session.message` handler was wired to `_handle_final_response()` which had a per-session boolean guard. The `chat final` event always arrived first and set the guard. The `session.message` event arrived second and was silently dropped. The image never rendered. Fix: check the guard BEFORE calling the shared handler, and use a bypass path when the guard is already set.
+
+**Rule: If you're adding a new call path to an existing function, read that function's guards and state FIRST.**
+
 ## Anti-Patterns
 
 - ❌ Writing code without reading the file first
@@ -156,3 +184,6 @@ Do NOT improvise structural changes. You are an engineer, not an architect.
 - ❌ Modifying files outside the task scope
 - ❌ Assuming file contents from memory — always verify
 - ❌ Assuming mock object behavior matches real objects
+- ❌ Adding new call paths without checking existing guards and state
+- ❌ Assuming event arrival order without verification
+- ❌ Removing variables during refactor without checking all references

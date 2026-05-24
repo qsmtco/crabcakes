@@ -343,6 +343,12 @@ class MainContent(Gtk.Box):
         if vadj is not None:
             vadj.connect("value-changed", self._on_vadjustment_changed, page_idx)
         self._chat_notebook.set_current_page(page_idx)
+        # Welcome bubble — centered logo at bottom of new chat tabs.
+        # Scrolled away naturally as messages arrive.
+        from ui.views.chat_bubble import build_welcome_bubble
+        welcome = build_welcome_bubble()
+        if welcome is not None:
+            chat_box.append(welcome)
         return page_idx
 
     def _on_notebook_switch_page(self, notebook, _page, page_num):
