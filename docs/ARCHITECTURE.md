@@ -354,7 +354,7 @@ apply_styles()  # Call once at startup, before any windows are created
 **Project group chat state:**
 ```python
 self._active_project_name = None   # set when a project tab is opened
-self._agent_to_project = AgentRoutingTable()  # shared with ProjectHandler (writes) and ChatHandler (reads)
+self._agent_to_project = AgentRoutingTable()  # shared with ProjectHandler (writes), ChatHandler (reads), and ActivityHandler (via set_agent_routing())
 ```
 
 **Phase 4 (MediaHandler) wiring:** `_media_handler` created and wired in `_build()`:
@@ -523,10 +523,10 @@ New state variables:
 
 New methods:
 - `_buffer_assistant_text(session_key, text)`: callback target for ActivityHandler's `set_on_assistant_buffer()` — populates `_assistant_text_buffer`
-- `_clear_render_guard(session_key)`: callback target for ActivityHandler's `set_on_agent_start()` — clears `_chat_final_rendered` so subsequent responses render
-- `_handle_lifecycle_completed(session_key, text)`: fallback render path — called when ActivityHandler fires lifecycle end/error but no chat final has rendered; renders buffered assistant text via `_handle_final_response()` guarded by `_chat_final_rendered`
+- `_clear_render_guard(session_key)`: callback target for ActivityHandler's `set_on_agent_start()` — clears `_chat_final_rendered` so subsequent responses render. Receives RAW `session_key` from the gateway event (not resolved via `_active_session()`).
+- `_handle_lifecycle_completed(session_key, text)`: fallback render path — called when ActivityHandler fires lifecycle end/error but no chat final has rendered; resolves project tab via `agent_to_project` routing table (same pattern as `on_chat_event`), then renders buffered assistant text via `_handle_final_response()` with resolved `target_tab` and original `session_key`. Guarded by `_chat_final_rendered`.
 - `_render_activity_bubble(bubble)`: called by ActivityHandler via `set_on_activity_bubble()` — dispatches to `_render_activity_bubble_impl` on main thread. Activity bubbles are NOT guarded by `_chat_final_rendered`.
-- `_render_activity_bubble_impl(session_key, text)`: thread-unsafe internal render — calls `render_sync(role="System", text=..., tight=True)`, appends to chat box, scrolls.
+- `_render_activity_bubble_impl(session_key, text)`: thread-unsafe internal render — resolves project tab via `agent_to_project` routing table when no direct tab exists, then calls `render_sync(role="System", text=..., tight=True)`, appends to chat box, scrolls.
 
 **Architecture:** ChatHandler owns all render decisions. ActivityHandler only tracks state. The lifecycle-completed callback is the fallback path when the gateway sends `stream=assistant` text but the corresponding `chat final` event carries no message body. The render guard is cleared when a new agent round starts (lifecycle phase=start) so that multiple responses per session work correctly. Activity bubbles are separate from the conversation message flow — they don't interact with `_chat_final_rendered`.
 
@@ -1645,6 +1645,9 @@ Public setters for the recovery callbacks:
 set_on_assistant_buffer(cb)                     # cb(session_key, text) — forward each assistant delta
 set_on_lifecycle_completed(cb)                 # cb(session_key, text) — lifecycle end/error fires this; ChatHandler renders fallback
 set_on_activity_bubble(cb)                     # cb(ActivityBubble) — tool/plan/approval/command_output/patch events; Phase 2 of SPEC-smarter-chat-ux
+set_on_agent_start(cb)                          # cb(session_key) — clears ChatHandler render guard for next round. Receives RAW session_key from the gateway event (the agent key), not _active_session() key.
+set_agent_routing(routing_table)                # Injected by window.py._build(). Enables _is_ui_active() to resolve project tabs for agent session keys.
+```
 
 **Activity Bubbles (Phase 2 of SPEC-smarter-chat-ux):**
 
@@ -1657,16 +1660,14 @@ ActivityHandler fires `_activity_bubble_callback` for each gateway event that wa
 - `stream=command_output phase=end` → 💻 {name}: exit {exitCode} ({durationMs}ms)
 - `stream=patch phase=end` → ✏️ {name}: +{added} ~{modified} -{deleted} files
 
-Architecture: ActivityHandler only creates ActivityBubble dataclass instances and fires the callback. ChatHandler owns all rendering decisions — `_render_activity_bubble()` calls `_render_activity_bubble_impl()` which calls `render_sync(role="System", text=...)`.set_on_agent_start(cb)                          # cb(session_key) — clears ChatHandler render guard for next round
-set_on_activity_bubble(cb)                      # cb(ActivityBubble, target_tab) — fires for tool/plan/approval/command_output/patch events; ChatHandler renders activity bubble
-```
+Architecture: ActivityHandler only creates ActivityBubble dataclass instances and fires the callback. ChatHandler owns all rendering decisions — `_render_activity_bubble()` calls `_render_activity_bubble_impl()` which calls `render_sync(role="System", text=...)`.
 
 Activity bubbles (Phase 2 of SPEC-smarter-chat-ux):
 - `on_gateway_event()` parses `stream` values `tool`, `plan`, `approval`, `command_output`, `patch`
 - Constructs `ActivityBubble` (from `models/activity.py`) and fires the callback
 - ChatHandler's `render_activity_bubble()` renders via `ChatRenderHandler.render_activity()`
-- Tab routing uses `agent_to_project` (AgentRoutingTable) passed via constructor
-- Lazy import of `models.activity` inside method body to avoid circular deps
+
+Tab routing uses `agent_to_project` (AgentRoutingTable). In ChatHandler this is passed via constructor; in ActivityHandler it's injected via `set_agent_routing(routing_table)`. Lazy import of `models.activity` inside method body to avoid circular deps.
 
 **Two-phase progress tracking:**
 - Phase 1 (send-initiated): Time-driven progress bar — on_send_initiated starts 30s timer
