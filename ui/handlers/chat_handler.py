@@ -207,8 +207,11 @@ class ChatHandler:
         if self._chat_final_rendered.get(session_key):
             return
         _logger.info("[fallback] Rendering fallback for session=%r (lifecycle ended)", session_key)
-        # Determine the tab for this session — use the session key's agent prefix.
-        target_tab = session_key
+        # Resolve the project tab for this agent (mirrors on_chat_event routing).
+        project_name = None
+        if self._agent_to_project is not None:
+            project_name = self._agent_to_project.get_project(session_key)
+        target_tab = f"project:{project_name}" if project_name else session_key
         self._dispatch(lambda t=target_tab, sk=session_key, txt=buffered_text: (
             self._handle_final_response(t, sk, txt)
         ))

@@ -380,6 +380,82 @@ class TestChatHandlerActivityBubbleRender:
         handler._render_activity_bubble_impl("agent:unknown", "search", "tool_start")
         handler._chat_render_handler.render_activity.assert_not_called()
 
+    def test_lifecycle_fallback_routes_to_project_tab(self, fake_glib):
+        """Lifecycle fallback resolves to project tab when agent has no direct tab."""
+        from ui.handlers.chat_handler import ChatHandler
+
+        class FakeRouting:
+            def get_project(self, sk):
+                return "crabwatch" if sk == "agent:qaster" else None
+        
+        routing = FakeRouting()
+        mock_project_chat_box = MagicMock()
+        mock_mc = MagicMock()
+        mock_mc.get_chat_box_for_session = lambda sk: (
+            mock_project_chat_box if sk == "project:crabwatch" else None
+        )
+        mock_mc.get_current_session_key = MagicMock(return_value="project:crabwatch")
+
+        handler = ChatHandler(
+            main_content=mock_mc,
+            gateway_client=MagicMock(),
+            agent_to_project=routing,
+            projects_module=MagicMock(),
+            GLib_module=fake_glib,
+        )
+
+        fake_render = MagicMock()
+        fake_render.is_streaming.return_value = False
+        fake_render.render_sync.return_value = MagicMock()
+        handler._chat_render_handler = fake_render
+
+        # Fire lifecycle fallback: agent key "agent:qaster" has project "crabwatch"
+        handler._handle_lifecycle_completed("agent:qaster", "Response text from fallback")
+
+        # Should have called _handle_final_response with project:crabwatch tab
+        fake_render.render_sync.assert_called_once()
+        mock_project_chat_box.append.assert_called_once()
+
+    def test_is_ui_active_resolves_project_tab_for_agent(self, fake_glib):
+        """_is_ui_active returns True when active tab is the project tab for the agent."""
+        from ui.handlers.activity_handler import ActivityHandler
+
+        class FakeRouting:
+            def get_project(self, sk):
+                return "crabwatch" if sk == "agent:qaster" else None
+        
+        routing = FakeRouting()
+        mc = MagicMock()
+        mc.get_current_session_key = MagicMock(return_value="project:crabwatch")
+
+        ah = ActivityHandler(feedbar=MagicMock(), main_content=mc, GLib_module=fake_glib)
+        ah.set_agent_routing(routing)
+
+        # Agent key belongs to active project tab → considered active
+        assert ah._is_ui_active("agent:qaster") is True
+        # Agent key has no project routing → not active
+        assert ah._is_ui_active("agent:unknown") is False
+        # Direct tab match still works
+        assert ah._is_ui_active("project:crabwatch") is True
+        # None is always active
+        assert ah._is_ui_active(None) is True
+
+    def test_is_ui_active_no_routing_table(self, fake_glib):
+        """Without routing table, _is_ui_active falls back to direct key comparison."""
+        from ui.handlers.activity_handler import ActivityHandler
+
+        mc = MagicMock()
+        mc.get_current_session_key = MagicMock(return_value="project:crabwatch")
+
+        ah = ActivityHandler(feedbar=MagicMock(), main_content=mc, GLib_module=fake_glib)
+        # No routing table set
+        ah._agent_to_project = None
+
+        # Agent key → project tab (no routing table to resolve it)
+        assert ah._is_ui_active("agent:qaster") is False
+        # Direct match still works
+        assert ah._is_ui_active("project:crabwatch") is True
+
 
 class TestSystemBubbleCSS:
     """System bubbles get the .chat-bubble-System CSS class."""

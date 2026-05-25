@@ -154,6 +154,13 @@ class ActivityHandler:
         """
         self._activity_bubble_callback = cb
 
+    def set_agent_routing(self, routing_table) -> None:
+        """Inject AgentRoutingTable. Called by window.py._build().
+
+        Used by _is_ui_active to resolve project tabs for agent session keys.
+        """
+        self._agent_to_project = routing_table
+
     def on_send_initiated(self, session_key: str):
         """Send button pressed — enter pre-flight (sending) state with 30s timeout.
 
@@ -385,11 +392,23 @@ class ActivityHandler:
 
         Used to guard state transitions — if the UI is showing a different tab
         than the one this event belongs to, we skip the update (deadcode pattern).
+
+        When the active tab is a project tab and the event belongs to an agent
+        that is a member of that project, we resolve the agent key to the project
+        tab key so the state transition is not incorrectly skipped.
         """
         if session_key is None:
             return True
         active = self._active_session()
-        return active is None or session_key == active
+        if active is None or session_key == active:
+            return True
+        # Resolve project tab for agent key — if the active tab is the project
+        # tab for this agent, consider it active.
+        if self._agent_to_project is not None:
+            project_name = self._agent_to_project.get_project(session_key)
+            if project_name is not None and f"project:{project_name}" == active:
+                return True
+        return False
 
     def _set_state(self, state: str, session_key: str | None):
         """Transition to a new state, cleaning up old timers and starting new ones."""
