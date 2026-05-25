@@ -123,6 +123,7 @@ crabcakes/
 │
 └── utils/                     # Pure Python utilities — no GTK, no network
     ├── __init__.py
+    ├── config.py                 # config path helpers (Phase 7)
     ├── escaping.py             # escape_for_pango(), xml_escape_text() — Pango-aware XML escape
     ├── markdown.py             # format_markdown() — inline markdown → Pango Markup
     ├── prompts.py             # load_prompts() — reads .md from prompts/
@@ -1397,7 +1398,7 @@ class AgentRuntimeHandler:
     def __init__(GLib, main_content, chat_handler, project_handler)
     def start() / def stop()
     def is_running() -> bool
-    def create_agent_tab(agent_name, model=None) -> str      # creates conversation + chat tab
+    def send_to_special_agent(session_key, text)              # routes through AgentRuntime, not gateway
     def send_message(session_key, text)
     def cancel(session_key)
     def approve_exec(session_key, tool_name, args, approved)  # PM Allow/Deny callback
@@ -1406,7 +1407,6 @@ class AgentRuntimeHandler:
     def restore_conversations()                                # reload saved from disk on startup
     def get_special_agents() -> dict[str, str]                # {session_key: display_name} for routing
     def get_special_agent_def(session_key) -> SpecialAgentDef | None
-    def send_to_special_agent(session_key, text)              # routes through AgentRuntime, not gateway
 ```
 
 **Callback wiring:** All callbacks dispatch to GTK via `GLib.idle_add()`. `on_enforcement_status` is wired into per-agent runtimes for observability logging. `_on_tool_call_approval_needed` currently logs the approval request — the Allow/Deny card UI is not yet wired to a PM-clickable action.
@@ -1429,11 +1429,11 @@ class MCPServerConfig:
     enabled: bool = True
 ```
 
-**Config file search order:**
-1. Agent-specific: `~/.openclaw/agents/<agent>/mcp-servers.json`
-2. Project root: `<workspace>/.config/crabcakes/mcp-servers.json`
-3. User-wide: `~/.config/crabcakes/mcp-servers.json`
-4. Default fallback: `mcp_servers.default` - `{"memory": {...}}`
+**Config location (actual code):**
+- `get_mcp_servers_path()` returns `~/.config/crabcakes/mcp-servers.json` (exact path: see `utils/mcp_config.py:87`)
+- `os.path.expanduser("~")/.config/crabcakes/mcp-servers.json`
+
+**Rationale:** Single config file keeps MCP registration explicit and user-scoped. Projects can extend via `mcp_servers` field in agent definitions; servers are added/removed via config edits or future UI.
 
 **Validation rules (validate_agent_def):**
 - `mcp_servers` must be a `list[str]` (string entry gets coerced to single-element list)
@@ -1450,16 +1450,18 @@ class MCPServerConfig:
 - **Tool cache** (`_tools_cache`) - per-conversation, per-server; invalidated on new connect to avoid repeated `list_tools()` round-trips
 - **Sentinel guard** - sentinel stored in `_conversations` until async future completes; `is_connected()` returns False while sentinel present
 
-**Public API:**
+**Public API** (verified by `inspect.signature()`; parameter is `conversation_key`, default `None`):
 ```python
-def connect(server_name: str, session_key: str = "_default") -> str | None
-    # Async: start server subprocess, handshake, cache tools. Returns error string or None.
-def disconnect(server_name: str, session_key: str = "_default") -> None
-def disconnect_all(session_key: str = "_default") -> None
-def get_connected_servers(session_key: str = "_default") -> list[str]
-def discover_tools(server_name: str, session_key: str = "_default") -> list[MCPToolDefinition]
-def call_tool(server_name: str, tool_name: str, arguments: dict, session_key: str = "_default") -> MCPToolResult
-def get_tools_for_api(server_names: list[str], session_key: str = "_default") -> list[dict]
+connect(server_name: str, conversation_key: str | None = None) -> None
+    # On success, returns None. On error, raises RuntimeError (contain subprocess failure) or TimeoutError.
+disconnect(server_name: str, conversation_key: str | None = None) -> None
+disconnect_all(conversation_key: str | None = None) -> None
+get_connected_servers(conversation_key: str | None = None) -> list[str]
+is_connected(conversation_key: str | None, server_name: str) -> bool
+    # Parameter order matches source: conversation_key first, server_name second.
+discover_tools(server_name: str, conversation_key: str | None = None) -> list[MCPToolDefinition]
+call_tool(server_name: str, tool_name: str, arguments: dict, conversation_key: str | None = None) -> MCPToolResult
+get_tools_for_api(server_names: list[str], conversation_key: str | None = None) -> list[dict]
     # Returns OpenAI-format tool definitions: [{"type":"function","function":{"name":"memory/search_nodes",...}}]
 ```
 
@@ -1478,8 +1480,8 @@ class MCPToolResult:
 ```
 
 **Cleanup:**
-- `create_conversation()` calls `mcp_disconnect_all()` on replacement (same session_key)
-- `stop_all()` calls `mcp_disconnect_all("_default")` before stopping AgentRuntime
+- `create_conversation()` calls `mcp_disconnect_all(session_key)` on replacement (same session_key)
+- `stop_all()` calls `mcp_disconnect_all()` (default conversation_key=None) before stopping AgentRuntime
 - Thread drain (`_drain_and_stop`) waits for pending ops before join
 
 ### 3.22 `ui/views/feedbar.py` — Response Status Bar (Phase 6)
@@ -2069,7 +2071,7 @@ Agent YAML definition (mcp_servers: ["memory", "fetch"])
 SpecialAgentDef(conv_id_prefix, ..., mcp_servers=["memory", "fetch"])
          │
          ▼
-AgentRuntimeHandler.create_agent_tab() → create_conversation(session_key, mcp_servers=["memory", "fetch"])
+AgentRuntimeHandler.send_to_special_agent() → create_conversation(session_key, mcp_servers=["memory", "fetch"])
          │
          ▼
 Conversation.mcp_servers = ["memory", "fetch"] (stored in Conversation dataclass)
@@ -2536,7 +2538,7 @@ crabcakes/
 │   ├── __init__.py               # 15 lines — package marker
 │   ├── config.py                 # AgentConfig, LLMProviderConfig, EnforcementConfig, load_agent_config() with chmod check
 │   ├── context.py                # 437 lines — build_system_prompt (agent_role), build_file_context, _read_crabcakes_docs (§4.4a) + .gitignore parsing
-│   ├── tools.py                  # 853 lines — 8 tools: read_file, write_file, edit_file, exec_command (§4.13 separate stdout/stderr), list_files, search_files, web_search, web_fetch
+│   ├── tools.py                  # 892 lines — 8 tools: read_file, write_file, edit_file, exec_command (§4.13 separate stdout/stderr), list_files, search_files, web_search, web_fetch
 │   └── enforcement.py             # Post-write verification: 3-tier checks (syntax, tests, lint) + per-project override (§F) with 30s TTL cache + TestConfig + venv detection
 │
 ├── ui/
@@ -2550,7 +2552,7 @@ crabcakes/
 │   │   ├── agent_list_handler.py # 118 lines — agent card data (initials, colors, sorting)
 │   │   ├── chat_handler.py       # 639 lines — send, fan-out, routing, special agent routing, tab switching
 │   │   ├── chat_render_handler.py # 421 lines — escape + markdown + highlight + bubble pipeline
-│   ├── agent_runtime_handler.py  # 200 lines — AgentRuntime UI bridge: conversation lifecycle, tool approval, MCP wiring (Phase 1.4+Phase C)
+│   ├── agent_runtime_handler.py  # 781 lines — AgentRuntime UI bridge: conversation lifecycle, tool approval, MCP wiring (Phase 1.4+Phase C)
 │   │   ├── agent_command_handler.py # 464 lines — agent response command parser + relay (Phase 6.2)
 │   │   ├── command_handler.py   # 514 lines — backtick command parser + @mention resolution (Phase 7)
 │   │   ├── gateway_handler.py    # 228 lines — connect, agents, lifecycle (Phase 2)
@@ -2588,8 +2590,8 @@ crabcakes/
     ├── prompts.py               # 25 lines — load_prompts() — reads .md from prompts/
     ├── quoting.py               # ~50 lines — _parse_quoted_payload() — escape-aware quoted-payload parsing (A2A_QUOTED_PAYLOAD_SPEC)
     ├── stt.py                   # 182 lines — STTEngine (faster-whisper push-to-talk, Phase 4)
-    ├── mcp_config.py            # ~180 lines — MCP server configuration loader with YAML/JSON schema validation (MCP Phase A)
-    ├── mcp_client.py            # ~400 lines — MCP asyncio-threading bridge, stdio transport, tool discovery/call (MCP Phase A/B)
+    ├── mcp_config.py            # 240 lines — MCP server configuration loader with YAML/JSON schema validation (MCP Phase A)
+    ├── mcp_client.py            # 488 lines — MCP asyncio-threading bridge, stdio transport, tool discovery/call (MCP Phase A/B)
     └── syntax_highlight.py      # 164 lines — highlight() — Pygments → Pango markup (Phase 2)
 
 prompts/                         # System prompt templates for agent runtime
@@ -2637,18 +2639,18 @@ tests/
     ├── test_streaming.py
     ├── test_syntax_highlight.py
     ├── test_tasks.py
-    ├── test_mcp_config.py        # ~100 lines — MCP server config validation tests (MCP Phase A)
-    ├── test_mcp_client.py        # ~180 lines — MCP client library tests with mock SDK boundary (MCP Phase A/B)
-    ├── test_mcp_integration.py   # ~250 lines — End-to-end integration tests: YAML→agent→conversation→tool routing→cleanup (MCP Phase C)
+    ├── test_mcp_config.py        # 216 lines — MCP server config validation tests (MCP Phase A)
+    ├── test_mcp_client.py        # 304 lines — MCP client library tests with mock SDK boundary (MCP Phase A/B)
+    ├── test_mcp_integration.py   # 358 lines — End-to-end integration tests: YAML→agent→conversation→tool routing→cleanup (MCP Phase C)
     ├── test_tools.py             # 334 lines — sandbox, approval, truncation tests (Phase 1.1)
     └── test_enforcement.py        # SPEC-2: TestConfig, venv detection, configurable test discovery, custom command, timeout, cache
 agent/
     ├── __init__.py            # 1 line — exports AgentRuntime
-    ├── runtime.py             # ~1331 lines — AgentRuntime: tool loop, enforcement hook (§F), stuck detection (§E), providers, streaming, cost (Phase 1.3a)
-    ├── tools.py                # ~380 lines — 8 tools: read/write/exec/list/search/web (Phase 1.1)
-    ├── config.py              # ~100 lines — LLM provider config + chmod check (Phase 1.1)
+    ├── runtime.py             # 1361 lines — AgentRuntime: tool loop, enforcement hook (§F), stuck detection (§E), providers, streaming, cost (Phase 1.3a)
+    ├── tools.py                # 892 lines — 8 tools: read/write/exec/list/search/web (Phase 1.1)
+    ├── config.py              # 237 lines — LLM provider config + chmod check (Phase 1.1)
     ├── context.py             # ~437 lines — build_system_prompt (agent_role), build_file_context (Phase 1.2)
-    └── special_agents.py     # ~70 lines — Coder + Debugger definitions (role field for explicit agent_role)
+    └── special_agents.py     # 152 lines — Coder + Debugger definitions (role field for explicit agent_role)
 
 converge/
     ├── __init__.py

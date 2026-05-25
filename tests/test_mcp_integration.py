@@ -49,23 +49,26 @@ class FakeMCPFactory:
         """Return a mock session with list_tools and call_tool."""
         mock_session = MagicMock()
         mock_session.initialize = AsyncMock()
-        mock_session.list_tools = AsyncMock(return_value=MagicMock(
-            tools=[
-                MagicMock(
-                    name="search_nodes",
-                    description="Search knowledge graph",
-                    inputSchema={"type": "object", "properties": {"query": {"type": "string"}}},
-                ),
-                MagicMock(
-                    name="create_node",
-                    description="Create a knowledge node",
-                    inputSchema={"type": "object", "properties": {"name": {"type": "string"}}},
-                ),
-            ]
-        ))
-        mock_session.call_tool = AsyncMock(return_value=MagicMock(
-            content=[MagicMock(text="42 nodes found: alpha, beta, gamma")]
-        ))
+
+        # Create explicit mock tools with real attributes
+        search_tool = MagicMock()
+        search_tool.name = "search_nodes"
+        search_tool.description = "Search knowledge graph"
+        search_tool.inputSchema = {"type": "object", "properties": {"query": {"type": "string"}}}
+
+        create_tool = MagicMock()
+        create_tool.name = "create_node"
+        create_tool.description = "Create a knowledge node"
+        create_tool.inputSchema = {"type": "object", "properties": {"name": {"type": "string"}}}
+
+        mock_tools_result = MagicMock()
+        mock_tools_result.tools = [search_tool, create_tool]
+        mock_session.list_tools = AsyncMock(return_value=mock_tools_result)
+
+        tool_result = MagicMock()
+        tool_result.content = [MagicMock(text="42 nodes found: alpha, beta, gamma")]
+        mock_session.call_tool = AsyncMock(return_value=tool_result)
+
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=False)
         return mock_session
@@ -119,21 +122,46 @@ class TestYAMLLoading(TestState):
         )
         assert agent.mcp_servers == ["memory"]
 
-    def test_mcp_servers_string_coerced_to_list(self):
-        """String value "memory" gets coerced to ["memory"]."""
-        # This guards the YAML edge case where a bare string slips through
-        agent = SpecialAgentDef(
-            conv_id_prefix="special:test",
-            display_name="Test",
-            role="tester",
-            emoji="🧪",
-            color="#123456",
-            tools=["read_file"],
-            can_write=False,
-            mcp_servers="memory",  # type: ignore[arg-type] — intentional misuse
+    def test_mcp_servers_coerced_in_load_registry(self, tmp_path, monkeypatch):
+        """BUG #32: String mcp_servers value is coerced to list by _load_registry.
+
+        When agent YAML contains `mcp_servers: memory` (a string not a list),
+        _load_registry() coerces it via the code at lines ~101-105 of
+        agent/special_agents.py.
+        """
+        import json
+        from agent.special_agents import reload_registry, get_special_agents
+        from utils.agent_defs import _parse_agent_file
+
+        # Write a test agent definition file containing a bare string
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        agent_file = agents_dir / "test.yaml"
+        agent_dict = {
+            "name": "StringMCP",
+            "role": "tester",
+            "prompts": ["system/default.md"],
+            "tools": ["read_file"],
+            "provider": "openai",
+            "mcp_servers": "memory",  # String, not list
+        }
+        agent_file.write_text(json.dumps(agent_dict))
+
+        # Monkeypatch utils.agent_defs._get_agents_dir() to point here
+        import utils.agent_defs as ad_mod
+        monkeypatch.setattr(ad_mod, "_get_agents_dir", lambda: str(agents_dir))
+        # Don't seed defaults (they'd pick up built-in dirs)
+        monkeypatch.setattr(ad_mod, "_seed_defaults_if_empty", lambda: None)
+
+        reload_registry()
+        agents = get_special_agents()
+        ours = [a for a in agents if a.display_name == "StringMCP"]
+        assert len(ours) == 1, f"Agent not found in registry; got {len(agents)} agents"
+        agent = ours[0]
+        # Critical assertion: string was coerced to list
+        assert isinstance(agent.mcp_servers, list) and agent.mcp_servers == ["memory"], (
+            f"Expected ['memory'], got {agent.mcp_servers!r} — coercion in _load_registry() is not working"
         )
-        # The dataclass stores whatever was passed; coercion happens in loader
-        assert agent.mcp_servers == "memory"  # Raw value preserved; coercion is loader duty
 
     def test_mcp_servers_invalid_type_rejected(self):
         """YAML dict with non-list mcp_servers is rejected by validation."""
@@ -180,8 +208,9 @@ class TestToolMerging(TestState):
 
         assert len(mcp_tools) > 0
         names = [t["function"]["name"] for t in mcp_tools]
-        # BUG #28: names have MagicMock ids — just verify namespacing present
-        assert any(name.startswith("memory/") for name in names)
+        # BUG #38: With proper explicit attributes, names must be exact strings
+        assert "memory/search_nodes" in names
+        assert "memory/create_node" in names
 
     @patch("utils.mcp_client._connect_async", side_effect=FakeMCPFactory.fake_connect_async)
     @patch("utils.mcp_client.get_server_config")
