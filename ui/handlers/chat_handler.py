@@ -172,6 +172,11 @@ class ChatHandler:
         if self._chat_render_handler is None:
             return
         chat_box = self._mc.get_chat_box_for_session(session_key)
+        # If no direct tab exists for this agent key, look up project via routing table.
+        if chat_box is None and self._agent_to_project is not None:
+            project_name = self._agent_to_project.get_project(session_key)
+            if project_name is not None:
+                chat_box = self._mc.get_chat_box_for_session(f"project:{project_name}")
         if chat_box is None:
             return
         bubble = self._chat_render_handler.render_activity(text, activity_type)

@@ -77,7 +77,7 @@ class ActivityHandler:
         self._set_state("reasoning", sk)
         # Clear render guard from previous round so new responses can render
         if self._on_agent_start_callback:
-            self._on_agent_start_callback(sk)
+            self._on_agent_start_callback(session_key)
 
     def on_agent_end(self, session_key, data=None):
         """agent phase=end — enter done state, auto-idle after 5s."""
@@ -89,7 +89,8 @@ class ActivityHandler:
 
     def on_agent_error(self, session_key, data=None):
         """agent phase=error — return to idle immediately."""
-        self._set_state("idle", session_key)
+        sk = self._active_session() or session_key
+        self._set_state("idle", sk)
 
     def on_tool_use(self, tool_name, session_key, data=None):
         """tool_call event — enter tool_use state."""

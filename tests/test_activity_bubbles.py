@@ -327,6 +327,59 @@ class TestChatHandlerActivityBubbleRender:
         # No crash, no render
         handler._chat_render_handler.render_activity.assert_not_called()
 
+    def test_render_activity_routes_via_project_table(self, fake_glib):
+        """If agent key has no direct tab, resolve via routing table to project tab."""
+        from ui.handlers.chat_handler import ChatHandler
+
+        class FakeRouting:
+            def get_project(self, sk):
+                return "crabwatch" if sk == "agent:qaster" else None
+        
+        routing = FakeRouting()
+        mock_project_chat_box = MagicMock()
+        mock_mc = MagicMock()
+        mock_mc.get_chat_box_for_session = lambda sk: mock_project_chat_box if sk == "project:crabwatch" else None
+
+        handler = ChatHandler(
+            main_content=mock_mc,
+            gateway_client=MagicMock(),
+            agent_to_project=routing,
+            projects_module=MagicMock(),
+            GLib_module=fake_glib,
+        )
+
+        mock_render = MagicMock(return_value=MagicMock())
+        handler._chat_render_handler = MagicMock()
+        handler._chat_render_handler.render_activity = mock_render
+
+        handler._render_activity_bubble_impl("agent:qaster", "search nodes", "tool_start")
+        # Should resolve to project:crabwatch chat box and render
+        mock_render.assert_called_once_with("search nodes", "tool_start")
+        mock_project_chat_box.append.assert_called_once()
+
+    def test_render_activity_skips_when_routing_table_returns_none(self, fake_glib):
+        """If routing table returns no project, silently skip — no crash."""
+        from ui.handlers.chat_handler import ChatHandler
+
+        class FakeRouting:
+            def get_project(self, sk):
+                return None
+        
+        mock_mc = MagicMock()
+        mock_mc.get_chat_box_for_session.return_value = None
+
+        handler = ChatHandler(
+            main_content=mock_mc,
+            gateway_client=MagicMock(),
+            agent_to_project=FakeRouting(),
+            projects_module=MagicMock(),
+            GLib_module=fake_glib,
+        )
+
+        handler._chat_render_handler = MagicMock()
+        handler._render_activity_bubble_impl("agent:unknown", "search", "tool_start")
+        handler._chat_render_handler.render_activity.assert_not_called()
+
 
 class TestSystemBubbleCSS:
     """System bubbles get the .chat-bubble-System CSS class."""
