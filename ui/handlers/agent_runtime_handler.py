@@ -338,15 +338,23 @@ class AgentRuntimeHandler:
                 session_key=session_key,
                 project_path=project_path,
                 model=agent_model,               # Per-agent provider/model override
-                allowed_tools=agent_def.tools,  # Phase A: filtered tool set per agent
-                agent_role=agent_def.role,       # §7: explicit role from definition
-                si_enforcement=si_enforcement,   # Per-agent enforcement gating
+                allowed_tools=agent_def.tools,   # Phase A: filtered tool set per agent
+                mcp_servers=agent_def.mcp_servers, # Phase B: MCP servers
+                agent_role=agent_def.role,        # §7: explicit role from definition
+                si_enforcement=si_enforcement,     # Per-agent enforcement gating
             )
 
         rt.send_message(session_key, text)
 
     def stop_all(self) -> None:
         """Stop all agent runtimes. Called on window shutdown."""
+        # BUG #31: Clean up MCP connections before stopping runtimes
+        try:
+            from utils.mcp_client import disconnect_all as mcp_disconnect_all
+            mcp_disconnect_all()  # Clean up all MCP connections across all conversations
+        except Exception:
+            pass  # Best effort — daemon threads die on exit anyway
+
         for name, rt in list(self._runtimes.items()):
             rt.stop()
         self._runtimes.clear()

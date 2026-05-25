@@ -829,6 +829,35 @@ def execute_tool(
     All file paths are sandboxed to project_path.
     exec_command requires PM approval via the registered callback.
     """
+    # Phase B: MCP tool routing — namespaced tools like "fetch/fetch"
+    if "/" in name:
+        server_name, _, tool_name = name.partition("/")
+        if not server_name or not tool_name:
+            return ToolResult(
+                success=False,
+                error=f"Invalid MCP tool name '{name}': expected 'server/tool' format",
+            )
+        # Route to MCP client
+        try:
+            from utils.mcp_client import call_tool as mcp_call_tool, is_connected
+            # Use session_key as conversation_key (or default)
+            conv_key = session_key if session_key != "_unknown" else None
+            if not is_connected(conv_key, server_name):
+                from utils.mcp_client import connect as mcp_connect
+                try:
+                    mcp_connect(server_name, conv_key)
+                except Exception as e:
+                    return ToolResult(success=False, error=f"Failed to connect to MCP server '{server_name}': {e}")
+            mcp_result = mcp_call_tool(server_name, tool_name, arguments, conv_key)
+            return ToolResult(
+                success=mcp_result.success,
+                output=mcp_result.output,
+                error=mcp_result.error,
+                duration_ms=mcp_result.duration_ms,
+            )
+        except Exception as e:
+            return ToolResult(success=False, error=f"MCP client error: {e}")
+
     entry = _TOOLS.get(name)
     if entry is None:
         return ToolResult(success=False, error=f"Unknown tool: {name}")

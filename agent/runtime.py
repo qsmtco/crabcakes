@@ -831,6 +831,7 @@ class AgentRuntime:
         project_path: str | None = None,
         model: str | None = None,
         allowed_tools: list[str] | None = None,  # NEW
+        mcp_servers: list[str] = None,  # NEW: Phase B MCP servers
         agent_role: str = "",
         si_enforcement: bool | None = None,      # per-agent enforcement override
     ) -> str:
@@ -842,9 +843,18 @@ class AgentRuntime:
         Args:
             allowed_tools: If provided, only these tool names are available to
                           the agent. If None, all tools are available.
+            mcp_servers: List of MCP server names to connect for this conversation.
             si_enforcement: If True/False, overrides global enforcement for this
                            agent. If None, uses global config.
         """
+        # Phase B BUG #22: Clean up existing MCP connections before replacing conversation
+        if session_key in self._conversations:
+            try:
+                from utils.mcp_client import disconnect_all
+                disconnect_all(session_key)  # Clean up MCP for this conversation
+            except Exception:
+                pass  # Best effort cleanup
+
         from agent.context import build_system_prompt
         from models.conversation import Conversation
 
@@ -865,6 +875,7 @@ class AgentRuntime:
             agent_name=agent_name,
             project_path=project_path,
             allowed_tools=allowed_tools,
+            mcp_servers=mcp_servers if mcp_servers else [],
             model=model,
             system_prompt=system_prompt,
             si_enforcement=si_enforcement,
@@ -956,6 +967,18 @@ class AgentRuntime:
                 # Get tools for this agent (filtered by allowed_tools if set)
                 from agent.tools import get_tool_definitions_for_api
                 tools = get_tool_definitions_for_api(conv.allowed_tools)
+
+                # Phase B: Merge MCP tools if configured
+                if conv.mcp_servers:
+                    try:
+                        from utils.mcp_client import get_tools_for_api
+                        mcp_tools = get_tools_for_api(
+                            conv.mcp_servers,
+                            session_key if session_key != "_unknown" else None,
+                        )
+                        tools.extend(mcp_tools)
+                    except Exception as e:
+                        logger.warning(f"Failed to load MCP tools for {session_key}: {e}")
 
                 # Call LLM
                 response = self._call_llm(session_key, messages, tools)

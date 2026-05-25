@@ -49,6 +49,10 @@ class MCPToolResult:
 # Key: (conversation_key, server_name) -> dict with 'session', 'stdio_cm', 'session_cm'
 _conversations: dict[tuple[str, str], dict[str, Any]] = {}
 
+# Tool definition cache: (conversation_key, server_name) -> list of tool dicts
+_tools_cache: dict[tuple[str, str], list[dict]] = {}
+_tools_cache_lock = threading.Lock()
+
 # Lock for thread-safe access
 _state_lock = threading.Lock()
 
@@ -59,10 +63,13 @@ def _make_conversation_key(conversation_key: str | None, server_name: str) -> tu
 
 
 def is_connected(conversation_key: str | None, server_name: str) -> bool:
-    """Check if server is connected for a conversation."""
+    """Check if server is fully connected (not still connecting) for a conversation."""
     key = _make_conversation_key(conversation_key, server_name)
     with _state_lock:
-        return key in _conversations
+        if key not in _conversations:
+            return False
+        # Sentinel means connection is in progress — treat as not yet connected
+        return not _is_connection_future(_conversations[key])
 
 
 def get_connected_servers(conversation_key: str | None = None) -> list[str]:
@@ -275,15 +282,11 @@ def connect(
 ) -> None:
     """Connect to an MCP server for a conversation.
 
-    Args:
-        server_name: Server name (e.g., "fetch")
-        conversation_key: Conversation identifier (None = default)
+    BUG #28 Fix: Two-phase connect — lock only held for dict ops (μs), not for
+    blocking MCP handshake (seconds). Uses "in-progress" sentinel pattern so that
+    concurrent callers wait for the same connection rather than racing.
     """
     key = _make_conversation_key(conversation_key, server_name)
-    
-    with _state_lock:
-        if key in _conversations:
-            raise RuntimeError(f"Already connected to {server_name}")
     
     config = get_server_config(server_name)
     if config is None:
@@ -292,17 +295,51 @@ def connect(
     if not config.enabled:
         raise MCPConfigError(f"Server {server_name} is disabled")
     
-    # Use persistent loop thread (Bug #13/18: cleanup on failure)
+    # ── Phase 1: Check/claim under lock (microseconds only) ─────────────────
+    with _state_lock:
+        # Already connected?
+        if key in _conversations:
+            existing = _conversations[key]
+            # If it's a "connecting in progress" future — wait for it below
+            if not _is_connection_future(existing):
+                return  # Already fully connected
+        
+        # Mark as "connecting" sentinel so concurrent callers wait for this one
+        connecting_future = _make_connecting_sentinel()
+        _conversations[key] = connecting_future
+    # Lock released — now do expensive MCP handshake outside lock
+    
+    # ── Phase 2: Establish connection (seconds, no lock held) ───────────────
     try:
         loop_thread = _MCPLoopThread.get_thread(conversation_key)
-        conn = loop_thread.submit(_connect_async(config))
-        
-        with _state_lock:
-            _conversations[key] = conn
-            
+        real_future = loop_thread.submit(_connect_async(config))
+        result = real_future  # Store the real future directly
     except Exception as e:
+        # Connect failed — clean up placeholder under lock
+        with _state_lock:
+            if _conversations.get(key) is connecting_future:
+                _conversations.pop(key, None)
         logger.warning(f"Failed to connect to {server_name}: {e}")
         raise RuntimeError(f"Failed to connect to {server_name}: {e}")
+    
+    # ── Phase 3: Commit result under lock (microseconds only) ──────────────
+    with _state_lock:
+        # Replace the connecting sentinel with the real connection
+        if _conversations.get(key) is connecting_future:
+            _conversations[key] = result
+        # Invalidate tools cache for this server on new connection
+        with _tools_cache_lock:
+            _tools_cache.pop(key, None)
+
+
+def _is_connection_future(value: Any) -> bool:
+    """Return True if value is our sentinel marker meaning 'connecting in progress'."""
+    return isinstance(value, tuple) and len(value) == 2 and value[0] == "connecting"
+
+
+def _make_connecting_sentinel() -> tuple:
+    """Sentinel placeholder stored in _conversations during connect handshake."""
+    return ("connecting", threading.current_thread().name)
 
 
 def disconnect(
@@ -405,30 +442,46 @@ def get_tools_for_api(
 ) -> list[dict]:
     """Get MCP tool definitions in OpenAI function-calling format.
     
-    Logs failures instead of silently swallowing them.
+    BUG #24 Fix: Caches tool definitions per server to avoid repeated MCP calls.
     """
     tools = []
     for server_name in server_names:
-        # Ensure connected
-        if not is_connected(conversation_key, server_name):
-            try:
-                connect(server_name, conversation_key)
-            except Exception as e:
-                logger.warning(f"Skipping {server_name}: {e}")
+        key = _make_conversation_key(conversation_key, server_name)
+        
+        # Check cache first
+        with _tools_cache_lock:
+            cached = _tools_cache.get(key)
+            if cached is not None:
+                tools.extend(cached)
                 continue
+        
+        # Ensure connected (idempotent)
+        try:
+            connect(server_name, conversation_key)
+        except Exception as e:
+            logger.warning(f"Skipping {server_name}: {e}")
+            continue
         
         try:
             server_tools = discover_tools(server_name, conversation_key)
+            server_tool_dicts = []
             for tool in server_tools:
                 namespaced = f"{server_name}/{tool.name}"
-                tools.append({
+                func_dict = {
                     "type": "function",
                     "function": {
                         "name": namespaced,
                         "description": tool.description or f"MCP: {tool.name}",
                         "parameters": tool.parameters or {"type": "object", "properties": {}},
                     },
-                })
+                }
+                tools.append(func_dict)
+                server_tool_dicts.append(func_dict)
+            
+            # Cache the results
+            with _tools_cache_lock:
+                _tools_cache[key] = server_tool_dicts
+                
         except Exception as e:
             logger.warning(f"Failed to discover tools from {server_name}: {e}")
             continue

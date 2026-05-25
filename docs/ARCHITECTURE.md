@@ -132,7 +132,8 @@ crabcakes/
     ├── feed_store.py         # Feed JSON persistence — load/save/append/update to .crabcakes/feed.json (Phase 5)
     ├── improve.py             # improve_prompt() — MiniMax API for prompt improvement (template mode with {{USER_INPUT}} marker, loads from prompts/system/improve.md)
     ├── stt.py                 # STTEngine — faster-whisper push-to-talk
-    ├── config.py              # Config path helpers — get_config_dir(), get_projects_dir(), COMMAND_PREFIX (Phase 7)
+    ├── mcp_config.py          # MCP server configuration loader — YAML/JSON deserialization with schema validation (transport, command, args, env, enabled)
+    ├── mcp_client.py          # MCP client library — asyncio-to-threading bridge, stdio transport, connection pooling, tool discovery/call, OpenAI-format conversion
     ├── diff_parser.py         # parse_diff() — unified diff → FileDiff/ParsedDiff data (Phase 7)
     ├── git_ops.py              # GitPython wrapper — git add/commit/diff/checkout via GitResult (Phase 7)
     ├── prompt_loader.py         # System prompt template loader — loads/fills/composes prompts/system/*.md
@@ -1412,6 +1413,75 @@ class AgentRuntimeHandler:
 
 **Special agent routing:** ChatHandler routes special agents through `send_to_special_agent()` (both solo DM and group broadcast paths). Gateway agents go through `gw.send_message()`. This ensures local AgentRuntime agents never hit the gateway.
 
+### 3.21v `utils/mcp_config.py` — MCP Server Configuration (MCP Phase A)
+
+**Responsibility:** Pure Python — loads MCP server configurations from YAML and JSON files. Validates transport type, command, args, environment variables, and enabled flag. No GTK, no network at import time.
+
+**Schema (MCPServerConfig dataclass):**
+```python
+@dataclass
+class MCPServerConfig:
+    name: str
+    transport: str        # "stdio" (v1), "http" (deferred to v2)
+    command: str          # e.g. "npx" or "uvx" or system binary
+    args: list[str]       # e.g. ["-y", "@mcp/server-memory"]
+    env: dict[str, str]   # env vars to prepend
+    enabled: bool = True
+```
+
+**Config file search order:**
+1. Agent-specific: `~/.openclaw/agents/<agent>/mcp-servers.json`
+2. Project root: `<workspace>/.config/crabcakes/mcp-servers.json`
+3. User-wide: `~/.config/crabcakes/mcp-servers.json`
+4. Default fallback: `mcp_servers.default` - `{"memory": {...}}`
+
+**Validation rules (validate_agent_def):**
+- `mcp_servers` must be a `list[str]` (string entry gets coerced to single-element list)
+- Server names must not contain `"/"` (reserved for namespacing separator)
+- Invalid entries rejected with error messages
+
+### 3.21w `utils/mcp_client.py` — MCP Client Library (MCP Phase A/B)
+
+**Responsibility:** asyncio-to-threading bridge for MCP stdio transport. Manages persistent background event loops per conversation key, connection pooling, tool discovery, tool invocation, and OpenAI-format conversion. All async SDK calls bridged to sync Python via `_MCPLoopThread.get_thread()`.
+
+**Key design decisions:**
+- **One loop thread per conversation key** (`_MCPLoopThread._instances`) - avoids `asyncio.run()` per-call failure
+- **Two-phase connect** - fast dict ops under global lock (mus), slow MCP handshake unlocked; sentinel `("connecting", thread_name)` prevents TOCTOU races
+- **Tool cache** (`_tools_cache`) - per-conversation, per-server; invalidated on new connect to avoid repeated `list_tools()` round-trips
+- **Sentinel guard** - sentinel stored in `_conversations` until async future completes; `is_connected()` returns False while sentinel present
+
+**Public API:**
+```python
+def connect(server_name: str, session_key: str = "_default") -> str | None
+    # Async: start server subprocess, handshake, cache tools. Returns error string or None.
+def disconnect(server_name: str, session_key: str = "_default") -> None
+def disconnect_all(session_key: str = "_default") -> None
+def get_connected_servers(session_key: str = "_default") -> list[str]
+def discover_tools(server_name: str, session_key: str = "_default") -> list[MCPToolDefinition]
+def call_tool(server_name: str, tool_name: str, arguments: dict, session_key: str = "_default") -> MCPToolResult
+def get_tools_for_api(server_names: list[str], session_key: str = "_default") -> list[dict]
+    # Returns OpenAI-format tool definitions: [{"type":"function","function":{"name":"memory/search_nodes",...}}]
+```
+
+**Internal types:**
+```python
+@dataclass
+class MCPToolDefinition:
+    name: str           # namespaced: "server_name/tool_name"
+    description: str
+    input_schema: dict  # JSON Schema for tool arguments
+
+@dataclass
+class MCPToolResult:
+    output: str         # Text output from tool
+    error: str | None   # Error if failed
+```
+
+**Cleanup:**
+- `create_conversation()` calls `mcp_disconnect_all()` on replacement (same session_key)
+- `stop_all()` calls `mcp_disconnect_all("_default")` before stopping AgentRuntime
+- Thread drain (`_drain_and_stop`) waits for pending ops before join
+
 ### 3.22 `ui/views/feedbar.py` — Response Status Bar (Phase 6)
 
 **Responsibility:** Horizontal bar between toolbar and main content. Pure view — no business logic.
@@ -1987,6 +2057,60 @@ human input — no special casing, no detection, no loops. Agent-initiated parsi
 handled by `AgentCommandHandler` (Phase 6.2) which hooks into the response pipeline
 and routes commands through CommandHandler.process_input().
 
+### 4.12 MCP Tool Execution Flow (MCP Phase B)
+
+**When:** An agent with `mcp_servers: ["memory", "fetch"]` is loaded and a tool call arrives.
+
+**Data flow:**
+```
+Agent YAML definition (mcp_servers: ["memory", "fetch"])
+         │
+         ▼
+SpecialAgentDef(conv_id_prefix, ..., mcp_servers=["memory", "fetch"])
+         │
+         ▼
+AgentRuntimeHandler.create_agent_tab() → create_conversation(session_key, mcp_servers=["memory", "fetch"])
+         │
+         ▼
+Conversation.mcp_servers = ["memory", "fetch"] (stored in Conversation dataclass)
+         │
+         ▼
+AgentRuntime.create_run_for(conv) → get_tool_definitions_for_api(conv)
+         │
+         ▼
+Tools.get_tool_definitions_for_api() → get_tools_for_api(mcp_servers, session_key)
+         │
+         ▼
+utils/mcp_client.py:
+    for each server in mcp_servers:
+        if not is_connected(session_key, server): connect(server, session_key)
+        discover_tools(server, session_key)  # calls session.list_tools(), caches result
+        convert to OpenAI format: name = "server_name/tool_name"
+         │
+         ▼
+Merge MCP tools + built-in tools → agent sees unified tool list
+         │
+         ▼
+LLM requests tool call: "memory/search_nodes" with {"query": "test"}
+         │
+         ▼
+AgentRuntime.on_tool_call() → execute_tool("memory/search_nodes", {"query": "test"}, project_path, session_key)
+         │
+         ▼
+agent/tools.py execute_tool():
+    if "/" in tool_name:  # MCP tool routing
+        server_name, tool_name = tool_name.split("/", 1)
+        result = call_tool(server_name, tool_name, arguments, session_key)
+    else:
+        # Built-in tool routing (read_file, write_file, etc.)
+```
+
+**Namespacing rule:** All MCP tool names are prefixed with `server_name/` using the `server_name/tool_name` convention. Built-in tools have no slash. This allows unambiguous routing.
+
+**Cleanup on conversation end:** `create_conversation(session_key)` with same key → `mcp_disconnect_all(session_key)` to kill stale MCP subprocesses.
+
+**Graceful degradation:** If MCP server fails (not found, can't spawn, network timeout), `execute_tool` returns `ToolResult(success=False, error=...)` and logs warning. Built-in tools still work.
+
 ## 5. Callback Pattern
 
 **Primary pattern for all component communication.** A callback is a function reference passed to a component at construction time or via a setter. The component calls it when something happens. The component does NOT know what happens after.
@@ -2426,6 +2550,7 @@ crabcakes/
 │   │   ├── agent_list_handler.py # 118 lines — agent card data (initials, colors, sorting)
 │   │   ├── chat_handler.py       # 639 lines — send, fan-out, routing, special agent routing, tab switching
 │   │   ├── chat_render_handler.py # 421 lines — escape + markdown + highlight + bubble pipeline
+│   ├── agent_runtime_handler.py  # 200 lines — AgentRuntime UI bridge: conversation lifecycle, tool approval, MCP wiring (Phase 1.4+Phase C)
 │   │   ├── agent_command_handler.py # 464 lines — agent response command parser + relay (Phase 6.2)
 │   │   ├── command_handler.py   # 514 lines — backtick command parser + @mention resolution (Phase 7)
 │   │   ├── gateway_handler.py    # 228 lines — connect, agents, lifecycle (Phase 2)
@@ -2463,6 +2588,8 @@ crabcakes/
     ├── prompts.py               # 25 lines — load_prompts() — reads .md from prompts/
     ├── quoting.py               # ~50 lines — _parse_quoted_payload() — escape-aware quoted-payload parsing (A2A_QUOTED_PAYLOAD_SPEC)
     ├── stt.py                   # 182 lines — STTEngine (faster-whisper push-to-talk, Phase 4)
+    ├── mcp_config.py            # ~180 lines — MCP server configuration loader with YAML/JSON schema validation (MCP Phase A)
+    ├── mcp_client.py            # ~400 lines — MCP asyncio-threading bridge, stdio transport, tool discovery/call (MCP Phase A/B)
     └── syntax_highlight.py      # 164 lines — highlight() — Pygments → Pango markup (Phase 2)
 
 prompts/                         # System prompt templates for agent runtime
@@ -2510,6 +2637,9 @@ tests/
     ├── test_streaming.py
     ├── test_syntax_highlight.py
     ├── test_tasks.py
+    ├── test_mcp_config.py        # ~100 lines — MCP server config validation tests (MCP Phase A)
+    ├── test_mcp_client.py        # ~180 lines — MCP client library tests with mock SDK boundary (MCP Phase A/B)
+    ├── test_mcp_integration.py   # ~250 lines — End-to-end integration tests: YAML→agent→conversation→tool routing→cleanup (MCP Phase C)
     ├── test_tools.py             # 334 lines — sandbox, approval, truncation tests (Phase 1.1)
     └── test_enforcement.py        # SPEC-2: TestConfig, venv detection, configurable test discovery, custom command, timeout, cache
 agent/

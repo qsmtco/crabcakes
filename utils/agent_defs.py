@@ -401,6 +401,17 @@ def validate_agent_def(agent_def: dict) -> list[str]:
                             )
                         break
 
+    # BUG #30: Validate mcp_servers field
+    mcp_servers = agent_def.get("mcp_servers")
+    if mcp_servers is not None and not isinstance(mcp_servers, list):
+        errors.append("Field 'mcp_servers' must be a list")
+    elif isinstance(mcp_servers, list):
+        for name in mcp_servers:
+            if not isinstance(name, str):
+                errors.append("mcp_servers entries must be strings")
+            elif "/" in name or any(c.isspace() for c in name):
+                errors.append(f"Invalid MCP server name '{name}': must not contain '/' or whitespace")
+
     return errors
 
 

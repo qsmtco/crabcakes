@@ -38,6 +38,7 @@ class SpecialAgentDef:
     provider: str | None = None   # per-agent provider override (None → global default)
     model: str | None = None      # per-agent model override (None → global default)
     self_improvement: dict = field(default_factory=dict)  # SI layer toggles
+    mcp_servers: list[str] = field(default_factory=list)  # MCP servers for Phase B
 
     def get_self_improvement_config(self) -> dict:
         """Return self_improvement config with defaults applied.
@@ -97,6 +98,13 @@ def _load_registry() -> dict[str, SpecialAgentDef]:
         tools = agent_def.get("tools", [])
         color = _next_color()
 
+        # BUG #30: Coerce mcp_servers to list if YAML gave a string
+        raw_mcp = agent_def.get("mcp_servers", [])
+        if isinstance(raw_mcp, str):
+            raw_mcp = [raw_mcp]  # Coerce single string to list
+        elif not isinstance(raw_mcp, list):
+            raw_mcp = []  # Invalid type → treat as empty
+
         registry[session_key] = SpecialAgentDef(
             conv_id_prefix=session_key,
             display_name=name,
@@ -108,6 +116,7 @@ def _load_registry() -> dict[str, SpecialAgentDef]:
             provider=agent_def.get("provider"),
             model=agent_def.get("model"),
             self_improvement=agent_def.get("self_improvement", {}),
+            mcp_servers=raw_mcp,  # Phase B: MCP server list (coerced)
         )
 
     return registry

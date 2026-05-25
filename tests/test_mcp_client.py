@@ -290,12 +290,13 @@ class TestConnectWithMockedSDK(TestState):
         assert is_connected(None, "fetch") is False
 
     @patch("utils.mcp_client.get_server_config")
-    def test_connect_rejects_duplicate(self, mock_get_config):
+    def test_connect_idempotent_already_connected(self, mock_get_config):
+        """BUG #23 Fix: connect() is now idempotent, not raising on duplicate."""
         mock_get_config.return_value = MagicMock(enabled=True)
         with patch("utils.mcp_client._connect_async", side_effect=self._mock_connect_async):
-            connect("fetch")
-            with pytest.raises(RuntimeError, match="Already connected"):
-                connect("fetch")
+            connect("fetch")  # First connect
+            connect("fetch")  # Second connect - idempotent, no error
+            assert is_connected(None, "fetch") is True
             disconnect("fetch")
 
     def test_connect_raises_if_server_not_found(self):
