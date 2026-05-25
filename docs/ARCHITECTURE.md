@@ -469,7 +469,7 @@ toggle_favorite(filepath) -> bool   # True if now favorited
 | `improve_prompt(text, callback, GLib)` | `improve.py` | Loads template from `prompts/system/improve.md`, injects user text at `{{USER_INPUT}}` marker (or legacy split), sends to MiniMax API, calls `callback(improved, error)` with GLib dispatch |
 | `load_prompt_template(name)` | `prompt_loader.py` | Load `prompts/system/<name>.md` template, return raw string or None |
 | `fill_template(template, variables)` | `prompt_loader.py` | Replace `{{KEY}}` markers with values from dict |
-| `compose_system_prompt(agent_name, ...)` | `prompt_loader.py` | Compose full system prompt from templates based on context (project, review mode, agent type) |
+| `compose_system_prompt(agent_name, ...)` | `prompt_loader.py` | Compose full system prompt from templates: (1) default.md, (1b) collab.md, (1c) crabcakes-context.md, (2) project-awareness.md, (3) crabcakes-commands.md, (4) project-onboarding.md, (5) code-review.md, (6) coder.md/debugger.md, (7) {role}-bugs.md/{role}-rules.md |
 | `STTEngine` class | `stt.py` | Push-to-talk STT via faster-whisper — arecord → PCM buffer → faster-whisper (tiny.en model) → stop_async callback |
 | `show_session_menu(parent, agent_name, sessions, on_select)` | `session_menu.py` | GTK popover menu listing sessions; clicking fires `on_select(session_key)` |
 
@@ -2598,6 +2598,8 @@ crabcakes/
 prompts/                         # System prompt templates for agent runtime
     └── system/
         ├── collab.md            # 28 lines — A2A collaboration protocol for all agents (Phase 4)
+        ├── crabcakes-context.md # Platform context: rendering formats, commands, review layer (SPEC-5)
+        ├── crabcakes-commands.md # Backtick command reference for project chats
         ├── default.md           # Default system prompt
         ├── coder.md             # Coder agent system prompt
         ├── debugger.md         # Debugger agent system prompt

@@ -804,6 +804,17 @@ class ChatHandler:
         except Exception:
             pass
 
+        # Inject CrabCakes platform context — rendering formats, commands, review layer
+        # Same template injected for special agents via compose_system_prompt().
+        # Gateway agents do not reach compose_system_prompt(), so this is the injection point.
+        try:
+            from utils.prompt_loader import load_prompt_template
+            cc_ctx = load_prompt_template("crabcakes-context")
+            if cc_ctx and cc_ctx.strip():
+                parts.append(cc_ctx)
+        except Exception:
+            pass
+
         if parts:
             return "\n\n".join(parts) + "\n\n"
         return ""

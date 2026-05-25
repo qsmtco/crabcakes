@@ -160,6 +160,11 @@ def compose_system_prompt(
     if collab:
         parts.append(collab)
 
+    # 1c. CrabCakes platform context (all agents — applies regardless of project/role)
+    cc_ctx = load_prompt_template("crabcakes-context")
+    if cc_ctx:
+        parts.append(cc_ctx)
+
     # 2. Project awareness (when project active)
     if project_path:
         pa = load_prompt_template("project-awareness")
