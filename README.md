@@ -321,7 +321,27 @@ These features are designed, specified, and ready to build:
 
 ### 🔌 MCP Server Integration
 
-Connect any [Model Context Protocol](https://modelcontextprotocol.io/) server to your agents. GitHub, PostgreSQL, Sentry, Puppeteer, Git — thousands of MCP servers become tool libraries. Agents get structured, well-described tools with proper schemas instead of raw shell commands.
+Connect any [Model Context Protocol](https://modelcontextprotocol.io/) server to your agents. GitHub, PostgreSQL, Sentry, Puppeteer, Filesystem, Memory — any MCP server becomes a tool library. Agents get structured, well-described tools with proper schemas instead of raw shell commands.
+
+**What's implemented:**
+- **stdio transport** — MCP clients launch as subprocesses; CrabCakes talks to them over stdin/stdout
+- **Tool discovery** — agents automatically discover all tools a server exposes (e.g., the Memory server exposes 9 tools: create_entities, read_graph, search_nodes, and more)
+- **Hot-reload** — add or remove a server from an agent's config in the Edit Agent dialog; no restart needed. The runtime reconnects on the next message
+- **Works for all agents** — any special agent (Coder, Debugger, Test Engineer, etc.) can be MCP-enabled per-agent in `~/.config/crabcakes/agents/{agent}.yaml`
+
+**Current status:** The memory server (`@modelcontextprotocol/server-memory`) is verified working end-to-end through the UI. Agents can create, query, and link entities in the knowledge graph. The graph persists across sessions.
+
+**Adding MCP tools to an agent:**
+1. Right-click an agent card → Edit
+2. Scroll to the MCP Servers section
+3. Check the servers you want — they're available on the next message
+
+```yaml
+# ~/.config/crabcakes/agents/coder.yaml
+mcp_servers:
+  - memory      # Knowledge graph — 9 tools
+  - filesystem  # Local file access
+```
 
 Your Coder agent configured with the GitHub MCP server gets `create_issue`, `search_repositories`, `list_commits` — operations the built-in tools can't do. Your Debugger with PostgreSQL and Sentry can query live databases and inspect production errors.
 
