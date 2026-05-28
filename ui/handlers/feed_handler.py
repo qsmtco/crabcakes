@@ -1,6 +1,7 @@
 # ui/handlers/feed_handler.py
 # Feed state management + card lifecycle (Phase 2).
 # Delegates rendering to feed_card.py, git ops to git_ops.py.
+from __future__ import annotations
 # All GTK via GLib.idle_add(). All git operations run in background threads.
 #
 # Architecture: one handler per subsystem. Does NOT import other handlers.
@@ -71,6 +72,13 @@ class FeedHandler:
         self._loading = False
         # Protects all shared dicts from concurrent access across threads
         self._lock = threading.Lock()
+
+        # Lazy-load backlog: older cards not yet rendered.
+        # Populated by on_project_opened() when total cards > PAGE_SIZE.
+        # Loaded in pages by _load_more().
+        self._backlog: list[FeedCardData] = []
+        self._load_more_widget: Gtk.Widget | None = None
+        self.PAGE_SIZE = 15
 
         # Echo suppression: git accept/reject triggers filesystem changes that
         # CrabWatch detects as new events. Track recently operated file paths
@@ -306,8 +314,8 @@ class FeedHandler:
 
         1. Clear previous project's cards if switching projects
         2. Load cards from .crabcakes/feed.json via feed_store.load_feed()
-        3. Render all cards (chronological order → oldest at top, newest at bottom)
-        4. Switch to Project Feed tab (default tab on open)
+        3. Render only the last PAGE_SIZE cards (newest)
+        4. Store older cards in backlog for "Load More"
         5. Auto-scroll to bottom (newest card visible)
         6. If no cards, show empty state widget
         """
@@ -318,6 +326,9 @@ class FeedHandler:
         self._active_project_name = project_name
         # Store project_path for persistence on new card adds
         self._project_paths[project_name] = project_path
+        # Clear backlog from previous project before starting load thread
+        self._backlog = []
+        self._load_more_widget = None
 
         def _load_and_render():
             # Mark loading mode — add_card skips persistence for already-saved cards
@@ -337,18 +348,34 @@ class FeedHandler:
                     card.metadata = {}
                 card.metadata["project_path"] = project_path
 
-            # Build all widgets (pure Python — no GTK yet) while holding lock
+            # Split into recent (render now) and backlog (lazy load)
+            # cards is chronological: oldest first, newest last
+            if len(cards) > self.PAGE_SIZE:
+                backlog = cards[:-self.PAGE_SIZE]  # older cards
+                recent = cards[-self.PAGE_SIZE:]   # newest PAGE_SIZE cards
+            else:
+                backlog = []
+                recent = cards
+
+            # Store backlog for "Load More" (thread-safe under lock)
+            with self._lock:
+                self._backlog = list(reversed(backlog))  # newest-first for pop(0)
+
+            # Build widgets for recent cards only
             widgets = {}
             with self._lock:
-                # Index by project (newest first)
+                # Index by project
                 if project_name not in self._project_cards:
                     self._project_cards[project_name] = []
+
+                # Index ALL cards (including backlog) so _project_cards is complete
                 for card in cards:
                     if card.card_id:
                         self._project_cards[project_name].append(card.card_id)
+                    self._cards[card.card_id] = card
 
-                # Build and store widgets/data under lock
-                for card in cards:
+                # Build widgets only for recent cards
+                for card in recent:
                     widget = build_feed_card(
                         card,
                         on_review=self._make_review_cb(card.card_id),
@@ -357,23 +384,34 @@ class FeedHandler:
                         on_copy=self._make_copy_cb(card),
                     )
                     self._card_widgets[card.card_id] = widget
-                    self._cards[card.card_id] = card
                     widgets[card.card_id] = widget
 
-            # Switch to feed tab on main thread (default tab on project open)
+            # Build "Load More" widget if backlog exists
+            backlog_count = len(backlog)
+            load_more_widget = None
+            if backlog_count > 0:
+                load_more_widget = self._build_load_more_widget(backlog_count)
+                self._load_more_widget = load_more_widget
 
-            # Add each card to the feed on main thread
-            def _add_card_widget(card):
-                widget = widgets.get(card.card_id)
-                if widget and self._feed_tab:
-                    self._feed_tab.append_card(widget, card.card_id)
+            # Add cards + load-more on main thread
+            def _render_feed():
+                if self._feed_tab is None:
+                    return
 
-            for card in cards:  # chronological: oldest first, newest last (bottom)
-                self._GLib.idle_add(lambda c=card: _add_card_widget(c))
+                # Prepend "Load More" at top if backlog exists
+                if load_more_widget is not None:
+                    self._feed_tab.prepend_card(load_more_widget, card_id="__load_more__")
 
-            # Auto-scroll to bottom (newest card visible) on main thread
-            self._GLib.idle_add(lambda: self._feed_tab.scroll_to_bottom() if self._feed_tab else None)
+                # Append recent cards (chronological: oldest first, newest last)
+                for card in recent:
+                    widget = widgets.get(card.card_id)
+                    if widget:
+                        self._feed_tab.append_card(widget, card.card_id)
 
+                # Auto-scroll to bottom (newest card visible)
+                self._feed_tab.scroll_to_bottom()
+
+            self._GLib.idle_add(_render_feed)
             self._loading = False
 
         t = threading.Thread(target=_load_and_render, daemon=True)
@@ -384,11 +422,91 @@ class FeedHandler:
         if self._active_project_name == project_name:
             self._active_project_name = None
         self.clear_project(project_name)
+        self._backlog = []
+        self._load_more_widget = None
 
         def _clear():
             if self._feed_tab is not None:
                 self._feed_tab.show_empty_state()
         self._GLib.idle_add(_clear)
+
+    # ─────────────────────────────────────────────────────────────────
+    # Lazy load: "Load More" button
+    # ─────────────────────────────────────────────────────────────────
+
+    def _build_load_more_widget(self, remaining: int) -> Gtk.Widget:
+        """Build the 'Load More' card that sits at the top of the feed.
+
+        Shows count of older cards and a button to load the next page.
+        Uses feed-card CSS for visual consistency.
+        """
+        from gi.repository import Gtk
+
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.add_css_class("feed-card")
+        card.add_css_class("feed-card-load-more")
+
+        body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        body.add_css_class("feed-card-body")
+        body.set_spacing(8)
+
+        label = Gtk.Label(label=f"📂 {remaining} older card{'s' if remaining != 1 else ''}")
+        label.set_halign(Gtk.Align.START)
+        label.set_hexpand(True)
+
+        btn = Gtk.Button(label="Load More")
+        btn.add_css_class("feed-btn-load-more")
+        btn.connect("clicked", lambda *_: self._load_more())
+
+        body.append(label)
+        body.append(btn)
+        card.append(body)
+        return card
+
+    def _load_more(self) -> None:
+        """Load the next PAGE_SIZE cards from backlog and prepend them."""
+        if not self._backlog:
+            return
+
+        # Take next page from backlog (newest-first)
+        page = self._backlog[:self.PAGE_SIZE]
+        self._backlog = self._backlog[self.PAGE_SIZE:]
+
+        # Build widgets for this page
+        widgets = []
+        for card in page:
+            widget = build_feed_card(
+                card,
+                on_review=self._make_review_cb(card.card_id),
+                on_accept=self._make_accept_cb(card.card_id),
+                on_reject=self._make_reject_cb(card.card_id),
+                on_copy=self._make_copy_cb(card),
+            )
+            self._card_widgets[card.card_id] = widget
+            widgets.append((card.card_id, widget))
+
+        remaining = len(self._backlog)
+
+        def _render():
+            if self._feed_tab is None:
+                return
+
+            # Remove old load-more widget
+            if self._load_more_widget is not None:
+                self._feed_tab.remove_card("__load_more__")
+
+            # Prepend new cards (oldest of page first → they go above existing cards)
+            for card_id, widget in widgets:
+                self._feed_tab.prepend_card(widget, card_id)
+
+            # Re-add load-more if backlog still has cards
+            if remaining > 0:
+                self._load_more_widget = self._build_load_more_widget(remaining)
+                self._feed_tab.prepend_card(self._load_more_widget, card_id="__load_more__")
+            else:
+                self._load_more_widget = None
+
+        self._GLib.idle_add(_render)
 
     # ─────────────────────────────────────────────────────────────────
     # Button action handlers

@@ -10,7 +10,7 @@
 
 import gi
 gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk
+from gi.repository import Gtk, Pango
 
 from typing import Callable
 
@@ -42,6 +42,8 @@ def _make_feed_card_header(
     title_label.set_text(title)
     title_label.set_halign(Gtk.Align.START)
     title_label.set_hexpand(True)
+    title_label.set_ellipsize(Pango.EllipsizeMode.END)
+    title_label.set_width_chars(20)
 
     copy_btn = Gtk.Button()
     copy_btn.add_css_class("flat")

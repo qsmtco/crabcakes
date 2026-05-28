@@ -106,6 +106,24 @@ class FeedTab(Gtk.Box):
             self._card_container.remove(widget)
         del self._cards_by_id[card_id]
 
+    def prepend_card(self, card_widget: Gtk.Widget, card_id: str | None = None) -> None:
+        """
+        Prepend a card widget at the top of the feed (above all other cards).
+
+        Used by lazy-load to insert older cards above the existing feed.
+        If card_id is provided, the card can be removed via remove_card().
+        """
+        if self._card_container is None:
+            return
+        # Remove empty state widget if present
+        if self._empty_widget is not None and self._empty_widget in self._card_container:
+            self._card_container.remove(self._empty_widget)
+            self._empty_widget = None
+        # insert_child_after(child, None) prepends in GTK4
+        self._card_container.insert_child_after(card_widget, None)
+        if card_id is not None:
+            self._cards_by_id[card_id] = card_widget
+
     def replace_card(self, card_id: str, new_widget: Gtk.Widget) -> None:
         """
         Replace an existing card widget with a new one at the same position.

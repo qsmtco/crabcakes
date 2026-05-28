@@ -830,6 +830,16 @@ notebook > header > tabs > tab {
 .feed-card-audit .feed-card-header { background: #2d5a5a; color: #a8e6e6; }
 .feed-card-audit .feed-card-body { background: #1a3d3d; }
 
+/* Load More card */
+.feed-card-load-more .feed-card-body {
+    background: rgba(255, 255, 255, 0.02);
+}
+.feed-btn-load-more {
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-size: 12px;
+}
+
 /* Feed action buttons */
 .feed-btn-review,
 .feed-btn-accept,
