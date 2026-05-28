@@ -42,7 +42,19 @@ _PROVIDER_COSTS: dict[str, dict[str, float]] = {
     "openai": _OPENAI_COST,
     "minimax": _MINIMAX_COST,
     "anthropic": _ANTHROPIC_COST,
+    "openrouter": _OPENAI_COST,  # varies by model, using openai as fallback
+    "zai": _OPENAI_COST,        # free tier, no cost
 }
+
+
+def _model_id(model: str) -> str:
+    """Strip the provider prefix, returning the model ID sent to the API.
+
+    'minimax/MiniMax-M2.7'       -> 'MiniMax-M2.7'
+    'openrouter/deepseek/deepseek-v4-pro' -> 'deepseek/deepseek-v4-pro'
+    """
+    parts = model.split("/", 1)
+    return parts[1] if len(parts) > 1 else parts[0]
 
 
 def _cost_for_model(model: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -68,7 +80,7 @@ def _call_openai(
 
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
     payload = {
-        "model": model.split("/")[-1],
+        "model": _model_id(model),
         "messages": messages,
     }
     if tools:
@@ -108,7 +120,7 @@ def _call_minimax(
 
     endpoint = f"{base_url.rstrip('/')}/text/chatcompletion_v2"
     payload = {
-        "model": model.split("/")[-1],
+        "model": _model_id(model),
         "messages": messages,
     }
     if tools:
@@ -186,7 +198,7 @@ def _call_anthropic(
             api_messages.append(msg)
 
     payload: dict[str, Any] = {
-        "model": model.split("/")[-1],
+        "model": _model_id(model),
         "messages": api_messages,
         "max_tokens": 4096,
     }
@@ -229,6 +241,8 @@ _PROVIDER_CALLERS: dict[str, Any] = {
     "openai": _call_openai,
     "minimax": _call_minimax,
     "anthropic": _call_anthropic,
+    "openrouter": _call_openai,  # OpenAI-compatible API
+    "zai": _call_openai,        # OpenAI-compatible API
 }
 
 
@@ -280,7 +294,7 @@ def _stream_openai_events(
     """Yield SSE events from OpenAI Chat Completions streaming API."""
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
     payload = {
-        "model": model.split("/")[-1],
+        "model": _model_id(model),
         "messages": messages,
         "stream": True,
     }
@@ -310,9 +324,10 @@ def _stream_openai_events(
                 continue
             d = ev.data
             delta = d.get("choices", [{}])[0].get("delta", {})
-            # Text content delta
-            if "content" in delta:
-                yield SSEEvent(type="text_delta", data={"content": delta["content"]})
+            # Text content delta (guard against null content from OpenRouter)
+            content = delta.get("content")
+            if content is not None:
+                yield SSEEvent(type="text_delta", data={"content": content})
             # Tool call deltas
             tc_delta = delta.get("tool_calls", [])
             for tcd in tc_delta:
@@ -336,7 +351,7 @@ def _stream_minimax_events(
     """Yield SSE events from MiniMax ChatCompletion streaming API (OpenAI-compatible)."""
     endpoint = f"{base_url.rstrip('/')}/text/chatcompletion_v2"
     payload = {
-        "model": model.split("/")[-1],
+        "model": _model_id(model),
         "messages": messages,
         "stream": True,
     }
@@ -365,8 +380,9 @@ def _stream_minimax_events(
                 continue
             d = ev.data
             delta = d.get("choices", [{}])[0].get("delta", {})
-            if "content" in delta:
-                yield SSEEvent(type="text_delta", data={"content": delta["content"]})
+            content = delta.get("content")
+            if content is not None:
+                yield SSEEvent(type="text_delta", data={"content": content})
             tc_delta = delta.get("tool_calls", [])
             for tcd in tc_delta:
                 idx = tcd.get("index", 0)
@@ -403,7 +419,7 @@ def _stream_anthropic_events(
             api_messages.append(msg)
 
     payload: dict[str, Any] = {
-        "model": model.split("/")[-1],
+        "model": _model_id(model),
         "messages": api_messages,
         "max_tokens": 4096,
         "stream": True,
@@ -457,6 +473,8 @@ _PROVIDER_STREAMERS: dict[str, Any] = {
     "openai": _stream_openai_events,
     "minimax": _stream_minimax_events,
     "anthropic": _stream_anthropic_events,
+    "openrouter": _stream_openai_events,  # OpenAI-compatible SSE
+    "zai": _stream_openai_events,        # OpenAI-compatible SSE
 }
 
 
@@ -489,7 +507,7 @@ def _call_llm_streaming(
 
     for ev in streamer(base_url, api_key, model, messages, tools, timeout):
         if ev.type == "text_delta":
-            text = ev.data["content"]
+            text = ev.data.get("content") or ""
             full_content += text
             if runtime._on_text_delta:
                 runtime._dispatch(runtime._on_text_delta, session_key, text)
@@ -834,6 +852,7 @@ class AgentRuntime:
         mcp_servers: list[str] = None,  # NEW: Phase B MCP servers
         agent_role: str = "",
         si_enforcement: bool | None = None,      # per-agent enforcement override
+        api_key: str | None = None,             # per-agent API key override
     ) -> str:
         """
         Create a new conversation for an agent.
@@ -879,6 +898,7 @@ class AgentRuntime:
             model=model,
             system_prompt=system_prompt,
             si_enforcement=si_enforcement,
+            api_key=api_key,
         )
 
         with self._lock:
@@ -1195,6 +1215,9 @@ class AgentRuntime:
             else:
                 raise ValueError(f"No LLM provider configured for {model}")
 
+        # Use per-agent API key if set, otherwise fall back to provider config
+        effective_api_key = conv.api_key or provider_cfg.api_key
+
         # Use streaming when on_text_delta callback is registered (Phase 1.3b)
         if self._on_text_delta is not None:
             logger.debug("[call-llm] sk=%s streaming=True provider=%s model=%s msg_count=%d",
@@ -1203,7 +1226,7 @@ class AgentRuntime:
                 runtime=self,
                 session_key=session_key,
                 base_url=provider_cfg.base_url,
-                api_key=provider_cfg.api_key,
+                api_key=effective_api_key,
                 model=model,
                 messages=messages,
                 tools=tools if tools else None,
@@ -1216,7 +1239,7 @@ class AgentRuntime:
 
         return caller(
             base_url=provider_cfg.base_url,
-            api_key=provider_cfg.api_key,
+            api_key=effective_api_key,
             model=model,
             messages=messages,
             tools=tools if tools else None,

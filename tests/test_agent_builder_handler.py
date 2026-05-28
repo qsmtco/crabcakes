@@ -64,6 +64,7 @@ class TestSaveValidation:
             "tools": ["read_file", "list_files"],
             "provider": "minimax",
             "model": "MiniMax-M2.7",
+            "api_key": "sk-test-123",
         }
         ok, errors = h.save(agent)
         assert ok
@@ -84,6 +85,7 @@ class TestSaveValidation:
             "tools": ["read_file"],
             "provider": "minimax",
             "model": "MiniMax-M2.7",
+            "api_key": "sk-test-123",
         })
         assert saved == ["CallbackTest"]
 
@@ -97,6 +99,7 @@ class TestLoadForEdit:
             "tools": ["read_file"],
             "provider": "minimax",
             "model": "MiniMax-M2.7",
+            "api_key": "sk-test-edit",
         })
         loaded = h.load_for_edit("Editable")
         assert loaded is not None
@@ -116,6 +119,7 @@ class TestDelete:
             "tools": ["read_file"],
             "provider": "minimax",
             "model": "MiniMax-M2.7",
+            "api_key": "sk-test-del",
         })
         assert h.delete("Deletable") is True
         assert "Deletable" in deleted
@@ -132,6 +136,7 @@ class TestDelete:
             "tools": ["read_file"],
             "provider": "minimax",
             "model": "MiniMax-M2.7",
+            "api_key": "sk-test-del2",
         })
         h.delete("ToDelete")
         assert deleted == ["ToDelete"]

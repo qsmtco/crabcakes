@@ -213,6 +213,7 @@ class TestValidateAgentDef:
             "tools": ["read_file"],
             "provider": "minimax",
             "model": "MiniMax-M2.7",
+            "api_key": "sk-test-valid",
         }
         errors = ad.validate_agent_def(agent)
         assert errors == []

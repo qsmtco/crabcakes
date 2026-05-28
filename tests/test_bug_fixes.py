@@ -91,6 +91,7 @@ class TestSIOverridesPreserved:
             "tools": ["read_file", "write_file"],
             "provider": "minimax",
             "model": "MiniMax-M2.7",
+            "api_key": "sk-test-si",
             "self_improvement": {
                 "bug_journal": True,
                 "project_rules": True,
@@ -125,6 +126,7 @@ class TestRenameCleanup:
             "tools": ["read_file"],
             "provider": "minimax",
             "model": "MiniMax-M2.7",
+            "api_key": "sk-test-ren",
         })
         assert ad.load_agent_def("Original") is not None
 
@@ -152,6 +154,7 @@ class TestRenameCleanup:
             "tools": ["read_file"],
             "provider": "minimax",
             "model": "MiniMax-M2.7",
+            "api_key": "sk-test-stable",
         })
 
         loaded = h.load_for_edit("Stable")

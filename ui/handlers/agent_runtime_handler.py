@@ -342,6 +342,7 @@ class AgentRuntimeHandler:
                 mcp_servers=agent_def.mcp_servers, # Phase B: MCP servers
                 agent_role=agent_def.role,        # §7: explicit role from definition
                 si_enforcement=si_enforcement,     # Per-agent enforcement gating
+                api_key=agent_def.api_key,        # Per-agent API key override
             )
 
         rt.send_message(session_key, text)

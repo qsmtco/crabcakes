@@ -381,6 +381,13 @@ def validate_agent_def(agent_def: dict) -> list[str]:
                     errors.append(f"No model specified and provider '{provider}' has no default")
                 break
 
+    # Validate API key for selected provider
+    provider_keys = agent_def.get("provider_keys", {})
+    if provider and not provider_keys.get(provider):
+        # Check legacy api_key as fallback
+        if not agent_def.get("api_key"):
+            errors.append(f"API key required for provider '{provider}'")
+
     # Check for filename collision (sanitized names may collide)
     name = agent_def.get("name", "")
     if name:
