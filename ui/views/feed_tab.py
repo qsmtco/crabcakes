@@ -42,7 +42,7 @@ class FeedTab(Gtk.Box):
         scroll = Gtk.ScrolledWindow()
         scroll.add_css_class("feed-scroll")
         scroll.set_vexpand(True)
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.AUTOMATIC)
         scroll.set_halign(Gtk.Align.FILL)
         scroll.set_valign(Gtk.Align.FILL)
         self._feed_scroll = scroll

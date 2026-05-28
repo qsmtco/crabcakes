@@ -157,6 +157,8 @@ def _render_file_event_body(card_data: FeedCardData) -> Gtk.Widget:
     path_label.set_markup(f"{icon} <b>{escape_for_pango(path)}</b>")
     path_label.set_xalign(0)
     path_label.set_wrap(False)
+    path_label.set_ellipsize(Pango.EllipsizeMode.START)
+    path_label.set_max_width_chars(40)
     path_label.set_selectable(True)
     path_label.set_can_focus(False)
     path_label.add_css_class("feed-body-path")
@@ -320,7 +322,8 @@ def build_context_panel(
             diff_label.set_xalign(0)
             diff_label.set_selectable(True)
             diff_label.set_can_focus(False)
-            diff_label.set_wrap(False)
+            diff_label.set_wrap(True)
+            diff_label.set_wrap_mode(Pango.WrapMode.CHAR)
             diff_label.add_css_class("feed-context-diff")
             panel.append(diff_label)
 
