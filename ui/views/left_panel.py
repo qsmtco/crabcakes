@@ -230,6 +230,15 @@ class LeftPanel(Gtk.Box):
         # Find nested Notebook inside _projects_open_page
         nested_nb = self._projects_open_page.get_first_child()
         if nested_nb is not None:
+            # Unparent FeedTab from the feed_box BEFORE destroying nested_nb.
+            # unparent() on a container does NOT recursively unparent its children,
+            # so FeedTab retains a stale parent ref and crashes on next append.
+            feed_page = nested_nb.get_nth_page(1)  # Feed tab is page 1
+            if feed_page is not None:
+                feed_child = feed_page.get_first_child()  # feed_box
+                if feed_child is not None and self._feed_tab is not None:
+                    feed_child.remove(self._feed_tab)
+
             self._projects_open_page.remove(nested_nb)
             nested_nb.unparent()
         self._projects_nested_notebook = None
