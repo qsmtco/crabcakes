@@ -227,27 +227,36 @@ class LeftPanel(Gtk.Box):
         if not self._is_project_view_open:
             return
 
-        # Find nested Notebook inside _projects_open_page
+        # 1. Reset FileTree to project picker view BEFORE detaching.
+        #    navigate_back clears file-listing state and calls _show_project_picker()
+        #    which rebuilds the project card grid. fire_callback=False prevents
+        #    the double-close loop (caller already handles project closure).
+        self._file_tree.navigate_back(fire_callback=False)
+
+        # 2. Remove pages from nested notebook using Notebook API.
+        #    MUST use remove_page(), NOT widget.unparent() — GTK4 Notebook uses
+        #    an internal Stack for page management. Direct unparent() bypasses
+        #    the Notebook's bookkeeping, corrupting its internal Stack and
+        #    causing gtk_stack_remove assertion failures.
         nested_nb = self._projects_open_page.get_first_child()
         if nested_nb is not None:
-            # Unparent FeedTab from the feed_box BEFORE destroying nested_nb.
-            # unparent() on a container does NOT recursively unparent its children,
-            # so FeedTab retains a stale parent ref and crashes on next append.
-            feed_page = nested_nb.get_nth_page(1)  # Feed tab is page 1
-            if feed_page is not None:
-                feed_child = feed_page.get_first_child()  # feed_box
-                if feed_child is not None and self._feed_tab is not None:
-                    feed_child.remove(self._feed_tab)
+            # Unparent FeedTab from feed_box before removing the Feed page
+            feed_page = nested_nb.get_nth_page(1)  # Feed tab is page 1 (returns feed_box)
+            if feed_page is not None and self._feed_tab is not None:
+                feed_page.remove(self._feed_tab)
 
+            # Remove pages using Notebook API (reverse order to keep indices valid)
+            # Page 1 = Feed tab, Page 0 = File Tree tab
+            n_pages = nested_nb.get_n_pages()
+            for i in range(n_pages - 1, -1, -1):
+                nested_nb.remove_page(i)
+
+            # Now safe to remove the notebook from its parent
             self._projects_open_page.remove(nested_nb)
             nested_nb.unparent()
         self._projects_nested_notebook = None
 
-        # Reparent FileTree back into _picker_box (Stack "picker" page)
-        # Must explicitly unparent from nested_nb first — unparent() on a container
-        # does NOT recursively unparent its children; they retain stale parent refs
-        if self._file_tree.get_parent() is not None:
-            self._file_tree.unparent()
+        # 3. Reparent FileTree back into picker
         self._picker_box.append(self._file_tree)
         self._projects_stack.set_visible_child_name("picker")
 

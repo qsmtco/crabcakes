@@ -241,6 +241,9 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # Wire MainContent → ProjectHandler (for right-click project tab menu)
         self._main_content.set_project_handler(self._project_handler)
+        self._main_content.set_on_project_tab_closed(
+            lambda name: self._close_project_tab(name)
+        )
         self._chat_handler.set_project_handler(self._project_handler)
 
         # Wire feed bar — updates when project opens or members change
@@ -639,15 +642,16 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _close_project_tab(self, name: str):
         """
-        Close a project: return Projects tab in LeftPanel to picker view.
-
-        Does: switch Projects tab back to picker, reset project state, clear feed bar.
+        Close a project: return Projects tab in LeftPanel to picker view,
+        close the project tab in main content, reset project state.
         """
         # 1. Reset project state (clears _active_project_name, fires on_project_closed callbacks)
         self._project_handler.close_project(name)
         # 2. Reparent FileTree back to Stack picker, destroy nested Notebook
         self._left_panel.close_project_view()
-        # 3. Clear the feed bar
+        # 3. Close the project tab in main content
+        self._main_content.close_project_tab(name)
+        # 4. Clear the feed bar
         self._on_feed_bar_update(None, 0)
 
     def _on_file_tree_navigate_back(self, project_name):

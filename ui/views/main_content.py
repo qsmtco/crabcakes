@@ -63,6 +63,7 @@ class MainContent(Gtk.Box):
         self._scroll_to_bottom_overlay = None  # per-tab overlay holding the button
         self._chat_render_handler = None  # injected via set_chat_render_handler()
         self._project_handler = None   # injected via set_project_handler()
+        self._on_project_tab_closed = None  # callback(name) — set by window.py
         # Bulk-close guard: skip reindex until all removals are done
         self._bulk_closing = False
         # Unread tab tracking — session_keys with unseen messages
@@ -342,6 +343,7 @@ class MainContent(Gtk.Box):
         vadj = chat_scroll.get_vadjustment()
         if vadj is not None:
             vadj.connect("value-changed", self._on_vadjustment_changed, page_idx)
+        self._chat_notebook.set_show_tabs(True)
         self._chat_notebook.set_current_page(page_idx)
         # Welcome bubble — centered logo at bottom of new chat tabs.
         # Scrolled away naturally as messages arrive.
@@ -467,6 +469,9 @@ class MainContent(Gtk.Box):
         self._tab_chat_boxes.pop(page_idx, None)
         self._tab_scrolls.pop(page_idx, None)
         self._tab_overlays.pop(page_idx, None)
+        # Hide tab bar when empty to prevent GtkGizmo min-height < 0 warning
+        if self._chat_notebook.get_n_pages() == 0:
+            self._chat_notebook.set_show_tabs(False)
         if not self._bulk_closing:
             self._reindex_tabs()
 
@@ -544,7 +549,13 @@ class MainContent(Gtk.Box):
         page_idx = self._find_page_by_session(session_key)
         if page_idx is None:
             return
-        self._close_tab(page_idx)
+
+        # If this is a project tab, notify window so it can close the project properly
+        if session_key.startswith("project:") and self._on_project_tab_closed:
+            project_name = session_key.replace("project:", "", 1)
+            self._on_project_tab_closed(project_name)
+        else:
+            self._close_tab(page_idx)
 
     def _on_tab_middle_click(self, ctrl, n_press, x, y):
         """Middle-click on tab label — close it."""
@@ -556,7 +567,12 @@ class MainContent(Gtk.Box):
             return
         page_idx = self._find_page_by_session(session_key)
         if page_idx is not None:
-            self._close_tab(page_idx)
+            # If this is a project tab, notify window so it can close the project properly
+            if session_key.startswith("project:") and self._on_project_tab_closed:
+                project_name = session_key.replace("project:", "", 1)
+                self._on_project_tab_closed(project_name)
+            else:
+                self._close_tab(page_idx)
 
     def _on_tab_right_click(self, ctrl, n_press, x, y, session_key):
         """Right-click on tab label — show appropriate menu."""
@@ -671,6 +687,19 @@ class MainContent(Gtk.Box):
     def set_project_handler(self, handler):
         """Inject ProjectHandler instance. Called by window.py._build()."""
         self._project_handler = handler
+
+    def set_on_project_tab_closed(self, callback):
+        """Set callback for when a project tab is closed via (X) or middle-click.
+        Signature: callback(project_name: str). Called by window.py._build().
+        """
+        self._on_project_tab_closed = callback
+
+    def close_project_tab(self, project_name: str):
+        """Remove the project tab from the notebook. Called by window._close_project_tab()."""
+        session_key = f"project:{project_name}"
+        page_idx = self._find_page_by_session(session_key)
+        if page_idx is not None:
+            self._close_tab(page_idx)
 
     def scroll_chat_to_bottom(self, page_index=None):
         """Scroll the chat ScrolledWindow to the bottom."""
