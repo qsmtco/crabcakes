@@ -25,6 +25,8 @@ Open a project. Assign the team of Agents. You type a message, it fans out to ev
 
 This is the first **PDE** — a Project Development Environment.
 
+CrabCakes is not a harness. A harness wraps API calls — CrabCakes is where AI and humans build software together. It's a collaborative development environment — or more precisely, an **AI-native project environment**. The "project" is the first-class citizen. Agents, humans, git, files, reviews — those all orbit the project.
+
 ---
 
 ## ✨ Features
