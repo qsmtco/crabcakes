@@ -108,7 +108,7 @@ class AgentBuilderDialog:
         form_box.append(provider_model_row)
 
         # API key / access token
-        self._api_key_entry = self._add_field(form_box, "Access Token", Gtk.Entry(), "API key or access token")
+        self._api_key_entry = self._add_field(form_box, "API Key", Gtk.Entry(), "API key for selected provider")
         self._api_key_entry.set_input_purpose(Gtk.InputPurpose.PASSWORD)
         self._api_key_entry.set_visibility(False)
         self._api_key_entry.connect("changed", lambda *_: self._update_save_button())
