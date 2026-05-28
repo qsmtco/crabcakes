@@ -780,33 +780,97 @@ class MainWindow(Gtk.ApplicationWindow):
         pass  # dialog already closes itself
 
     def _on_agent_saved(self, name: str) -> None:
-        """Called after an agent is saved — reload registry and refresh UI."""
+        """Called after an agent is saved — reload registry, refresh UI, and hot-reload MCP connections.
+
+        Hot-reload flow (SPEC-MCP-agent-tools-hot-reload.md §2.3):
+        1. reload_registry() — re-read YAML files
+        2. disconnect_all() — kill stale MCP subprocesses from prior config
+        3. Re-register agents with runtime handler
+        4. connect_servers() per agent — pre-warm MCP connections so next message
+           has full tool cache (no cold-start latency)
+        5. Refresh UI
+        """
         from agent.special_agents import reload_registry, get_special_agents
+        from utils.mcp_client import disconnect_all, connect_servers
         reload_registry()
 
+        # Collect all current agent conv_id_prefix values BEFORE clearing,
+        # so we can disconnect their actual MCP connections (not _default)
+        old_prefixes = list(self._agent_runtime_handler._agents.keys())
+
         # Re-register all agents with the runtime handler
-        # Clear existing and re-add
         self._agent_runtime_handler._agents.clear()
-        for agent_def in get_special_agents():
+        new_agents = get_special_agents()
+        for agent_def in new_agents:
             self._agent_runtime_handler.add_special_agent(agent_def)
+
+        # Kill stale MCP subprocesses for all known prefixes
+        # (old ones that no longer exist + new ones being refreshed)
+        prefixes_to_disconnect = set(old_prefixes) | {a.conv_id_prefix for a in new_agents}
+        for prefix in prefixes_to_disconnect:
+            disconnect_all(conversation_key=prefix)
+
+        # Re-establish MCP connections for each agent (hot-reload)
+        for agent_def in new_agents:
+            if agent_def.mcp_servers:
+                result = connect_servers(
+                    server_names=agent_def.mcp_servers,
+                    conversation_key=agent_def.conv_id_prefix,
+                )
+                # Log any servers that failed to connect
+                for server_name, error in result.items():
+                    if error:
+                        logger.warning(
+                            "MCP hot-reload: failed to connect %s for %s: %s",
+                            server_name, agent_def.conv_id_prefix, error,
+                        )
 
         # Refresh left panel
         self._left_panel.set_special_agents(self._agent_runtime_handler)
-        logger.info("Agent saved and UI refreshed: %s", name)
+        logger.info("Agent saved, UI refreshed, MCP hot-reloaded: %s", name)
 
     def _on_agent_deleted(self, name: str) -> None:
-        """Called after an agent is deleted — reload registry and refresh UI."""
+        """Called after an agent is deleted — reload registry, refresh UI, and hot-reload MCP connections.
+
+        Hot-reload flow mirrors _on_agent_saved() — ensures deleted agent's
+        MCP connections are torn down and surviving agents reconnected.
+        """
         from agent.special_agents import reload_registry, get_special_agents
+        from utils.mcp_client import disconnect_all, connect_servers
         reload_registry()
+
+        # Collect all current agent conv_id_prefix values BEFORE clearing
+        old_prefixes = list(self._agent_runtime_handler._agents.keys())
 
         # Re-register all agents
         self._agent_runtime_handler._agents.clear()
-        for agent_def in get_special_agents():
+        new_agents = get_special_agents()
+        for agent_def in new_agents:
             self._agent_runtime_handler.add_special_agent(agent_def)
+
+        # Kill stale MCP subprocesses for all known prefixes
+        # (includes deleted agent's prefix which won't appear in new_agents)
+        prefixes_to_disconnect = set(old_prefixes) | {a.conv_id_prefix for a in new_agents}
+        for prefix in prefixes_to_disconnect:
+            disconnect_all(conversation_key=prefix)
+
+        # Re-establish MCP connections for surviving agents
+        for agent_def in new_agents:
+            if agent_def.mcp_servers:
+                result = connect_servers(
+                    server_names=agent_def.mcp_servers,
+                    conversation_key=agent_def.conv_id_prefix,
+                )
+                for server_name, error in result.items():
+                    if error:
+                        logger.warning(
+                            "MCP hot-reload: failed to connect %s for %s: %s",
+                            server_name, agent_def.conv_id_prefix, error,
+                        )
 
         # Refresh left panel
         self._left_panel.set_special_agents(self._agent_runtime_handler)
-        logger.info("Agent deleted and UI refreshed: %s", name)
+        logger.info("Agent deleted, UI refreshed, MCP hot-reloaded: %s", name)
 
     def _confirm_delete_agent(self, name: str) -> None:
         """Show confirmation dialog, then delete agent if confirmed."""

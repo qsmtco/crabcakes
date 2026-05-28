@@ -37,6 +37,8 @@ class CrabcakesApp(Gtk.Application):
         super().__init__(application_id='com.crabcakes.app')
         # Connect the 'activate' signal — fired when app is first started
         self.connect('activate', self.on_activate)
+        # Set application icon for taskbar/dock (installed in hicolor icon theme)
+        Gtk.Window.set_default_icon_name('crabcakes')
 
     def on_activate(self, app):
         """

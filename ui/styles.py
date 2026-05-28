@@ -148,6 +148,35 @@ button.flat:hover {
     color: #fecdd3;
 }
 
+/* Agent Builder — MCP server list */
+.agent-builder-mcp-list {
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 6px;
+}
+.agent-builder-mcp-check {
+    padding: 6px 8px;
+}
+
+/* Agent Builder — Tool category grid */
+.agent-builder-tool-count {
+    font-size: 0.8em;
+    opacity: 0.6;
+}
+.agent-builder-tool-cat-label {
+    font-size: 0.85em;
+    font-weight: 600;
+    opacity: 0.7;
+    margin-top: 4px;
+}
+.agent-builder-tool-grid {
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 6px;
+    padding: 4px;
+}
+.agent-builder-tool-check {
+    padding: 6px 8px;
+}
+
 /* -- Prompt library ------------------------------------------------------ */
 .lib-row {
     background: rgba(255, 255, 255, 0.04);

@@ -15,6 +15,8 @@ import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gio, GLib
 
+from utils.mcp_config import load_mcp_servers, MCPConfigError
+
 
 class AgentBuilderDialog:
     """GTK4 dialog for creating/editing agent definitions.
@@ -45,6 +47,8 @@ class AgentBuilderDialog:
         self._is_edit = agent_def is not None
         self._original_si = {}  # preserved SI overrides from edit source
         self._tool_checks: dict[str, Gtk.CheckButton] = {}
+        self._tool_count_label: Gtk.Label | None = None
+        self._mcp_checks: dict[str, Gtk.CheckButton] = {}
 
         # ── Window setup ──────────────────────────────────────────────
         title = "Edit Agent" if self._is_edit else "Create Agent"
@@ -94,6 +98,10 @@ class AgentBuilderDialog:
         tools_section = self._build_tools_section()
         self._add_labeled(form_box, "Tools", tools_section, expand=True)
 
+        # MCP server checkboxes
+        mcp_section = self._build_mcp_section()
+        self._add_labeled(form_box, "MCP Servers", mcp_section, expand=False)
+
         scroll.set_child(form_box)
         content.append(scroll)
 
@@ -133,6 +141,7 @@ class AgentBuilderDialog:
             "tools": tools,
             "provider": provider,
             "model": model,
+            "mcp_servers": self._get_selected_mcp_servers(),
             "self_improvement": self._get_si_config(tools),
         }
 
@@ -279,9 +288,16 @@ class AgentBuilderDialog:
     # ── Tools section with presets ────────────────────────────────────
 
     def _build_tools_section(self) -> Gtk.Box:
+        """Build a categorized FlowBox grid of tool checkboxes.
+
+        Tools are grouped into categories (Read, Write, Execute, Web). Unclassified
+        tools fall into an "Other" category. Each tool displays as a simple checkbox
+        with tooltip showing its description. Category headers are visually distinct.
+        """
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
 
-        # Preset buttons row
+        # Header row: presets on left, count badge on right
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         presets = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         presets.add_css_class("agent-builder-presets")
 
@@ -300,39 +316,108 @@ class AgentBuilderDialog:
         presets.append(full_btn)
         presets.append(readonly_btn)
         presets.append(custom_btn)
-        outer.append(presets)
+        header.append(presets)
 
-        # Tool checkboxes in a scrollable list
+        # Count badge (right side)
+        self._tool_count_label = Gtk.Label(label="0/0 tools")
+        self._tool_count_label.add_css_class("agent-builder-tool-count")
+        self._tool_count_label.set_halign(Gtk.Align.END)
+        self._tool_count_label.set_hexpand(True)
+        header.append(self._tool_count_label)
+
+        outer.append(header)
+
+        # Category definitions
+        CATEGORIES = [
+            ("Read", {"read_file", "list_files", "search_files"}),
+            ("Write", {"write_file", "edit_file"}),
+            ("Execute", {"exec_command"}),
+            ("Web", {"web_search", "web_fetch"}),
+        ]
+
         tools = self._handler.get_tool_options()
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_min_content_height(80)
-        scroll.set_max_content_height(160)
-        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
 
-        tool_box = Gtk.ListBox()
-        tool_box.add_css_class("agent-builder-tool-list")
-        tool_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        # Build a map from tool name → tool dict
+        tool_map = {t["name"]: t for t in tools}
 
-        for t in tools:
-            row = Gtk.ListBoxRow()
-            row.set_selectable(False)
-            row.set_activatable(False)
+        # Track which tools we've placed
+        placed = set()
 
-            check = Gtk.CheckButton(label=f"{t['name']} — {t['description'][:60]}")
-            check.add_css_class("agent-builder-tool-check")
-            self._tool_checks[t["name"]] = check
+        # Render each category
+        for cat_name, cat_tools in CATEGORIES:
+            # Get tools in this category that actually exist
+            cat_matches = [(name, tool_map[name]) for name in sorted(cat_tools) if name in tool_map]
+            if not cat_matches:
+                continue
 
-            row.set_child(check)
-            tool_box.append(row)
+            placed.update(name for name, _ in cat_matches)
 
-        scroll.set_child(tool_box)
-        outer.append(scroll)
+            # Category header
+            cat_label = Gtk.Label(label=cat_name)
+            cat_label.add_css_class("agent-builder-tool-cat-label")
+            cat_label.set_halign(Gtk.Align.START)
+            outer.append(cat_label)
+
+            # FlowBox for this category
+            flow = Gtk.FlowBox()
+            flow.add_css_class("agent-builder-tool-grid")
+            flow.set_min_children_per_line(2)
+            flow.set_max_children_per_line(3)
+            flow.set_selection_mode(Gtk.SelectionMode.NONE)
+            flow.set_homogeneous(True)
+            outer.append(flow)
+
+            # Checkboxes in this category
+            for name, tool in cat_matches:
+                check = Gtk.CheckButton(label=name)
+                check.add_css_class("agent-builder-tool-check")
+                # First line only — avoids "WHEN TO USE:" dev docs noise
+                desc_first = tool["description"].split("\n")[0].strip()
+                check.set_tooltip_text(desc_first)
+                check.connect("toggled", lambda *_: self._update_tool_count())
+                self._tool_checks[name] = check
+
+                child = Gtk.FlowBoxChild()
+                child.set_can_focus(False)
+                child.set_child(check)
+                flow.append(child)
+
+        # "Other" category for any unclassified tools
+        other_tools = [(name, tool_map[name]) for name in sorted(tool_map.keys()) if name not in placed]
+        if other_tools:
+            cat_label = Gtk.Label(label="Other")
+            cat_label.add_css_class("agent-builder-tool-cat-label")
+            cat_label.set_halign(Gtk.Align.START)
+            outer.append(cat_label)
+
+            flow = Gtk.FlowBox()
+            flow.add_css_class("agent-builder-tool-grid")
+            flow.set_min_children_per_line(2)
+            flow.set_max_children_per_line(3)
+            flow.set_selection_mode(Gtk.SelectionMode.NONE)
+            flow.set_homogeneous(True)
+            outer.append(flow)
+
+            for name, tool in other_tools:
+                check = Gtk.CheckButton(label=name)
+                check.add_css_class("agent-builder-tool-check")
+                desc_first = tool["description"].split("\n")[0].strip()
+                check.set_tooltip_text(desc_first)
+                check.connect("toggled", lambda *_: self._update_tool_count())
+                self._tool_checks[name] = check
+
+                child = Gtk.FlowBoxChild()
+                child.set_can_focus(False)
+                child.set_child(check)
+                flow.append(child)
+
+        # Initialize count badge
+        self._update_tool_count()
 
         return outer
 
     def _apply_preset(self, preset: str) -> None:
         """Apply a tool preset to all checkboxes."""
-        all_tools = list(self._tool_checks.keys())
         read_only = {"read_file", "list_files", "search_files", "web_search", "web_fetch"}
 
         if preset == "full":
@@ -343,8 +428,70 @@ class AgentBuilderDialog:
                 check.set_active(name in read_only)
         # "custom" — leave as-is
 
+        self._update_tool_count()
+
+    def _update_tool_count(self) -> None:
+        """Update the tool count badge label."""
+        if self._tool_count_label is None:
+            return
+        total = len(self._tool_checks)
+        selected = sum(1 for check in self._tool_checks.values() if check.get_active())
+        self._tool_count_label.set_label(f"{selected}/{total} tools")
+
     def _get_selected_tools(self) -> list[str]:
         return [name for name, check in self._tool_checks.items() if check.get_active()]
+
+    # ── MCP Servers section ────────────────────────────────────────────
+
+    def _build_mcp_section(self) -> Gtk.Box:
+        """Build MCP server checkbox list for the agent builder form."""
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+
+        try:
+            all_servers = load_mcp_servers()
+        except (FileNotFoundError, OSError, MCPConfigError) as exc:
+            dim = Gtk.Label(label="No MCP servers configured.\nAdd servers to ~/.config/crabcakes/mcp-servers.json")
+            dim.add_css_class("dim-label")
+            dim.set_justify(Gtk.Justification.LEFT)
+            dim.set_xalign(0.0)
+            dim.set_wrap(True)
+            outer.append(dim)
+            return outer
+
+        # Only show enabled servers
+        enabled_servers = {name: cfg for name, cfg in all_servers.items() if cfg.enabled}
+
+        if not enabled_servers:
+            dim = Gtk.Label(label="No MCP servers configured.\nAdd servers to ~/.config/crabcakes/mcp-servers.json")
+            dim.add_css_class("dim-label")
+            dim.set_justify(Gtk.Justification.LEFT)
+            dim.set_xalign(0.0)
+            dim.set_wrap(True)
+            outer.append(dim)
+            return outer
+
+        list_box = Gtk.ListBox()
+        list_box.add_css_class("agent-builder-mcp-list")
+        list_box.set_selection_mode(Gtk.SelectionMode.NONE)
+
+        for name, cfg in enabled_servers.items():
+            row = Gtk.ListBoxRow()
+            row.set_selectable(False)
+            row.set_activatable(False)
+
+            check = Gtk.CheckButton(label=f"{name}  — {cfg.description[:60]}")
+            check.add_css_class("agent-builder-mcp-check")
+            self._mcp_checks[name] = check
+
+            row.set_child(check)
+            list_box.append(row)
+
+        outer.append(list_box)
+        return outer
+
+    def _get_selected_mcp_servers(self) -> list[str]:
+        """Return list of MCP server names whose checkboxes are active."""
+        return [name for name, check in self._mcp_checks.items() if check.get_active()]
 
     # ── SI config ─────────────────────────────────────────────────────
 
@@ -387,6 +534,13 @@ class AgentBuilderDialog:
         selected_tools = set(agent_def.get("tools", []))
         for name, check in self._tool_checks.items():
             check.set_active(name in selected_tools)
+
+        self._update_tool_count()
+
+        # Check MCP servers
+        selected_mcp = set(agent_def.get("mcp_servers", []))
+        for name, check in self._mcp_checks.items():
+            check.set_active(name in selected_mcp)
 
     # ── Actions ───────────────────────────────────────────────────────
 
