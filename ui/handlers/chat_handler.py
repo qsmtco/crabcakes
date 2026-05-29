@@ -693,8 +693,8 @@ class ChatHandler:
         - A list of typed blocks (block-level formatting: code, quote, media, etc.)
 
         This method normalizes both into a single string for bubble rendering.
-        MEDIA: blocks (image, audio, video, file) are converted to MEDIA:<url>
-        directives so the rendering pipeline can display them inline.
+        input_image blocks (from gateway media attachments) are converted to
+        ```image code blocks for the existing image rendering pipeline.
         """
         if isinstance(msg_obj, dict):
             content = msg_obj.get("content", "")
@@ -710,11 +710,13 @@ class ChatHandler:
                     t = block.get("text", "")
                     if t:
                         parts.append(t)
-                elif block_type in ("image", "audio", "video", "file"):
-                    # Gateway media attachment — emit as MEDIA: directive
-                    url = block.get("url", "") or block.get("file", "")
-                    if url:
-                        parts.append(f"\n\nMEDIA:{url}\n\n")
+                elif block_type == "input_image":
+                    # Gateway media attachment (image_generate tool / MEDIA: directive)
+                    # The gateway sends type:"input_image" with image_url field.
+                    # Emit as ```image code block for the existing image rendering pipeline.
+                    image_url = block.get("image_url", "")
+                    if image_url and isinstance(image_url, str):
+                        parts.append(f"\n\n```image\n{image_url.strip()}\n```")
             return "".join(parts)
         elif isinstance(content, str):
             return content
