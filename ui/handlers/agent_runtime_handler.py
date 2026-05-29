@@ -344,6 +344,17 @@ class AgentRuntimeHandler:
                 si_enforcement=si_enforcement,     # Per-agent enforcement gating
                 api_key=agent_def.api_key,        # Per-agent API key override
             )
+        else:
+            # Bug fix: sync existing conversation with latest agent definition.
+            # When agent is edited (e.g. api_key added), the in-memory Conversation
+            # retains stale values. Update api_key/model so edits take effect
+            # immediately without requiring an app restart.
+            conv = rt.get_conversation(session_key)
+            if conv is not None:
+                if agent_def.api_key:
+                    conv.api_key = agent_def.api_key
+                if agent_model:
+                    conv.model = agent_model
 
         rt.send_message(session_key, text)
 
