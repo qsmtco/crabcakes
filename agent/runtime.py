@@ -684,6 +684,7 @@ def _save_conversation_to_disk(conv: "Conversation", session_key: str) -> str:
         "total_cost": conv.total_cost,
         "step_count": conv.step_count,
         "allowed_tools": conv.allowed_tools,
+        "api_key": conv.api_key,
         "created_at": conv.created_at.isoformat() if hasattr(conv.created_at, "isoformat") else conv.created_at,
     }
     with open(path, "w", encoding="utf-8") as f:
@@ -735,6 +736,7 @@ def _load_conversation_from_disk(session_key: str) -> tuple["Conversation", dict
         total_cost=data.get("total_cost", 0.0),
         step_count=data.get("step_count", 0),
         allowed_tools=data.get("allowed_tools"),
+        api_key=data.get("api_key"),
     )
     return conv, data
 
