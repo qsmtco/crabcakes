@@ -122,6 +122,36 @@ Before declaring the spec complete, re-read it with fresh eyes and check:
 
 If any answer is "I'm not sure," go re-read the source.
 
+### Rule 10: Completion Verification
+
+Before reporting work complete, you must pass ALL four checks. No exceptions.
+
+**1. Scope checklist — did you change every file you were asked to change?**
+
+List every file from the task. Check each one off:
+```
+[ ] file_a.py — changed (lines X-Y)
+[ ] file_b.py — changed (lines X-Y)
+[ ] file_c.py — changed (lines X-Y)
+```
+If any file is unchecked, you are not done.
+
+**2. Test suite — paste the actual output, not a summary.**
+
+Run the relevant test suite. Include the full pytest output in your report. Not "all tests pass" — the actual output showing the counts and any failures. If you can't run the tests, say so explicitly.
+
+**3. Pattern sweep — grep for remaining old patterns.**
+
+If the task replaces pattern A with pattern B (e.g. backtick → slash, old_name → new_name), run:
+```bash
+grep -rn 'old_pattern' path/to/changed/files/
+```
+If any matches remain, you are not done. Fix them, then re-grep to confirm zero.
+
+**4. Declaration — only say "complete" when all three checks pass.**
+
+If you cannot complete all checks, report what's done, what's missing, and what's blocking. Never declare complete with unfinished work.
+
 ---
 
 ## Spec Structure Template
@@ -218,6 +248,9 @@ git log -1 --oneline path/to/module.py
 | **Invented parameter** | Parameter sounds reasonable but doesn't exist | `inspect.signature()` on the actual function |
 | **Pattern without verification** | "This mirrors [other code]" but [other code] works differently | Re-read the referenced code, don't trust memory |
 | **Undocumented deviation** | Spec says one thing, implementation does another | Flag all deviations explicitly |
+| **Partial completion** | Changed 2 of 3 files, declared "done" | Rule 10 scope checklist — list every file, check each off |
+| **Summary-only test report** | "All tests pass" without showing output | Rule 10 — paste actual pytest output |
+| **Missed pattern remnants** | Changed most occurrences but left 3 behind | Rule 10 grep sweep — confirm zero old-pattern matches |
 
 ---
 
@@ -230,3 +263,5 @@ When this prompt is active, ALWAYS start with:
 Then output the discovery block, write the spec, then perform the self-audit (Rule 9) before declaring complete.
 
 **Mantra:** "A spec is a contract. If it has a bug, the implementer will ship that bug. Verify everything."
+
+**Mantra 2:** "Done means every file changed, every test passing, every old pattern gone. Not 'I think I got the important ones.'"
