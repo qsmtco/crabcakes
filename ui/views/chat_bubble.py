@@ -29,6 +29,7 @@
 #   CSS classes: .chat-bubble-you  /  .chat-bubble-agent
 
 import os
+import re
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -72,10 +73,16 @@ def process_segments(text: str) -> list[dict]:
       - text segments: 'markup' key with Pango-formatted string
       - code segments: 'code_markup' with highlighted Pango, 'raw_content' for copy
       - crabcard_placeholder segments: 'index' key — rendered as feed reference chip
+      - image segments: 'file_path' key — rendered as inline image block
       - other segments (quote, terminal, heading, task): 'content' passthrough
 
     Groups consecutive text segments for unified rendering (same as build_role_bubble).
     """
+    # Phase 4: Pre-scan for MEDIA: directives (gateway media attachments)
+    # MEDIA:<path-or-url> on its own line → convert to ```image block
+    # The existing image pipeline (_process_text_chunk → image → _build_image_block) handles rendering.
+    text = _MEDIA_RE.sub(_replace_media, text)
+
     # Phase 3: Pre-scan for crabcard placeholder markers (\x00CRABCARD_REF:N\x00)
     # These are embedded in cleaned_text by extract_crabcards(). We split them
     # out into dedicated segments so build_role_bubble can render feed chips.
@@ -112,6 +119,18 @@ def process_segments(text: str) -> list[dict]:
         _process_text_chunk(rest, processed)
 
     return processed
+
+
+# ── MEDIA: directive parsing (gateway media attachments) ───────────────────
+
+# Matches MEDIA:<path> on its own line — captures the path/URL.
+_MEDIA_RE = re.compile(r'^MEDIA:(\S+)\s*$', re.MULTILINE)
+
+
+def _replace_media(match: re.Match) -> str:
+    """Convert MEDIA:<path> → ```image code block for existing image pipeline."""
+    path = match.group(1)
+    return f"```image\n{path}\n```"
 
 
 def _process_text_chunk(text_chunk: str, processed: list) -> None:
