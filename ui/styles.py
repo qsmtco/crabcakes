@@ -582,6 +582,40 @@ notebook > header > tabs > tab {
 .task-checked { color: #9ece6a; text-decoration: line-through; }
 .task-unchecked { color: #f0f0f0; }
 
+/* ── Table rendering ─────────────────────────────────── */
+.table-block {
+    margin: 6px 0;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.table-grid {
+    background: transparent;
+}
+.table-cell-box {
+    padding: 6px 10px;
+    border-right: 1px solid rgba(255, 255, 255, 0.04);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.table-cell-header {
+    font-size: 13px;
+    font-weight: bold;
+    color: #c0caf5;
+}
+.table-cell-header .table-cell-box {
+    background: rgba(67, 27, 125, 0.3);
+}
+.table-cell {
+    font-size: 13px;
+    color: #e0e0f0;
+}
+.table-cell .table-cell-box {
+    background: rgba(255, 255, 255, 0.03);
+}
+.table-cell-alt .table-cell-box {
+    background: rgba(255, 255, 255, 0.06);
+}
+
 /* -- Response Status progress bar ------------------------------------- */
 .response-progress {
     margin-top: 2px;
