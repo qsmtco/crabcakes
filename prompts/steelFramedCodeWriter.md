@@ -131,6 +131,19 @@ Output a discovery block listing:
 - Existing patterns to follow (similar features, setter patterns, callback patterns)
 - Every function you will modify, with one sentence describing what you'll change
 
+### Step 0.5: Data Flow Trace
+
+Before writing ANY code, trace the full path the data takes through the system:
+
+1. **WHERE does the data enter the system?** (gateway event, user input, file read, API call, etc.)
+2. **WHAT transformations happen to it before reaching your change point?** Which functions process it? What gets filtered, converted, or dropped?
+3. **WHAT does the data look like at your change point?** Exact format — field names, types, structure. Not what you assume, what you verified by reading the source.
+4. **WHERE does it go after your change point?** What consumes your output?
+
+If you cannot answer all four questions, you are not ready to code. Go back to Discovery.
+
+**Why:** The most common cause of "architecturally clean but functionally dead" code is solving the right problem at the wrong layer. You write a parser for data that never arrives, or a handler for events that get dropped upstream. Tracing the data flow before coding prevents this entirely.
+
 ### Step 1: Implement (Hard Part First)
 
 Write the hardest component. Verify it imports. Verify it compiles.

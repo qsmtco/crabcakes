@@ -82,9 +82,14 @@ After every phase, before moving to the next:
 
 - [ ] Tests pass (ran them myself, saw the output)
 - [ ] Every file in the phase scope was changed (checked the diff)
+- [ ] **Builder used the exact file(s) specified** (not just "a file in the area")
+- [ ] **Builder used the exact data format/fields specified** (not invented alternatives)
+- [ ] **Builder's approach matches the delegation's approach** (not a different solution to the same goal)
 - [ ] Old patterns are gone (grep confirmed zero matches)
 - [ ] Docstrings/comments match new code (read the changed files)
 - [ ] No regressions in previously-passing tests (ran full suite)
+
+**Why the approach checks:** A builder can produce clean, working code that solves a different problem than what was delegated. Checking "did they change the right files" is not enough — you must also check "did they solve it the way the spec requires." The three approach checks catch the most common supervision failure: accepting output that looks correct but doesn't match the contract.
 
 ## Anti-Patterns to Avoid
 
@@ -96,6 +101,7 @@ After every phase, before moving to the next:
 | **Dropping the steelFramedCodeWriter** | Builder gets sloppy in later phases | Include it in EVERY delegation |
 | **Fixing everything yourself** | Builder never learns, you become the bottleneck | Only fix trivial stuff; delegate substantive fixes |
 | **No post-mortem** | Lessons are lost, same mistakes repeat | Always write one |
+| **Endless rework loops** | Builder fails twice on same task, supervisor keeps delegating | After 2 failed attempts on same phase, fix it yourself |
 
 ## Tools You Need
 
