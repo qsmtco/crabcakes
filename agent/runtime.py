@@ -685,6 +685,7 @@ def _save_conversation_to_disk(conv: "Conversation", session_key: str) -> str:
         "step_count": conv.step_count,
         "allowed_tools": conv.allowed_tools,
         "api_key": conv.api_key,
+        "app_title": conv.app_title,
         "created_at": conv.created_at.isoformat() if hasattr(conv.created_at, "isoformat") else conv.created_at,
     }
     with open(path, "w", encoding="utf-8") as f:
@@ -737,6 +738,7 @@ def _load_conversation_from_disk(session_key: str) -> tuple["Conversation", dict
         step_count=data.get("step_count", 0),
         allowed_tools=data.get("allowed_tools"),
         api_key=data.get("api_key"),
+        app_title=data.get("app_title", ""),
     )
     return conv, data
 
@@ -855,6 +857,7 @@ class AgentRuntime:
         agent_role: str = "",
         si_enforcement: bool | None = None,      # per-agent enforcement override
         api_key: str | None = None,             # per-agent API key override
+        app_title: str = "",                    # app identifier (e.g. "crabcakes")
     ) -> str:
         """
         Create a new conversation for an agent.
@@ -867,6 +870,8 @@ class AgentRuntime:
             mcp_servers: List of MCP server names to connect for this conversation.
             si_enforcement: If True/False, overrides global enforcement for this
                            agent. If None, uses global config.
+            app_title: App identifier — flows from gateway displayName into
+                      the conversation so agents know the source application.
         """
         # Phase B BUG #22: Clean up existing MCP connections before replacing conversation
         if session_key in self._conversations:
@@ -901,6 +906,7 @@ class AgentRuntime:
             system_prompt=system_prompt,
             si_enforcement=si_enforcement,
             api_key=api_key,
+            app_title=app_title,
         )
 
         with self._lock:

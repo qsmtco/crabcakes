@@ -290,13 +290,17 @@ class AgentRuntimeHandler:
 
     # ── Public: send a message to a special agent ────────────────────────────
 
-    def send_to_special_agent(self, session_key: str, text: str) -> None:
+    def send_to_special_agent(self, session_key: str, text: str, app_title: str = "") -> None:
         """
         Send a user message to a special agent for processing.
 
         Called by ChatHandler.on_send() when the target tab is a special agent.
 
         Requires an active project — special agents are project-scoped.
+
+        Args:
+            app_title: App identifier (e.g. "crabcakes") — stored on the
+                      conversation so agents know the source application.
         """
         agent_def = self._agents.get(session_key)
         if agent_def is None:
@@ -343,11 +347,12 @@ class AgentRuntimeHandler:
                 agent_role=agent_def.role,        # §7: explicit role from definition
                 si_enforcement=si_enforcement,     # Per-agent enforcement gating
                 api_key=agent_def.api_key,        # Per-agent API key override
+                app_title=app_title,              # App identifier for source tracking
             )
         else:
             # Bug fix: sync existing conversation with latest agent definition.
             # When agent is edited (e.g. api_key added), the in-memory Conversation
-            # retains stale values. Update api_key/model so edits take effect
+            # retains stale values. Update api_key/model/app_title so edits take effect
             # immediately without requiring an app restart.
             conv = rt.get_conversation(session_key)
             if conv is not None:
@@ -355,6 +360,8 @@ class AgentRuntimeHandler:
                     conv.api_key = agent_def.api_key
                 if agent_model:
                     conv.model = agent_model
+                if app_title:
+                    conv.app_title = app_title
 
         rt.send_message(session_key, text)
 
