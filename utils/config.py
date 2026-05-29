@@ -68,5 +68,5 @@ def get_identity_dir() -> str:
 # Command system configuration
 # Backtick prefix — triggers command parsing in ChatHandler.on_send().
 # Zero collision with gateway commands (/approve, /status, etc.) which use /.
-COMMAND_PREFIX = "`"
+COMMAND_PREFIX = "/"
 

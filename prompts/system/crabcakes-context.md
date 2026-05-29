@@ -12,8 +12,8 @@ Your markdown renders in GTK4 Pango widgets. Standard markdown works as expected
 - Feed cards appear automatically for git commits, file edits, and review events — you do not need to format these.
 - Activity bubbles (tool calls, plans, patches) are generated from gateway events automatically.
 
-### Backtick Commands
-Use backtick commands to query CrabCakes state: `status`, `agents`, `tasks`, `review`, `cost`
+### Slash Commands
+Use slash commands to query CrabCakes state: `/status`, `/agents`, `/tasks`, `/review`, `/cost`
 
 ### Review Layer
 When agents write files through the project, changes go through a checkpoint → diff → accept/reject flow. You do not push changes directly.

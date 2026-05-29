@@ -94,9 +94,9 @@ class TaskHandler:
     # ── Task commands ───────────────────────────────────────────────────────────
 
     def cmd_task(self, cmd: Command) -> CommandResult:
-        """`task @agent — description → create task, assign to agent, show card."""
+        """/task @agent — description → create task, assign to agent, show card."""
         if not cmd.target_session_key:
-            return CommandResult(handled=True, response_text="No target agent. Usage: `task @agent — description")
+            return CommandResult(handled=True, response_text="No target agent. Usage: /task @agent — description")
         now = datetime.now().isoformat()
         task = task_store.create(Task(
             title=cmd.body,
@@ -122,10 +122,10 @@ class TaskHandler:
         return CommandResult(handled=True, response_card=card)
 
     def cmd_done(self, cmd: Command) -> CommandResult:
-        """`done <id> → mark task complete."""
+        """/done <id> → mark task complete."""
         task_id = self._parse_task_id(cmd)
         if task_id is None:
-            return CommandResult(handled=True, response_text="Usage: `done <task_id>")
+            return CommandResult(handled=True, response_text="Usage: /done <task_id>")
         task = task_store.get(task_id)
         if not task:
             return CommandResult(handled=True, response_text=f"Task not found: {task_id}")
@@ -146,10 +146,10 @@ class TaskHandler:
         return CommandResult(handled=True, response_card=card)
 
     def cmd_start(self, cmd: Command) -> CommandResult:
-        """`start <id> → start working on task."""
+        """/start <id> → start working on task."""
         task_id = self._parse_task_id(cmd)
         if task_id is None:
-            return CommandResult(handled=True, response_text="Usage: `start <task_id>")
+            return CommandResult(handled=True, response_text="Usage: /start <task_id>")
         task = task_store.get(task_id)
         if not task:
             return CommandResult(handled=True, response_text=f"Task not found: {task_id}")
@@ -170,10 +170,10 @@ class TaskHandler:
         return CommandResult(handled=True, response_card=card)
 
     def cmd_blocked(self, cmd: Command) -> CommandResult:
-        """`blocked <id> — reason → mark task blocked."""
+        """/blocked <id> — reason → mark task blocked."""
         task_id = self._parse_task_id(cmd)
         if task_id is None:
-            return CommandResult(handled=True, response_text="Usage: `blocked <task_id> — reason")
+            return CommandResult(handled=True, response_text="Usage: /blocked <task_id> — reason")
         task = task_store.get(task_id)
         if not task:
             return CommandResult(handled=True, response_text=f"Task not found: {task_id}")
@@ -195,10 +195,10 @@ class TaskHandler:
         return CommandResult(handled=True, response_card=card)
 
     def cmd_cancel(self, cmd: Command) -> CommandResult:
-        """`cancel <id> → cancel task."""
+        """/cancel <id> → cancel task."""
         task_id = self._parse_task_id(cmd)
         if task_id is None:
-            return CommandResult(handled=True, response_text="Usage: `cancel <task_id>")
+            return CommandResult(handled=True, response_text="Usage: /cancel <task_id>")
         task = task_store.get(task_id)
         if not task:
             return CommandResult(handled=True, response_text=f"Task not found: {task_id}")
@@ -219,7 +219,7 @@ class TaskHandler:
         return CommandResult(handled=True, response_card=card)
 
     def cmd_tasks(self, cmd: Command) -> CommandResult:
-        """`tasks → show all tasks."""
+        """/tasks → show all tasks."""
         tasks = task_store.list_all()
         if not tasks:
             return CommandResult(handled=True, response_text="No tasks yet.")
@@ -233,12 +233,12 @@ class TaskHandler:
         return CommandResult(handled=True, response_text="\n".join(lines))
 
     def cmd_assign(self, cmd: Command) -> CommandResult:
-        """`assign <id> @agent → reassign task."""
+        """/assign <id> @agent → reassign task."""
         task_id = self._parse_task_id(cmd)
         if task_id is None:
-            return CommandResult(handled=True, response_text="Usage: `assign <task_id> @agent")
+            return CommandResult(handled=True, response_text="Usage: /assign <task_id> @agent")
         if len(cmd.args) < 2:
-            return CommandResult(handled=True, response_text="Usage: `assign <task_id> @agent")
+            return CommandResult(handled=True, response_text="Usage: /assign <task_id> @agent")
         task = task_store.get(task_id)
         if not task:
             return CommandResult(handled=True, response_text=f"Task not found: {task_id}")
@@ -260,13 +260,13 @@ class TaskHandler:
         return CommandResult(handled=True, response_card=card)
 
     def cmd_priority(self, cmd: Command) -> CommandResult:
-        """`priority <id> <level> → set task priority."""
+        """/priority <id> <level> → set task priority."""
         valid = list(PRIORITY_LABELS.keys())
         if len(cmd.args) < 2:
-            return CommandResult(handled=True, response_text=f"Usage: `priority <task_id> <{'|'.join(valid)}>")
+            return CommandResult(handled=True, response_text=f"Usage: /priority <task_id> <{'|'.join(valid)}>")
         task_id = self._parse_task_id(cmd)
         if task_id is None:
-            return CommandResult(handled=True, response_text=f"Usage: `priority <task_id> <{'|'.join(valid)}>")
+            return CommandResult(handled=True, response_text=f"Usage: /priority <task_id> <{'|'.join(valid)}>")
         task = task_store.get(task_id)
         if not task:
             return CommandResult(handled=True, response_text=f"Task not found: {task_id}")

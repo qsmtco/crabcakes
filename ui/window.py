@@ -575,13 +575,13 @@ class MainWindow(Gtk.ApplicationWindow):
             # Collaboration — CollabHandler
             ch = self._collab_handler
             self._command_handler.register_command("ask", ch.cmd_ask, aliases=["a"],
-                help_text="Ask an agent a question: `ask @agent — question")
+                help_text="Ask an agent a question: /ask @agent — question")
             self._command_handler.register_command("delegate", ch.cmd_delegate, aliases=["d"],
-                help_text="PM delegates to agent: `delegate @agent — task")
+                help_text="PM delegates to agent: /delegate @agent — task")
             self._command_handler.register_command("stop", ch.cmd_stop,
-                help_text="PM stops the current collaboration: `stop @agent")
+                help_text="PM stops the current collaboration: /stop @agent")
             self._command_handler.register_command("tell", ch.cmd_tell,
-                help_text="One agent shares information with another: `tell @agent — info")
+                help_text="One agent shares information with another: /tell @agent — info")
             # Task — TaskHandler
             th = self._task_handler
             self._command_handler.register_command("task", th.cmd_task, aliases=["t"],
@@ -623,7 +623,7 @@ class MainWindow(Gtk.ApplicationWindow):
             self._command_handler.register_command("help", self._command_handler.cmd_help, aliases=["?"],
                 help_text="List all commands or help for a specific command")
             self._command_handler.register_command("session", sh.cmd_session, aliases=["s"],
-                help_text="Switch agent session in project: `session list @agent | `session <ref> @agent")
+                help_text="Switch agent session in project: /session list @agent | /session <ref> @agent")
     def _on_project_selected(self, path):
         """Handle file tree selection — no-op; project card clicks route via ProjectHandler."""
         pass

@@ -99,7 +99,7 @@ crabcakes/
 │   │   ├── media_handler.py   # MediaHandler — STT + improve
 │   │   ├── project_handler.py  # ProjectHandler — active project + agent-to-project routing
 │   │   ├── activity_handler.py  # ActivityHandler — 6-state activity machine (Phase 6)
-│   │   ├── command_handler.py   # CommandHandler — backtick command parser (Phase 7)
+│   │   ├── command_handler.py   # CommandHandler — slash-prefix command parser (Phase 7)
 │   │   ├── review_handler.py    # ReviewHandler — review session lifecycle (Phase 7)
 │   │   ├── task_handler.py      # TaskHandler — task commands: task/done/start/blocked/cancel/tasks/assign/priority (Phase 7)
 │   │   ├── collab_handler.py   # CollabHandler — collaboration commands: ask/delegate/stop/tell (Phase 7)
@@ -920,11 +920,11 @@ show_session_menu(parent, agent_name, sessions, on_select)
 show_project_menu(parent, project_name, member_names, current_solo, on_select)
 ```
 
-### 3.21a `ui/handlers/command_handler.py` — Backtick Command Parser (Phase 7)
+### 3.21a `ui/handlers/command_handler.py` — Command Parser — Slash Prefix (Phase 7)
 
-**Responsibility:** Parse backtick commands, resolve `@mentions`, dispatch to command handlers.
+**Responsibility:** Parse slash-prefixed commands, resolve `@mentions`, dispatch to command handlers.
 
-**Quoted payloads:** A2A commands use quoted payloads per `A2A_QUOTED_PAYLOAD_SPEC` — the payload is wrapped in double quotes (`"payload"`). The parser (`_parse_quoted_payload()` in `utils/quoting.py`) handles `\"` and `\\` escapes. The canonical format is `` `cmd @Agent "payload" ``.
+**Quoted payloads:** A2A commands use quoted payloads per `A2A_QUOTED_PAYLOAD_SPEC` — the payload is wrapped in double quotes (`"payload"`). The parser (`_parse_quoted_payload()` in `utils/quoting.py`) handles `\"` and `\\` escapes. The canonical format is `/cmd @Agent "payload"`.
 
 **Owns:** CommandRegistry, command prefix, `@mention` resolution.
 
@@ -946,7 +946,7 @@ def get_help(name) -> str | None
 
 **Responsibility:** Review session lifecycle — checkpoint, check changes, accept, reject. Coordinates git_ops, diff_parser, and GTK views.
 
-**Status:** **Superseded by the project feed card system + SPEC-3 structured feedback protocol.** The `` `review``/`check`/`accept`/`reject`` commands and ReviewBar are kept in the codebase for potential future use, but the primary review workflow is now: enforcement layer catches issues on write → feed cards surface events in the feed bar → audit reports (`## Audit Report` blocks) log bugs to the target agent's bug journal. This is more intuitive and always-on compared to the mode-gated checkpoint flow. See `docs/specs/SPEC-3-structured-feedback.md`.
+**Status:** **Superseded by the project feed card system + SPEC-3 structured feedback protocol.** The `/review`/`check`/`accept`/`reject` commands and ReviewBar are kept in the codebase for potential future use, but the primary review workflow is now: enforcement layer catches issues on write → feed cards surface events in the feed bar → audit reports (`## Audit Report` blocks) log bugs to the target agent's bug journal. This is more intuitive and always-on compared to the mode-gated checkpoint flow. See `docs/specs/SPEC-3-structured-feedback.md`.
 
 **Owns:** Per-project `ReviewState` dict.
 
@@ -1019,7 +1019,7 @@ class CollabHandler:
 
 ### 3.21e `ui/handlers/agent_command_handler.py` — Agent Response Command Parser (Phase 6.2)
 
-**Responsibility:** Scan agent response text for backtick commands, route them through `CommandHandler.process_input()`, and relay agent-to-agent answers back to the asking agent via pending-ask tracking.
+**Responsibility:** Scan agent response text for slash-prefixed commands, route them through `CommandHandler.process_input()`, and relay agent-to-agent answers back to the asking agent via pending-ask tracking.
 
 **Owns:** `_pending_asks` (target_sk → source_sk), `_chain_depth` (session_key → depth counter).
 
@@ -1048,19 +1048,19 @@ class AgentCommandHandler:
     # Entry point (wired into both response pipelines)
     def on_agent_response(session_key, text, project_name) -> None
         # Step 1: RELAY — if agent has pending ask, deliver response to asking agent
-        # Step 2: SCAN — parse backtick commands, route through CommandHandler.process_input()
+        # Step 2: SCAN — parse slash commands, route through CommandHandler.process_input()
 ```
 
 **Constants:**
 - `_MAX_CHAIN_DEPTH = 3` — max nested command hops before cutoff
 - `_MAX_COMMANDS_PER_RESPONSE = 3` — max commands parsed per response
-- `_extract_quoted_commands()` function — extracts A2A commands in quoted-payload format (`` `cmd @Agent "payload" ``) from agent response text. Uses `_parse_quoted_payload()` from `utils/quoting.py` for escape-aware payload extraction. Fenced code blocks (```` ```...``` ````) stripped first. Returns `ParsedCommand` namedtuples. Maximum 3 commands per response.
+- `_extract_quoted_commands()` function — extracts A2A commands in quoted-payload format (`/cmd @Agent "payload"`) from agent response text. Uses `_parse_quoted_payload()` from `utils/quoting.py` for escape-aware payload extraction. Fenced code blocks (```` ```...``` ````) stripped first. Returns `ParsedCommand` namedtuples. Maximum 3 commands per response.
 
-**Relay mechanism:** `` `ask @B "question"` `` from A → `_pending_asks[B] = A`. When B responds → `_relay_response(A, B, text)` delivers B's answer wrapped as `"[{B} responded]: {text}"`. Only `` `ask` `` and `` `delegate` `` create pending asks — `` `tell` `` is one-way.
+**Relay mechanism:** `/ask @B "question"` from A → `_pending_asks[B] = A`. When B responds → `_relay_response(A, B, text)` delivers B's answer wrapped as `"[{B} responded]: {text}"`. Only `/ask` and `/delegate` create pending asks — `/tell` is one-way.
 
 **Sender identity:** Outbound messages to target agents are prefixed with `"[{sender_name} asks]: {question}"` so the target knows who's consulting them — not the human.
 
-**Command canonicalization:** `ParsedCommand` results from `_extract_quoted_commands()` are rebuilt into canonical quoted-payload format (`` `cmd @Agent "escaped_payload" ``) before calling `process_input()`. Backslashes and quotes in the payload are escaped (`\` → `\\`, `"` → `\"`) per A2A_QUOTED_PAYLOAD_SPEC §5.4. Payload-free commands (e.g. `stop`) omit the payload.
+**Command canonicalization:** `ParsedCommand` results from `_extract_quoted_commands()` are rebuilt into canonical slash-prefix format (`/cmd @Agent "escaped_payload"`) before calling `process_input()`. Backslashes and quotes in the payload are escaped (`\` → `\\`, `"` → `\"`) per A2A_QUOTED_PAYLOAD_SPEC §5.4. Payload-free commands (e.g. `stop`) omit the payload.
 
 **Dispatch suppression:** `process_input()` is called with `skip_dispatch=True` to prevent GTK UI side effects (error bubbles) from background agent-to-agent routing.
 
@@ -1134,7 +1134,7 @@ get_projects_dir() -> str                      # ~/projects (or $CRABCAKES_PROJE
 get_gateway_url() -> str                        # ws://localhost:18789 (or $CRABCAKES_GATEWAY_URL)
 get_identity_dir() -> str                       # ~/.openclaw/identity/
 
-COMMAND_PREFIX = "`"                            # backtick command trigger
+COMMAND_PREFIX = "/"                            # slash command prefix
 ```
 
 ### 3.21k `models/conversation.py` — Conversation Data Models (Agent Runtime Phase 1.1)
@@ -2010,13 +2010,13 @@ FeedBar → GTK widgets:
 Agent-to-agent consultation is entirely command-based. There are no automatic @mention
 detectors, no relay threads, no convergence loops, and no capture_response cycles.
 
-**The only mechanism:** `` `ask @AgentName "question"` `` — typed by a human or emitted
+**The only mechanism:** `/ask @AgentName "question"` — typed by a human or emitted
 by an agent in its response text.
 
 **Commands** (see §3.21d for CollabHandler):
 | Command | Effect |
 |---------|--------|
-| `` `ask @Agent "question"` `` | Forward question to target agent; response appears in same tab |
+| `/ask @Agent "question"` | Forward question to target agent; response appears in same tab |
 | `` `delegate @Agent "task"` `` | Assign a task to an agent |
 | `` `stop @Agent` `` | Send stop signal to a collaboration |
 | `` `tell @Agent "info"` `` | Share information with an agent |
@@ -2054,8 +2054,8 @@ before routing via gateway.
 - `is_pending_relay()` / `capture_response()` / `start_relay()` / `detect_a2a_mention()` throughout
 - §3.21n (CollabManager module) and the old §4.11 A2A data flow
 
-**Architecture rule:** Agents that need another agent's input include a backtick command
-in their response text. The backtick command is parsed by CommandHandler like any other
+**Architecture rule:** Agents that need another agent's input include a slash-prefixed command
+in their response text. The slash command is parsed by CommandHandler like any other
 human input — no special casing, no detection, no loops. Agent-initiated parsing is
 handled by `AgentCommandHandler` (Phase 6.2) which hooks into the response pipeline
 and routes commands through CommandHandler.process_input().
@@ -2555,7 +2555,7 @@ crabcakes/
 │   │   ├── chat_render_handler.py # 421 lines — escape + markdown + highlight + bubble pipeline
 │   ├── agent_runtime_handler.py  # 781 lines — AgentRuntime UI bridge: conversation lifecycle, tool approval, MCP wiring (Phase 1.4+Phase C)
 │   │   ├── agent_command_handler.py # 464 lines — agent response command parser + relay (Phase 6.2)
-│   │   ├── command_handler.py   # 514 lines — backtick command parser + @mention resolution (Phase 7)
+│   │   ├── command_handler.py   # 514 lines — slash-prefix command parser + @mention resolution (Phase 7)
 │   │   ├── gateway_handler.py    # 228 lines — connect, agents, lifecycle (Phase 2)
 │   │   ├── media_handler.py      # 89 lines — STT + improve (Phase 4)
 │   │   ├── project_handler.py    # 281 lines — active project + agent-to-project routing + session switching
@@ -2599,7 +2599,7 @@ prompts/                         # System prompt templates for agent runtime
     └── system/
         ├── collab.md            # 28 lines — A2A collaboration protocol for all agents (Phase 4)
         ├── crabcakes-context.md # Platform context: rendering formats, commands, review layer (SPEC-5)
-        ├── crabcakes-commands.md # Backtick command reference for project chats
+        ├── crabcakes-commands.md # Slash command reference for project chats
         ├── default.md           # Default system prompt
         ├── coder.md             # Coder agent system prompt
         ├── debugger.md         # Debugger agent system prompt

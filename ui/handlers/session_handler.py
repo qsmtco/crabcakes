@@ -22,7 +22,7 @@ from models.command import Command, CommandResult
 
 class SessionHandler:
     """
-    Handles `session list @agent | `session <ref> @agent command.
+    Handles /session list @agent | /session <ref> @agent command.
 
     Manages agent session switching within project tabs. Needs AgentManager
     (for session lookup by agent name) and ProjectHandler (for updating
@@ -46,7 +46,7 @@ class SessionHandler:
         self._project_handler = project_handler
 
     def cmd_session(self, cmd: Command) -> CommandResult:
-        """`session list @agent | `session <ref> @agent — switch agent session."""
+        """/session list @agent | /session <ref> @agent — switch agent session."""
         sk = cmd.source_session_key
         if not sk or not sk.startswith("project:"):
             return CommandResult(
@@ -59,7 +59,7 @@ class SessionHandler:
         if not cmd.target_session_key:
             return CommandResult(
                 handled=True,
-                response_text="Usage: `session list @agent | `session <ref> @agent",
+                response_text="Usage: /session list @agent | /session <ref> @agent",
             )
 
         if self._agent_mgr is None:
@@ -77,7 +77,7 @@ class SessionHandler:
         if not cmd.args:
             return CommandResult(
                 handled=True,
-                response_text="Usage: `session list @agent | `session <ref> @agent",
+                response_text="Usage: /session list @agent | /session <ref> @agent",
             )
 
         subcmd = cmd.args[0].lower()
@@ -100,7 +100,7 @@ class SessionHandler:
             marker = "  ✓ (current)" if s == current_sk else ""
             lines.append(f"  {i}. {display}{marker}")
         lines.append("")
-        lines.append("Switch: `session <number> @" + agent_name)
+        lines.append("Switch: /session <number> @" + agent_name)
         return CommandResult(handled=True, response_text="\n".join(lines))
 
     def _session_switch(
@@ -139,13 +139,13 @@ class SessionHandler:
                 elif len(matches) > 1:
                     return CommandResult(
                         handled=True,
-                        response_text=f"Ambiguous session ref '{session_ref}'. Use `session list @{agent_name} to see options.",
+                        response_text=f"Ambiguous session ref '{session_ref}'. Use /session list @{agent_name} to see options.",
                     )
 
         if new_sk is None:
             return CommandResult(
                 handled=True,
-                response_text=f"No matching session '{session_ref}'. Use `session list @{agent_name} to see options.",
+                response_text=f"No matching session '{session_ref}'. Use /session list @{agent_name} to see options.",
             )
 
         if new_sk == old_sk:

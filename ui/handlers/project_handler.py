@@ -415,7 +415,7 @@ class ProjectHandler:
 
 
     def cmd_status(self, cmd: Command, session_key: str | None = None) -> CommandResult:
-        """`status → project status summary"""
+        """/status → project status summary"""
         sk = cmd.source_session_key
         if not sk.startswith("project:"):
             return CommandResult(handled=True, response_text="Open a project tab to check status.")
@@ -441,7 +441,7 @@ class ProjectHandler:
         return CommandResult(handled=True, response_text="\n".join(lines))
 
     def cmd_agents(self, cmd: Command, session_key: str | None = None) -> CommandResult:
-        """`agents → list project agents and their state"""
+        """/agents → list project agents and their state"""
         sk = cmd.source_session_key
         if not sk.startswith("project:"):
             return CommandResult(handled=True, response_text="Open a project tab to list agents.")
@@ -457,7 +457,7 @@ class ProjectHandler:
 
 
     def cmd_cost(self, cmd: Command, session_key: str | None = None) -> CommandResult:
-        """`cost — spending summary for current project"""
+        """/cost — spending summary for current project"""
         sk = cmd.source_session_key
         if not sk.startswith("project:"):
             return CommandResult(handled=True, response_text="Open a project tab to check cost.")

@@ -59,7 +59,7 @@ class ChatHandler:
         self._project_handler = None   # injected via set_project_handler()
         self._chat_render_handler = None  # injected via set_chat_render_handler()
         self._on_forward_message = None   # injected via set_on_forward_message()
-        self._command_handler = None     # injected via set_command_handler() — for backtick commands
+        self._command_handler = None     # injected via set_command_handler() — for slash commands
         self._on_send_initiated = None    # injected via set_on_send_initiated()
         self._pending_req_id: str | None = None  # tracks last sent req_id for res correlation
         self._on_agent_response: Callable[[str, str, str | None], None] | None = None  # agent response hook (Phase 6.2)

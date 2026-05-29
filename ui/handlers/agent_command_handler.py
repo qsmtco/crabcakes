@@ -41,7 +41,7 @@ _MAX_CHAIN_DEPTH = 3
 # Max commands parsed from a single agent response.
 _MAX_COMMANDS_PER_RESPONSE = 3
 
-# Command keywords recognized in backtick-enclosed agent responses.
+# Command keywords recognized in slash-prefixed agent responses.
 _COMMAND_KEYWORDS = frozenset({'ask', 'delegate', 'stop', 'tell'})
 
 # Maximum characters in a quoted A2A payload (per spec §5.4).
@@ -52,7 +52,7 @@ _QUOTED_PAYLOAD_MAX = 4096
 ParsedCommand = namedtuple('ParsedCommand', ['command', 'agent', 'payload', 'raw_start', 'raw_end'])
 
 
-def _extract_quoted_commands(text: str) -> list[ParsedCommand]:
+def _extract_quoted_commands(text: str, command_names: set[str] | None = None) -> list[ParsedCommand]:
     """Extract A2A commands in quoted-payload format: `cmd @Agent "payload"`
     
     Per A2A_QUOTED_PAYLOAD_SPEC §3:
@@ -66,21 +66,29 @@ def _extract_quoted_commands(text: str) -> list[ParsedCommand]:
     """
     results = []
     
-    for m in re.finditer(r'`([^`]+)`', text):
+    for m in re.finditer(r'(?:^|\s)/([^\s/\n][^/\n]*)', text):
         inner = m.group(1)
         tokens = inner.split()
         if not tokens:
             continue
         
-        cmd = tokens[0]
+        raw_cmd = tokens[0]
+        cmd = raw_cmd.lower()  # commands are case-insensitive
         rest = tokens[1:]
         
-        # Implicit ask: `@Agent ...` → treat as `ask @Agent ...`
-        if cmd.startswith('@'):
-            agent = cmd      # @Agent token
-            cmd = 'ask'      # implicit ask command
+        # Implicit ask: /@Agent ... → treat as /ask @Agent ...
+        is_implicit = raw_cmd.startswith('@')
+        if is_implicit:
+            agent = raw_cmd   # @Agent token (preserve case)
+            cmd = 'ask'       # implicit ask command
             # rest stays as payload tokens (already after @Agent)
-        else:
+        
+        # Reject unknown command names (file paths, URLs, etc.)
+        if command_names and cmd not in command_names:
+            continue
+        
+        # For explicit commands, find @Agent in rest
+        if not is_implicit:
             # Normal: find @Agent in rest
             agent = None
             for i, tok in enumerate(rest):
@@ -132,7 +140,7 @@ def _extract_quoted_commands(text: str) -> list[ParsedCommand]:
 
 
 class AgentCommandHandler:
-    """Parses backtick commands from agent response text, routes them to target
+    """Parses slash commands from agent response text, routes them to target
     agents, and relays responses back to the asking agent.
 
     Wired via window.py. Receives all dependencies through setters.
@@ -219,7 +227,7 @@ class AgentCommandHandler:
         Three responsibilities:
         1. AUDIT: Detect and process structured audit reports (SPEC-3).
         2. RELAY: If this agent has a pending ask, relay response to asker.
-        3. COMMAND: Scan for backtick A2A commands.
+        3. COMMAND: Scan for slash A2A commands.
 
         Args:
             session_key: The responding agent's session key
@@ -263,7 +271,8 @@ class AgentCommandHandler:
         clean_text = self._strip_fenced_blocks(text)
 
         # Extract A2A commands in quoted-payload format (A2A_QUOTED_PAYLOAD_SPEC §5.2)
-        parsed_commands = _extract_quoted_commands(clean_text)
+        command_names = self._command_handler.get_command_names() if self._command_handler else None
+        parsed_commands = _extract_quoted_commands(clean_text, command_names)
 
         # Process commands if any are found
         if parsed_commands:
@@ -283,9 +292,9 @@ class AgentCommandHandler:
                 # Payload-free commands (e.g. stop) get no payload.
                 if pc.payload:
                     escaped = pc.payload.replace('\\', '\\\\').replace('"', '\\"')
-                    candidate = f"`{pc.command} {pc.agent} \"{escaped}\""
+                    candidate = f"/{pc.command} {pc.agent} \"{escaped}\""
                 else:
-                    candidate = f"`{pc.command} {pc.agent}"
+                    candidate = f"/{pc.command} {pc.agent}"
 
                 result = self._command_handler.process_input(session_key, candidate,
                                                              skip_dispatch=True)

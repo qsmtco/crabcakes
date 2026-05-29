@@ -1,5 +1,5 @@
 # ui/handlers/command_handler.py
-# Command handler — parses backtick commands, routes results.
+# Command handler — parses slash commands, routes results.
 #
 # Manifest:
 #   reads:   nothing
@@ -33,7 +33,7 @@ from utils.quoting import _parse_quoted_payload, _PAYLOAD_MAX_CHARS   # A2A_QUOT
 
 
 class CommandHandler:
-    """Parses and executes backtick commands.
+    """Parses and executes slash commands.
 
     Architecture:
         - process_input() is the single public entry point called by ChatHandler
@@ -94,7 +94,7 @@ class CommandHandler:
         self._registry.register(name, handler, aliases=aliases, help_text=help_text)
 
     def set_prefix(self, char: str) -> None:
-        """Change the command prefix character. Default: backtick."""
+        """Change the command prefix character. Default: slash."""
         self._prefix = char
 
     def cmd_help(self, cmd: Command) -> CommandResult:
@@ -103,16 +103,16 @@ class CommandHandler:
             name = cmd.args[0].lstrip("@")
             help_text = self.get_help(name)
             if help_text is None:
-                help_text = f"Unknown command: `{name}"
+                help_text = f"Unknown command: /{name}"
             else:
-                help_text = f"`{name}` — {help_text}"
+                help_text = f"/{name} — {help_text}"
             return CommandResult(handled=True, response_text=help_text)
         lines = [" CrabCakes Commands", ""]
         for name in self._registry.list_commands():
             alias_list = [al for al, cn in self._registry.list_aliases().items() if cn == name]
-            alias_str = f" (`{', `'.join(alias_list)}`)" if alias_list else ""
-            lines.append(f"  `{name}`{alias_str}")
-        lines.extend(["", f"Type `help <command> for details."])
+            alias_str = f" (/{', /'.join(alias_list)})" if alias_list else ""
+            lines.append(f"  /{name}{alias_str}")
+        lines.extend(["", f"Type /help <command> for details."])
         return CommandResult(handled=True, response_text="\n".join(lines))
 
     def get_help(self, name: str) -> str | None:   # BUG #10 fix: public API for help
@@ -122,18 +122,18 @@ class CommandHandler:
     def get_command_names(self) -> set[str]:
         """Return registered command names as a set.
 
-        Used by AgentCommandHandler to determine if a scanned backtick token
+        Used by AgentCommandHandler to determine if a scanned slash-prefixed token
         is a known command (vs. arbitrary quoted text that looks like a command).
         Spec §4.4: returns set[str] for O(1) membership checks.
         """
         return set(self._registry.list_commands())
 
     def resolve_inline_mention(self, text: str, session_key: str = "") -> "MentionResolution":
-        """Resolve @mentions from plain text (no backtick prefix required).
+        """Resolve @mentions from plain text (no slash prefix required).
 
         This is the public API used by ChatHandler for inline @ routing in
         project tabs. Reuses the same parsing and resolution logic as the
-        backtick command path but without requiring a command prefix.
+        slash command path but without requiring a command prefix.
 
         Args:
             text:         Raw input text from the user.
@@ -280,9 +280,9 @@ class CommandHandler:
             if payload is None:
                 # "" → empty payload error; missing closing " → unclosed quote error
                 if len(after_ws) >= 2 and after_ws[1] == '"':
-                    error_msg = 'Empty payload — provide a message: `' + cmd_name + ' @Agent "your message"`'
+                    error_msg = 'Empty payload — provide a message: /' + cmd_name + ' @Agent "your message"'
                 else:
-                    error_msg = 'Unclosed quote — missing closing ": `' + cmd_name + ' @Agent "your message"`'
+                    error_msg = 'Unclosed quote — missing closing ": /' + cmd_name + ' @Agent "your message"'
             else:
                 body = payload
                 # Enforce 4K payload cap per spec §4.5
@@ -292,7 +292,7 @@ class CommandHandler:
             # Payload-free command: no payload required, no error
             pass
         else:
-            error_msg = 'Malformed command — payload must be quoted: `' + cmd_name + ' @Agent "your message"`'
+            error_msg = 'Malformed command — payload must be quoted: /' + cmd_name + ' @Agent "your message"'
 
         if error_msg:
             return CommandResult(handled=True, response_text=error_msg)

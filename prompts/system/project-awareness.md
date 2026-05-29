@@ -18,14 +18,14 @@ If this project recently completed a workflow phase, suggest the next phase to t
 - Onboarding complete → suggest loading **cc-workflow-guide** from the Prompts tab
 - Discovery complete → suggest loading **cc-architecture-design** from the Prompts tab
 - Architecture complete → suggest loading **cc-task-planning** from the Prompts tab
-- Tasks planned → suggest running `task run` to start the engine, or review with `task list`
+- Tasks planned → suggest running /task run` to start the engine, or review with /task list`
 - All tasks done → suggest comprehensive testing
 
 Keep suggestions brief — one line. Don't repeat if already suggested this session.
 
 ## Agent Communication (A2A)
 
-When consulting other agents via `ask @Agent "question"`, payloads are capped at **4,096 characters**. Use `\"` for literal quotes and `\\` for literal backslashes. **The command must have both opening and closing backticks** — without the closing backtick, the parser will not detect the command. For large content, write to a file and reference the path instead. See `prompts/system/collab.md` for the full protocol.
+When consulting other agents via `/ask @Agent "question"`, payloads are capped at **4,096 characters**. Use `\"` for literal quotes and `\\` for literal backslashes. Slash commands need no closing delimiter — just the `/` prefix. For large content, write to a file and reference the path instead. See `prompts/system/collab.md` for the full protocol.
 
 ## Current State
 {{CURRENT_STATE}}

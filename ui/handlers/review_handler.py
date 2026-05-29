@@ -167,7 +167,7 @@ class ReviewHandler:
         sk = session_key or f"project:{project_name}"
 
         if not state.is_active():
-            self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, "No active review session. Use `review` to start one."))
+            self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, "No active review session. Use /review to start one."))
             return
 
         project_path = state.project_path
@@ -339,7 +339,7 @@ class ReviewHandler:
     # ── Project lifecycle hooks ─────────────────────────────────────────
 
     def cmd_review(self, cmd: Command, session_key: str | None = None) -> CommandResult:
-        """`review → start a review session"""
+        """/review → start a review session"""
         sk = cmd.source_session_key
         if not sk.startswith("project:"):
             return CommandResult(handled=True, response_text="Open a project tab first.")
@@ -350,7 +350,7 @@ class ReviewHandler:
         return CommandResult(handled=True, response_text="Starting review...")
 
     def cmd_check(self, cmd: Command, session_key: str | None = None) -> CommandResult:
-        """`check → check changes since checkpoint"""
+        """/check → check changes since checkpoint"""
         sk = cmd.source_session_key
         if not sk.startswith("project:"):
             return CommandResult(handled=True, response_text="Open a project tab first.")
@@ -359,7 +359,7 @@ class ReviewHandler:
         return CommandResult(handled=True, response_text="Checking changes...")
 
     def cmd_accept(self, cmd: Command, session_key: str | None = None) -> CommandResult:
-        """`accept → accept all changes"""
+        """/accept → accept all changes"""
         sk = cmd.source_session_key
         if not sk.startswith("project:"):
             return CommandResult(handled=True, response_text="Open a project tab first.")
@@ -370,7 +370,7 @@ class ReviewHandler:
 
 
     def cmd_reject(self, cmd: Command, session_key: str | None = None) -> CommandResult:
-        """`reject → reject all changes"""
+        """/reject → reject all changes"""
         sk = cmd.source_session_key
         if not sk.startswith("project:"):
             return CommandResult(handled=True, response_text="Open a project tab first.")
