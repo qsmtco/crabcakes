@@ -461,3 +461,95 @@ class TestSwitchToTab:
         handler.switch_to_tab("agent:main")  # no crash
 
         mc.notebook.set_current_page.assert_not_called()
+
+
+# ── Tests: command error response_text display ─────────────────────────────────
+
+class TestCommandErrorDisplay:
+    """When a command returns handled=True with response_text but no forward_to,
+    the error message must be displayed in the chat (not silently swallowed)."""
+
+    def _make_handler_with_command(self, input_text: str, command_result):
+        """Create a ChatHandler with a mock command handler that returns the given result."""
+        from models.command import CommandResult
+        gw = FakeGatewayClient(connected=True)
+        mc = FakeMainContent(session_key="agent:main", input_text=input_text)
+        handler = make_handler(mc, gw)
+
+        # Mock command handler
+        mock_cmd = MagicMock()
+        mock_cmd.process_input.return_value = command_result
+        handler.set_command_handler(mock_cmd)
+
+        # Mock chat render handler — render_sync returns a fake bubble
+        mock_render = MagicMock()
+        mock_render.render_sync.return_value = MagicMock()  # fake bubble widget
+        handler.set_chat_render_handler(mock_render)
+
+        return handler, mc, mock_render
+
+    def test_error_response_text_displayed_in_chat(self):
+        """CommandResult with response_text and no forward_to: text must be rendered."""
+        from models.command import CommandResult
+        result = CommandResult(handled=True, response_text="Malformed command — payload must be quoted")
+        handler, mc, mock_render = self._make_handler_with_command("/task @Coder hello", result)
+
+        handler.on_send()
+
+        # render_sync must have been called with ("CrabCakes", error_text, session_key)
+        mock_render.render_sync.assert_called_once_with(
+            "CrabCakes", "Malformed command — payload must be quoted", "agent:main"
+        )
+
+    def test_error_response_appends_bubble_to_chat_box(self):
+        """The bubble returned by render_sync is appended to the chat box."""
+        from models.command import CommandResult
+        result = CommandResult(handled=True, response_text="Unknown agent: @Foo")
+        handler, mc, mock_render = self._make_handler_with_command("/ask @Foo hi", result)
+        fake_bubble = MagicMock()
+        mock_render.render_sync.return_value = fake_bubble
+
+        handler.on_send()
+
+        # The fake bubble must be appended to the chat box
+        chat_box = mc.get_chat_box()
+        assert fake_bubble in chat_box.bubbles
+
+    def test_forward_to_command_does_not_trigger_response_text_branch(self):
+        """Commands with forward_to use the forward branch, not the response_text branch."""
+        from models.command import CommandResult
+        result = CommandResult(
+            handled=True,
+            response_text="should be ignored",
+            forward_to="agent:coder",
+            forward_text="actual message",
+        )
+        handler, mc, mock_render = self._make_handler_with_command("/ask @Coder \"hi\"", result)
+
+        handler.on_send()
+
+        # render_sync must NOT be called with response_text — forward branch handles display
+        for call_args in mock_render.render_sync.call_args_list:
+            assert call_args[0][1] != "should be ignored"
+
+    def test_handled_false_does_not_display_response_text(self):
+        """handled=False: response_text is ignored, message passes through as text."""
+        from models.command import CommandResult
+        result = CommandResult(handled=False, response_text="should not appear")
+        handler, mc, mock_render = self._make_handler_with_command("/home/path", result)
+
+        handler.on_send()
+
+        # render_sync must NOT be called — message passes through as plain text
+        mock_render.render_sync.assert_not_called()
+
+    def test_no_response_text_no_crash(self):
+        """handled=True with response_text=None and no forward_to: no crash."""
+        from models.command import CommandResult
+        result = CommandResult(handled=True)
+        handler, mc, mock_render = self._make_handler_with_command("/status", result)
+
+        handler.on_send()  # must not raise
+
+        # render_sync should NOT be called — nothing to display
+        mock_render.render_sync.assert_not_called()
