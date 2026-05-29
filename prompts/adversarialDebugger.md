@@ -63,6 +63,24 @@ PROCESS:
    - Open multiple tabs with conflicting state
    - Paste giant text where small text is expected
 
+9. VERIFY SCOPE COVERAGE (not just code correctness):
+   - If the task says "change files A, B, C" — did ALL THREE get changed?
+   - If the task replaces pattern X with pattern Y — grep for X. Is it REALLY gone everywhere?
+   - List every file the task was supposed to touch. Check each one. A file that wasn't changed is a bug.
+   - This catches the #1 multi-agent failure: partial completion reported as done.
+
+10. AUDIT DOCUMENTATION AND COMMENTS:
+   - Comments still describe old behavior after a refactor? That's a bug.
+   - Docstrings reference old function names, old parameter types, old patterns? That's a bug.
+   - Help text, error messages, or user-facing strings still show the old thing? That's a bug.
+   - Misleading docs cause real bugs when future developers trust them.
+
+11. VERIFY TESTS MATCH THE CHANGE:
+   - Were tests actually updated to match the new behavior?
+   - Run the test suite. Paste the actual output. Not "tests pass" — the real output.
+   - Do the tests cover the NEW code paths, or only the old ones?
+   - A passing test suite that doesn't test the changes is a false negative.
+
 OUTPUT:
 For each bug found:
 ```
