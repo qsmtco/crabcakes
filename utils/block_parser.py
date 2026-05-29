@@ -15,6 +15,7 @@
 #   {"type": "terminal","content": "..."}
 #   {"type": "heading", "content": "...", "level": 2}
 #   {"type": "task",    "content": "...", "checked": True}
+#   {"type": "table",   "headers": [...], "rows": [[...], ...]}
 #
 # Order of operations:
 #   1. Extract fenced code blocks first ( ``` lang  ...  ``` )
@@ -101,6 +102,94 @@ def _extract_fenced_code_blocks(text: str) -> tuple[list[dict], str]:
     return segments, remaining
 
 
+# ── Table detection regexes ──────────────────────────────────────────────────
+
+# A separator row must have at least one dash per cell (with optional colons)
+_TABLE_SEP_CELL_RE = re.compile(r'^\s*:?-+:?\s*$')
+
+
+def _split_table_row(row: str) -> list[str]:
+    """Split a pipe-delimited row into cell values.
+
+    Handles optional leading/trailing pipe.
+    Returns list of stripped cell strings.
+    """
+    row = row.strip()
+    # Strip leading and trailing pipes
+    if row.startswith('|'):
+        row = row[1:]
+    if row.endswith('|'):
+        row = row[:-1]
+    # Split and strip each cell
+    return [cell.strip() for cell in row.split('|')]
+
+
+def _is_markdown_table(lines: list[str]) -> bool:
+    """Check if a paragraph (list of lines) is a markdown pipe table.
+
+    Requirements:
+      - At least 2 lines (header + separator)
+      - Line 1 (header) contains at least one pipe |
+      - Line 2 (separator) matches |---|---| pattern
+    """
+    if len(lines) < 2:
+        return False
+
+    # Header row must contain at least one pipe
+    if '|' not in lines[0]:
+        return False
+
+    # Separator row: must be all pipes, colons, dashes, spaces
+    sep = lines[1].strip()
+    if '|' not in sep:
+        return False
+
+    # Check separator cells
+    cells = _split_table_row(sep)
+    if not cells:
+        return False
+
+    # Every separator cell must match the --- pattern
+    for cell in cells:
+        if not _TABLE_SEP_CELL_RE.match(cell):
+            return False
+
+    return True
+
+
+def _parse_table(lines: list[str]) -> dict:
+    """Parse markdown table lines into a table segment dict.
+
+    Args:
+        lines: All lines of the table paragraph (header, separator, data rows)
+
+    Returns:
+        Segment dict with type='table', headers list, and rows list-of-lists.
+    """
+    if not lines:
+        return {"type": "text", "content": ""}
+
+    headers = _split_table_row(lines[0])
+    num_cols = len(headers)
+
+    rows = []
+    # Skip header (line 0) and separator (line 1)
+    for line in lines[2:]:
+        cells = _split_table_row(line)
+        # Pad or truncate to match header column count
+        if len(cells) < num_cols:
+            cells.extend([''] * (num_cols - len(cells)))
+        elif len(cells) > num_cols:
+            cells = cells[:num_cols]
+        rows.append(cells)
+
+    return {
+        "type": "table",
+        "headers": headers,
+        "rows": rows,
+    }
+
+
 def _classify_paragraph(para: str) -> dict | None:
     """
     Classify a paragraph (non-empty, no blank lines) into a block type.
@@ -153,6 +242,10 @@ def _classify_paragraph(para: str) -> dict | None:
             for item in items
         )
         return {"type": "task", "content": content}
+
+    # Markdown table: at least 2 lines, first has pipes, second is separator
+    if '|' in first and _is_markdown_table(lines):
+        return _parse_table(lines)
 
     # Plain text
     return {"type": "text", "content": para}
