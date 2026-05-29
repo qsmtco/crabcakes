@@ -159,12 +159,16 @@ def _process_text_chunk(text_chunk: str, processed: list) -> None:
                     })
             else:
                 # quote, terminal, heading, task — pass through raw content
-                processed.append({
-                    "type": seg_type,
-                    "content": seg.get("content", ""),
-                    **({"lang": seg["lang"]} if "lang" in seg else {}),
-                    **({"level": seg["level"]} if "level" in seg else {}),
-                })
+                # table — pass through structured data (headers, rows)
+                if seg_type == "table":
+                    processed.append(seg)
+                else:
+                    processed.append({
+                        "type": seg_type,
+                        "content": seg.get("content", ""),
+                        **({"lang": seg["lang"]} if "lang" in seg else {}),
+                        **({"level": seg["level"]} if "level" in seg else {}),
+                    })
     flush_text()
 
 
@@ -280,12 +284,16 @@ def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool =
             if block is not None:
                 bubble.append(block)
         else:
-            # quote, terminal, heading, task — use original segment builders
-            seg_dict = {"type": seg_type, "content": pseg.get("content", "")}
-            if "lang" in pseg:
-                seg_dict["lang"] = pseg["lang"]
-            if "level" in pseg:
-                seg_dict["level"] = pseg["level"]
+            # quote, terminal, heading, task, table — use segment builders
+            if seg_type == "table":
+                # Table has structured data (headers, rows), pass through as-is
+                seg_dict = pseg
+            else:
+                seg_dict = {"type": seg_type, "content": pseg.get("content", "")}
+                if "lang" in pseg:
+                    seg_dict["lang"] = pseg["lang"]
+                if "level" in pseg:
+                    seg_dict["level"] = pseg["level"]
             widget = _build_segment_widget(seg_dict)
             if widget is not None:
                 bubble.append(widget)
@@ -482,8 +490,83 @@ def _build_segment_widget(seg: dict) -> Gtk.Widget | None:
         return _build_task_segment(seg)
     elif seg_type == "crabcard_placeholder":
         return _build_crabcard_placeholder_segment(seg)
+    elif seg_type == "table":
+        return _build_table_segment(seg)
     else:
         return None
+
+
+def _build_table_segment(seg: dict) -> Gtk.Widget:
+    """Render a markdown table as a GTK Grid with styled cells.
+
+    Args:
+        seg: Table segment with 'headers' (list[str]) and 'rows' (list[list[str]])
+
+    Returns:
+        Gtk.Box wrapping the grid with proper styling.
+    """
+    headers = seg.get("headers", [])
+    rows = seg.get("rows", [])
+    num_cols = len(headers)
+
+    if num_cols == 0:
+        return Gtk.Box()
+
+    # Outer container
+    outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    outer.add_css_class("table-block")
+
+    grid = Gtk.Grid()
+    grid.add_css_class("table-grid")
+    grid.set_column_spacing(1)
+    grid.set_row_spacing(1)
+
+    # Header row
+    for col, header_text in enumerate(headers):
+        cell = _make_table_cell(header_text, is_header=True)
+        grid.attach(cell, col, 0, 1, 1)
+
+    # Data rows
+    for row_idx, row_data in enumerate(rows):
+        for col, cell_text in enumerate(row_data):
+            is_odd = (row_idx % 2 == 1)
+            cell = _make_table_cell(cell_text, is_header=False, is_odd_row=is_odd)
+            grid.attach(cell, col, row_idx + 1, 1, 1)
+
+    outer.append(grid)
+    return outer
+
+
+def _make_table_cell(text: str, is_header: bool = False, is_odd_row: bool = False) -> Gtk.Widget:
+    """Create a single table cell widget.
+
+    Supports inline markdown (bold, italic, code, links) in cell text.
+    """
+    label = Gtk.Label()
+    # Apply inline markdown formatting (escape first, then format)
+    escaped = escape_for_pango(text)
+    formatted = format_markdown(escaped)
+    label.set_markup(formatted)
+    label.set_xalign(0)
+    label.set_valign(Gtk.Align.CENTER)
+    label.set_wrap(True)
+    label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    label.set_can_focus(False)
+    label.set_selectable(True)
+
+    # Styling
+    if is_header:
+        label.add_css_class("table-cell-header")
+    else:
+        label.add_css_class("table-cell")
+        if is_odd_row:
+            label.add_css_class("table-cell-alt")
+
+    # Wrap in a box for padding control
+    box = Gtk.Box()
+    box.append(label)
+    box.add_css_class("table-cell-box")
+    return box
 
 
 def _build_text_segment(seg: dict) -> Gtk.Widget:
