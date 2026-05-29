@@ -119,6 +119,7 @@ def _call_minimax(
     messages: list[dict],
     tools: list[dict] | None,
     timeout: float,
+    x_title: str = "",
 ) -> dict:
     """Call MiniMax ChatCompletion v2 API."""
     import urllib.request
@@ -158,6 +159,7 @@ def _call_anthropic(
     messages: list[dict],
     tools: list[dict] | None,
     timeout: float,
+    x_title: str = "",
 ) -> dict:
     """Call Anthropic Messages API."""
     import urllib.request
@@ -357,6 +359,7 @@ def _stream_minimax_events(
     messages: list[dict],
     tools: list[dict] | None,
     timeout: float,
+    x_title: str = "",
 ):
     """Yield SSE events from MiniMax ChatCompletion streaming API (OpenAI-compatible)."""
     endpoint = f"{base_url.rstrip('/')}/text/chatcompletion_v2"
@@ -416,6 +419,7 @@ def _stream_anthropic_events(
     messages: list[dict],
     tools: list[dict] | None,
     timeout: float,
+    x_title: str = "",
 ):
     """Yield SSE events from Anthropic Messages streaming API."""
     endpoint = f"{base_url.rstrip('/')}/messages"

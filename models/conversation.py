@@ -103,7 +103,7 @@ class Conversation:
     model: str = ""                      # e.g. "openai/gpt-4o"
     api_key: str | None = None           # per-agent API key override (from agent def)
     si_enforcement: bool | None = None     # per-agent enforcement override (None → use global)
-    app_title: str = ""                   # app identifier (e.g. "crabcakes") — set from gateway displayName
+    app_title: str = ""                   # OpenRouter X-Title header value (e.g. "Coder:Crabcakes")
     created_at: datetime = field(default_factory=datetime.now)
     total_tokens: int = 0
     total_cost: float = 0.0              # cumulative USD cost
