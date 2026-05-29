@@ -74,8 +74,9 @@ def _call_openai(
     messages: list[dict],
     tools: list[dict] | None,
     timeout: float,
+    x_title: str = "",
 ) -> dict:
-    """Call OpenAI Chat Completions API."""
+    """Call OpenAI Chat Completions API (also used by OpenRouter, ZAI)."""
     import urllib.request
 
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
@@ -88,13 +89,17 @@ def _call_openai(
         payload["tool_choice"] = "auto"
 
     body = json.dumps(payload).encode()
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    if x_title:
+        headers["HTTP-Referer"] = "https://github.com/qsmtco/crabcakes"
+        headers["X-Title"] = x_title
     req = urllib.request.Request(
         endpoint,
         data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
+        headers=headers,
         method="POST",
     )
     try:
@@ -290,8 +295,9 @@ def _stream_openai_events(
     messages: list[dict],
     tools: list[dict] | None,
     timeout: float,
+    x_title: str = "",
 ):
-    """Yield SSE events from OpenAI Chat Completions streaming API."""
+    """Yield SSE events from OpenAI Chat Completions streaming API (also used by OpenRouter, ZAI)."""
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
     payload = {
         "model": _model_id(model),
@@ -303,13 +309,17 @@ def _stream_openai_events(
         payload["tool_choice"] = "auto"
 
     body = json.dumps(payload).encode()
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    if x_title:
+        headers["HTTP-Referer"] = "https://github.com/qsmtco/crabcakes"
+        headers["X-Title"] = x_title
     req = urllib.request.Request(
         endpoint,
         data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -487,6 +497,7 @@ def _call_llm_streaming(
     messages: list[dict],
     tools: list[dict] | None,
     timeout: float,
+    x_title: str = "",
 ) -> dict:
     """
     Call the LLM with streaming. Fires on_text_delta as chunks arrive,
@@ -505,7 +516,7 @@ def _call_llm_streaming(
     # tool_call_index → {name, arguments, done}
     tool_calls_partial: dict[int, dict] = {}
 
-    for ev in streamer(base_url, api_key, model, messages, tools, timeout):
+    for ev in streamer(base_url, api_key, model, messages, tools, timeout, x_title=x_title):
         if ev.type == "text_delta":
             text = ev.data.get("content") or ""
             full_content += text
@@ -1225,6 +1236,8 @@ class AgentRuntime:
 
         # Use per-agent API key if set, otherwise fall back to provider config
         effective_api_key = conv.api_key or provider_cfg.api_key
+        # Use app_title as X-Title header for OpenRouter attribution
+        x_title = conv.app_title or ""
 
         # Use streaming when on_text_delta callback is registered (Phase 1.3b)
         if self._on_text_delta is not None:
@@ -1239,6 +1252,7 @@ class AgentRuntime:
                 messages=messages,
                 tools=tools if tools else None,
                 timeout=float(self._config.tool_timeout_seconds),
+                x_title=x_title,
             )
 
         caller = _PROVIDER_CALLERS.get(provider_name)
@@ -1252,6 +1266,7 @@ class AgentRuntime:
             messages=messages,
             tools=tools if tools else None,
             timeout=float(self._config.tool_timeout_seconds),
+            x_title=x_title,
         )
 
     def _check_stuck(self, session_key: str, tool_name: str, args: dict, iteration: int) -> str | None:

@@ -272,14 +272,8 @@ class GatewayClient:
         session_key: str,
         text: str,
         on_sent: Optional[Callable[[Optional[dict[str, Any]]], None]] = None,
-        app_title: str = "",
     ) -> None:
-        """Send a text message into a session.
-
-        Args:
-            app_title: App identifier (e.g. "crabcakes") — passed as appTitle
-                       in chat.send params so gateway agents know the source app.
-        """
+        """Send a text message into a session."""
         if not isinstance(session_key, str) or not isinstance(text, str):
             self.on_error(f"send_message: expected str, got {type(session_key).__name__}/{type(text).__name__}")
             return
@@ -307,18 +301,15 @@ class GatewayClient:
         req_id = str(uuid.uuid4())
         # Embed req_id in the closure so it's available when res fires
         stored_cb = lambda p: on_send_response(p, req_id)
-        params = {
-            "idempotencyKey": str(uuid.uuid4()),
-            "message": text,
-            "sessionKey": session_key,
-        }
-        if app_title:
-            params["appTitle"] = app_title
         self._send({
             "type": "req",
             "id": req_id,
             "method": "chat.send",
-            "params": params,
+            "params": {
+                "idempotencyKey": str(uuid.uuid4()),
+                "message": text,
+                "sessionKey": session_key,
+            },
         }, on_response=stored_cb)
 
     # ── Internals ────────────────────────────────────────────────────────────

@@ -38,6 +38,7 @@ class SpecialAgentDef:
     provider: str | None = None   # per-agent provider override (None → global default)
     model: str | None = None      # per-agent model override (None → global default)
     api_key: str | None = None    # per-agent API key override (None → provider config)
+    app_title: str | None = None   # OpenRouter X-Title header (e.g. "Coder:Crabcakes")
     self_improvement: dict = field(default_factory=dict)  # SI layer toggles
     mcp_servers: list[str] = field(default_factory=list)  # MCP servers for Phase B
 
@@ -117,6 +118,7 @@ def _load_registry() -> dict[str, SpecialAgentDef]:
             provider=agent_def.get("provider"),
             model=agent_def.get("model"),
             api_key=agent_def.get("provider_keys", {}).get(agent_def.get("provider", ""), "") or agent_def.get("api_key"),
+            app_title=agent_def.get("app_title"),
             self_improvement=agent_def.get("self_improvement", {}),
             mcp_servers=raw_mcp,  # Phase B: MCP server list (coerced)
         )
