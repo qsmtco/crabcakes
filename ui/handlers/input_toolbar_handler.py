@@ -304,9 +304,14 @@ class InputToolbarHandler:
         filename should NOT include .md extension — it's added automatically.
         """
         from utils.prompts import PROMPTS_DIR
+        # Sanitize filename — prevent path traversal
+        clean = os.path.basename(filename)
+        if clean != filename or not clean:
+            logger.error("Invalid prompt name: %s", filename)
+            return None
         buf = self._mc.user_input.get_buffer()
         text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
-        path = os.path.join(PROMPTS_DIR, f"{filename}.md")
+        path = os.path.join(PROMPTS_DIR, f"{clean}.md")
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
