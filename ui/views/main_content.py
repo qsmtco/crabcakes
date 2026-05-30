@@ -136,6 +136,13 @@ class MainContent(Gtk.Box):
         # Connect buffer changed signal for toolbar spell check + word count
         self._user_input.get_buffer().connect("changed", self._on_input_buffer_changed)
 
+        # Right-click for spell suggestion popover
+        self._spell_popup = None
+        right_click = Gtk.GestureClick()
+        right_click.set_button(3)  # right button only
+        right_click.connect("pressed", self._on_input_right_click)
+        self._user_input.add_controller(right_click)
+
         # Button bar — right-justified buttons below the input
         button_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         button_bar.set_halign(Gtk.Align.END)
@@ -825,6 +832,101 @@ class MainContent(Gtk.Box):
         end_iter = buf.get_end_iter()
         buf.place_cursor(end_iter)
         self.user_input.grab_focus()
+
+    # ── Spell suggestion popover ──────────────────────────────────────────
+
+    def _on_input_right_click(self, gesture, n_press, x, y):
+        """Show spell suggestion popover at cursor if right-click is on a misspelled word."""
+        if n_press != 1:
+            return
+        buf = self._user_input.get_buffer()
+        iter_at_click = self._user_input.get_iter_at_location(x, y)
+        if iter_at_click is None:
+            return
+
+        # Check if click is inside a misspelled word
+        word_start = iter_at_click.copy()
+        word_end = iter_at_click.copy()
+        if not word_start.inside_word():
+            self._dismiss_spell_popover()
+            return
+        word_start.backward_word_start()
+        word_end.forward_word_end()
+        word = buf.get_text(word_start, word_end, True)
+
+        # Get spell suggestions from handler (via right-click callback)
+        getter = getattr(self, '_on_spell_suggestion_getter', None)
+        suggestions = getter(iter_at_click) if getter else []
+        if not suggestions:
+            self._dismiss_spell_popover()
+            return
+
+        self._show_spell_popover(word, word_start, word_end, suggestions)
+
+    def _show_spell_popover(self, word, word_start, word_end, suggestions):
+        """Show a popover with spell check suggestions for *word*."""
+        self._dismiss_spell_popover()
+
+        popover = Gtk.Popover()
+        popover.set_halign(Gtk.Align.START)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        box.set_margin_top(4)
+        box.set_margin_bottom(4)
+
+        # Header: the misspelled word
+        header = Gtk.Label()
+        header.set_markup(f"<b>{word}</b>")
+        header.set_halign(Gtk.Align.START)
+        header.set_margin_start(8)
+        header.set_margin_end(8)
+        box.append(header)
+
+        sep = Gtk.Separator()
+        sep.set_margin_top(2)
+        sep.set_margin_bottom(2)
+        box.append(sep)
+
+        # Suggestion buttons
+        for sug in suggestions:
+            btn = Gtk.Button(label=sug)
+            btn.add_css_class("flat")
+            btn.set_halign(Gtk.Align.START)
+            btn.connect("clicked", self._on_spell_suggestion_clicked, word_start, word_end, sug)
+            box.append(btn)
+
+        popover.set_child(box)
+
+        # Position relative to the input widget
+        rect = Gdk.Rectangle()
+        rect.x = 0
+        rect.y = 0
+        rect.width = 1
+        rect.height = 1
+        popover.set_pointing_to(rect)
+        popover.set_parent(self._user_input)
+        popover.popup()
+        self._spell_popup = popover
+
+    def _on_spell_suggestion_clicked(self, btn, word_start, word_end, suggestion):
+        """Replace misspelled word with the selected suggestion."""
+        self._dismiss_spell_popover()
+        buf = self._user_input.get_buffer()
+        buf.delete(word_start, word_end)
+        buf.insert(word_start, suggestion)
+
+    def _dismiss_spell_popover(self):
+        """Dismiss the spell suggestion popover if open."""
+        if self._spell_popup is not None:
+            self._spell_popup.popdown()
+            self._spell_popup = None
+
+    def set_on_spell_suggestion_getter(self, cb: callable) -> None:
+        """Set callback to get spell suggestions for an iter (used by right-click popover)."""
+        self._on_spell_suggestion_getter = cb
+
+    def set_on_spell_suggestion_apply(self, cb: callable) -> None:
+        """Set callback for spell suggestion application."""
+        self._on_spell_suggestion_apply = cb
 
     def set_review_bar(self, bar: Gtk.Widget | None):
         """

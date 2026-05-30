@@ -446,6 +446,11 @@ class MainWindow(Gtk.ApplicationWindow):
         toolbar.set_on_find_prev(self._input_toolbar_handler.find_prev)
         toolbar.set_on_find_next(self._input_toolbar_handler.find_next)
 
+        # Wire spell suggestion right-click to handler
+        self._main_content.set_on_spell_suggestion_getter(
+            lambda iter: self._input_toolbar_handler.get_suggestions_at_iter(iter)
+        )
+
         # Initial word count
         self._update_word_count()
 
@@ -491,16 +496,45 @@ class MainWindow(Gtk.ApplicationWindow):
         self._set_window_icon()
 
     def _setup_keyboard_shortcuts(self):
-        """Bind Shift+Enter in the input box to send."""
+        """Bind Shift+Enter, Ctrl+F, Ctrl+H, Escape in the input box."""
         controller = Gtk.EventControllerKey()
         controller.connect("key-pressed", self._on_input_key_press)
         self._main_content.user_input.add_controller(controller)
 
     def _on_input_key_press(self, controller, keyval, keycode, state):
-        """Shift+Enter sends the message."""
+        """Handle keyboard shortcuts in the input box.
+
+        Shift+Enter  → send message
+        Ctrl+F       → show find bar
+        Ctrl+H       → show find bar with replace row
+        Escape       → close find bar (if open)
+        """
+        ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
+
+        # Ctrl+F → show find bar
+        if ctrl and keyval == Gdk.KEY_f:
+            toolbar = self._main_content.toolbar
+            toolbar.show_find_bar(show_replace=False)
+            return True
+
+        # Ctrl+H → show find bar with replace row
+        if ctrl and keyval == Gdk.KEY_h:
+            toolbar = self._main_content.toolbar
+            toolbar.show_find_bar(show_replace=True)
+            return True
+
+        # Escape → close find bar
+        if keyval == Gdk.KEY_Escape:
+            toolbar = self._main_content.toolbar
+            toolbar.hide_find_bar()
+            self._input_toolbar_handler.clear_find()
+            return True
+
+        # Shift+Enter → send
         if keyval == Gdk.KEY_Return and (state & Gdk.ModifierType.SHIFT_MASK):
             self._chat_handler.on_send()
             return True
+
         return False
 
     # ── Prompt callback ─────────────────────────────────────────────────────
