@@ -10,8 +10,8 @@ tools:
   - write_file
   - web_search
   - web_fetch
-provider: google
-model: gemini-2.0-flash
+provider: openrouter
+model: inclusionai/ling-2.6-flash
 auto_open: true
 api_key_built_in: true
 auto_add_to_projects: true
