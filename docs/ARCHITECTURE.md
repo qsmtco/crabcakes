@@ -107,10 +107,11 @@ crabcakes/
 │   │   ├── agent_runtime_handler.py  # AgentRuntimeHandler — local agent UI bridge (Phase 1.4)
 │   │   ├── project_list_handler.py  # ProjectListHandler — project card data + color round-robin
 │   │   ├── crabwatch_handler.py  # CrabWatchHandler — Gio.FileMonitor filesystem watcher (Phase 5)
+│   │   └── input_toolbar_handler.py  # InputToolbarHandler — find/replace, spell check, file I/O, word count
 │   └── views/                 # View widgets
 │       ├── __init__.py
 │       ├── chat_bubble.py      # build_role_bubble() — chat bubble widget factories (Phase 1)
-│       ├── chat_control_bar.py # ChatControlBar — planned stub (update() not wired)
+│       ├── chat_input_toolbar.py  # ChatInputToolbar — compact toolbar for input area (Phase 5)
 │       ├── feedbar.py          # FeedBar — Response Status Bar + progress bar + ActivityHandler public API (Phase 6)
 │       ├── feed_card.py        # feed_card widget factory (Phase 5)
 │       ├── diff_card.py         # Diff card widget factories — build_file_diff_card, build_diff_summary_card (Phase 7)
@@ -133,6 +134,7 @@ crabcakes/
     ├── feed_store.py         # Feed JSON persistence — load/save/append/update to .crabcakes/feed.json (Phase 5)
     ├── improve.py             # improve_prompt() — MiniMax API for prompt improvement (template mode with {{USER_INPUT}} marker, loads from prompts/system/improve.md)
     ├── stt.py                 # STTEngine — faster-whisper push-to-talk
+    └── spellcheck.py             # check_words() + get_suggestions() via enchant-2 subprocess
     ├── mcp_config.py          # MCP server configuration loader — YAML/JSON deserialization with schema validation (transport, command, args, env, enabled)
     ├── mcp_client.py          # MCP client library — asyncio-to-threading bridge, stdio transport, connection pooling, tool discovery/call, OpenAI-format conversion
     ├── diff_parser.py         # parse_diff() — unified diff → FileDiff/ParsedDiff data (Phase 7)
