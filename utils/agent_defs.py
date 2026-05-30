@@ -105,29 +105,18 @@ def _derive_role(agent_def: dict) -> str:
 # ── Default seeding ──────────────────────────────────────────────────────────
 
 
-def _seed_defaults_if_empty() -> None:
-    """Copy built-in default agent YAML files if the agents dir is empty/missing.
+def _seed_defaults() -> None:
+    """Copy any missing built-in default agent YAML files to the agents dir.
 
-    Copies from prompts/default_agents/ to <config_dir>/agents/.
-    Only runs if the target directory has no .yaml/.yml/.json files.
+    Only copies files from prompts/default_agents/ that don't already exist
+    in <config_dir>/agents/. Never overwrites existing user files.
     """
     agents_dir = _get_agents_dir()
     src_dir = _get_default_agents_src()
 
-    # Check if agents dir already has definitions
-    if os.path.isdir(agents_dir):
-        existing = [
-            f for f in os.listdir(agents_dir)
-            if f.endswith((".yaml", ".yml", ".json"))
-        ]
-        if existing:
-            return  # User has definitions — don't overwrite
-
-    # Check if source defaults exist
     if not os.path.isdir(src_dir):
         return
 
-    # Copy default files
     try:
         os.makedirs(agents_dir, exist_ok=True)
     except OSError as e:
@@ -177,7 +166,7 @@ def load_agent_defs() -> list[dict]:
     Returns list of agent definition dicts. Empty list if dir missing.
     Skips files that fail to parse.
     """
-    _seed_defaults_if_empty()
+    _seed_defaults()
 
     agents_dir = _get_agents_dir()
     if not os.path.isdir(agents_dir):
@@ -381,12 +370,13 @@ def validate_agent_def(agent_def: dict) -> list[str]:
                     errors.append(f"No model specified and provider '{provider}' has no default")
                 break
 
-    # Validate API key for selected provider
-    provider_keys = agent_def.get("provider_keys", {})
-    if provider and not provider_keys.get(provider):
-        # Check legacy api_key as fallback
-        if not agent_def.get("api_key"):
-            errors.append(f"API key required for provider '{provider}'")
+    # Validate API key for selected provider (skip if built-in)
+    if not agent_def.get("api_key_built_in"):
+        provider_keys = agent_def.get("provider_keys", {})
+        if provider and not provider_keys.get(provider):
+            # Check legacy api_key as fallback
+            if not agent_def.get("api_key"):
+                errors.append(f"API key required for provider '{provider}'")
 
     # Check for filename collision (sanitized names may collide)
     name = agent_def.get("name", "")

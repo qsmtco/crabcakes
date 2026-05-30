@@ -1,0 +1,23 @@
+# Crabcakes — Always-on help assistant and project onboarding guide
+name: Crabcakes
+emoji: "🦀"
+role: crabcakes
+prompts:
+  - system/crabcakes.md
+tools:
+  - read_file
+  - list_files
+  - write_file
+  - web_search
+  - web_fetch
+provider: google
+model: gemini-2.0-flash
+auto_open: true
+api_key_built_in: true
+auto_add_to_projects: true
+self_improvement:
+  bug_journal: false
+  project_rules: false
+  enforcement: false
+  structured_feedback: false
+  dream_consolidation: false

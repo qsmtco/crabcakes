@@ -76,7 +76,23 @@ class AgentConfig:
     enforcement: EnforcementConfig = field(default_factory=EnforcementConfig)
 
 
-# ── Config loading ─────────────────────────────────────────────────────────────
+# ── Built-in providers ─────────────────────────────────────────────────────────
+
+# Built-in free-tier Gemini key for the Crabcakes help agent.
+# Google AI Studio free tier: 1,500 RPD, 15 RPM, 1M TPM, no credit card.
+# This is NOT a secret — it's a shared free-tier key with rate limits.
+# Users are encouraged to configure their own keys for better performance.
+_BUILT_IN_GOOGLE_KEY = "***"  # Replace with actual key from Google AI Studio
+
+_BUILT_IN_GOOGLE_PROVIDER = LLMProviderConfig(
+    name="google",
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+    api_key=_BUILT_IN_GOOGLE_KEY,
+    default_model="gemini-2.0-flash",
+    supports_tools=True,
+    supports_streaming=True,
+    max_tokens=1_000_000,
+)
 
 
 def _check_permissions(path: str) -> None:
@@ -152,7 +168,7 @@ def load_agent_config(config_path: str | None = None) -> AgentConfig:
 
     if not os.path.isfile(config_path):
         _create_default_config(config_path)
-        return AgentConfig()
+        # Fall through to parse the newly-created file.
 
     try:
         with open(config_path, "r", encoding="utf-8") as f:
@@ -192,6 +208,12 @@ def load_agent_config(config_path: str | None = None) -> AgentConfig:
         )
     else:
         enforcement = EnforcementConfig()
+
+    # Inject built-in Google provider if not user-configured.
+    # This ensures the Crabcakes help agent works out of the box.
+    if "google" not in providers:
+        providers["google"] = _BUILT_IN_GOOGLE_PROVIDER
+        logger.info("Injected built-in Google Gemini provider for Crabcakes help agent")
 
     return AgentConfig(
         providers=providers,
@@ -246,11 +268,7 @@ def _create_default_config(path: str) -> None:
 
 
 def get_api_key(provider_name: str) -> str | None:
-    """
-    Get the API key for a specific provider.
-
-    Loads the config if not already loaded (lazy loading).
-    """
+    """Get the API key for a specific provider."""
     config = load_agent_config()
     provider = config.providers.get(provider_name)
     return provider.api_key if provider else None

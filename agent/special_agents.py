@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["SPECIAL_AGENTS", "SpecialAgentDef", "get_special_agents", "get_special_agent"]
+__all__ = ["SPECIAL_AGENTS", "SpecialAgentDef", "get_special_agents", "get_special_agent", "get_auto_open_agents", "get_project_onboarding_agents"]
 
 
 @dataclass
@@ -41,6 +41,9 @@ class SpecialAgentDef:
     app_title: str | None = None   # OpenRouter X-Title header (e.g. "Coder:Crabcakes")
     self_improvement: dict = field(default_factory=dict)  # SI layer toggles
     mcp_servers: list[str] = field(default_factory=list)  # MCP servers for Phase B
+    auto_open: bool = False           # open tab automatically on every app launch
+    api_key_built_in: bool = False    # uses a built-in provider key, not user-configured
+    auto_add_to_projects: bool = False  # auto-add to every new project's team
 
     def get_self_improvement_config(self) -> dict:
         """Return self_improvement config with defaults applied.
@@ -52,6 +55,8 @@ class SpecialAgentDef:
         from utils.agent_defs import get_default_si_config
         defaults = get_default_si_config(can_write=self.can_write)
         return {**defaults, **self.self_improvement}
+
+
 
 
 # ── Color assignment ─────────────────────────────────────────────────────────
@@ -121,6 +126,9 @@ def _load_registry() -> dict[str, SpecialAgentDef]:
             app_title=agent_def.get("app_title"),
             self_improvement=agent_def.get("self_improvement", {}),
             mcp_servers=raw_mcp,  # Phase B: MCP server list (coerced)
+            auto_open=agent_def.get("auto_open", False),
+            api_key_built_in=agent_def.get("api_key_built_in", False),
+            auto_add_to_projects=agent_def.get("auto_add_to_projects", False),
         )
 
     return registry
@@ -154,3 +162,21 @@ def get_special_agents() -> list[SpecialAgentDef]:
 def get_special_agent(prefix: str) -> SpecialAgentDef | None:
     """Look up a special agent by its session key prefix."""
     return _ensure_loaded().get(prefix)
+
+
+def get_auto_open_agents() -> list[SpecialAgentDef]:
+    """Return all agents with auto_open=True.
+
+    Used by window.py at startup to open tabs for agents that should
+    be present on every launch.
+    """
+    return [agent for agent in get_special_agents() if agent.auto_open]
+
+
+def get_project_onboarding_agents() -> list[SpecialAgentDef]:
+    """Return all agents with auto_add_to_projects=True.
+
+    Used by ProjectHandler when creating or opening a project to
+    auto-add agents to the team roster.
+    """
+    return [agent for agent in get_special_agents() if agent.auto_add_to_projects]

@@ -203,6 +203,10 @@ def compose_system_prompt(
         dt = load_prompt_template("debugger")
         if dt:
             parts.append(dt)
+    elif agent_role == "crabcakes":
+        ct = load_prompt_template("crabcakes")
+        if ct:
+            parts.append(ct)
 
     # 7. Per-agent self-improvement context files (bug journal + project rules)
     if project_path and agent_role:
