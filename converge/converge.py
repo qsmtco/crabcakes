@@ -131,7 +131,16 @@ DEPENDENCIES
 
   pip install scikit-learn numpy joblib
 No GPU, no cloud API, no external service. Everything runs locally.
-The model and TF-IDF vectorizer are pre-trained and shipped as .pkl
+# SECURITY NOTE: .pkl files are loaded via joblib (pickle under the hood).
+# Pickle deserialization is an arbitrary code execution vector. These files
+# are generated locally and committed to a private repo, so the risk is low.
+# If this repo ever accepts external contributions or goes public:
+#   - .gitignore the .pkl files
+#   - Ship a training script (converge/train.py) that generates them
+#   - Document the training data and process
+# See: https://docs.python.org/3/library/pickle.html#restricting-globals
+#
+# The model and TF-IDF vectorizer are pre-trained and shipped as .pkl
 files. They are loaded at import time — no training on startup.
 """
 
