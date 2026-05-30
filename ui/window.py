@@ -214,6 +214,13 @@ class MainWindow(Gtk.ApplicationWindow):
             GLib_module=GLib,
         )
 
+        # Input toolbar handler — owns find/replace, spell check, file I/O, word count
+        from ui.handlers.input_toolbar_handler import InputToolbarHandler
+        self._input_toolbar_handler = InputToolbarHandler(
+            main_content=self._main_content,
+            GLib_module=GLib,
+        )
+
         # Project handler — owns active project state + agent-to-project routing (Phase 3)
         from ui.handlers.project_handler import ProjectHandler
         self._projects = __import__("utils.projects", fromlist=["projects"])
@@ -422,8 +429,25 @@ class MainWindow(Gtk.ApplicationWindow):
         self._register_stub_commands()
 
         # Wire STT + improve buttons
+        # Wire MediaHandler STT/improve callbacks
         self._main_content.set_on_stt_click(self._media_handler.on_stt_click)
         self._main_content.set_on_improve_click(self._media_handler.on_improve_click)
+
+        # Wire input toolbar callbacks
+        self._main_content.set_on_buffer_changed(self._on_input_buffer_changed)
+        toolbar = self._main_content.toolbar
+        toolbar.set_on_save_file(self._input_toolbar_handler.save_to_file)
+        toolbar.set_on_save_prompt(self._input_toolbar_handler.save_as_prompt)
+        toolbar.set_on_open_file(self._input_toolbar_handler.load_file)
+        toolbar.set_on_open_prompt(self._input_toolbar_handler.load_prompt)
+        toolbar.set_on_find(self._on_find_text_changed)
+        toolbar.set_on_replace(self._on_replace_action)
+        toolbar.set_on_spell_toggle(self._on_spell_toggle)
+        toolbar.set_on_find_prev(self._input_toolbar_handler.find_prev)
+        toolbar.set_on_find_next(self._input_toolbar_handler.find_next)
+
+        # Initial word count
+        self._update_word_count()
 
         # Right-side vertical stack: feedbar above main content
         right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -486,6 +510,37 @@ class MainWindow(Gtk.ApplicationWindow):
         buffer = self._main_content.user_input.get_buffer()
         cursor_iter = buffer.get_iter_at_mark(buffer.get_insert())
         buffer.insert(cursor_iter, content)
+
+    # ── Input toolbar callbacks ─────────────────────────────────────────────
+
+    def _on_input_buffer_changed(self):
+        """Handle input buffer changes — trigger spell check debounce + word count."""
+        self._input_toolbar_handler.on_buffer_changed()
+        self._update_word_count()
+
+    def _update_word_count(self):
+        """Update word/char/token count display in the toolbar."""
+        words, chars, tokens = self._input_toolbar_handler.get_word_count()
+        self._main_content.toolbar.update_word_count(words, chars, tokens)
+
+    def _on_find_text_changed(self, search_text: str):
+        """Handle find text changes — run find, update match count."""
+        current, total = self._input_toolbar_handler.find(search_text)
+        self._main_content.toolbar.update_match_count(current, total)
+
+    def _on_replace_action(self, replacement: str, current_only: bool):
+        """Handle replace or replace-all action."""
+        if current_only:
+            current, total = self._input_toolbar_handler.replace_current(replacement)
+        else:
+            self._input_toolbar_handler.replace_all(replacement)
+            current, total = -1, 0
+        self._main_content.toolbar.update_match_count(current, total)
+
+    def _on_spell_toggle(self):
+        """Toggle spell check — update button state."""
+        active = self._input_toolbar_handler.toggle_spell_check()
+        self._main_content.toolbar.set_spell_active(active)
 
     # ── Command handlers (Step 0.3) ────────────────────────────────────────
 

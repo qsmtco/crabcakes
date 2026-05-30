@@ -13,7 +13,7 @@ _logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-from ui.views.chat_control_bar import ChatControlBar
+from ui.views.chat_input_toolbar import ChatInputToolbar
 from ui.views.session_menu import show_session_menu, show_project_menu
 
 class MainContent(Gtk.Box):
@@ -69,16 +69,16 @@ class MainContent(Gtk.Box):
         # Unread tab tracking — session_keys with unseen messages
         self._unread_tabs: set[str] = set()
 
-        self._control_bar = ChatControlBar()
+        self._toolbar = ChatInputToolbar()
 
-        # Control bar is updated by ActivityHandler via set_on_control_bar_update()
-        self._on_control_bar_update: callable | None = None
+        # Input toolbar buffer change callback — set by window.py
+        self._on_toolbar_buffer_changed: callable | None = None
 
         # Top box minimum height — prevents it collapsing when notebook is empty
         top_box.set_size_request(-1, 120)
 
         top_box.append(self._chat_notebook)
-        top_box.append(self._control_bar)
+        top_box.append(self._toolbar)
 
         # ── Project Settings Bar — floating OVER the chat scroll area only ────
         # Placed as overlay on the notebook's chat area (not the tab bar).
@@ -132,6 +132,9 @@ class MainContent(Gtk.Box):
         self._user_input.set_bottom_margin(6)
         self._user_input.add_css_class("input-bubble")
         input_scroll.set_child(self._user_input)
+
+        # Connect buffer changed signal for toolbar spell check + word count
+        self._user_input.get_buffer().connect("changed", self._on_input_buffer_changed)
 
         # Button bar — right-justified buttons below the input
         button_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -198,14 +201,19 @@ class MainContent(Gtk.Box):
             lbl.set_text(text)
         self._project_settings.append(lbl)
 
-    def set_on_control_bar_update(self, cb: "Callable[[str, str], None]") -> None:
-        """Set the callback for control bar updates. cb(event_type, message)."""
-        self._on_control_bar_update = cb
+    @property
+    def toolbar(self):
+        """Expose the input toolbar for callback wiring."""
+        return self._toolbar
 
-    def update_control_bar(self, event_type: str, message: str) -> None:
-        """Update the control bar. Called by ActivityHandler on state transitions."""
-        if self._on_control_bar_update:
-            self._on_control_bar_update(event_type, message)
+    def set_on_buffer_changed(self, cb: callable) -> None:
+        """Set callback for input buffer changes. Used by InputToolbarHandler."""
+        self._on_toolbar_buffer_changed = cb
+
+    def _on_input_buffer_changed(self, buf):
+        """Forward buffer changes to the toolbar handler."""
+        if self._on_toolbar_buffer_changed:
+            self._on_toolbar_buffer_changed()
 
     def set_on_project_settings_update(self, cb):
         """Set callback for project settings updates. cb(project_name, member_count)."""
