@@ -11,7 +11,7 @@ tools:
   - web_search
   - web_fetch
 provider: openrouter
-model: openrouter/owl-alpha
+model: openrouter/free
 auto_open: true
 api_key_built_in: true
 auto_add_to_projects: true
