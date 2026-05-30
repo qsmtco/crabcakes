@@ -11,7 +11,7 @@ tools:
   - web_search
   - web_fetch
 provider: openrouter
-model: inclusionai/ling-2.6-flash
+model: openrouter/owl-alpha
 auto_open: true
 api_key_built_in: true
 auto_add_to_projects: true
