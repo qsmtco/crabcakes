@@ -90,6 +90,9 @@ class ProjectHandler:
         if self._awareness:
             self._awareness.init_project_config(path, name)
 
+        # Auto-add onboarding agents if not already members
+        self._auto_add_onboarding_agents(path)
+
         # Initialize workflow.md (idempotent — skips if already exists)
         try:
             init_workflow(path)
@@ -148,6 +151,9 @@ class ProjectHandler:
         # Initialize .crabcakes/ with awareness artifacts
         if self._awareness:
             self._awareness.init_project_config(path, name, pm_name, pm_id)
+
+        # Auto-add onboarding agents (Crabcakes 🦀) to new project team
+        self._auto_add_onboarding_agents(path)
 
         # Initialize workflow.md (idempotent — creates with onboarding as current)
         try:
@@ -360,6 +366,44 @@ class ProjectHandler:
     def set_agent_manager(self, agent_mgr) -> None:
         """Inject the live AgentManager after gateway connect. Called by window.py."""
         self._agent_mgr = agent_mgr
+
+    # ── Phase 5: Project Onboarding ─────────────────────────────────────
+
+    def _auto_add_onboarding_agents(self, project_path: str) -> None:
+        """Auto-add agents with auto_add_to_projects=True to the project team.
+
+        Called during project creation and first open. These agents serve as
+        project onboarding guides — they receive the project-onboarding template
+        via compose_system_prompt() when the project is not yet onboarded.
+        """
+        try:
+            from agent.special_agents import get_project_onboarding_agents
+            onboarding_agents = get_project_onboarding_agents()
+        except Exception:
+            return  # Non-fatal — special agents may not be loaded yet
+
+        if not onboarding_agents or not self._awareness:
+            return
+
+        team = self._awareness.load_team(project_path)
+        changed = False
+        for agent_def in onboarding_agents:
+            if not team.has_member(agent_def.conv_id_prefix):
+                from models.team import TeamMember
+                team.add_member(TeamMember(
+                    session_key=agent_def.conv_id_prefix,
+                    name=agent_def.display_name,
+                    role="onboarding guide",
+                    can_write=True,  # needs write_file for onboarding
+                ))
+                changed = True
+                # Also add to routing table if project is active
+                if self._active_project_name:
+                    self._agent_to_project.add(agent_def.conv_id_prefix, self._active_project_name)
+
+        if changed:
+            self._awareness.save_team(project_path, team)
+            _logger.info("Auto-added onboarding agents to project at %s", project_path)
 
     # ── Internal ─────────────────────────────────────────────────────────────
 

@@ -79,9 +79,9 @@ crabcakes/
 │   ├── __init__.py           # Exports: AgentRuntime
 │   ├── runtime.py           # AgentRuntime — tool loop, LLM API, streaming, cost tracking + enforcement hook
 │   ├── tools.py              # Tool definitions + execution (read_file, write_file, edit_file, exec_command, etc.)
-│   ├── config.py             # LLM provider config + EnforcementConfig dataclass
+│   ├── config.py             # LLM provider config + EnforcementConfig dataclass + built-in Google provider
 │   ├── context.py            # System prompt builder (via prompts/system/ templates) + file context builder + .gitignore parsing
-│   ├── special_agents.py     # Coder + Debugger agent definitions
+│   ├── special_agents.py     # Coder + Debugger + Crabcakes agent definitions (auto_open, api_key_built_in, auto_add_to_projects fields)
 │   └── enforcement.py        # Post-write verification: syntax guard, test runner, lint check (Phase 3)
 │
 ├── ui/                        # All UI components
@@ -120,6 +120,15 @@ crabcakes/
 │       ├── left_progress.py    # Stub — progress indicator placeholder
 │       ├── main_content.py     # MainContent — chat notebook + input + button bar
 │       └── session_menu.py     # Right-click session switcher popover
+│
+├── knowledge/                # User-facing documentation files (read by Crabcakes agent via web_fetch)
+│   ├── setup.md              # Installation and first-run guide
+│   ├── configuration.md      # Configuration options and agent.json
+│   ├── agents.md             # How agents work (Coder, Debugger, Crabcakes, custom)
+│   ├── features.md           # Feature overview and how-tos
+│   ├── commands.md           # Slash command reference
+│   ├── gateway.md            # OpenClaw gateway connection
+│   └── troubleshooting.md    # Common problems and solutions
 │
 └── utils/                     # Pure Python utilities — no GTK, no network
     ├── __init__.py
@@ -1257,23 +1266,33 @@ def load_custom_system_prompt(project_path) -> str | None  # .crabcakes/agent-sy
 
 ### 3.21p `agent/special_agents.py` — Special Agent Definitions (Phase 1.4 → User-Defined Agents)
 
-**Responsibility:** Agent definition registry — loads agent definitions from `~/.config/crabcakes/agents/*.yaml` (or `.json`). Built-in defaults (Coder, Debugger) are seeded from `prompts/default_agents/` on first launch. New agents are created via the Agent Builder UI.
+**Responsibility:** Agent definition registry — loads agent definitions from `~/.config/crabcakes/agents/*.yaml` (or `.json`). Built-in defaults (Coder, Debugger, Crabcakes) are seeded from `prompts/default_agents/` on first launch. New agents are created via the Agent Builder UI.
 
 **Public API:**
 ```python
 @dataclass SpecialAgentDef:
     conv_id_prefix, display_name, role, emoji, color, tools, can_write,
-    provider: str | None, model: str | None, self_improvement: dict
+    provider: str | None, model: str | None, self_improvement: dict,
+    mcp_servers: list[str],
+    auto_open: bool = False,              # open tab on every app launch
+    api_key_built_in: bool = False,       # has built-in API key (Crabcakes agent)
+    auto_add_to_projects: bool = False,   # auto-add to every new project
     def get_self_improvement_config() -> dict
 
 def get_special_agents() -> list[SpecialAgentDef]
 def get_special_agent(prefix) -> SpecialAgentDef | None
+def get_auto_open_agents() -> list[SpecialAgentDef]      # agents to auto-open on launch
+def get_project_onboarding_agents() -> list[SpecialAgentDef]  # auto-add to new projects
 def reload_registry() -> None   # force reload after create/edit/delete
 ```
 
 **Lazy loading:** Registry loads from config files on first access. `reload_registry()` clears and reloads.
 
 **Self-improvement:** Each agent carries `self_improvement` toggles (bug_journal, project_rules, enforcement, structured_feedback, dream_consolidation). Defaults from `utils/agent_defs.get_default_si_config()`. Override via YAML.
+
+**Auto-open agents:** Agents with `auto_open=True` (currently only Crabcakes 🦀) get a chat tab created automatically on every app launch. See `ui/window.py` Phase 4.
+
+**Project onboarding agents:** Agents with `auto_add_to_projects=True` are automatically added to every new project's team. See `ui/handlers/project_handler.py` Phase 5.
 
 **Per-agent model:** `provider` and `model` fields override the global default for this agent. Resolved in `AgentRuntimeHandler._resolve_agent_model()`.
 
@@ -1299,7 +1318,7 @@ def get_available_providers() -> list[dict]     # [{name, base_url, default_mode
 def get_default_si_config(can_write: bool) -> dict  # canonical SI defaults — single source of truth
 ```
 
-**Default seeding:** If the agents config dir is empty, copies YAML files from `prompts/default_agents/`.
+**Default seeding:** Copies YAML files from `prompts/default_agents/` that don't already exist in the agents config dir. New default agents (like Crabcakes) are seeded on existing installations.
 
 **Validation:** Checks required fields (name, prompts, tools, provider), verifies tool names against `agent/tools.py`, prompt file existence, and provider availability.
 
