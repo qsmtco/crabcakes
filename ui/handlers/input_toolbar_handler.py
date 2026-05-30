@@ -116,7 +116,6 @@ class InputToolbarHandler:
         buf = self._mc.user_input.get_buffer()
 
         # Get or create the spell-error tag (once)
-        tag_table = buf.get_tag_table()
         if self._spell_tag is None:
             from gi.repository import Pango, Gdk
             self._spell_tag = buf.create_tag("spell-error")

@@ -861,10 +861,10 @@ class MainContent(Gtk.Box):
             self._dismiss_spell_popover()
             return
 
-        self._show_spell_popover(word, word_start, word_end, suggestions)
+        self._show_spell_popup(word, word_start, word_end, suggestions, x, y)
 
-    def _show_spell_popover(self, word, word_start, word_end, suggestions):
-        """Show a popover with spell check suggestions for *word*."""
+    def _show_spell_popup(self, word, word_start, word_end, suggestions, x, y):
+        """Show a popover with spell check suggestions for *word* at click position."""
         self._dismiss_spell_popover()
 
         popover = Gtk.Popover()
@@ -896,10 +896,10 @@ class MainContent(Gtk.Box):
 
         popover.set_child(box)
 
-        # Position relative to the input widget
+        # Position relative to the input widget at click coordinates
         rect = Gdk.Rectangle()
-        rect.x = 0
-        rect.y = 0
+        rect.x = int(x)
+        rect.y = int(y)
         rect.width = 1
         rect.height = 1
         popover.set_pointing_to(rect)
