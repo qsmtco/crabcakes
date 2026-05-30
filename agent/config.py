@@ -108,6 +108,22 @@ def _check_permissions(path: str) -> None:
         pass  # File doesn't exist yet — not a permission problem
 
 
+def _fix_config_dir_permissions(dir_path: str) -> None:
+    """Ensure config directory is owner-only (0o700).
+
+    The directory contains agent.json with API keys in plaintext.
+    Restricting to owner-only matches the protection SSH uses for ~/.ssh/.
+    This is a best-effort fix — we log a warning if we can't tighten permissions.
+    """
+    try:
+        current = os.stat(dir_path).st_mode & 0o777
+        if current != 0o700:
+            os.chmod(dir_path, 0o700)
+            logger.info("Tightened config dir permissions to 0o700: %s", dir_path)
+    except OSError as e:
+        logger.warning("Could not fix config dir permissions on %s: %s", dir_path, e)
+
+
 def load_agent_config(config_path: str | None = None) -> AgentConfig:
     """
     Load agent configuration from <config_dir>/agent.json.
@@ -132,6 +148,7 @@ def load_agent_config(config_path: str | None = None) -> AgentConfig:
     # Check permissions before reading
     if os.path.isfile(config_path):
         _check_permissions(config_path)
+        _fix_config_dir_permissions(os.path.dirname(config_path))
 
     if not os.path.isfile(config_path):
         _create_default_config(config_path)
@@ -217,10 +234,12 @@ def _create_default_config(path: str) -> None:
     }
 
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        dir_path = os.path.dirname(path)
+        os.makedirs(dir_path, exist_ok=True)
+        os.chmod(dir_path, 0o700)  # owner-only: config dir contains API keys
         with open(path, "w", encoding="utf-8") as f:
             json.dump(example, f, indent=4)
-        os.chmod(path, 0o600)
+        os.chmod(path, 0o600)  # owner-only: file contains API keys
         logger.info("Created example agent.json at %s — add your API keys", path)
     except OSError as e:
         logger.warning("Could not create example agent.json at %s: %s", path, e)
