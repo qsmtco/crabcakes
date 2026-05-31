@@ -45,7 +45,7 @@ from ui.handlers.task_handler import TaskHandler
 from ui.handlers.collab_handler import CollabHandler
 from ui.handlers.session_handler import SessionHandler
 
-from models.command import Command
+
 from models.task import Task
 from models import task_store
 from datetime import datetime
@@ -188,14 +188,20 @@ class MainWindow(Gtk.ApplicationWindow):
         # Agent builder handler — manages create/edit/delete for user-defined agents
         from ui.handlers.agent_builder_handler import AgentBuilderHandler
         self._agent_builder_handler = AgentBuilderHandler(
-            on_agent_saved=lambda name: self._on_agent_saved(name),
-            on_agent_deleted=lambda name: self._on_agent_deleted(name),
+            GLib_module=GLib,
+            parent_window=self,
+            on_agent_saved=lambda name: self._agent_runtime_handler.reload_agents_and_mcp(
+                on_complete=lambda: self._left_panel.set_special_agents(self._agent_runtime_handler)
+            ),
+            on_agent_deleted=lambda name: self._agent_runtime_handler.reload_agents_and_mcp(
+                on_complete=lambda: self._left_panel.set_special_agents(self._agent_runtime_handler)
+            ),
         )
 
         # Wire left panel agent builder callbacks
         self._left_panel.set_on_create_agent(lambda: self._open_agent_builder())
         self._left_panel.set_on_edit_agent(lambda name: self._open_agent_builder(name))
-        self._left_panel.set_on_delete_agent(lambda name: self._confirm_delete_agent(name))
+        self._left_panel.set_on_delete_agent(lambda name: self._agent_builder_handler.delete_agent_with_confirmation(name))
 
         # Prompts handler — wired to left_panel after both are created
         from ui.handlers.prompts_handler import PromptsHandler
@@ -379,24 +385,8 @@ class MainWindow(Gtk.ApplicationWindow):
             project_handler=self._project_handler,
         )
 
-        # Command handler — owns backtick command parsing + routing (Phase 0.2)
-        # Created AFTER ProjectHandler is initialized so project_handler reference is valid.
-        from ui.handlers.command_handler import CommandHandler
-        self._command_handler = CommandHandler(
-            gateway_client=None,   # synced after connect via _sync_gateway_to_chat_handler
-            agent_manager=None,    # synced after connect via _sync_gateway_to_chat_handler
-            project_handler=self._project_handler,
-            GLib_module=GLib,
-            on_display_card=self._on_command_card,
-            on_display_text=self._on_command_text,
-        )
-        self._command_handler.set_prefix(COMMAND_PREFIX)   # BUG #9 fix: read prefix from config
-        # Inject CommandHandler into ChatHandler (ChatHandler calls process_input before send)
-        self._chat_handler.set_command_handler(self._command_handler)
-        # Populate CommandHandler with special agent names for @mention resolution in ask/delegate/stop/tell commands
-        self._command_handler.set_special_agents(self._agent_runtime_handler.get_special_agents())
-
         # Review handler — owns review session lifecycle (Phase 3)
+        # Created BEFORE CommandHandler so it can be passed as a constructor param.
         from ui.handlers.review_handler import ReviewHandler
         self._review_handler = ReviewHandler(
             GLib=GLib,
@@ -407,6 +397,27 @@ class MainWindow(Gtk.ApplicationWindow):
             on_display_card=self._on_command_card,
             on_display_text=self._on_command_text,
         )
+
+        # Command handler — owns backtick command parsing + routing (Phase 0.2)
+        # Created AFTER ProjectHandler and ReviewHandler are initialized.
+        from ui.handlers.command_handler import CommandHandler
+        self._command_handler = CommandHandler(
+            gateway_client=None,   # synced after connect via _sync_gateway_to_chat_handler
+            agent_manager=None,    # synced after connect via _sync_gateway_to_chat_handler
+            project_handler=self._project_handler,
+            GLib_module=GLib,
+            on_display_card=self._on_command_card,
+            on_display_text=self._on_command_text,
+            collab_handler=self._collab_handler,
+            task_handler=self._task_handler,
+            review_handler=self._review_handler,
+            session_handler=self._session_handler,
+        )
+        self._command_handler.set_prefix(COMMAND_PREFIX)   # BUG #9 fix: read prefix from config
+        # Inject CommandHandler into ChatHandler (ChatHandler calls process_input before send)
+        self._chat_handler.set_command_handler(self._command_handler)
+        # Populate CommandHandler with special agent names for @mention resolution in ask/delegate/stop/tell commands
+        self._command_handler.set_special_agents(self._agent_runtime_handler.get_special_agents())
         # Wire ReviewHandler into AgentRuntimeHandler (deferred to avoid circular dep in _build order)
         self._agent_runtime_handler.set_review_handler(self._review_handler)
         # Wire FeedHandler into AgentRuntimeHandler (Phase D: tool call feed cards)
@@ -440,8 +451,7 @@ class MainWindow(Gtk.ApplicationWindow):
             lambda name: (self._review_handler.on_project_closed(name))
         )
 
-        # Register all commands — must be after _review_handler is created (Phase 7)
-        self._register_stub_commands()
+
 
         # Wire STT + improve buttons
         self._main_content.set_on_stt_click(self._media_handler.on_stt_click)
@@ -548,104 +558,9 @@ class MainWindow(Gtk.ApplicationWindow):
         self._chat_render_handler.render_event_card(card["type"], chat_box, **card)
         self._main_content.scroll_chat_to_bottom()
 
-    def _on_audit_report_card(self, report: dict) -> None:
-        """Emit a feed card when a structured audit report is processed (SPEC-3).
 
-        report keys: severity, file_path, task, bug_description, pattern,
-        reviewer, target_role, project_path.
-        """
-        from datetime import datetime, timezone
-        from models.feed_card import FeedCardData
 
-        severity = report.get("severity", "issue")
-        icons = {"bug": "🔴", "issue": "🟡", "suggestion": "🔵"}
-        icon = icons.get(severity, "⚪")
 
-        file_path = report.get("file_path", "?")
-        pattern = report.get("pattern")
-        reviewer = report.get("reviewer", "unknown")
-        target = report.get("target_role", "unknown")
-        desc = report.get("bug_description", "")
-
-        pattern_suffix = f" ({pattern})" if pattern else ""
-        title = f"{icon} {severity.upper()}: {file_path}{pattern_suffix}"
-        body = f"**{reviewer}** reviewed **{target}**: {desc}"
-
-        project_name = self._project_handler.get_active_project_name() if self._project_handler else None
-        if not project_name:
-            return
-
-        card = FeedCardData(
-            card_type="audit_report",
-            source="agent",
-            title=title,
-            body=body,
-            author=reviewer,
-            timestamp=datetime.now(timezone.utc),
-            project_name=project_name,
-            file_path=file_path,
-            metadata={
-                "severity": severity,
-                "pattern": pattern,
-                "target_role": target,
-            },
-        )
-        self._feed_handler.add_card(card)
-
-    def _register_stub_commands(self):
-            """Wire all commands to their handler methods (Phase 7)."""
-            # Collaboration — CollabHandler
-            ch = self._collab_handler
-            self._command_handler.register_command("ask", ch.cmd_ask, aliases=["a"],
-                help_text="Ask an agent a question: /ask @agent — question")
-            self._command_handler.register_command("delegate", ch.cmd_delegate, aliases=["d"],
-                help_text="PM delegates to agent: /delegate @agent — task")
-            self._command_handler.register_command("stop", ch.cmd_stop,
-                help_text="PM stops the current collaboration: /stop @agent")
-            self._command_handler.register_command("tell", ch.cmd_tell,
-                help_text="One agent shares information with another: /tell @agent — info")
-            # Task — TaskHandler
-            th = self._task_handler
-            self._command_handler.register_command("task", th.cmd_task, aliases=["t"],
-                help_text="Create a task card assigned to agent")
-            self._command_handler.register_command("done", th.cmd_done,
-                help_text="Mark task complete")
-            self._command_handler.register_command("start", th.cmd_start,
-                help_text="Start working on a task")
-            self._command_handler.register_command("blocked", th.cmd_blocked,
-                help_text="Report a blocker on a task")
-            self._command_handler.register_command("cancel", th.cmd_cancel,
-                help_text="Cancel a task")
-            self._command_handler.register_command("tasks", th.cmd_tasks,
-                help_text="Show all tasks")
-            self._command_handler.register_command("assign", th.cmd_assign,
-                help_text="Reassign a task to a different agent")
-            self._command_handler.register_command("priority", th.cmd_priority,
-                help_text="Set task priority")
-            # Review — ReviewHandler
-            rh = self._review_handler
-            self._command_handler.register_command("review", rh.cmd_review,
-                help_text="Start a review checkpoint")
-            self._command_handler.register_command("check", rh.cmd_check,
-                help_text="Show diff of changes since checkpoint")
-            self._command_handler.register_command("accept", rh.cmd_accept,
-                help_text="Accept all changes (or single file)")
-            self._command_handler.register_command("reject", rh.cmd_reject,
-                help_text="Reject all pending changes")
-            # Project — ProjectHandler
-            ph = self._project_handler
-            self._command_handler.register_command("status", ph.cmd_status, aliases=["st"],
-                help_text="Project status summary")
-            self._command_handler.register_command("agents", ph.cmd_agents,
-                help_text="List project agents and current state")
-            self._command_handler.register_command("cost", ph.cmd_cost,
-                help_text="Spending summary for this project")
-            # Utility — SessionHandler + CommandHandler
-            sh = self._session_handler
-            self._command_handler.register_command("help", self._command_handler.cmd_help, aliases=["?"],
-                help_text="List all commands or help for a specific command")
-            self._command_handler.register_command("session", sh.cmd_session, aliases=["s"],
-                help_text="Switch agent session in project: /session list @agent | /session <ref> @agent")
     def _on_project_selected(self, path):
         """Handle file tree selection — no-op; project card clicks route via ProjectHandler."""
         pass
@@ -737,7 +652,9 @@ class MainWindow(Gtk.ApplicationWindow):
             pass  # agent_defs optional at startup
         # Wire audit report feed card emission
         self._agent_command_handler.set_on_audit_report(
-            self._on_audit_report_card
+            lambda report: self._feed_handler.add_audit_report_card(
+                report, project_name=self._project_handler.get_active_project_name() if self._project_handler else None
+            )
         )
         # Wire SessionHandler with live AgentManager for session lookups
         self._session_handler.set_agent_manager(self._gateway_handler.agent_mgr)
@@ -805,121 +722,11 @@ class MainWindow(Gtk.ApplicationWindow):
         """Called when the builder dialog is cancelled."""
         pass  # dialog already closes itself
 
-    def _on_agent_saved(self, name: str) -> None:
-        """Called after an agent is saved — reload registry, refresh UI, and hot-reload MCP connections.
 
-        Hot-reload flow (SPEC-MCP-agent-tools-hot-reload.md §2.3):
-        1. reload_registry() — re-read YAML files
-        2. disconnect_all() — kill stale MCP subprocesses from prior config
-        3. Re-register agents with runtime handler
-        4. connect_servers() per agent — pre-warm MCP connections so next message
-           has full tool cache (no cold-start latency)
-        5. Refresh UI
-        """
-        from agent.special_agents import reload_registry, get_special_agents
-        from utils.mcp_client import disconnect_all, connect_servers
-        reload_registry()
 
-        # Collect all current agent conv_id_prefix values BEFORE clearing,
-        # so we can disconnect their actual MCP connections (not _default)
-        old_prefixes = list(self._agent_runtime_handler._agents.keys())
 
-        # Re-register all agents with the runtime handler
-        self._agent_runtime_handler._agents.clear()
-        new_agents = get_special_agents()
-        for agent_def in new_agents:
-            self._agent_runtime_handler.add_special_agent(agent_def)
 
-        # Kill stale MCP subprocesses for all known prefixes
-        # (old ones that no longer exist + new ones being refreshed)
-        prefixes_to_disconnect = set(old_prefixes) | {a.conv_id_prefix for a in new_agents}
-        for prefix in prefixes_to_disconnect:
-            disconnect_all(conversation_key=prefix)
 
-        # Re-establish MCP connections for each agent (hot-reload)
-        for agent_def in new_agents:
-            if agent_def.mcp_servers:
-                result = connect_servers(
-                    server_names=agent_def.mcp_servers,
-                    conversation_key=agent_def.conv_id_prefix,
-                )
-                # Log any servers that failed to connect
-                for server_name, error in result.items():
-                    if error:
-                        logger.warning(
-                            "MCP hot-reload: failed to connect %s for %s: %s",
-                            server_name, agent_def.conv_id_prefix, error,
-                        )
-
-        # Refresh left panel
-        self._left_panel.set_special_agents(self._agent_runtime_handler)
-        logger.info("Agent saved, UI refreshed, MCP hot-reloaded: %s", name)
-
-    def _on_agent_deleted(self, name: str) -> None:
-        """Called after an agent is deleted — reload registry, refresh UI, and hot-reload MCP connections.
-
-        Hot-reload flow mirrors _on_agent_saved() — ensures deleted agent's
-        MCP connections are torn down and surviving agents reconnected.
-        """
-        from agent.special_agents import reload_registry, get_special_agents
-        from utils.mcp_client import disconnect_all, connect_servers
-        reload_registry()
-
-        # Collect all current agent conv_id_prefix values BEFORE clearing
-        old_prefixes = list(self._agent_runtime_handler._agents.keys())
-
-        # Re-register all agents
-        self._agent_runtime_handler._agents.clear()
-        new_agents = get_special_agents()
-        for agent_def in new_agents:
-            self._agent_runtime_handler.add_special_agent(agent_def)
-
-        # Kill stale MCP subprocesses for all known prefixes
-        # (includes deleted agent's prefix which won't appear in new_agents)
-        prefixes_to_disconnect = set(old_prefixes) | {a.conv_id_prefix for a in new_agents}
-        for prefix in prefixes_to_disconnect:
-            disconnect_all(conversation_key=prefix)
-
-        # Re-establish MCP connections for surviving agents
-        for agent_def in new_agents:
-            if agent_def.mcp_servers:
-                result = connect_servers(
-                    server_names=agent_def.mcp_servers,
-                    conversation_key=agent_def.conv_id_prefix,
-                )
-                for server_name, error in result.items():
-                    if error:
-                        logger.warning(
-                            "MCP hot-reload: failed to connect %s for %s: %s",
-                            server_name, agent_def.conv_id_prefix, error,
-                        )
-
-        # Refresh left panel
-        self._left_panel.set_special_agents(self._agent_runtime_handler)
-        logger.info("Agent deleted, UI refreshed, MCP hot-reloaded: %s", name)
-
-    def _confirm_delete_agent(self, name: str) -> None:
-        """Show confirmation dialog, then delete agent if confirmed."""
-        from gi.repository import Gtk
-
-        dialog = Gtk.MessageDialog(
-            transient_for=self,
-            modal=True,
-            message_type=Gtk.MessageType.WARNING,
-            buttons=Gtk.ButtonsType.YES_NO,
-            text=f"Delete agent \"{name}\"?",
-        )
-        dialog.set_property("secondary-text", "This cannot be undone. The agent definition file will be removed.")
-
-        def on_response(_dialog, response_id):
-            dialog.close()
-            if response_id == Gtk.ResponseType.YES:
-                success = self._agent_builder_handler.delete(name)
-                if not success:
-                    logger.warning("Failed to delete agent: %s", name)
-
-        dialog.connect("response", on_response)
-        dialog.show()
 
     # ── Forward message ────────────────────────────────────────────────────
 

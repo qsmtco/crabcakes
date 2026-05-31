@@ -374,6 +374,77 @@ class AgentRuntimeHandler:
             rt.stop()
         self._runtimes.clear()
 
+
+    def reload_agents_and_mcp(
+        self,
+        *,
+        on_complete: Callable[[], None] | None = None,
+    ) -> None:
+        """
+        Reload agent registry and hot-reload MCP connections.
+
+        Flow:
+          1. reload_registry() — re-read YAML files from agents/
+          2. Collect current agent prefixes BEFORE clearing self._agents
+          3. Re-register all agents from the fresh registry
+          4. disconnect_all() for all known prefixes — kill stale MCP subprocesses
+          5. connect_servers() per agent — pre-warm MCP connections
+          6. Call on_complete callback if provided
+
+        Thread-safe: MCP operations are blocking; call from a background thread
+        or via GLib.idle_add() if calling from a non-main thread that needs
+        to update UI after completion.
+        """
+        from agent.special_agents import reload_registry, get_special_agents
+        from utils.mcp_client import disconnect_all, connect_servers
+
+        # 1. Reload registry from disk
+        reload_registry()
+
+        # 2. Collect current agent prefixes BEFORE clearing
+        old_prefixes = list(self._agents.keys())
+
+        # 3. Re-register all agents from fresh registry
+        self._agents.clear()
+        new_agents = get_special_agents()
+        for agent_def in new_agents:
+            self._agents[agent_def.conv_id_prefix] = agent_def
+
+        # 4. Disconnect stale MCP connections for all known prefixes
+        prefixes_to_disconnect = set(old_prefixes) | {a.conv_id_prefix for a in new_agents}
+        for prefix in prefixes_to_disconnect:
+            try:
+                disconnect_all(conversation_key=prefix)
+            except Exception as e:
+                logger.warning(
+                    "MCP disconnect failed for prefix %s: %s", prefix, e
+                )
+
+        # 5. Re-establish MCP connections for each agent
+        for agent_def in new_agents:
+            if agent_def.mcp_servers:
+                try:
+                    result = connect_servers(
+                        server_names=agent_def.mcp_servers,
+                        conversation_key=agent_def.conv_id_prefix,
+                    )
+                    for server_name, error in result.items():
+                        if error:
+                            logger.warning(
+                                "MCP hot-reload: failed to connect %s for %s: %s",
+                                server_name, agent_def.conv_id_prefix, error,
+                            )
+                except Exception as e:
+                    logger.warning(
+                        "MCP hot-reload: connection attempt failed for %s: %s",
+                        agent_def.conv_id_prefix, e,
+                    )
+
+        logger.info("Agent registry and MCP connections reloaded")
+
+        if on_complete:
+            on_complete()
+
     # ── Chat box resolution ────────────────────────────────────────────────
 
     def _resolve_chat_box(self, session_key: str):

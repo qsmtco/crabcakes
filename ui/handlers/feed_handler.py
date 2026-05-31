@@ -847,6 +847,71 @@ class FeedHandler:
             self.handle_copy(text)
         return cb
 
+    def add_audit_report_card(
+        self,
+        report: dict,
+        project_name: str | None = None,
+    ) -> str | None:
+        """
+        Construct and add a feed card for a structured audit report (SPEC-3).
+
+        Args:
+            report: dict with keys: severity, file_path, task, bug_description,
+                    pattern, reviewer, target_role, project_path.
+            project_name: Override project name. If None, uses report["project_path"]
+                          to derive the name. If no project can be determined, returns None.
+
+        Returns:
+            card_id string on success, None if no project context available.
+
+        Thread-safe: dispatches to main thread via GLib.idle_add() if needed.
+        """
+        from pathlib import Path
+        from models.feed_card import FeedCardData
+
+        severity = report.get("severity", "issue")
+        icons = {"bug": "🔴", "issue": "🟡", "suggestion": "🔵"}
+        icon = icons.get(severity, "⚪")
+
+        file_path = report.get("file_path", "?")
+        pattern = report.get("pattern")
+        reviewer = report.get("reviewer", "unknown")
+        target = report.get("target_role", "unknown")
+        desc = report.get("bug_description", "")
+
+        pattern_suffix = f" ({pattern})" if pattern else ""
+        title = f"{icon} {severity.upper()}: {file_path}{pattern_suffix}"
+        body = f"**{reviewer}** reviewed **{target}**: {desc}"
+
+        resolved_project = project_name
+        if not resolved_project:
+            project_path = report.get("project_path")
+            if project_path:
+                resolved_project = Path(project_path).name
+
+        if not resolved_project:
+            _logger.warning(
+                "Cannot add audit report card: no project context"
+            )
+            return None
+
+        card = FeedCardData(
+            card_type="audit_report",
+            source="agent",
+            title=title,
+            body=body,
+            author=reviewer,
+            timestamp=datetime.now(timezone.utc),
+            project_name=resolved_project,
+            file_path=file_path,
+            metadata={
+                "severity": severity,
+                "pattern": pattern,
+                "target_role": target,
+            },
+        )
+        return self.add_card(card)
+
     def _update_card_visual(self, card_id: str, accepted: bool) -> None:
         """Apply accepted/rejected CSS class + badge to card widget."""
         widget = self._card_widgets.get(card_id)

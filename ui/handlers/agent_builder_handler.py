@@ -43,9 +43,13 @@ class AgentBuilderHandler:
         *,
         on_agent_saved: Callable[[str], None] | None = None,
         on_agent_deleted: Callable[[str], None] | None = None,
+        GLib_module=None,        # gi.repository.GLib — for idle_add dispatch
+        parent_window=None,     # Gtk.Window — for transient_for on confirmation dialog
     ):
         self._on_agent_saved = on_agent_saved
         self._on_agent_deleted = on_agent_deleted
+        self._GLib = GLib_module
+        self._parent_window = parent_window
         self._editing_name: str | None = None  # track original name for rename detection
 
     # ── Form templates ──────────────────────────────────────────────────────
@@ -119,6 +123,56 @@ class AgentBuilderHandler:
         if success:
             logger.info("Agent deleted: %s", name)
         return success
+
+    def delete_agent_with_confirmation(self, name: str) -> None:
+        """
+        Show a modal GTK confirmation dialog, then delete the agent if confirmed.
+
+
+        Args:
+            name: Agent name to delete.
+
+
+        Flow:
+          1. Build Gtk.MessageDialog transient_for parent_window
+          2. Show dialog with warning text
+          3. On YES response: call self.delete(name)
+          4. On NO response: close dialog, no action
+
+        Thread-safe: dialog.show() must be called from main thread.
+        If GLib_module is available, dispatches via GLib.idle_add().
+        """
+        from gi.repository import Gtk
+
+        def _show_dialog():
+            parent = self._parent_window
+            dialog = Gtk.MessageDialog(
+                transient_for=parent,
+                modal=True,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.YES_NO,
+                text=f'Delete agent "{name}"?',
+            )
+            dialog.set_property(
+                "secondary-text",
+                "This cannot be undone. The agent definition file will be removed.",
+            )
+
+            def on_response(_dialog, response_id):
+                _dialog.close()
+                if response_id == Gtk.ResponseType.YES:
+                    success = self.delete(name)
+                    if not success:
+                        logger.warning("Failed to delete agent: %s", name)
+
+
+            dialog.connect("response", on_response)
+            dialog.show()
+
+        if self._GLib is not None:
+            self._GLib.idle_add(_show_dialog)
+        else:
+            _show_dialog()
 
     # ── Options for UI dropdowns ─────────────────────────────────────────────
 

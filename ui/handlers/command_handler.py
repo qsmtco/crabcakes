@@ -55,6 +55,10 @@ class CommandHandler:
         GLib_module=None,         # gi.repository.GLib or None
         on_display_card=None,     # callback(card_dict) — render a card in chat
         on_display_text=None,     # callback(session_key, text) — display text in chat
+        collab_handler=None,     # CollabHandler — for ask/delegate/stop/tell
+        task_handler=None,       # TaskHandler — for task/done/start/blocked/cancel/tasks/assign/priority
+        review_handler=None,     # ReviewHandler — for review/check/accept/reject
+        session_handler=None,    # SessionHandler — for session
     ):
         self._gw = gateway_client
         self._agent_mgr = agent_manager
@@ -65,6 +69,78 @@ class CommandHandler:
         self._prefix = COMMAND_PREFIX   # BUG #9 fix: read from config at construction
         self._registry = CommandRegistry()
         self._special_agents: dict[str, str] = {}  # {session_key: display_name}
+
+
+        # Store handler references for command registration
+        self._collab_handler = collab_handler
+        self._task_handler = task_handler
+        self._review_handler = review_handler
+        self._session_handler = session_handler
+
+        # ── Register built-in commands ──────────────────────────────────────────
+
+        # Help — owned by CommandHandler itself (always registered)
+        self.register_command("help", self.cmd_help, aliases=["?"],
+            help_text="List all commands or help for a specific command")
+
+        # Collaboration — requires CollabHandler
+        if collab_handler is not None:
+            self.register_command("ask", collab_handler.cmd_ask, aliases=["a"],
+                help_text="Ask an agent a question: /ask @agent — question")
+            self.register_command("delegate", collab_handler.cmd_delegate, aliases=["d"],
+                help_text="PM delegates to agent: /delegate @agent — task")
+            self.register_command("stop", collab_handler.cmd_stop,
+                help_text="PM stops the current collaboration: /stop @agent")
+            self.register_command("tell", collab_handler.cmd_tell,
+                help_text="One agent shares information with another: /tell @agent — info")
+
+        # Task — requires TaskHandler
+        if task_handler is not None:
+            self.register_command("task", task_handler.cmd_task, aliases=["t"],
+                help_text="Create a task card assigned to agent")
+            self.register_command("done", task_handler.cmd_done,
+                help_text="Mark task complete")
+            self.register_command("start", task_handler.cmd_start,
+                help_text="Start working on a task")
+            self.register_command("blocked", task_handler.cmd_blocked,
+                help_text="Report a blocker on a task")
+            self.register_command("cancel", task_handler.cmd_cancel,
+                help_text="Cancel a task")
+            self.register_command("tasks", task_handler.cmd_tasks,
+                help_text="Show all tasks")
+            self.register_command("assign", task_handler.cmd_assign,
+                help_text="Reassign a task to a different agent")
+            self.register_command("priority", task_handler.cmd_priority,
+                help_text="Set task priority")
+
+        # Review — requires ReviewHandler
+        if review_handler is not None:
+            self.register_command("review", review_handler.cmd_review,
+                help_text="Start a review checkpoint")
+            self.register_command("check", review_handler.cmd_check,
+                help_text="Show diff of changes since checkpoint")
+            self.register_command("accept", review_handler.cmd_accept,
+                help_text="Accept all changes (or single file)")
+            self.register_command("reject", review_handler.cmd_reject,
+                help_text="Reject all pending changes")
+
+        # Project — requires ProjectHandler (always provided in production; None in tests)
+        # Use hasattr guards so test fixtures with fake handlers don't crash.
+        if project_handler is not None:
+            if hasattr(project_handler, "cmd_status"):
+                self.register_command("status", project_handler.cmd_status, aliases=["st"],
+                    help_text="Project status summary")
+            if hasattr(project_handler, "cmd_agents"):
+                self.register_command("agents", project_handler.cmd_agents,
+                    help_text="List project agents and current state")
+            if hasattr(project_handler, "cmd_cost"):
+                self.register_command("cost", project_handler.cmd_cost,
+                    help_text="Spending summary for this project")
+
+        # Session — requires SessionHandler
+        if session_handler is not None:
+            self.register_command("session", session_handler.cmd_session, aliases=["s"],
+                help_text="Switch agent session in project: /session list @agent | /session <ref> @agent")
 
     # ── Public API ─────────────────────────────────────────────────────────────
 

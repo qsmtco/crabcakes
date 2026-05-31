@@ -24,12 +24,22 @@ Never delegate a 20-file change in one shot. Break it into phases:
 - Each phase should be independently verifiable
 - Order phases by dependency (core changes first, then consumers, then tests, then docs)
 
+**Integration steps get sub-phased even within a single file.** A phase like "rewire 6 things and remove 4 methods in window.py" must be broken into sub-phases:
+- Phase 5a: Remove the 4 methods
+- Phase 5b: Rewire the 3 lambdas
+- Phase 5c: Fix the import ordering
+- Phase 5d: Verify independently
+
+Integration is where builders fail most. More granular phases catch issues earlier.
+
 ### 3. Short, Sharp Delegations
 Every delegation message should be:
 - **One phase only** — not "do phases 1-3"
 - **Specific files and lines** — not "update the handlers"
 - **Include the steelFramedCodeWriter instruction** — every single time
 - **Demand evidence** — "paste the full pytest output"
+
+**When a delegation needs more than 3 specific edits, write the full instructions to a file** (e.g., `docs/specs/PHASE-N-INSTRUCTIONS.md`) and `/ask` with a one-liner pointing to it. Never try to fit 6+ code edits into a single `/ask` payload — the channel has character limits and messages get truncated. The builder reads the file, follows it step by step, and reports back.
 
 Template:
 ```
@@ -42,7 +52,13 @@ Files to change:
 Rules:
 - Use the steelFramedCodeWriter prompt at [path]
 - Run: [exact test command] and paste the output
+- For any removals: run [grep command] and confirm output is 0
 - Report: files changed with line numbers, test results, any issues
+- At the end, include a completeness checklist:
+  COMPLETENESS:
+  - [x/not done] Edit 1: description — evidence
+  - [x/not done] Edit 2: description — evidence
+  - [x/not done] Edit 3: description — evidence
 ```
 
 ### 4. Never Trust "Done"
@@ -86,6 +102,8 @@ After every phase, before moving to the next:
 - [ ] **Builder used the exact data format/fields specified** (not invented alternatives)
 - [ ] **Builder's approach matches the delegation's approach** (not a different solution to the same goal)
 - [ ] Old patterns are gone (grep confirmed zero matches)
+- [ ] **Builder provided grep proof for every removal** (not just verbal confirmation)
+- [ ] **If builder claimed a line count, ran `wc -l` myself** (don't accept "~829" as evidence)
 - [ ] Docstrings/comments match new code (read the changed files)
 - [ ] No regressions in previously-passing tests (ran full suite)
 
@@ -101,7 +119,8 @@ After every phase, before moving to the next:
 | **Dropping the steelFramedCodeWriter** | Builder gets sloppy in later phases | Include it in EVERY delegation |
 | **Fixing everything yourself** | Builder never learns, you become the bottleneck | Only fix trivial stuff; delegate substantive fixes |
 | **No post-mortem** | Lessons are lost, same mistakes repeat | Always write one |
-| **Endless rework loops** | Builder fails twice on same task, supervisor keeps delegating | After 2 failed attempts on same phase, fix it yourself |
+| **Endless rework loops** | Builder fails twice on same task, supervisor keeps delegating | After 2 failed attempts on a normal phase, fix it yourself. After 1 failed attempt on an **integration/rewiring phase**, fix it yourself — integration is high-risk and the supervisor's context is always better than sending the builder back with another message that might get truncated |
+| **Trusting the summary table** | Builder generates a table showing "✅ Phase N complete" for work that wasn't actually done | Ignore summaries. Only trust grep output, test results, and diff output you run yourself |
 
 ## Tools You Need
 
