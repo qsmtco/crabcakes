@@ -79,7 +79,7 @@ crabcakes/
 │   ├── __init__.py           # Exports: AgentRuntime
 │   ├── runtime.py           # AgentRuntime — tool loop, LLM API, streaming, cost tracking + enforcement hook
 │   ├── tools.py              # Tool definitions + execution (read_file, write_file, edit_file, exec_command, etc.)
-│   ├── config.py             # LLM provider config + EnforcementConfig dataclass + built-in Google provider
+│   ├── config.py             # LLM provider config + EnforcementConfig dataclass
 │   ├── context.py            # System prompt builder (via prompts/system/ templates) + file context builder + .gitignore parsing
 │   ├── special_agents.py     # Coder + Debugger + Crabcakes agent definitions (auto_open, api_key_built_in, auto_add_to_projects fields)
 │   └── enforcement.py        # Post-write verification: syntax guard, test runner, lint check (Phase 3)

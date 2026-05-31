@@ -13,7 +13,7 @@ tools:
 provider: openrouter
 model: openrouter/free
 auto_open: true
-api_key_built_in: true
+api_key_built_in: false
 auto_add_to_projects: true
 self_improvement:
   bug_journal: false

@@ -76,27 +76,6 @@ class AgentConfig:
     enforcement: EnforcementConfig = field(default_factory=EnforcementConfig)
 
 
-# ── Built-in providers ─────────────────────────────────────────────────────────
-
-# Built-in free-tier Gemini key for the Crabcakes help agent.
-# Google AI Studio free tier: 1,500 RPD, 15 RPM, 1M TPM, no credit card.
-# This is NOT a secret — it's a shared free-tier key with rate limits.
-# Users are encouraged to configure their own keys for better performance.
-_BUILT_IN_OPENROUTER_KEY = os.environ.get(
-    "CRABCAKES_HELPER_KEY", ""
-)  # User must set CRABCAKES_HELPER_KEY env var with their OpenRouter key
-
-_BUILT_IN_OPENROUTER_PROVIDER = LLMProviderConfig(
-    name="openrouter",
-    base_url="https://openrouter.ai/api/v1",
-    api_key=_BUILT_IN_OPENROUTER_KEY,
-    default_model="openrouter/free",
-    supports_tools=True,
-    supports_streaming=True,
-    max_tokens=1_000_000,
-)
-
-
 def _check_permissions(path: str) -> None:
     """
     Warn if config file is group/world-readable.
@@ -210,13 +189,6 @@ def load_agent_config(config_path: str | None = None) -> AgentConfig:
         )
     else:
         enforcement = EnforcementConfig()
-
-    # Inject built-in OpenRouter provider if not user-configured.
-    # This ensures the Crabcakes help agent works out of the box.
-    # Key comes from CRABCAKES_HELPER_KEY env var.
-    if "openrouter" not in providers and _BUILT_IN_OPENROUTER_KEY:
-        providers["openrouter"] = _BUILT_IN_OPENROUTER_PROVIDER
-        logger.info("Injected built-in OpenRouter provider for Crabcakes help agent")
 
     return AgentConfig(
         providers=providers,
