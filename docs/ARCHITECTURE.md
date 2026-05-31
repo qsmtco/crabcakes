@@ -1275,7 +1275,7 @@ def load_custom_system_prompt(project_path) -> str | None  # .crabcakes/agent-sy
     provider: str | None, model: str | None, self_improvement: dict,
     mcp_servers: list[str],
     auto_open: bool = False,              # open tab on every app launch
-    api_key_built_in: bool = False,       # has built-in API key (Crabcakes agent)
+    api_key_built_in: bool = False,       # reserved, not currently used
     auto_add_to_projects: bool = False,   # auto-add to every new project
     def get_self_improvement_config() -> dict
 
