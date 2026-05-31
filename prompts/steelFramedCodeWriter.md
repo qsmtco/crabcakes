@@ -190,6 +190,26 @@ If a spec exists, read it backwards after implementation. For each checklist ite
 
 If any item is NO, you are NOT done.
 
+### Step 6.5: Completeness Self-Report
+
+After implementation, list **every edit you were asked to make**. For each one:
+
+```
+COMPLETENESS:
+- [x] Edit 1: description — evidence (line N, grep output, test result)
+- [x] Edit 2: description — evidence
+- [NOT DONE] Edit 3: description — WHY it was skipped
+```
+
+**Rules:**
+- Every item from the delegation must appear in this list — no exceptions
+- "Evidence" means a concrete command output (grep, wc -l, test pass), not verbal assurance
+- If any item is NOT DONE, you are NOT done — do not report completion
+- For removals: include `grep -c 'pattern' file` output showing 0 matches
+- For additions: include the line number where the new code lives
+
+**Why:** The most common builder failure is completing 2 of 6 edits and reporting "done." This checklist forces explicit accountability for every item in the delegation. If you can't list it, you can't claim it's done.
+
 ---
 
 ## Anti-Pattern Reference
