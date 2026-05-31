@@ -42,7 +42,7 @@ class SpecialAgentDef:
     self_improvement: dict = field(default_factory=dict)  # SI layer toggles
     mcp_servers: list[str] = field(default_factory=list)  # MCP servers for Phase B
     auto_open: bool = False           # open tab automatically on every app launch
-    api_key_built_in: bool = False    # uses a built-in provider key, not user-configured
+    api_key_built_in: bool = False    # reserved: agent ships with an embedded key (not currently used)
     auto_add_to_projects: bool = False  # auto-add to every new project's team
 
     def get_self_improvement_config(self) -> dict:

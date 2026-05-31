@@ -1231,7 +1231,16 @@ class AgentRuntime:
 
         provider_cfg = config.providers.get(provider_name)
         if provider_cfg is None:
-            # Fall back to first available provider
+            # If the agent specified a provider explicitly (model has a prefix like
+            # "openrouter/"), don't silently fall back to the wrong provider — raise
+            # a clear error so the user knows to configure it.
+            if "/" in model and config.providers:
+                raise ValueError(
+                    f"Provider '{provider_name}' is not configured. "
+                    f"Add it to Settings → Providers (or agent.json), "
+                    f"or set an API key in the agent editor. "
+                    f"Available providers: {', '.join(sorted(config.providers.keys()))}"
+                )
             if config.providers:
                 provider_name = list(config.providers.keys())[0]
                 provider_cfg = config.providers[provider_name]

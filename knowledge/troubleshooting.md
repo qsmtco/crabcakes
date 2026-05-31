@@ -20,7 +20,7 @@
 2. Add your API key for the relevant provider
 3. Restart Crabcakes
 
-The Crabcakes help agent uses a built-in Google Gemini key as fallback, so it should work even without a configured key.
+The Crabcakes 🦀 help agent requires an OpenRouter API key. Configure it through the agent editor (click the 🦀 tab → edit) by adding your OpenRouter key and provider.
 
 ### Gateway Won't Connect
 

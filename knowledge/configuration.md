@@ -27,8 +27,7 @@ Located at `~/.config/crabcakes/agent.json`. This file configures LLM API provid
 |----------|----------|-------|
 | OpenAI | `https://api.openai.com/v1` | Standard OpenAI API |
 | MiniMax | `https://api.minimax.chat/v1` | Large context (1M+ tokens) |
-| OpenRouter | `https://openrouter.ai/api/v1` | Multi-model aggregator |
-| Google (built-in) | Gemini free tier | Available as fallback |
+| OpenRouter | `https://openrouter.ai/api/v1` | Multi-model aggregator, free models available |
 
 ### Adding a Provider
 
