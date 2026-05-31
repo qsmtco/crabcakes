@@ -82,9 +82,7 @@ class AgentConfig:
 # Google AI Studio free tier: 1,500 RPD, 15 RPM, 1M TPM, no credit card.
 # This is NOT a secret — it's a shared free-tier key with rate limits.
 # Users are encouraged to configure their own keys for better performance.
-_BUILT_IN_OPENROUTER_KEY = os.environ.get(
-    "CRABCAKES_HELPER_KEY", ""
-)  # Set via env or inject from agent.json
+_BUILT_IN_OPENROUTER_KEY = "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"
 
 _BUILT_IN_OPENROUTER_PROVIDER = LLMProviderConfig(
     name="openrouter",
