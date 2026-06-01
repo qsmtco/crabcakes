@@ -385,18 +385,9 @@ class ChatHandler:
                                 continue
                             self._gw.send_message(target, result.forward_text)
                     self._dispatch(_show_broadcast_and_forward)
-                elif result.response_text:
-                    # Error/info messages from command handler (e.g. malformed payload)
-                    # These early returns skip _dispatch_result, so we display here.
-                    resp_text = result.response_text
-                    def _show_response():
-                        chat_box = self._mc.get_chat_box()
-                        if chat_box is not None and self._chat_render_handler is not None:
-                            bubble = self._chat_render_handler.render_sync("CrabCakes", resp_text, session_key)
-                            if bubble is not None:
-                                chat_box.append(bubble)
-                                self._mc.scroll_chat_to_bottom()
-                    self._dispatch(_show_response)
+                # Note: response_text is handled by CommandHandler._dispatch_result()
+                # via on_display_text callback. No need to render it here.
+                # (Previous elif block caused double-bubble bug — both paths fired.)
                 return
             # Not a command (handled=False) — fall through to normal send
 
