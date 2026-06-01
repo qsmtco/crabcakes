@@ -27,7 +27,7 @@
 
 ---
 
-## <img src="icons/emoji/crab.png" width="20" height="20" alt="crab" style="vertical-align:middle" /> What is CrabCakes?
+## <img src="icons/emoji/crab.png" width="40" height="40" alt="crab" style="vertical-align:middle" /> What is CrabCakes?
 
 **CrabCakes is a native Linux desktop app that reimagines software development as a group chat — where some of your teammates happen to be AI agents.**
 
