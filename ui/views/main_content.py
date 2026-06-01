@@ -260,9 +260,11 @@ class MainContent(Gtk.Box):
         chat_overlay = Gtk.Overlay()
         chat_overlay.set_vexpand(True)
         chat_overlay.set_child(chat_scroll)
-        chat_overlay.add_overlay(self._project_settings)
-        # Phase 5b: scroll-to-bottom button on this tab's overlay
-        chat_overlay.add_overlay(self._scroll_btn_box)
+        # Only add singleton overlays to the FIRST tab.
+        # On subsequent tabs, they'll be moved via _on_notebook_switch_page.
+        if len(self._tab_sessions) == 0:
+            chat_overlay.add_overlay(self._project_settings)
+            chat_overlay.add_overlay(self._scroll_btn_box)
 
         # Vertical box for chat messages
         chat_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -354,7 +356,17 @@ class MainContent(Gtk.Box):
         return page_idx
 
     def _on_notebook_switch_page(self, notebook, _page, page_num):
-        """Handle tab switch: scroll to bottom and clear unread indicator."""
+        """Handle tab switch: move overlays, scroll to bottom, clear unread."""
+        # Move singleton overlays (project settings, scroll btn) to the new tab.
+        # Detach them from whatever overlay they're currently on first to avoid
+        # GTK4 "Can't set new parent" warnings when the widget already has a parent.
+        overlay = self._tab_overlays.get(page_num)
+        if overlay is not None:
+            for widget in (self._project_settings, self._scroll_btn_box):
+                old_parent = widget.get_parent()
+                if old_parent is not None:
+                    old_parent.remove(widget)
+                overlay.add_overlay(widget)
         self.scroll_chat_to_bottom(page_num)
         # Clear unread state for the tab being switched to
         tab_label = self._chat_notebook.get_tab_label(notebook.get_nth_page(page_num))
