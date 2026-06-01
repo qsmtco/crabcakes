@@ -83,6 +83,8 @@ class MainWindow(Gtk.ApplicationWindow):
         self._session_handler = None
         # Connection sync handler — owns post-connect wiring (Phase 3a extraction)
         self._connection_sync_handler = None
+        # Forward handler — owns agent-to-agent message forwarding (Phase 3b extraction)
+        self._forward_handler = None
 
         self._build()
         self._setup_keyboard_shortcuts()
@@ -442,6 +444,16 @@ class MainWindow(Gtk.ApplicationWindow):
         self._chat_handler.set_on_agent_response(self._agent_command_handler.on_agent_response)
         self._agent_runtime_handler.set_on_agent_response(self._agent_command_handler.on_agent_response)
 
+        # Forward handler — owns agent-to-agent message forwarding (Phase 3b extraction)
+        from ui.handlers.forward_handler import ForwardHandler
+        self._forward_handler = ForwardHandler(
+            main_content=self._main_content,
+            chat_handler=self._chat_handler,
+            chat_render_handler=self._chat_render_handler,
+            agent_runtime_handler=self._agent_runtime_handler,
+            gateway_handler=self._gateway_handler,
+        )
+
         # Connection sync handler — owns post-connect wiring (Phase 3a extraction)
         from ui.handlers.connection_sync_handler import ConnectionSyncHandler
         self._connection_sync_handler = ConnectionSyncHandler(
@@ -458,7 +470,7 @@ class MainWindow(Gtk.ApplicationWindow):
             review_handler=self._review_handler,
             activity_handler=self._activity_handler,
             agent_to_project=self._agent_to_project,
-            on_forward_clicked=self._on_forward_clicked,  # method still exists in window.py for now
+            on_forward_clicked=self._forward_handler.show_forward_popover,
             project_path_provider=lambda: self._project_handler.get_active_project_path() if self._project_handler else None,
         )
         # Wire the sync callback to fire on gateway connect
@@ -679,106 +691,3 @@ class MainWindow(Gtk.ApplicationWindow):
 
 
 
-    # ── Forward message ────────────────────────────────────────────────────
-
-    def _on_forward_clicked(self, text, anchor_widget, source_session_key=None):
-        """Show a popover listing all other agents to forward text to."""
-        # Build list of available agents:
-        #   - Special agents (always available, even offline)
-        #   - Gateway agents (only when connected)
-        other_sessions = []
-
-        if self._agent_runtime_handler is not None:
-            for sk, name in self._agent_runtime_handler.get_special_agents().items():
-                if source_session_key is None or sk != source_session_key:
-                    other_sessions.append((sk, name))
-
-        agent_mgr = self._gateway_handler.agent_mgr if self._gateway_handler else None
-        if agent_mgr is not None:
-            for page_idx, sk in self._main_content._tab_sessions.items():
-                name = agent_mgr.get_name(sk)
-                if name and (source_session_key is None or sk != source_session_key):
-                    if not any(s == sk for s, _ in other_sessions):
-                        other_sessions.append((sk, name))
-
-
-        if not other_sessions:
-            return  # nobody to forward to — silently skip
-
-        popover = Gtk.Popover()
-        popover.set_parent(anchor_widget)
-        popover.set_position(Gtk.PositionType.TOP)
-
-        menu_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        menu_box.set_margin_start(8)
-        menu_box.set_margin_end(8)
-        menu_box.set_margin_top(4)
-        menu_box.set_margin_bottom(4)
-
-        for sk, name in other_sessions:
-            btn = Gtk.Button(label=f"→ {name}")
-            btn.add_css_class("flat")
-            btn.set_has_frame(False)
-            btn.connect("clicked", lambda _b, s=sk, t=text, ss=source_session_key, pop=popover: self._forward_to_agent(s, t, ss, pop))
-            menu_box.append(btn)
-
-        popover.set_child(menu_box)
-        popover.popup()
-
-    def _forward_to_agent(self, target_session_key, text, source_session_key, popover):
-        """Send forwarded text to target agent and show it in their tab."""
-        popover.popdown()
-        if not text:
-            return
-        # Resolve source name from either special agents or gateway
-        source_name = None
-        if (self._agent_runtime_handler is not None
-                and source_session_key in self._agent_runtime_handler.get_special_agents()):
-            source_name = self._agent_runtime_handler.get_special_agents()[source_session_key]
-        if not source_name and self._gateway_handler and self._gateway_handler.agent_mgr:
-            source_name = self._gateway_handler.agent_mgr.get_name(source_session_key)
-        # Route message to special or gateway agent
-        is_special = (
-            self._agent_runtime_handler is not None
-            and target_session_key in self._agent_runtime_handler.get_special_agents()
-        )
-        if is_special:
-            target_name = self._agent_runtime_handler.get_special_agents()[target_session_key]
-            self._agent_runtime_handler.send_to_special_agent(target_session_key, text)
-        else:
-            target_name = (
-                self._gateway_handler.agent_mgr.get_name(target_session_key)
-                if self._gateway_handler and self._gateway_handler.agent_mgr
-                else "Agent"
-            )
-            gw = self._gateway_handler._gw if self._gateway_handler else None
-            if gw is None or not gw.is_connected():
-                return
-            gw.send_message(target_session_key, text)
-
-        # Check if target agent already has an open tab
-        target_tab_exists = None
-        for page_idx, sk in self._main_content._tab_sessions.items():
-            if sk == target_session_key:
-                target_tab_exists = page_idx
-                break
-
-        if target_tab_exists is None:
-            target_tab_exists = self._main_content.create_chat_tab(target_session_key, target_name)
-        else:
-            self._main_content._chat_notebook.set_current_page(target_tab_exists)
-
-        # Append forwarded bubble to the target tab
-        chat_box = self._main_content.get_chat_box(target_tab_exists)
-        if chat_box is not None and self._chat_render_handler is not None:
-            bubble = self._chat_render_handler.render_sync(
-                "You", text, target_session_key,
-                on_forward_click=self._chat_render_handler._on_forward_message,
-                forwarded_from=source_name,
-                agent_name="You",
-            )
-            if bubble is not None:
-                chat_box.append(bubble)
-                # Defer scroll to ensure GTK has laid out the new bubble first
-                from gi.repository import GLib
-                GLib.timeout_add(16, lambda: (self._main_content.scroll_chat_to_bottom(target_tab_exists), False)[1])
