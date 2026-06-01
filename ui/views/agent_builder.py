@@ -793,7 +793,7 @@ class AgentBuilderDialog:
             self._on_cancel()
         self._window.destroy()
 
-    def _on_close_request(self) -> bool:
+    def _on_close_request(self, _widget=None) -> bool:
         """Window close button clicked."""
         if self._on_cancel:
             self._on_cancel()
