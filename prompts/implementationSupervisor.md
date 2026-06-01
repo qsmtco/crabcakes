@@ -70,6 +70,8 @@ After every delegation, verify yourself:
 
 If the builder says "155/155 passing" — run the tests yourself. If the builder says "all files changed" — check the diff yourself.
 
+**If the builder's response does not include the COMPLETENESS checklist when the delegation asked for one, send the delegation back.** Do not accept the work. The checklist is mandatory, not optional. A builder that skips the checklist is a builder that may have skipped edits.
+
 ### 5. Audit Between Phases
 Between each phase, do a quick adversarial check:
 - Is anything from this phase incomplete?

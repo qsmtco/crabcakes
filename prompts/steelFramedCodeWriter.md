@@ -180,6 +180,8 @@ If updating documentation:
 - Copy exact values from the commands into the documentation
 - Do NOT modify existing documentation content unless explicitly fixing a bug
 - After writing, run the verification commands again to confirm accuracy
+- **ASCII tree formatting:** When editing directory tree structures in documentation, continuation lines MUST use the same indentation pattern (`│   │`) as surrounding entries. Never break tree alignment. Multi-line entries use `│   │` for continuation, aligned with the parent's `│`.
+- **Files must end with a trailing newline.** Run `tail -c 1 file | xxd` to verify the last byte is `0a`.
 
 ### Step 6: Spec Compliance
 
@@ -210,6 +212,8 @@ COMPLETENESS:
 
 **Why:** The most common builder failure is completing 2 of 6 edits and reporting "done." This checklist forces explicit accountability for every item in the delegation. If you can't list it, you can't claim it's done.
 
+**Enforcement:** If a delegation asks for this checklist and you do not include it, your response is INCOMPLETE. Do not expect the supervisor to accept your work without it.
+
 ---
 
 ## Anti-Pattern Reference
@@ -228,6 +232,7 @@ These are the most common LLM coding failures observed across models. Do ALL of 
 | **Weak mocks** | Mock returns MagicMock where string expected | Test mock output type explicitly |
 | **Weak assertions** | `startswith()` when exact match expected | Assert exact values |
 | **Invented facts** | Documentation describes code that doesn't exist | Verify every claim against source |
+| **Broken tree formatting** | ASCII directory trees get misaligned continuation lines | Copy surrounding pattern exactly, use `│   │` for continuations |
 
 ---
 
