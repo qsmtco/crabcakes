@@ -81,6 +81,8 @@ class MainWindow(Gtk.ApplicationWindow):
         self._collab_handler = None
         # Session handler — owns session switching logic (Phase 7)
         self._session_handler = None
+        # Connection sync handler — owns post-connect wiring (Phase 3a extraction)
+        self._connection_sync_handler = None
 
         self._build()
         self._setup_keyboard_shortcuts()
@@ -135,7 +137,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self._left_panel = left_panel
         self._left_panel.set_main_content(self._main_content)
 
-        # Agent card handler — agent_mgr set in _sync_gateway_to_chat_handler after connect
+        # Agent card handler — agent_mgr set in ConnectionSyncHandler.sync() after connect
         from ui.handlers.agent_list_handler import AgentListHandler
         self._agent_list_handler = AgentListHandler(
             agent_mgr=None,
@@ -220,9 +222,6 @@ class MainWindow(Gtk.ApplicationWindow):
             on_event=self._on_ws_event,
             GLib_module=GLib,
         )
-        # Sync the live GatewayClient reference into ChatHandler after connect
-        self._gateway_handler.set_sync_callback(self._sync_gateway_to_chat_handler)
-
         # # Response Status bar (right side)
         self._response_status = FeedBar()
 
@@ -381,7 +380,7 @@ class MainWindow(Gtk.ApplicationWindow):
         # Session handler — session switching (Phase 7)
         # Needs AgentManager and ProjectHandler injected via setters after connect
         self._session_handler = SessionHandler(
-            agent_manager=None,   # synced in _sync_gateway_to_chat_handler
+            agent_manager=None,   # synced in ConnectionSyncHandler.sync()
             project_handler=self._project_handler,
         )
 
@@ -402,8 +401,8 @@ class MainWindow(Gtk.ApplicationWindow):
         # Created AFTER ProjectHandler and ReviewHandler are initialized.
         from ui.handlers.command_handler import CommandHandler
         self._command_handler = CommandHandler(
-            gateway_client=None,   # synced after connect via _sync_gateway_to_chat_handler
-            agent_manager=None,    # synced after connect via _sync_gateway_to_chat_handler
+            gateway_client=None,   # synced after connect via ConnectionSyncHandler.sync()
+            agent_manager=None,    # synced after connect via ConnectionSyncHandler.sync()
             project_handler=self._project_handler,
             GLib_module=GLib,
             on_display_card=self._on_command_card,
@@ -442,6 +441,28 @@ class MainWindow(Gtk.ApplicationWindow):
         # Wire callbacks into both agent response pipelines
         self._chat_handler.set_on_agent_response(self._agent_command_handler.on_agent_response)
         self._agent_runtime_handler.set_on_agent_response(self._agent_command_handler.on_agent_response)
+
+        # Connection sync handler — owns post-connect wiring (Phase 3a extraction)
+        from ui.handlers.connection_sync_handler import ConnectionSyncHandler
+        self._connection_sync_handler = ConnectionSyncHandler(
+            chat_handler=self._chat_handler,
+            main_content=self._main_content,
+            agent_list_handler=self._agent_list_handler,
+            gateway_handler=self._gateway_handler,
+            project_handler=self._project_handler,
+            command_handler=self._command_handler,
+            agent_command_handler=self._agent_command_handler,
+            session_handler=self._session_handler,
+            feed_handler=self._feed_handler,
+            left_panel=self._left_panel,
+            review_handler=self._review_handler,
+            activity_handler=self._activity_handler,
+            agent_to_project=self._agent_to_project,
+            on_forward_clicked=self._on_forward_clicked,  # method still exists in window.py for now
+            project_path_provider=lambda: self._project_handler.get_active_project_path() if self._project_handler else None,
+        )
+        # Wire the sync callback to fire on gateway connect
+        self._gateway_handler.set_sync_callback(self._connection_sync_handler.sync)
 
         # Wire project lifecycle → ReviewHandler
         self._project_handler.set_on_project_opened(
@@ -609,76 +630,6 @@ class MainWindow(Gtk.ApplicationWindow):
         self._activity_handler.on_gateway_event(event, payload)
         if event == "chat":
             self._chat_handler.on_chat_event(event, payload)
-
-    def _sync_gateway_to_chat_handler(self, gw):
-        """Sync the live GatewayClient into ChatHandler after connect succeeds.
-
-        Called by GatewayHandler via set_sync_callback() after on_connected() dispatches.
-        GatewayClient is not available at window construction time (gateway isn't running yet),
-        so we defer the reference injection until after the WebSocket handshake completes.
-        This is the only place where ChatHandler._gw gets set — it's write-once after connect.
-        """
-        self._chat_handler.set_gateway_client(gw)
-        self._main_content.set_agent_manager(self._gateway_handler.agent_mgr)
-        # Wire AgentListHandler to the live AgentManager
-        self._agent_list_handler.set_agent_mgr(self._gateway_handler.agent_mgr)
-        # Refresh agents list for the currently open project — fixes members not
-        # appearing after gateway reconnect (session keys change on reconnect)
-        if self._project_handler.get_active_project_name():
-            self._left_panel.refresh_agents_with_project(
-                self._project_handler.get_active_project_name()
-            )
-        # Wire CommandHandler with live references after connect
-        self._command_handler.set_gateway_client(gw)
-        self._command_handler.set_agent_manager(self._gateway_handler.agent_mgr)
-        # Wire ProjectHandler with live AgentManager for session lookup
-        self._project_handler.set_agent_manager(self._gateway_handler.agent_mgr)
-        # Wire ProjectHandler → ReviewHandler for cmd_status review state queries
-        self._project_handler.set_review_handler(self._review_handler)
-        # Wire AgentCommandHandler with live references after connect
-        self._agent_command_handler.set_gateway_client(gw)
-        self._agent_command_handler.set_agent_manager(self._gateway_handler.agent_mgr)
-        self._agent_command_handler.set_agent_routing(self._agent_to_project)
-        self._agent_command_handler.set_awareness_sent(self._chat_handler._awareness_sent)
-        self._agent_command_handler.set_project_handler(self._project_handler)
-        self._agent_command_handler.set_project_path_provider(
-            lambda: self._project_handler.get_active_project_path()
-            if self._project_handler else None
-        )
-        try:
-            from utils.agent_defs import load_agent_defs
-            self._agent_command_handler.set_agent_defs_loader(load_agent_defs)
-        except Exception:
-            pass  # agent_defs optional at startup
-        # Wire audit report feed card emission
-        self._agent_command_handler.set_on_audit_report(
-            lambda report: self._feed_handler.add_audit_report_card(
-                report, project_name=self._project_handler.get_active_project_name() if self._project_handler else None
-            )
-        )
-        # Wire SessionHandler with live AgentManager for session lookups
-        self._session_handler.set_agent_manager(self._gateway_handler.agent_mgr)
-        # Wire ChatHandler with AgentManager for display name resolution
-        self._chat_handler.set_agent_manager(self._gateway_handler.agent_mgr)
-        # Wire forward button callback
-        self._chat_handler.set_on_forward_message(self._on_forward_clicked)
-        # Wire send-initiated → ActivityHandler pre-flight state
-        self._chat_handler.set_on_send_initiated(self._activity_handler.on_send_initiated)
-        # Wire res confirmation → ActivityHandler pre-flight end
-        self._chat_handler.set_on_res_confirmed(self._activity_handler.on_res_confirmed)
-        # Wire lifecycle completed → ChatHandler fallback render (missing message bug fix)
-        # Architecture: ActivityHandler tracks state; ChatHandler makes render decisions.
-        self._activity_handler.set_on_lifecycle_completed(
-            self._chat_handler._handle_lifecycle_completed
-        )
-        # Wire assistant text buffer so ChatHandler can populate its own buffer.
-        # ChatHandler needs its own buffer for the recovery path when lifecycle
-        # ends before any chat final arrives.
-        self._activity_handler.set_on_assistant_buffer(self._chat_handler._buffer_assistant_text)
-        # Wire agent start → clear render guard so subsequent responses render
-        self._activity_handler.set_on_agent_start(self._chat_handler._clear_render_guard)
-        # Wire activity bubbles: ActivityHandler → ChatHandler (Phase 2 of SPEC-smarter-chat-ux)
-        self._activity_handler.set_on_activity_bubble(self._chat_handler._render_activity_bubble)
 
     # ── Agent selection callback ────────────────────────────────────────────
 
