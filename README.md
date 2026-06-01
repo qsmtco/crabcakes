@@ -2,7 +2,7 @@
 
 <img src="icons/logo-rounded.png" alt="CrabCakes" width="280">
 
-# CrabCakes
+# CrabCakes:PDE
 
 ### The first **Project Development Environment**.
 
