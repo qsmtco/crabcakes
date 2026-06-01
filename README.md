@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="icons/logo11.png" alt="CrabCakes" width="280">
+<img src="icons/logo-rounded.png" alt="CrabCakes" width="280">
 
 # CrabCakes
 
