@@ -27,7 +27,7 @@
 
 ---
 
-## <img src="icons/emoji/crab.png" width="40" height="40" alt="crab" style="vertical-align:middle" /> What is CrabCakes?
+## <img src="icons/emoji/crab.png" width="60" height="60" alt="crab" style="vertical-align:middle" /> What is CrabCakes?
 
 **CrabCakes is a native Linux desktop app that reimagines software development as a group chat — where some of your teammates happen to be AI agents.**
 
@@ -41,7 +41,7 @@ Open a project. The team appears. You type a message, it fans out to every membe
   QTR     │  I left a draft in lib/ratelimit.py from last week
   Coder   │  Good catch. Building on that.
   ─────────────────────────────────────────
-  [type a message...]               <img src="icons/emoji/classic_mic.png" width="20" height="20" alt="classic_mic" style="vertical-align:middle" />  <img src="icons/emoji/paperclip.png" width="20" height="20" alt="paperclip" style="vertical-align:middle" />  <img src="icons/emoji/sparkle.png" width="20" height="20" alt="sparkle" style="vertical-align:middle" />
+  [type a message...]               <img src="icons/emoji/classic_mic.png" width="60" height="60" alt="classic_mic" style="vertical-align:middle" />  <img src="icons/emoji/paperclip.png" width="60" height="60" alt="paperclip" style="vertical-align:middle" />  <img src="icons/emoji/sparkle.png" width="60" height="60" alt="sparkle" style="vertical-align:middle" />
 ```
 
 **It runs standalone.** Two built-in coding agents — **Coder** and **Debugger** — work locally on your machine with full file access and shell execution. No cloud, no account, no API key required to start. Connect to [OpenClaw](https://github.com/openclaw/openclaw) and your remote agents join seamlessly — but you don't have to.
@@ -52,9 +52,9 @@ This is the first **PDE** — a *Project Development Environment*.
 
 ---
 
-## <img src="icons/emoji/sparkles.png" width="20" height="20" alt="sparkles" style="vertical-align:middle" /> What's Inside
+## <img src="icons/emoji/sparkles.png" width="60" height="60" alt="sparkles" style="vertical-align:middle" /> What's Inside
 
-### <img src="icons/emoji/chat.png" width="20" height="20" alt="chat" style="vertical-align:middle" /> Project Group Chat
+### <img src="icons/emoji/chat.png" width="60" height="60" alt="chat" style="vertical-align:middle" /> Project Group Chat
 
 Every member — you, Coder, Debugger, your remote agents — shares a single conversation. Messages fan out. Responses route back. You see the whole picture. Per-tab routing means project discussions stay in project tabs and agent queries stay in agent tabs, automatically.
 
@@ -63,7 +63,7 @@ Every member — you, Coder, Debugger, your remote agents — shares a single co
 - **Streaming responses** with typewriter-style incremental rendering
 - **Markdown → Pango markup** pipeline — bold, italic, code, links, strikethrough, all native GTK, no webview, no sanitization theater
 
-### <img src="icons/emoji/robot.png" width="20" height="20" alt="robot" style="vertical-align:middle" /> Built-In Coding Agents
+### <img src="icons/emoji/robot.png" width="60" height="60" alt="robot" style="vertical-align:middle" /> Built-In Coding Agents
 
 **Coder** reads your architecture docs, your project context, your conventions. Writes production code. Every file change gets a diff card in the feed.
 
@@ -73,7 +73,7 @@ Both run locally against **OpenAI**, **MiniMax**, **Anthropic**, or any OpenAI-c
 
 > Built-in agents are just YAML files in `prompts/default_agents/`. Drop a new one in `~/.config/crabcakes/agents/` and it appears in your team — with your choice of provider, model, system prompt, emoji, color, and tool set. No code required. No fork needed.
 
-### <img src="icons/emoji/shield.png" width="20" height="20" alt="shield" style="vertical-align:middle" /> Post-Write Enforcement
+### <img src="icons/emoji/shield.png" width="60" height="60" alt="shield" style="vertical-align:middle" /> Post-Write Enforcement
 
 Every agent write goes through a **3-tier verification pipeline** automatically — not a prompt request, a structural guarantee:
 
@@ -85,7 +85,7 @@ Every agent write goes through a **3-tier verification pipeline** automatically 
 
 If anything fails, the agent gets the error and self-corrects. **No prompts, no reminders, no human intervention.** Infrastructure enforces what prompts cannot.
 
-### <img src="icons/emoji/newspaper.png" width="20" height="20" alt="newspaper" style="vertical-align:middle" /> Project Feed
+### <img src="icons/emoji/newspaper.png" width="60" height="60" alt="newspaper" style="vertical-align:middle" /> Project Feed
 
 Every significant action generates a **card** — not a wall of text, not a terminal dump. A scannable, actionable signal. Eleven typed cards, each with a distinct visual signature:
 
@@ -105,7 +105,7 @@ Every significant action generates a **card** — not a wall of text, not a term
 
 Agents emit cards. You read the feed. **Nothing slips through.**
 
-### <img src="icons/emoji/magnifier.png" width="20" height="20" alt="magnifier" style="vertical-align:middle" /> Git-Backed Code Review
+### <img src="icons/emoji/magnifier.png" width="60" height="60" alt="magnifier" style="vertical-align:middle" /> Git-Backed Code Review
 
 Every agent write is checkpointed before it reaches your codebase:
 
@@ -115,7 +115,7 @@ Every agent write is checkpointed before it reaches your codebase:
 
 Agents keep working while you review. Multiple agents can write simultaneously — each on its own branch. **Nothing touches your code until you approve it.**
 
-### <img src="icons/emoji/bubbles.png" width="20" height="20" alt="bubbles" style="vertical-align:middle" /> Activity Bubbles
+### <img src="icons/emoji/bubbles.png" width="60" height="60" alt="bubbles" style="vertical-align:middle" /> Activity Bubbles
 
 Real-time visibility into what your agents are doing. Centered, pill-shaped indicators appear as tools run:
 
@@ -133,7 +133,7 @@ Real-time visibility into what your agents are doing. Centered, pill-shaped indi
 
 Eight activity types: lifecycle, tool start, tool end, tool error, plan updates, approval requests, command output, file patches. Color-coded by status. No emoji soup. No visual noise.
 
-### <img src="icons/emoji/handshake.png" width="20" height="20" alt="handshake" style="vertical-align:middle" /> Agent-to-Agent Collaboration
+### <img src="icons/emoji/handshake.png" width="60" height="60" alt="handshake" style="vertical-align:middle" /> Agent-to-Agent Collaboration
 
 Agents consult each other through the same command system you use:
 
@@ -146,7 +146,7 @@ Agents consult each other through the same command system you use:
 
 The `@mention` system, `ask`, `delegate`, `stop`, and `tell` commands work identically for humans and agents. Agents collaborate and you watch it happen. **The collaboration layer is uniform.**
 
-### <img src="icons/emoji/clipboard.png" width="20" height="20" alt="clipboard" style="vertical-align:middle" /> Task System
+### <img src="icons/emoji/clipboard.png" width="60" height="60" alt="clipboard" style="vertical-align:middle" /> Task System
 
 Full task management baked into the project feed:
 
@@ -160,19 +160,19 @@ Full task management baked into the project feed:
 
 Every action emits a structured card. Full history, always visible.
 
-### <img src="icons/emoji/padlock.png" width="20" height="20" alt="padlock" style="vertical-align:middle" /> Exec Approval Gate
+### <img src="icons/emoji/padlock.png" width="60" height="60" alt="padlock" style="vertical-align:middle" /> Exec Approval Gate
 
 Shell commands go through an approval gate. Dangerous operations — file deletions, system changes, network calls — surface for your review before execution. You see the exact command, the host, and the reason. **One click to approve or deny.** No silent shell access. No surprise side effects.
 
-### <img src="icons/emoji/sparkle.png" width="20" height="20" alt="sparkle" style="vertical-align:middle" /> Prompt Improvement
+### <img src="icons/emoji/sparkle.png" width="60" height="60" alt="sparkle" style="vertical-align:middle" /> Prompt Improvement
 
 Every prompt in the library can be refined before loading. The built-in prompt improver rewrites your template with better structure, clearer instructions, and sharper edge cases. Templates support variables (`{{PROJECT_NAME}}`, `{{TEAM}}`, `{{GIT_STATE}}`) that fill from project context.
 
-### <img src="icons/emoji/studio_mic.png" width="20" height="20" alt="studio_mic" style="vertical-align:middle" /> Voice Input
+### <img src="icons/emoji/studio_mic.png" width="60" height="60" alt="studio_mic" style="vertical-align:middle" /> Voice Input
 
 Push-to-talk via **faster-whisper**. No cloud, no latency. Hold a key, speak, release — your words land in the input box. Built for when you're mid-flow and reaching for the keyboard would break your concentration.
 
-### <img src="icons/emoji/plug.png" width="20" height="20" alt="plug" style="vertical-align:middle" /> MCP Server Integration
+### <img src="icons/emoji/plug.png" width="60" height="60" alt="plug" style="vertical-align:middle" /> MCP Server Integration
 
 Connect any [Model Context Protocol](https://modelcontextprotocol.io/) server to your agents. GitHub, PostgreSQL, Sentry, Puppeteer, Filesystem, Memory — any MCP server becomes a tool library. Agents get structured, well-described tools with proper schemas instead of raw shell commands.
 
@@ -191,20 +191,20 @@ mcp_servers:
 
 The **Memory server is verified working end-to-end** through the UI. Agents can create, query, and link entities in a persistent knowledge graph that survives across sessions.
 
-### <img src="icons/emoji/folder.png" width="20" height="20" alt="folder" style="vertical-align:middle" /> Project Browser & Team Management
+### <img src="icons/emoji/folder.png" width="60" height="60" alt="folder" style="vertical-align:middle" /> Project Browser & Team Management
 
 - **File tree** in the left panel. Open any file, browse directories, see what's changed.
 - **Project creation** scaffolds `AGENTS.md` and `.crabcakes/` for you.
 - **Membership toggles** — who do you need on this project? Add someone mid-sprint. Remove them when the work is done. Changes fan out immediately, no restart, no reconfigure.
 - **Agent Discovery** — connect to an OpenClaw gateway and CrabCakes pulls the full agent roster. Remote agents blend seamlessly into project group chats alongside your local Coder and Debugger. The split between local and remote is invisible to the user.
 
-### <img src="icons/emoji/construction.png" width="20" height="20" alt="construction" style="vertical-align:middle" /> Custom Agent Builder
+### <img src="icons/emoji/construction.png" width="60" height="60" alt="construction" style="vertical-align:middle" /> Custom Agent Builder
 
 Coder and Debugger are just the starting point. Use the built-in **Agent Builder UI** to configure a new agent visually — pick a provider, model, system prompt role, emoji, color, tool set. Or drop a YAML file into `~/.config/crabcakes/agents/`. **No code required. No fork needed.** Agents load at startup.
 
 ---
 
-## <img src="icons/emoji/brain.png" width="20" height="20" alt="brain" style="vertical-align:middle" /> Self-Improvement System
+## <img src="icons/emoji/brain.png" width="60" height="60" alt="brain" style="vertical-align:middle" /> Self-Improvement System
 
 Coder learns. Not metaphorically — **structurally.** A five-layer feedback engine that makes Coder measurably better every time it gets something wrong.
 
@@ -258,7 +258,7 @@ Proposed changes to `coder.md` require human approval. Project rules and bug jou
 
 ---
 
-## <img src="icons/emoji/rocket.png" width="20" height="20" alt="rocket" style="vertical-align:middle" /> Quick Start
+## <img src="icons/emoji/rocket.png" width="60" height="60" alt="rocket" style="vertical-align:middle" /> Quick Start
 
 ### Prerequisites
 
@@ -294,7 +294,7 @@ openclaw gateway start
 
 ---
 
-## <img src="icons/emoji/gear.png" width="20" height="20" alt="gear" style="vertical-align:middle" /> Configuration
+## <img src="icons/emoji/gear.png" width="60" height="60" alt="gear" style="vertical-align:middle" /> Configuration
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -308,7 +308,7 @@ Agent configs live in `~/.config/crabcakes/`. LLM provider settings in `agent.js
 
 ---
 
-## <img src="icons/emoji/construction.png" width="20" height="20" alt="construction" style="vertical-align:middle" /> Architecture
+## <img src="icons/emoji/construction.png" width="60" height="60" alt="construction" style="vertical-align:middle" /> Architecture
 
 **Strict layer separation.** The codebase is readable, testable, and trustworthy:
 
@@ -427,7 +427,7 @@ crabcakes/
 
 ---
 
-## <img src="icons/emoji/test_tube.png" width="20" height="20" alt="test_tube" style="vertical-align:middle" /> Testing
+## <img src="icons/emoji/test_tube.png" width="60" height="60" alt="test_tube" style="vertical-align:middle" /> Testing
 
 ```bash
 pytest                    # run all tests
@@ -440,7 +440,7 @@ pytest -k pattern         # filter by name
 
 ---
 
-## <img src="icons/emoji/target.png" width="20" height="20" alt="target" style="vertical-align:middle" /> Why a PDE?
+## <img src="icons/emoji/target.png" width="60" height="60" alt="target" style="vertical-align:middle" /> Why a PDE?
 
 Every tool today makes the same trade-off: agents work alone (fast, uncontrolled) or humans supervise every action (safe, unscalable). The moment you want two agents to collaborate, you're duct-taping prompts together and hoping nothing breaks.
 
@@ -452,7 +452,7 @@ CrabCakes solves this by making the **project itself the social context.** Not a
 
 ---
 
-## <img src="icons/emoji/crab.png" width="20" height="20" alt="crab" style="vertical-align:middle" /> About the Name
+## <img src="icons/emoji/crab.png" width="60" height="60" alt="crab" style="vertical-align:middle" /> About the Name
 
 Named after the Chesapeake Bay delicacy — sweet, rich, and built from parts other people throw away.
 
