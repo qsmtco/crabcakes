@@ -326,6 +326,23 @@ class ProjectHandler:
 
     # ── Solo DM target (Phase 5 — per-project direct message override) ─────
 
+    @staticmethod
+    def _extract_display_name(session_key: str) -> str:
+        """Extract a human-readable name from a session key when AgentManager has no mapping.
+
+        Examples:
+          'special:crabcakes' → 'crabcakes'
+          'special:tester'    → 'tester'
+          'agent:qtr:telegram:direct:123' → 'qtr'
+          'agent:qaster:telegram:direct:456' → 'Qaster'
+        """
+        parts = session_key.split(":")
+        if parts[0] == "special" and len(parts) >= 2:
+            return parts[1]
+        if parts[0] == "agent" and len(parts) >= 2:
+            return parts[1]
+        return session_key
+
     def get_solo_target(self, project_name: str) -> str | None:
         """
         Return the solo DM target for a project, or None for group broadcast.
@@ -474,7 +491,7 @@ class ProjectHandler:
         done = sum(1 for t in project_tasks if t.status == "done")
         review_state = self._review_handler.get_state(project_name) if hasattr(self, '_review_handler') and self._review_handler else None
         review_status = "active" if (review_state and review_state.is_active()) else "not started"
-        solo_str = f"@{self._agent_mgr.get_name(solo_target)}" if solo_target and self._agent_mgr else "none"
+        solo_str = f"@{((self._agent_mgr.get_name(solo_target) if self._agent_mgr else "") or self._extract_display_name(solo_target))}" if solo_target else "none"
         lines = [
             f"Project: {project_name}",
             f"Members: {len(members)}",
@@ -494,7 +511,7 @@ class ProjectHandler:
         solo_target = self.get_solo_target(project_name)
         lines = [f"Members in {project_name}:", ""]
         for m in members:
-            name = self._agent_mgr.get_name(m) if self._agent_mgr else m
+            name = (self._agent_mgr.get_name(m) if self._agent_mgr else "") or self._extract_display_name(m)
             solo_marker = " (solo DM target)" if m == solo_target else ""
             lines.append(f"• @{name} — {m}{solo_marker}")
         return CommandResult(handled=True, response_text="\n".join(lines))
@@ -509,7 +526,7 @@ class ProjectHandler:
         members = self.get_project_members(project_name)
         if not members:
             return CommandResult(handled=True, response_text="No members in this project.")
-        agent_names = [self._agent_mgr.get_name(sk) if self._agent_mgr else sk for sk in members]
+        agent_names = [((self._agent_mgr.get_name(sk) if self._agent_mgr else "") or self._extract_display_name(sk)) for sk in members]
         lines = [
             f"Spending summary for {project_name}:",
             "(last 7 days)",
