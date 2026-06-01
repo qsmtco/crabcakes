@@ -123,6 +123,16 @@ def _seed_defaults() -> None:
         logger.warning("Cannot create agents directory %s: %s", agents_dir, e)
         return
 
+    # If user already has agents, don't seed defaults — they may have
+    # intentionally removed built-in agents.
+    try:
+        existing = [f for f in os.listdir(agents_dir)
+                    if f.endswith((".yaml", ".yml", ".json"))]
+    except OSError:
+        existing = []
+    if existing:
+        return
+
     for fname in sorted(os.listdir(src_dir)):
         if fname.endswith((".yaml", ".yml", ".json")):
             src = os.path.join(src_dir, fname)

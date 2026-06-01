@@ -60,9 +60,7 @@ def load_members(project_name: str) -> list[str]:
     Returns session keys for backward compatibility.
     """
     from utils.project_awareness import load_team as _load_team
-    from utils.projects import load_projects as _load_projects
-    # Find the project path from project name
-    for name, path in _load_projects():
+    for name, path in load_projects():
         if name == project_name:
             team = _load_team(path)
             return team.get_session_keys()
@@ -75,20 +73,14 @@ def save_members(project_name: str, members: list[str]) -> None:
     Saves session keys for backward compatibility.
     """
     from utils.project_awareness import load_team as _load_team, save_team as _save_team
-    from utils.projects import load_projects as _load_projects
     from models.team import TeamMember
-    # Find the project path from project name
-    for name, path in _load_projects():
+    for name, path in load_projects():
         if name == project_name:
             team = _load_team(path)
-            # Rebuild member list from session keys
             new_members = []
             for sk in members:
                 existing = team.get_member(sk)
-                if existing:
-                    new_members.append(existing)
-                else:
-                    new_members.append(TeamMember(session_key=sk, name=""))
+                new_members.append(existing if existing else TeamMember(session_key=sk, name=""))
             team.members = new_members
             _save_team(path, team)
             return

@@ -61,12 +61,11 @@ def lp():
 
 
 @pytest.fixture
-def handler(mc, lp, fake_projects, fake_glib):
+def handler(lp, fake_projects, fake_glib):
     from ui.handlers.project_handler import ProjectHandler
     from models import AgentRoutingTable
     agent_to_project = AgentRoutingTable()
     return ProjectHandler(
-        main_content=mc,
         left_panel=lp,
         projects_module=fake_projects,
         agent_to_project=agent_to_project,

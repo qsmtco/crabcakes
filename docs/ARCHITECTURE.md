@@ -65,7 +65,10 @@ crabcakes/
 │
 ├── models/                    # Data models — no UI dependencies
 │   ├── __init__.py           # Exports: AgentManager, AgentRoutingTable, Command, CommandResult, CommandRegistry,
-│   │                          # StreamingBubble, FeedCardData, next_agent_color, reset_color_indices
+│   │                          # StreamingBubble, FeedCardData, ActivityBubble, ToolStatus, Conversation, Message,
+│   │                          # MessageRole, ToolCall, ToolCallStatus, ConversationSnapshot, SnapshotMessage,
+│   │                          # ReviewState, TeamMember, ProjectTeam, Task, TaskStore, TASK_STATUS_LABELS,
+│   │                          # PRIORITY_LABELS, next_agent_color, reset_color_indices
 │   │                          # Also creates: task_store = TaskStore() singleton
 │   ├── agents.py              # AgentManager — session_key → name, colors, sessions
 │   ├── activity.py            # ActivityBubble dataclass — activity bubble state for ActivityHandler
@@ -81,7 +84,10 @@ crabcakes/
 │   └── team.py                # TeamMember + ProjectTeam — project team membership data
 │
 ├── agent/                     # Local agent runtime — no UI dependencies
-│   ├── __init__.py           # Exports: AgentRuntime
+│   ├── __init__.py           # Exports: AgentRuntime, LLMProviderConfig, EnforcementConfig, AgentConfig,
+│   │                          # load_agent_config, get_api_key, SpecialAgentDef, SPECIAL_AGENTS,
+│   │                          # get_special_agents, reload_registry, ToolDefinition, ToolResult,
+│   │                          # build_system_prompt, build_file_context, check
 │   ├── runtime.py           # AgentRuntime — tool loop, LLM API, streaming, cost tracking + enforcement hook
 │   ├── tools.py              # Tool definitions + execution (read_file, write_file, edit_file, exec_command, etc.)
 │   ├── config.py             # LLM provider config + EnforcementConfig dataclass
@@ -112,7 +118,7 @@ crabcakes/
 │   │   ├── project_list_handler.py  # ProjectListHandler — project card data + color round-robin
 │   │   ├── crabwatch_handler.py  # ~364 lines — CrabWatchHandler — Gio.FileMonitor filesystem watcher (Phase 5)
 │   │   ├── input_toolbar_handler.py # ~395 lines — InputToolbarHandler — find/replace, spell check, word count logic
-│   │   ├── agent_builder_handler.py # AgentBuilderHandler — agent create/edit form logic
+│   │   ├── agent_builder_handler.py # ~199 lines — AgentBuilderHandler — agent create/edit form + delete_agent_with_confirmation() (Phase 5)
 │   │   ├── agent_command_handler.py # AgentCommandHandler — agent response slash-command parser (Phase 6.2)
 │   │   ├── feed_handler.py        # ~867 lines — FeedHandler — feed card lifecycle, persistence, review actions (Phase 5)
 │   │   └── session_handler.py     # ~164 lines — SessionHandler — session switching commands (Phase 7)
@@ -169,7 +175,7 @@ crabcakes/
     ├── quoting.py               # _parse_quoted_payload() — quoted-payload parsing with escape handling (A2A_QUOTED_PAYLOAD_SPEC)
     ├── review_log.py            # Review log persistence — append/retrieve review entries per project
     ├── spellcheck.py            # Spell check engine — Enchant-based misspelling detection and suggestion
-    ├── stt.py                   # STTEngine — faster-whisper push-to-talk (model size hardcoded to tiny.en; STT_MODEL_SIZE env var reserved)
+    ├── stt.py                   # STTEngine — faster-whisper push-to-talk; respects STT_MODEL_SIZE env var (default tiny.en)
     ├── syntax_highlight.py      # highlight() — Pygments → Pango markup (Tokyo Night color scheme)
     └── workflow_state.py        # Workflow state tracker — manages .crabcakes/workflow.md per project
 ```
@@ -397,10 +403,11 @@ self._agent_to_project = AgentRoutingTable()  # shared with ProjectHandler (writ
 - Window creates all sub-components and passes callbacks to each.
 - Window holds references to gateway client and agent manager.
 - Window creates and wires handler instances (ChatHandler, etc.) — see `ui/handlers/`.
-- Window defines callback handlers not yet extracted (`_on_agent_selected`, `_on_tab_close`, `_on_feed_bar_update`, `_on_file_tree_navigate_back`, `_on_ws_event`, `_on_prompt_selected`, `_on_project_selected`, `_on_connect_clicked`, `_on_input_key_press`, `_on_prompt_clicked`, `_on_improve_clicked`, `_on_stt_partial`, `_on_agent_chat`, `_on_prompt_loaded`, `_on_refresh_ui`).
+- Window defines callback handlers not yet extracted (major business logic extracted to handlers per SPEC-window-business-logic-extraction.md).
 - Window does NOT define GTK widgets directly — it composes sub-views.
 
 **Phase 1 (ChatHandler) extracted:** `_on_send`, `_on_send_clicked`, `_switch_to_session_tab`, and chat.final routing are now in `ui/handlers/chat_handler.py`.
+**Phase 5 extracted:** `_on_audit_report_card` (FeedHandler.add_audit_report_card), `_on_agent_saved`/`_on_agent_deleted` (AgentRuntimeHandler.reload_agents_and_mcp), `_confirm_delete_agent` (AgentBuilderHandler.delete_agent_with_confirmation), `_register_stub_commands` (CommandHandler auto-registration).
 
 ### 3.7 `ui/views/left_panel.py` — Left Sidebar
 
@@ -2613,7 +2620,7 @@ pytest              # auto-discovers tests/ via pytest.ini
 - `tests/test_syntax_highlight.py` — Pygments → Pango highlighter
 - `tests/test_tasks.py` — TaskStore CRUD + status transitions
 - `tests/test_tools.py` — tool execution: sandbox, blocklist, file ops
-- `tests/test_convergence.py` — legacy convergence tests (converge/ removed)
+- `tests/test_convergence.py` — REMOVED (converge/ package removed 2026-05-30)
 
 **Writing new tests:** aim to break the code, not confirm it works. Test:
 - Unknown/missing inputs → what does the code do?
@@ -2759,7 +2766,7 @@ Agent and project avatars use a 10-color round-robin palette defined in `models/
 | `CRABCAKES_GATEWAY_DEBUG` | (unset) | Set to `1` to enable raw WebSocket message dump in `gateway/client.py` — independent of `CRABCAKES_DEBUG` |
 | `CRABCAKES_GATEWAY_URL` | `ws://localhost:18789` | OpenClaw gateway WebSocket URL |
 | `CRABCAKES_PROJECTS_DIR` | `~/projects` | Directory containing project folders for the Projects tab |
-| `STT_MODEL_SIZE` | `tiny.en` | **Reserved, not yet implemented.** Documented for future use. `utils/stt.py` currently hardcodes `"tiny.en"` with no env var override. |
+| `STT_MODEL_SIZE` | `tiny.en` | faster-whisper model size — "tiny.en", "base.en", "small.en", "medium.en", etc. Respects env var or explicit param; defaults to "tiny.en". |
 
 **External binaries required for STT:**
 - `arecord` — ALSA audio capture (part of alsa-utils)
@@ -2842,9 +2849,11 @@ crabcakes/
 │   └── client.py                 # ~486 lines — GatewayClient (threaded WebSocket + v3 device auth)
 │
 ├── models/
-│   ├── __init__.py               # exports AgentManager, AgentRoutingTable, Command, CommandResult,
-│   │                               #   StreamingBubble, FeedCardData, next_agent_color, reset_color_indices
-│   │                               # Creates: task_store = TaskStore() singleton
+│   ├── __init__.py               # exports 28 symbols: AgentManager, AgentRoutingTable, Command/Result/Registry,
+│   │                               #   FeedCardData, StreamingBubble, ActivityBubble, ToolStatus,
+│   │                               #   Conversation/Message/MessageRole/ToolCall/ToolCallStatus,
+│   │                               #   ConversationSnapshot/SnapshotMessage, ReviewState, TeamMember/ProjectTeam,
+│   │                               #   Task/TaskStore/TASK_STATUS_LABELS/PRIORITY_LABELS, next_agent_color, reset_color_indices
 │   ├── activity.py               # ActivityBubble dataclass — activity bubble state
 │   ├── agents.py                 # AgentManager — session_key → name, color, sessions
 │   ├── colors.py                 # AGENT_COLORS palette + round-robin
@@ -2859,7 +2868,10 @@ crabcakes/
 │   └── team.py                   # TeamMember, ProjectTeam — project team membership data
 │
 ├── agent/
-│   ├── __init__.py               # exports: AgentRuntime
+│   ├── __init__.py               # exports: AgentRuntime, AgentConfig, EnforcementConfig, LLMProviderConfig,
+│   │                              # SpecialAgentDef, SPECIAL_AGENTS, ToolDefinition, ToolResult,
+│   │                              # build_system_prompt, build_file_context, check, get_api_key, get_special_agents,
+│   │                              # load_agent_config, reload_registry
 │   ├── config.py                 # ~249 lines — LLMProviderConfig, EnforcementConfig, AgentConfig, load_agent_config(), get_api_key()
 │   ├── context.py                # ~437 lines — build_system_prompt, build_file_context, _read_crabcakes_docs + .gitignore parsing
 │   ├── enforcement.py            # ~761 lines — Post-write verification: 3-tier checks + per-project override + TestConfig + venv detection
@@ -2871,20 +2883,20 @@ crabcakes/
 │   ├── __init__.py               # 1 line
 │   ├── toolbar.py                # ~112 lines — Toolbar widget (connect button + status label)
 │   ├── styles.py                 # ~1045 lines — APP_CSS constant + apply_styles()
-│   ├── window.py                 # ~1026 lines — MainWindow + all handler wiring + business logic (audit, MCP hot-reload, forward)
+│   ├── window.py                 # ~833 lines — MainWindow — assembles all components, wires callbacks. Business logic extracted to handlers (see Section 3.6).
 │   ├── handlers/
 │   │   ├── __init__.py           # 0 lines — package marker
 │   │   ├── activity_handler.py   # ~610 lines — 6-state activity machine + two-phase progress (Phase 6)
-│   │   ├── agent_builder_handler.py # AgentBuilderHandler — agent create/edit form logic
+│   │   ├── agent_builder_handler.py # ~199 lines — AgentBuilderHandler — agent create/edit form + delete_agent_with_confirmation() (Phase 5)
 │   │   ├── agent_command_handler.py # ~546 lines — agent response command parser + relay (Phase 6.2)
 │   │   ├── agent_list_handler.py # ~126 lines — agent card data (initials, colors, sorting)
-│   │   ├── agent_runtime_handler.py # ~796 lines — AgentRuntime UI bridge: conversation lifecycle, tool approval, MCP wiring
+│   │   ├── agent_runtime_handler.py # ~867 lines — AgentRuntime UI bridge: conversation lifecycle, tool approval, reload_agents_and_mcp() (Phase 5)
 │   │   ├── chat_handler.py       # ~853 lines — send, fan-out, routing, special agent routing, tab switching
 │   │   ├── chat_render_handler.py # ~770 lines — escape + markdown + highlight + bubble pipeline
 │   │   ├── collab_handler.py     # Collaboration commands: ask, delegate, stop, tell (Phase 7)
-│   │   ├── command_handler.py    # ~525 lines — slash-prefix command parser + @mention resolution (Phase 7)
+│   │   ├── command_handler.py    # ~601 lines — slash-prefix command parser + @mention resolution; auto-registers 21 commands on init (Phase 7)
 │   │   ├── crabwatch_handler.py  # ~364 lines — CrabWatchHandler — Gio.FileMonitor filesystem watcher (Phase 5)
-│   │   ├── feed_handler.py       # ~867 lines — FeedHandler — feed card lifecycle, persistence, review actions (Phase 5)
+│   │   ├── feed_handler.py       # ~932 lines — FeedHandler — feed card lifecycle, persistence, add_audit_report_card() (Phase 5)
 │   │   ├── gateway_handler.py    # ~233 lines — connect, agents, lifecycle (Phase 2)
 │   │   ├── input_toolbar_handler.py # ~395 lines — InputToolbarHandler — find/replace, spell check, word count logic
 │   │   ├── media_handler.py      # ~99 lines — STT + improve (Phase 4)
@@ -2937,7 +2949,7 @@ crabcakes/
     ├── quoting.py                # ~50 lines — _parse_quoted_payload() — escape-aware quoted-payload parsing
     ├── review_log.py             # Review log persistence — append/retrieve entries per project
     ├── spellcheck.py             # Spell check engine — Enchant-based detection + suggestions
-    ├── stt.py                    # ~182 lines — STTEngine (faster-whisper push-to-talk; model hardcoded to tiny.en)
+    ├── stt.py                    # ~182 lines — STTEngine (faster-whisper push-to-talk; respects STT_MODEL_SIZE env var)
     ├── syntax_highlight.py       # ~164 lines — highlight() — Pygments → Pango markup (Tokyo Night)
     └── workflow_state.py         # Workflow state tracker — manages .crabcakes/workflow.md per project
 
@@ -3030,7 +3042,7 @@ tests/                           # 61 files (57 test + 4 support)
     ├── test_tasks.py
     └── test_tools.py             # ~334 lines
 
-**Test count:** 61 test files (snapshot as of 2026-05-30: 1680 tests collected; 1631 passed, 27 failed, 22 errors — 22 errors in test_project_handler.py::TestUpdateAgentSession). Run `pytest --co -q` for current count.
+**Test count:** 61 test files (snapshot as of 2026-05-31: 1680 tests collected; 1632 passed, 1 failed, 0 errors). 22 TestUpdateAgentSession errors resolved in Phase 5; 1 pre-existing failure in test_agents.py::TestLoadAgentDefs::test_does_not_overwrite_existing. Run `pytest --co -q` for current count.
 
 ---
 

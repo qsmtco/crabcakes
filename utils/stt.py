@@ -5,9 +5,11 @@
 #   arecord (ALSA/PipeWire, 16kHz mono) → raw PCM in memory
 #     → faster-whisper (Python API, model loaded once) → transcript via callback
 #
-# Pattern: record-all-then-transcribe-once (deadcode style).
-#   - start()     → begin capture to memory
-#   - stop_async() → stop capture, transcribe in background thread, call callback
+# Environment:
+#   STT_MODEL_SIZE  — faster-whisper model size, default "tiny.en".
+#                    Values: "tiny.en", "base.en", "small.en", "medium.en", etc.
+
+import os
 #
 # Security Manifest:
 #   Reads: ALSA device ("default" via PipeWire ALSA plugin)
@@ -40,18 +42,20 @@ class STTEngine:
 
     def __init__(
         self,
-        model_size="tiny.en",
+        model_size=None,
         device="default",
         on_result=None,
     ):
         """
         Args:
             model_size:   faster-whisper model — "tiny.en" for English-only (fastest CPU).
+                          Respects STT_MODEL_SIZE env var as fallback. Values: "tiny.en",
+                          "base.en", "small.en", "medium.en", etc. None → use env var or default.
             device:       ALSA device name for capture (arecord -D <device>).
                           "default" uses PipeWire ALSA plugin (~5ms open vs ~230ms direct HW).
             on_result:    Callback(text: str) — called with transcript on stop_async.
         """
-        self._model_size = model_size
+        self._model_size = model_size or os.environ.get("STT_MODEL_SIZE", "tiny.en")
         self._device = device
         self._on_result = on_result
 
