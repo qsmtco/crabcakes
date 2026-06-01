@@ -1532,6 +1532,99 @@ class MCPToolResult:
 - `stop_all()` calls `mcp_disconnect_all()` (default conversation_key=None) before stopping AgentRuntime
 - Thread drain (`_drain_and_stop`) waits for pending ops before join
 
+### 3.21y `ui/handlers/connection_sync_handler.py` — Connection Sync Handler (Phase 3a extraction)
+
+**Responsibility:** Post-connect wiring of live references into all dependent handlers. Called once by `GatewayHandler` via `set_sync_callback()` after the gateway WebSocket handshake completes. Injects the live `GatewayClient` and `AgentManager` into every handler that needs them (chat, command, project, agent_command, session, activity, etc.).
+
+**Owns:** None — this is a stateless wiring function. All references it sets are owned by the handlers it injects them into.
+
+**Constructor:**
+```python
+class ConnectionSyncHandler:
+    def __init__(
+        self,
+        *,
+        chat_handler,                  # ChatHandler — gets gateway_client + agent_manager
+        main_content,                  # MainContent — gets agent_manager
+        agent_list_handler,            # AgentListHandler — gets agent_mgr
+        gateway_handler,               # GatewayHandler — SOURCE of live agent_mgr
+        project_handler,               # ProjectHandler — gets agent_manager + review_handler
+        command_handler,               # CommandHandler — gets gateway_client + agent_manager
+        agent_command_handler,         # AgentCommandHandler — gets 6 setters wired at once
+        session_handler,               # SessionHandler — gets agent_manager
+        feed_handler,                  # FeedHandler — receives audit-report callback
+        left_panel,                    # LeftPanel — refreshed on connect if a project is open
+        review_handler,                # ReviewHandler — wired into project_handler
+        activity_handler,              # ActivityHandler — gets 4 lifecycle callbacks from chat_handler
+        agent_to_project,              # AgentRoutingTable — shared with agent_command_handler
+        on_forward_clicked: Callable,  # chat bubble forward-button → ForwardHandler.show_forward_popover
+        project_path_provider: Callable[[], str | None],  # lambda for agent_command_handler
+    ) -> None
+```
+
+**Public API:**
+```python
+    def sync(self, gw: GatewayClient) -> None
+        # Inject live GatewayClient + AgentManager into all 16 dependencies.
+        # Called by GatewayHandler via set_sync_callback() — fires once per connect.
+        # Idempotent: callers may invoke multiple times safely.
+```
+
+**Thread safety:** Called on the main thread by `GatewayHandler.on_connected()` (which itself is dispatched via `GLib.idle_add` from the gateway's background thread). All downstream setter calls must therefore be main-thread safe.
+
+**Extracted from:** `window._sync_gateway_to_chat_handler` (former location: ui/window.py). The original method was 73 lines and violated the §3.6 boundary between window.py (composition root) and handlers (business logic).
+
+### 3.21z `ui/handlers/forward_handler.py` — Forward Handler (Phase 3b extraction)
+
+**Responsibility:** Agent-to-agent message forwarding flow. Builds a `Gtk.Popover` listing every other agent the user could forward to; on selection, routes the text to the target (special agent or gateway agent), creates/selects the target's chat tab, and renders a "forwarded from <source>" bubble into it.
+
+**Owns:** The popover widget construction, target agent resolution (special vs gateway), and forwarded bubble rendering. Stateless otherwise.
+
+**Constructor:**
+```python
+class ForwardHandler:
+    def __init__(
+        self,
+        *,
+        main_content,                  # MainContent — for create_chat_tab, get_chat_box, _chat_notebook, scroll_chat_to_bottom, _tab_sessions
+        chat_handler,                  # ChatHandler — placeholder for future evolution; not currently read
+        chat_render_handler,           # ChatRenderHandler — for render_sync (forwarded bubble) + _on_forward_message
+        agent_runtime_handler,         # AgentRuntimeHandler — for get_special_agents() + send_to_special_agent()
+        gateway_handler,               # GatewayHandler — for agent_mgr.get_name() + gw.send_message() + gw.is_connected()
+    ) -> None
+```
+
+**Public API:**
+```python
+    def show_forward_popover(
+        self,
+        text: str,
+        anchor_widget,                 # Gtk.Widget — the popover's parent (e.g. a chat bubble)
+        source_session_key: str | None,
+    ) -> None
+        # Build a Gtk.Popover with one button per other agent.
+        # Excludes source_session_key from the list.
+        # Deduplicates between special-agent and gateway-tab lists.
+        # Returns silently if no other agents exist.
+
+    def forward_to_agent(
+        self,
+        target_session_key: str,
+        text: str,
+        source_session_key: str | None,
+        popover,                       # Gtk.Popover — popped down at start
+    ) -> None
+        # Route text to special-agent (send_to_special_agent) or gateway (gw.send_message).
+        # Resolve source_name for the forwarded_from label.
+        # Create new tab if target not in _tab_sessions, else select existing.
+        # Render "You" bubble with forwarded_from=<source_name> via chat_render_handler.
+        # Defer scroll to bottom via GLib.timeout_add(16, ...).
+```
+
+**Thread safety:** Called only on the main thread (button click handler). The `GLib.timeout_add(16, ...)` deferral runs on the default main loop context.
+
+**Extracted from:** `window._on_forward_clicked` and `window._forward_to_agent` (former location: ui/window.py, 100 combined lines). The methods were tightly coupled via a shared `popover` variable and were extracted as a single unit to preserve that coupling.
+
 ### 3.22 `ui/views/feedbar.py` — Response Status Bar (Phase 6)
 
 **Responsibility:** Horizontal bar between toolbar and main content. Pure view — no business logic.
@@ -2620,7 +2713,6 @@ pytest              # auto-discovers tests/ via pytest.ini
 - `tests/test_syntax_highlight.py` — Pygments → Pango highlighter
 - `tests/test_tasks.py` — TaskStore CRUD + status transitions
 - `tests/test_tools.py` — tool execution: sandbox, blocklist, file ops
-- `tests/test_convergence.py` — REMOVED (converge/ package removed 2026-05-30)
 
 **Writing new tests:** aim to break the code, not confirm it works. Test:
 - Unknown/missing inputs → what does the code do?
@@ -2883,7 +2975,7 @@ crabcakes/
 │   ├── __init__.py               # 1 line
 │   ├── toolbar.py                # ~112 lines — Toolbar widget (connect button + status label)
 │   ├── styles.py                 # ~1045 lines — APP_CSS constant + apply_styles()
-│   ├── window.py                 # ~833 lines — MainWindow — assembles all components, wires callbacks. Business logic extracted to handlers (see Section 3.6).
+│   ├── window.py                 # ~693 lines — MainWindow — assembles all components, wires callbacks. Business logic extracted to handlers (see Section 3.6). Most recent extractions: ConnectionSyncHandler (§3.21y) and ForwardHandler (§3.21z).
 │   ├── handlers/
 │   │   ├── __init__.py           # 0 lines — package marker
 │   │   ├── activity_handler.py   # ~610 lines — 6-state activity machine + two-phase progress (Phase 6)
@@ -2895,8 +2987,10 @@ crabcakes/
 │   │   ├── chat_render_handler.py # ~770 lines — escape + markdown + highlight + bubble pipeline
 │   │   ├── collab_handler.py     # Collaboration commands: ask, delegate, stop, tell (Phase 7)
 │   │   ├── command_handler.py    # ~601 lines — slash-prefix command parser + @mention resolution; auto-registers 21 commands on init (Phase 7)
+│   │   ├── connection_sync_handler.py # ~173 lines — ConnectionSyncHandler — post-connect wiring of live GatewayClient + AgentManager into 16 dependents (Phase 3a extraction)
 │   │   ├── crabwatch_handler.py  # ~364 lines — CrabWatchHandler — Gio.FileMonitor filesystem watcher (Phase 5)
 │   │   ├── feed_handler.py       # ~932 lines — FeedHandler — feed card lifecycle, persistence, add_audit_report_card() (Phase 5)
+│   │   ├── forward_handler.py    # ~194 lines — ForwardHandler — agent-to-agent popover + routing + forwarded bubble (Phase 3b extraction)
 │   │   ├── gateway_handler.py    # ~233 lines — connect, agents, lifecycle (Phase 2)
 │   │   ├── input_toolbar_handler.py # ~395 lines — InputToolbarHandler — find/replace, spell check, word count logic
 │   │   ├── media_handler.py      # ~99 lines — STT + improve (Phase 4)
@@ -3002,8 +3096,8 @@ tests/                           # 61 files (57 test + 4 support)
     ├── test_command_models.py
     ├── test_config.py
     ├── test_context.py           # ~329 lines
+    ├── test_connection_sync_handler.py  # 28 tests (Phase 3a extraction)
     ├── test_conversation.py      # ~299 lines
-    ├── test_convergence.py       # Legacy convergence tests (converge/ removed)
     ├── test_crabcard_parser.py
     ├── test_crabwatch_handler.py
     ├── test_create_project.py
@@ -3015,6 +3109,7 @@ tests/                           # 61 files (57 test + 4 support)
     ├── test_feed_card.py
     ├── test_feed_handler.py
     ├── test_feed_store.py
+    ├── test_forward_handler.py   # 17 tests (Phase 3b extraction)
     ├── test_gateway_handler.py
     ├── test_git_ops.py
     ├── test_icons.py
