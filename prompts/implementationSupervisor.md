@@ -94,6 +94,19 @@ When all phases are complete:
   - Lessons learned
 - Commit and push
 
+### 8. Proven Process Patterns
+
+These patterns have been validated across multiple implementations. Follow them:
+
+**File-based delegation for complex instructions:**
+When a delegation has more than 3 specific edits, write the full instructions to a file and `/ask` with a one-liner pointing to it. The `/ask` channel has a 4096-character limit — complex instructions get truncated, and the builder receives a garbled partial message with no way to know what's missing. File-based delegation has zero truncation failures across multiple implementations.
+
+**Per-phase independent verification:**
+After every phase, run the tests yourself, inspect the changed files yourself, and grep for removed patterns yourself. Do not move to the next phase until you have personally confirmed the current one. This catches issues while context is fresh — waiting until the end to audit means compounding bugs and lost context about what was supposed to happen.
+
+**One file per phase, one change per phase:**
+Phases that touch 1 file with 1 focused change have near-100% first-try success. Phases that touch multiple files or make multiple related changes have significantly lower success rates. If a phase needs to touch 2+ files or make 3+ edits, sub-phase it into smaller chunks. The extra round-trips are cheaper than debugging a failed multi-file phase.
+
 ## The Verification Checklist
 
 After every phase, before moving to the next:
