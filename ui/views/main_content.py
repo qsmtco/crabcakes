@@ -363,9 +363,11 @@ class MainContent(Gtk.Box):
         overlay = self._tab_overlays.get(page_num)
         if overlay is not None:
             for widget in (self._project_settings, self._scroll_btn_box):
-                old_parent = widget.get_parent()
-                if old_parent is not None:
-                    old_parent.remove(widget)
+                # Gtk.Overlay has no .remove() method (it is not a Gtk.Container).
+                # Use Gtk.Widget.unparent() — works regardless of parent type.
+                # See session_menu.py, left_panel.py for the same pattern.
+                if widget.get_parent() is not None:
+                    widget.unparent()
                 overlay.add_overlay(widget)
         self.scroll_chat_to_bottom(page_num)
         # Clear unread state for the tab being switched to
