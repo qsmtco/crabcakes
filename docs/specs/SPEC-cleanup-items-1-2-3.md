@@ -15,7 +15,7 @@
 ### Problem
 The original architecture audit (2026-05-30) found 20 issues. The 7-phase audit-fixes spec (2026-05-31) resolved 7 of the 13 fixable findings. Three remaining items are isolated, low-risk cleanup:
 
-1. **`utils/workflow_state.py` has the same circular self-import pattern** that was already fixed in `utils/projects.py` during Phase 6 of the audit-fixes spec. Trivial — copy the proven fix.
+1. ~~`utils/workflow_state.py` has the same circular self-import pattern~~ **N/A — verified false by QTR 2026-05-31.** The only `from utils.workflow_state import` line in the file is inside the module docstring's `Usage:` example. The actual `advance_phase` function has no self-import. Item 1 is skipped.
 
 2. **`tests/test_convergence.py` references deleted `converge/` code.** The `converge/` directory was removed, but the test file remained. The `.bak` and `.insert` files are also leftover from the deletion work. All three should be removed.
 
@@ -45,24 +45,6 @@ The original architecture audit (2026-05-30) found 20 issues. The 7-phase audit-
 
 ## 2. Changes by File
 
-### Item 1 — `utils/workflow_state.py`
-
-**What changes:** Remove the function-level self-import at line 11, replace the imported function call with a direct call to the same-module function (which is already in scope at module load time).
-
-**Verified current code (read from source):**
-```python
-# Line 11 — INSIDE advance_phase():
-from utils.workflow_state import init_workflow, advance_phase, get_current_phase
-```
-
-**Verified:** `init_workflow`, `advance_phase`, and `get_current_phase` are all defined as top-level functions in the same file (lines 174, 209, 215, 241 of current source). They are in module scope at the time `advance_phase` is called — no import is needed. The pattern is identical to the one already removed from `utils/projects.py` during Phase 6 of the audit-fixes spec.
-
-**Change:** Delete line 11 entirely. The rest of `advance_phase` calls these functions by their short names, which already resolve to the module-level definitions.
-
-**Files NOT changed (already correct):**
-- `utils/projects.py` — already fixed in Phase 6 (audit-fixes spec), no further changes needed
-
-**Line count estimate:** −1 line net
 
 ### Item 2 — Test file deletion
 
@@ -339,12 +321,8 @@ Same flow, one less hop through window.py. The callback wiring in `chat_handler.
 
 ## 5. Implementation Order
 
-### Phase 1: `utils/workflow_state.py` self-import (Item 1)
-- **Verify:** `grep "from utils.workflow_state import" utils/workflow_state.py` returns 0 matches after edit
-- **Verify:** `python3 -c "from utils.workflow_state import advance_phase, init_workflow, get_current_phase; print('OK')"` works
-- **Test:** `python3 -m pytest tests/ -q` — count must not decrease from baseline (1601)
-- **Estimated time:** 2 minutes
-
+### Phase 1: ~~`utils/workflow_state.py` self-import~~ SKIPPED (verified N/A by QTR 2026-05-31)
+- **Result:** Item 1 marked as not applicable. No code change to `utils/workflow_state.py`.
 ### Phase 2: Delete `test_convergence.py` and backups (Item 2)
 - **Verify:** `ls tests/test_convergence*` returns "No such file or directory"
 - **Verify:** `git ls-files tests/ | grep convergence` returns empty
