@@ -31,8 +31,11 @@ accepted.
 - **Quoted format required:** The payload must start with `"` and end with `"`.
 - **No closing delimiter:** The slash command ends naturally — no closing backtick needed.
 - **4,096 character limit:** Payloads longer than 4,096 characters are truncated.
- If you need to share large content, write it to a file and reference the file
- path in your message instead.
+ If you need to share large content, write it to a file in the project directory
+ and reference the file path in your payload (e.g. `/ask @Coder "review the
+ refactor plan in docs/refactor-plan.md"`). The receiving agent **must** read
+ the referenced file to get the full context — do not attempt to summarize or
+ guess the contents. Both sender and receiver share the same project filesystem.
 - **Escaped quotes:** Use `\"` to include a literal double quote inside the payload.
 - **Escaped backslashes:** Use `\\` to include a literal backslash inside the payload.
 - **All other characters are literal:** Em-dashes, hyphens, markdown, and code

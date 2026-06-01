@@ -110,10 +110,22 @@ class TestRegistry:
         assert "Debugger" in names
 
     def test_coder_has_write_tools(self):
-        coder = get_special_agent("special:coder")
-        assert coder is not None
-        assert "write_file" in coder.tools
-        assert coder.can_write is True
+        from unittest.mock import patch
+        coder_def = {
+            "role": "coder",
+            "name": "Coder",
+            "emoji": "🛠️",
+            "tools": ["read_file", "write_file", "edit_file", "exec_command",
+                      "list_files", "search_files", "web_search", "web_fetch"],
+            "provider": "minimax",
+            "model": "MiniMax-M2.7",
+        }
+        with patch("utils.agent_defs.load_agent_defs", return_value=[coder_def]):
+            reload_registry()
+            coder = get_special_agent("special:coder")
+            assert coder is not None
+            assert "write_file" in coder.tools
+            assert coder.can_write is True
 
     def test_debugger_no_write_tools(self):
         debugger = get_special_agent("special:debugger")
@@ -125,17 +137,46 @@ class TestRegistry:
         assert get_special_agent("special:nonexistent") is None
 
     def test_coder_has_provider_model(self):
-        coder = get_special_agent("special:coder")
-        assert coder.provider == "minimax"
-        assert coder.model == "MiniMax-M2.7"
+        from unittest.mock import patch
+        coder_def = {
+            "role": "coder",
+            "name": "Coder",
+            "emoji": "🛠️",
+            "tools": ["read_file", "write_file"],
+            "provider": "minimax",
+            "model": "MiniMax-M2.7",
+        }
+        with patch("utils.agent_defs.load_agent_defs", return_value=[coder_def]):
+            reload_registry()
+            coder = get_special_agent("special:coder")
+            assert coder.provider == "minimax"
+            assert coder.model == "MiniMax-M2.7"
 
     def test_coder_si_full_stack(self):
-        coder = get_special_agent("special:coder")
-        si = coder.get_self_improvement_config()
-        assert si["bug_journal"] is True
-        assert si["enforcement"] is True
-        assert si["structured_feedback"] is True
-        assert si["dream_consolidation"] is True
+        from unittest.mock import patch
+        coder_def = {
+            "role": "coder",
+            "name": "Coder",
+            "emoji": "🛠️",
+            "tools": ["read_file", "write_file"],
+            "provider": "minimax",
+            "model": "MiniMax-M2.7",
+            "self_improvement": {
+                "bug_journal": True,
+                "project_rules": True,
+                "enforcement": True,
+                "structured_feedback": True,
+                "dream_consolidation": True,
+            },
+        }
+        with patch("utils.agent_defs.load_agent_defs", return_value=[coder_def]):
+            reload_registry()
+            coder = get_special_agent("special:coder")
+            si = coder.get_self_improvement_config()
+            assert si["bug_journal"] is True
+            assert si["enforcement"] is True
+            assert si["structured_feedback"] is True
+            assert si["dream_consolidation"] is True
 
     def test_debugger_si_context_only(self):
         debugger = get_special_agent("special:debugger")

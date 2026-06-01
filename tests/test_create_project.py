@@ -23,7 +23,6 @@ def _make_handler(projects_dir: str) -> ProjectHandler:
     projects_mod.load_projects.return_value = []
 
     ph = ProjectHandler(
-        main_content=MagicMock(),
         left_panel=MagicMock(),
         projects_module=projects_mod,
         agent_to_project=AgentRoutingTable(),

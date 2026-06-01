@@ -126,6 +126,14 @@ class FakeMainContent:
                 return idx
         return None
 
+    def get_chat_box_for_session(self, session_key: str):
+        """Match MainContent.get_chat_box_for_session() — returns the fake chat box
+        if session_key is in _tab_sessions, else None."""
+        for idx, sk in self._tab_sessions.items():
+            if sk == session_key:
+                return self._fake_chat_box
+        return None
+
     # ── Helpers for test assertions ──────────────────────────────────────────
 
     def clear_messages(self):
@@ -318,6 +326,7 @@ class TestChatEventRouting:
         """Agent is a project member → response appears in project tab."""
         gw = FakeGatewayClient()
         mc = FakeMainContent(session_key="project:myproj")
+        mc.set_tab_sessions({0: "project:myproj"})
         # agent:qaster:1 belongs to myproj
         agent_to_project = {"agent:qaster:1": "myproj"}
         handler = make_handler(mc, gw, agent_to_project=agent_to_project)
@@ -330,6 +339,7 @@ class TestChatEventRouting:
         """Agent is NOT a project member → response appears in agent's own tab."""
         gw = FakeGatewayClient()
         mc = FakeMainContent(session_key="agent:main")
+        mc.set_tab_sessions({0: "agent:main"})
         agent_to_project = {}  # no project mapping
         handler = make_handler(mc, gw, agent_to_project=agent_to_project)
 
@@ -341,6 +351,7 @@ class TestChatEventRouting:
         """Agent in two projects → uses the project that matches the current tab."""
         gw = FakeGatewayClient()
         mc = FakeMainContent(session_key="project:projA")
+        mc.set_tab_sessions({0: "project:projA"})
         # agent is in both projA and projB
         agent_to_project = {
             "agent:shared:1": "projA",
@@ -356,6 +367,7 @@ class TestChatEventRouting:
         """Agent session_key not in _agent_to_project: routes to agent tab."""
         gw = FakeGatewayClient()
         mc = FakeMainContent(session_key="agent:unknown")
+        mc.set_tab_sessions({0: "agent:unknown"})
         agent_to_project = {}  # completely empty
         handler = make_handler(mc, gw, agent_to_project=agent_to_project)
 
@@ -392,6 +404,7 @@ class TestChatEventRouting:
         """content is a list of text blocks: joined together."""
         gw = FakeGatewayClient()
         mc = FakeMainContent(session_key="agent:main")
+        mc.set_tab_sessions({0: "agent:main"})
         handler = make_handler(mc, gw)
 
         handler.on_chat_event("chat", {
@@ -411,6 +424,7 @@ class TestChatEventRouting:
         """content is a number or object instead of str/list: no crash, no message."""
         gw = FakeGatewayClient()
         mc = FakeMainContent(session_key="agent:main")
+        mc.set_tab_sessions({0: "agent:main"})
         handler = make_handler(mc, gw)
 
         # Must not raise — falls back to str() or empty

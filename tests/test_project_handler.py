@@ -76,11 +76,6 @@ def handler(lp, fake_projects, fake_glib):
 # ── open_project ─────────────────────────────────────────────────────────────
 
 class TestOpenProject:
-    def test_creates_project_tab(self, handler, mc, fake_glib):
-        handler.open_project("my-project", "/path/to/my-project")
-        fake_glib.dispatch_all()
-        mc.create_chat_tab.assert_called_once_with("project:my-project", "Project: my-project")
-
     def test_refreshes_agents_list(self, handler, lp, fake_glib):
         handler.open_project("my-project", "/path/to/my-project")
         fake_glib.dispatch_all()

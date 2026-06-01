@@ -204,16 +204,14 @@ class TestCrabWatchHandlerStopWatching:
         mock_new_for_path.return_value = mock_gfile
         mock_gfile.query_exists.return_value = True
 
-        mock_timer_source = MagicMock()
         mock_monitor = MagicMock()
         mock_monitor_dir.return_value = mock_monitor
 
-        # Patch GLib.timeout_add to give us a fake timer source
-        with patch.object(handler, '_GLib', None):
-            # Direct call — no GLib in tests
-            handler._debounce_map['test.py'] = mock_timer_source
+        # Store an int source ID like production code does
+        handler._debounce_map['test.py'] = 42
 
-        handler.stop_watching()
+        with patch("gi.repository.GLib.Source.remove") as mock_remove:
+            handler.stop_watching()
 
         assert len(handler._debounce_map) == 0
-        mock_timer_source.destroy.assert_called_once()
+        mock_remove.assert_called_with(42)

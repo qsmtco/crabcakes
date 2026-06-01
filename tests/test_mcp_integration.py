@@ -150,8 +150,6 @@ class TestYAMLLoading(TestState):
         # Monkeypatch utils.agent_defs._get_agents_dir() to point here
         import utils.agent_defs as ad_mod
         monkeypatch.setattr(ad_mod, "_get_agents_dir", lambda: str(agents_dir))
-        # Don't seed defaults (they'd pick up built-in dirs)
-        monkeypatch.setattr(ad_mod, "_seed_defaults_if_empty", lambda: None)
 
         reload_registry()
         agents = get_special_agents()

@@ -807,7 +807,9 @@ class TestAuditReportProcessing:
             "**Pattern:** off-by-one" + lb
         )
 
-        handler.on_agent_response("session:qaster:123", text, "test-project")
+        from unittest.mock import patch
+        with patch("utils.feedback_processor.resolve_default_target_role", return_value="unknown"):
+            handler.on_agent_response("session:qaster:123", text, "test-project")
         log = tmp_path / ".crabcakes" / "review-log.jsonl"
         assert log.exists()
         import json
@@ -947,7 +949,9 @@ class TestAuditReportProcessing:
             "**Pattern:** null-check" + lb
         )
 
-        handler.on_agent_response("session:qaster:123", text, "test-project")
+        from unittest.mock import patch
+        with patch("utils.feedback_processor.resolve_default_target_role", return_value="unknown"):
+            handler.on_agent_response("session:qaster:123", text, "test-project")
 
         assert len(received) == 1
         report = received[0]
