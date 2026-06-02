@@ -4,7 +4,7 @@
 **Author:** Qaster
 **Status:** Proposal — pending Captain approval
 **Priority:** High
-**Effort:** 4-5 days (3 days for Qaster's core plan + 1 day for content enrichment + 0.5-1 day for per-agent + per-type filter)
+**Effort:** 5-6 days (3 days core + 1 day content enrichment + 1-2 days filter + click-to-expand + lifecycle separators)
 
 ---
 
@@ -268,6 +268,22 @@ No state machine. On each `append_event()`:
 
 This is a simple visual compression — 5 consecutive EXEC events become one row showing `exec ×5  ruff check  4.2s`. No lifecycle tracking, no per-session state, no mutate-in-place. Just "does the last row match?"
 
+**Per-agent counter state (added to handle multi-agent drawers):**
+
+The "last row matches?" check must be **scoped per-agent**. The drawer tracks the last row's `(agent_name, activity_type)` key, not just `activity_type`. If Coder fires 3 execs in a row, then Researcher fires 1 search, then Coder fires 1 exec, the drawer's row sequence is:
+
+```
+[Coder]    exec ×3   pytest tests/   3.8s
+[Researcher]  search ×1   "openclaw gateway"   740ms
+[Coder]    exec ×1   git commit   340ms        ← NEW row, not appended to the ×3 above
+```
+
+The Researcher's search broke the visual chain (different agent + different type), so the Coder exec that follows starts a new counter row. The ×3 counter is preserved as a frozen historical row.
+
+Implementation: `self._last_row_key: tuple[str, str] | None` stores `(agent_name, activity_type)` of the most recently appended row. On each `append_event(agent_name, type, ...)`, compare against the new event's `(agent_name, type)`. Mismatch → start a new row. Match → mutate the existing row in place (count++, duration sum, last_command refresh).
+
+**Lifecycle end + filter interaction:** When `on_agent_end(agent_name)` fires, the next event from that agent starts a fresh counter (lifecycle separator breaks the chain). This is correct because a new turn is a new logical unit of work. Other agents' counters are unaffected — the per-agent scope is preserved across the whole stream.
+
 **`models/activity.py` — new method:**
 
 ```python
@@ -324,8 +340,14 @@ self._active_tools[session_key] = {
     "started_at": time.monotonic(),
 }
 
-# In _do_tool_call_result, at the top of the method:
-self._active_tools.pop(session_key, None)
+# In _do_tool_call_result, do NOT clear the cache immediately.
+# The command_output event arrives AFTER tool_end, so clearing here
+# would race with ActivityHandler's lookup. Instead, use delayed clear:
+GLib.timeout_add(5000, lambda: self._active_tools.pop(session_key, None) is None or True)
+# 5-second grace period: command_output events typically arrive within 1-2s
+# of tool_end. The cache entry is auto-removed after 5s regardless.
+# The next _do_tool_call_start for the same session_key will overwrite
+# the stale entry, so no conflict with subsequent tool calls.
 
 # New public method:
 def get_active_tool(self, session_key: str) -> dict | None:
@@ -405,6 +427,10 @@ Because the drawer is **global** (Captain's decision, see "Drawer Scope: Global 
 **Implementation:** The drawer maintains a `dict[str, int]` mapping `agent_name → event_count` and a `dict[str, float]` mapping `agent_name → first_event_time`. On lifecycle end, look up the agent's count and elapsed time, format the summary, reset the per-agent counters.
 
 When a new turn starts for an agent, insert a start-separator labeled with the agent name. On end, insert a summary-separator labeled with the agent name and per-agent stats.
+
+**Per-agent break of the counter chain (explicit):** A lifecycle_end for an agent breaks **only that agent's** counter chain, not other agents' counters. State: `self._agent_counters: dict[str, dict] = {}` keyed by agent name, each holding `{count, last_command, total_duration_ms, last_text, exit_code}`. On lifecycle_end(agent_name): format summary for that agent, then `self._agent_counters.pop(agent_name, None)`. Other agents' counters continue uninterrupted. The `_last_row_key` is also reset for the ending agent only.
+
+**Why per-agent, not global:** In a multi-agent project, a Researcher lifecycle_end should not break a Coder counter that's still actively running. The user wants to see Coder's exec run complete cleanly even as Researcher's turn wraps.
 
 **Clear button:** Resets the drawer to empty. Useful for long sessions.
 
@@ -512,13 +538,13 @@ Similarly, if `exec` is hidden but `read` is visible, a Coder exec → Coder rea
 
 **Cost:** ~4-6 hours. Mostly dropdown widget construction and filter logic. No new business logic.
 
-**Open questions for Captain:**
+**Filter decisions (all confirmed, see Section 10):**
 
-1. **AND vs OR semantics for the two filters?** Current proposal: AND (a row is visible only if BOTH its agent AND its type pass). Alternative: OR (a row is visible if EITHER passes). AND is more restrictive (focus mode); OR is more permissive (broad view). Captain's preference?
-2. **Should the filter bar always be visible, or only when 2+ agents OR 2+ active types have appeared?** Default proposal: visible once the drawer has more than 1 unique agent or 2+ unique types in its history. Hidden when there's nothing to filter yet.
-3. **Should the "Clear" button reset filter state too?** Default proposal: no — Clear only empties the list, filter survives. But "Clear all" (list + filter) is a valid alternative.
-4. **Persist filter across app restarts?** Default proposal: no (in-memory). Persist via `~/.config/crabcakes/config.json` if the Captain wants it.
-5. **Dropdown vs. multi-select chips?** Current proposal: `Gtk.DropDown` with checkboxes. Alternative: a row of toggle chips in the header (e.g., `[Coder] [Researcher] [Reviewer]` with strikethrough on hidden). Chips are faster to scan, dropdown is more compact. Captain's preference?
+1. **AND semantics** — row visible only if BOTH agent AND type pass.
+2. **Filter bar visible** once 2+ agents OR 2+ unique types have appeared. Hidden when nothing to filter.
+3. **Clear button** does NOT reset filter state. Filter survives Clear.
+4. **No persistence** — in-memory only, resets on app restart.
+5. **Dropdown UI** — `Gtk.DropDown` with checkboxes, not chips.
 
 ---
 
@@ -631,8 +657,9 @@ Each day produces a shippable state. Day 1 alone solves the core UX problem (cha
 | `Gtk.Paned` divider position resets on tab switch | Low | Drawer is global (not per-tab), so position persists across tab switches. No per-tab storage needed |
 | Drawer steals vertical space from short chat tabs | Low | Set `set_shrink_end_child(True)` so drawer shrinks first. Default position gives 80%+ to chat |
 | `Gtk.ListBox` performance with 500+ rows | Low | Cap at 100 rows (trim oldest 25). Rows are lightweight (icon + label) |
-| Counter-collapse shows wrong count on lifecycle boundaries | Low | Day 3 adds lifecycle separators that break the counter chain |
-| `set_propagate_natural_height(True)` causes drawer to expand unboundedly | Medium | Set `set_max_content_height(200)` on ScrolledWindow |
+| Counter-collapse shows wrong count on lifecycle boundaries | Low | Day 3 adds lifecycle separators that break the counter chain. **Per-agent scope** is explicit: a lifecycle_end for one agent does not break another agent's active counter. State: `dict[agent_name, counter_state]`, popped on that agent's lifecycle_end. |
+| `set_propagate_natural_height(True)` causes drawer to expand unboundedly | Medium | Cap height via `set_max_content_height(200)` (requires GTK 4.10+; this project ships GTK 4.14, so it's safe). Pre-flight: `Gtk.get_major_version() / .get_minor_version()` is logged at app startup; build fails fast if < 4.10. Fallback for older GTK: `set_size_request(-1, 200)` on the ScrolledWindow directly. |
+| `set_max_content_height` doesn't cap the inner list, only the scroll viewport | Low | Pair with explicit `Gtk.ListBox.set_min_children_per_page(0)` and `set_show_separators(False)`; verify the inner box's `set_valign(START)` so rows pack from the top, not center |
 
 ---
 
@@ -689,6 +716,67 @@ This proposal is a **simpler alternative** to QTR's `PROPOSAL-activity-bubble-ux
 9. **Agent list source:** Only agents that have actually emitted events. Not from AgentManager.
 
 **Implementation implication of global drawer:** The ActivityDrawer is wired into `MainWindow._build()`, not `MainContent`. It sits outside the notebook — below the entire MainContent widget. This means it persists across tab switches and shows a unified activity stream from all agents and projects.
+
+---
+
+## 11. Future Work — Added by QTR (Kage-7), 2026-06-01
+
+Items deferred from the initial ship. Not blockers; can be added in a follow-up proposal if user feedback warrants.
+
+### 11.1 Per-Agent Row Caps on Lifecycle End
+
+**Status:** Not in initial ship.
+**Why deferred:** The 100-row global cap is sufficient for typical sessions. Per-agent caps are polish.
+
+**Behavior:** On `on_agent_end(agent_name)`, trim that agent's history to its last 50 rows. The global cap stays at 100 but the per-agent cap means a long Coder run doesn't push out all of Researcher's history.
+
+**Implementation:** After the lifecycle_end summary is appended, walk the rows in reverse, find the rows belonging to that agent, and remove oldest-first until that agent's row count is ≤ 50.
+
+**Effort:** ~1-2 hours.
+
+### 11.2 Search-in-Drawer
+
+**Status:** Not in initial ship.
+**Why deferred:** Not requested. Power-user feature.
+
+**Behavior:** A search field in the drawer header. Type to filter rows by substring match (case-insensitive). Combined with the agent/type filter for narrow results.
+
+**Implementation:** A `Gtk.SearchEntry` in the header. On `search-changed`, recompute visible rows.
+
+**Effort:** ~2-3 hours.
+
+### 11.3 Export Drawer History to File
+
+**Status:** Not in initial ship.
+**Why deferred:** Debugging/diagnostics. Most users won't need it.
+
+**Behavior:** Right-click the drawer header → "Export to file" → writes the current visible rows to a timestamped `.txt` or `.json` file.
+
+**Implementation:** `Gtk.FileDialog` (existing pattern, see `ui/views/left_panel.py:805-840`). Format rows as plain text by default; `.json` includes structured fields (agent, type, timestamp, command, duration).
+
+**Effort:** ~2 hours.
+
+### 11.4 Group-by-Agent Collapse
+
+**Status:** Not in initial ship.
+**Why deferred:** Adds UI complexity (collapse arrows, group headers). Most users will use the filter dropdown instead.
+
+**Behavior:** When drawer is in "group" mode, each agent's events are wrapped in a collapsible group header (similar to conversation threads in Slack). Click the group header to collapse/expand.
+
+**Implementation:** A toggle button "Group by agent" in the header. When on, rows are nested under a `Gtk.Expander` per agent.
+
+**Effort:** ~4-6 hours.
+
+### 11.5 Persist Filter State Across App Restarts
+
+**Status:** Not in initial ship.
+**Why deferred:** Per Qaster's decision §10.8, filter resets on restart. Revisit if users complain.
+
+**Behavior:** Save `self._visible_agents` and `self._visible_types` to `~/.config/crabcakes/drawer_filters.json` on every change. Load at app startup.
+
+**Implementation:** `utils/config.py` already provides `get_config_file()` returning the standard XDG path. Add a section for drawer filters.
+
+**Effort:** ~1-2 hours.
 
 ---
 
