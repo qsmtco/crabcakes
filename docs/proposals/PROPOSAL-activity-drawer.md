@@ -95,14 +95,30 @@ ActivityDrawer (Gtk.Box, vertical)
 
 **Row format:**
 ```
-{icon}  {type_label}  ×{count}  {command_or_detail}  {duration}
+{timestamp}  [{agent}]  {icon}  {type_label}  ×{count}  {file_path}  {command_or_detail}  {exit_badge}  {duration}
 ```
 
 Where:
+- `{timestamp}` — wall clock time (HH:MM) when the event occurred. For correlation with conversation messages.
+- `{agent}` — agent display name ("Coder", "Debugger", etc.). Needed since the drawer is global.
 - `{icon}` — Unicode emoji from the event type (🔧 exec, 📖 read, 📋 plan, etc.)
 - `{count}` — consecutive same-type count (incremented when last row is same type)
-- `{command_or_detail}` — tool name or plan title
+- `{file_path}` — relative path from project root for file-related events (read, write, edit). Omitted for non-file events.
+- `{command_or_detail}` — full command string for exec events, tool name or plan title for others
+- `{exit_badge}` — `✓ 0` (green) for success, `✗ N` (red) for failure. Only shown for exec/command_output events. Omitted for other types.
 - `{duration}` — formatted duration (83ms, 4.2s)
+
+**Example rows:**
+```
+18:23  [Coder]  🔧 exec ×5  pytest tests/auth.py  ✓ 4.2s
+18:21  [Coder]  📖 read     src/auth/login.py         83ms
+18:20  [Coder]  🔧 exec     ruff check            ✗ 1  1.1s
+18:19  [Coder]  ✏️ patch    +12 -3 files             
+```
+
+**Click-to-expand (Day 3 polish):** Clicking an exec row expands it to show the last 5-10 lines of stdout/stderr output. Click again to collapse. Uses `Gtk.Revealer` for smooth animation. The output comes from the `command_output` gateway event payload.
+
+**File path resolution:** Paths are relative to the active project root, not absolute. `ActivityHandler` resolves the project path via `ProjectHandler.get_active_project_name()` and strips the prefix. If no project is active, the full filename is shown.
 
 **Drawer Scope: Global (Confirmed) — Added by QTR (Kage-7), 2026-06-01**
 
@@ -261,11 +277,16 @@ This is a simple visual compression — 5 consecutive EXEC events become one row
     def to_drawer_row(self) -> dict:
         """Convert to structured dict for ActivityDrawer row rendering."""
         return {
+            "timestamp": datetime.now().strftime("%H:%M"),
+            "agent": self.agent_name,
             "icon": self._icon_for_type(),
             "type_label": self.activity_type,
+            "file_path": self._relative_file_path(),  # relative to project root
             "detail": self._format_detail(),
+            "exit_code": self.exit_code,  # None for non-exec types
             "duration": self._format_duration(),
             "activity_type": self.activity_type,
+            "output": self.output,  # stdout/stderr for click-to-expand
         }
 ```
 
@@ -356,18 +377,18 @@ The agent prefix `[Coder]` is the agent-name label that the per-agent filter (be
 
 **Cost:** 10 minutes if gateway sends it; 4-6 hours if not. The first 10 minutes of work determines the cost.
 
-### Day 3: Polish — Header State, Clear, Lifecycle Boundaries
+### Day 3: Polish — Lifecycle Separators, Click-to-Expand, Filter
 
-**Goal:** Drawer responds to agent lifecycle events and provides clear/reset.
+**Goal:** Drawer shows lifecycle boundaries, clickable rows with output preview, and per-agent/per-type filtering.
 
 **Files changed:**
 
 | File | Change |
 |------|--------|
-| `ui/views/activity_drawer.py` | Add `on_agent_start()` and `on_agent_end()` methods |
+| `ui/views/activity_drawer.py` | Add `on_agent_start()` and `on_agent_end()` methods, click-to-expand with `Gtk.Revealer`, filter dropdowns |
 | `ui/handlers/activity_handler.py` | Wire lifecycle events to drawer for section markers |
 | `ui/window.py` | Wire lifecycle callbacks to drawer |
-| `ui/styles.py` | Add `.activity-drawer-separator` CSS for lifecycle dividers |
+| `ui/styles.py` | Add `.activity-drawer-separator`, `.activity-drawer-row-expandable`, `.activity-drawer-output` CSS |
 
 **Lifecycle separators (per-agent, drawer is global):**
 
@@ -388,6 +409,22 @@ When a new turn starts for an agent, insert a start-separator labeled with the a
 **Clear button:** Resets the drawer to empty. Useful for long sessions.
 
 **No auto-collapse.** Per Captain decision (msg #8317): drawer stays expanded until manually collapsed.
+
+**Click-to-expand for exec rows:**
+
+When an exec/command_output row is clicked, a `Gtk.Revealer` below the row expands to show the last 5-10 lines of stdout/stderr. Click again to collapse. This turns the drawer from a simple log into a lightweight terminal viewer.
+
+The output text comes from the `command_output` gateway event's `output` field (already available in the ActivityBubble data from `models/activity.py`).
+
+```
+18:23  [Coder]  🔧 exec ×5  pytest tests/auth.py  ✓ 4.2s
+  │ FAILED tests/test_auth.py::test_login - AssertionError
+  │ FAILED tests/test_auth.py::test_token_refresh - TimeoutError
+  │ 1 failed, 14 passed in 3.87s
+18:21  [Coder]  📖 read     src/auth/login.py         83ms
+```
+
+Only exec/command_output rows are expandable. Read, write, plan, and lifecycle rows are not — they don't have output to show.
 
 #### Per-Agent + Per-Type Filter — Added by QTR (Kage-7), 2026-06-01 (revised msg #5219)
 
