@@ -285,6 +285,11 @@ class ActivityHandler:
                 item_status = data.get("status", "")
                 started_at = data.get("startedAt")
                 ended_at = data.get("endedAt")
+                # SPEC-activity-drawer §2.4: tool bubbles carry agentName from
+                # the gateway payload so the drawer can group per-agent. Same
+                # extraction pattern as the lifecycle branch above — defaults
+                # to "" if the gateway doesn't send agentName on item events.
+                _agent_name = data.get("agentName", "") or ""
                 sk = payload.get("sessionKey", "") or session_key
 
                 if kind == "tool" and self._activity_bubble_callback:
@@ -292,7 +297,8 @@ class ActivityHandler:
                     if item_phase == "start":
                         self._activity_bubble_callback(
                             ActivityBubble(type="tool_start", session_key=sk, tool_name=item_name,
-                                           icon="🔧", status=ToolStatus.RUNNING)
+                                           icon="🔧", status=ToolStatus.RUNNING,
+                                           agent_name=_agent_name)
                         )
                     elif item_phase == "end":
                         is_error = item_status == "failed"
