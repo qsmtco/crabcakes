@@ -202,7 +202,7 @@ class ConnectionSyncHandler:
             if self._chat_handler._agent_runtime_handler is not None:
                 agent_runtime = self._chat_handler._agent_runtime_handler
 
-                def _on_command_output(sk, command, output):
+                def _on_command_output(sk, command, output, exit_code, duration_ms):
                     from models.activity import ActivityBubble
                     bubble = ActivityBubble(
                         type="command_output",
@@ -210,6 +210,8 @@ class ConnectionSyncHandler:
                         tool_name=command,
                         command=command,
                         output=output,
+                        exit_code=exit_code,
+                        duration_ms=duration_ms,
                         icon="💻",
                     )
                     drawer.append_event(bubble.to_drawer_row())

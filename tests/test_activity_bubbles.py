@@ -424,6 +424,93 @@ class TestActivityHandlerActivityBubbles:
         bubble = cb.call_args[0][0]
         assert bubble.agent_name == ""
 
+    def test_data_null_does_not_crash(self, fake_glib):
+        """Gateway payload with data=None must not crash the handler (PHASE 7 Bug #4).
+
+        Bug #4 root cause: payload.get('data', {}) returns the default {} only
+        when the key is MISSING. When the key is present-but-null (data: None),
+        the default is bypassed and downstream .get() crashes with AttributeError.
+        _safe_data() helper coerces any non-dict to {} so all call sites are safe.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+        cb = MagicMock()
+        handler.set_on_activity_bubble(cb)
+
+        # Should not raise for any stream type when data is None
+        for stream in ("assistant", "lifecycle", "item", "plan", "approval", "patch"):
+            try:
+                handler.on_gateway_event("agent", {
+                    "stream": stream,
+                    "sessionKey": "sk-1",
+                    "runId": "r-1",
+                    "data": None,  # explicit null
+                })
+            except Exception as e:
+                pytest.fail(f"handler crashed on data=None for stream={stream!r}: {e}")
+
+    def test_data_missing_does_not_crash(self, fake_glib):
+        """Gateway payload with data key MISSING must not crash the handler.
+
+        Defensive complement to test_data_null_does_not_crash — covers the
+        case where the gateway omits the 'data' key entirely.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+        cb = MagicMock()
+        handler.set_on_activity_bubble(cb)
+
+        for stream in ("assistant", "lifecycle", "item", "plan", "approval", "patch"):
+            try:
+                handler.on_gateway_event("agent", {
+                    "stream": stream,
+                    "sessionKey": "sk-1",
+                    "runId": "r-1",
+                    # NO "data" key at all
+                })
+            except Exception as e:
+                pytest.fail(f"handler crashed on missing-data for stream={stream!r}: {e}")
+
+    def test_data_non_dict_does_not_crash(self, fake_glib):
+        """Gateway payload with data=42 (or other non-dict) must not crash the handler.
+
+        Defensive — _safe_data() coerces any non-dict value to {}.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+        cb = MagicMock()
+        handler.set_on_activity_bubble(cb)
+
+        for bad_value in (42, "string-not-dict", [1, 2, 3], True, None):
+            try:
+                handler.on_gateway_event("agent", {
+                    "stream": "item",
+                    "sessionKey": "sk-1",
+                    "runId": "r-1",
+                    "data": bad_value,
+                })
+            except Exception as e:
+                pytest.fail(f"handler crashed on data={bad_value!r}: {e}")
+
+    def test_set_on_command_output_5_args(self, fake_glib):
+        """AgentRuntimeHandler.set_on_command_output accepts 5 args (PHASE 7 Bug #7).
+
+        Bug #7: spec §2.5 promised 5-arg signature
+        (session_key, command, output, exit_code, duration_ms) but the
+        implementation used 3 args, losing exit_code and duration_ms.
+        """
+        import inspect
+        from ui.handlers.agent_runtime_handler import AgentRuntimeHandler
+        src = inspect.getsource(AgentRuntimeHandler)
+        # Type annotation: should declare Callable[[str, str, str, int, int], None]
+        assert "Callable[[str, str, str, int, int]" in src, (
+            "set_on_command_output signature should be 5 args per spec §2.5"
+        )
+        # Firing site: should call with 5 args
+        assert "_on_command_output(session_key, cmd, tail, exit_code, duration_ms)" in src, (
+            "firing site should pass 5 args (session_key, command, output, exit_code, duration_ms)"
+        )
+
 
 class TestChatHandlerActivityBubbleRender:
     """ChatHandler integration tests for activity/lifecycle routing (Phase 2 SPEC-smarter-chat-ux).

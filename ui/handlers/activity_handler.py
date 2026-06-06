@@ -186,6 +186,17 @@ class ActivityHandler:
         Used to resolve agent_name when the gateway payload's data.agentName is empty.
         """
         self._agent_mgr = agent_mgr
+    def _safe_data(self, payload: dict) -> dict:
+        """Safely extract payload.data — handles missing, None, and non-dict values.
+
+        PHASE 7 Bug #4: dict.get('data', {}) returns the default only when the
+        key is MISSING. When the key is present-but-null (data: None) or a
+        non-dict value, the default is bypassed and downstream .get() crashes
+        with AttributeError. This helper coerces any non-dict result to {} so
+        every call site is safe.
+        """
+        data = payload.get("data")
+        return data if isinstance(data, dict) else {}
 
     def _resolve_agent_name(self, payload: dict) -> str:
         """Resolve the agent display name from a gateway payload.
@@ -201,7 +212,7 @@ class ActivityHandler:
         Returns:
             The agent display name, or "" if unknown.
         """
-        direct = payload.get("data", {}).get("agentName", "") or ""
+        direct = self._safe_data(payload).get("agentName", "") or ""
         if direct:
             return direct
         session_key = payload.get("sessionKey", "") or ""
@@ -267,7 +278,7 @@ class ActivityHandler:
         if event == "agent":
             stream = payload.get("stream", "")
             if stream == "assistant":
-                text = payload.get("data", {}).get("text", "")
+                text = self._safe_data(payload).get("text", "")
                 if text:
                     sk = payload.get("sessionKey", "") or session_key
                     if sk:
@@ -275,7 +286,7 @@ class ActivityHandler:
                         if self._on_assistant_buffer:
                             self._on_assistant_buffer(sk, text)
             if stream == "lifecycle":
-                phase = payload.get("data", {}).get("phase", "")
+                phase = self._safe_data(payload).get("phase", "")
                 # Resolve agent name with AgentManager fallback (SPEC-activity-drawer §2.4 / PHASE 6).
                 # When the gateway's data.agentName is empty, fall back to AgentManager.
                 _agent_name = self._resolve_agent_name(payload)
@@ -316,7 +327,7 @@ class ActivityHandler:
                 # kind="tool" / kind="command" / kind="patch" with phase, name, title, status.
                 # This is why exec bubbles worked (command_output is also broadcast) but
                 # tool_start/tool_end never appeared (stream="tool" never reaches us).
-                data = payload.get("data", {})
+                data = self._safe_data(payload)
                 kind = data.get("kind", "")
                 item_phase = data.get("phase", "")
                 item_name = data.get("name", "") or ""
@@ -352,7 +363,7 @@ class ActivityHandler:
                         )
             elif stream == "plan":
                 # ── Activity bubble: plan update ───────────────────────────
-                data = payload.get("data", {})
+                data = self._safe_data(payload)
                 title = data.get("title", "") or ""
                 steps_raw = data.get("steps", []) or []
                 steps = [s.get("title", "") or str(s) for s in steps_raw]
@@ -363,7 +374,7 @@ class ActivityHandler:
                     self._activity_bubble_callback(bubble)
             elif stream == "approval":
                 # ── Activity bubble: approval request ─────────────────────
-                data = payload.get("data", {})
+                data = self._safe_data(payload)
                 if data.get("phase") == "requested":
                     cmd = data.get("command", "") or ""
                     reason = data.get("reason", "") or ""
@@ -375,7 +386,7 @@ class ActivityHandler:
                         self._activity_bubble_callback(bubble)
             elif stream == "patch":
                 # ── Activity bubble: file edit summary ────────────────────
-                data = payload.get("data", {})
+                data = self._safe_data(payload)
                 if data.get("phase") == "end":
                     name = data.get("name", "") or ""
                     added = len(data.get("added", []) or [])
@@ -391,7 +402,7 @@ class ActivityHandler:
             # Item-level events (stream="item") put phase directly in payload.phase.
             stream = payload.get("stream", "")
             if stream == "lifecycle":
-                phase = payload.get("data", {}).get("phase", "")
+                phase = self._safe_data(payload).get("phase", "")
             else:
                 phase = payload.get("phase", "")
             if phase == "start":

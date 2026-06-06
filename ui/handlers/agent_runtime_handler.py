@@ -81,9 +81,11 @@ class AgentRuntimeHandler:
         self._on_agent_end_cb: Callable[[str], None] | None = None
         self._on_agent_response: Callable[[str, str, str | None], None] | None = None  # Phase 6.2
         # SPEC-activity-drawer Phase 1: command_output callback.
-        # cb(session_key, command, output) — drawer uses command for the row
-        # label and output for click-to-expand revealer.
-        self._on_command_output: Callable[[str, str, str], None] | None = None
+        # cb(session_key, command, output, exit_code, duration_ms) — drawer uses
+        # command for the row label, output for click-to-expand revealer, and
+        # exit_code + duration_ms for the exit badge and duration display
+        # (per SPEC-activity-drawer §2.5).
+        self._on_command_output: Callable[[str, str, str, int, int], None] | None = None
         # Per-session pending exec_command text — captured in _do_tool_call_start,
         # consumed in _do_tool_call_result. Keyed by session_key (one in-flight
         # exec per session is the realistic case).
@@ -105,15 +107,18 @@ class AgentRuntimeHandler:
         """
         self._on_agent_response = cb
 
-    def set_on_command_output(self, cb: Callable[[str, str, str], None]) -> None:
-        """Set callback for command_output drawer events (SPEC-activity-drawer).
+    def set_on_command_output(self, cb: Callable[[str, str, str, int, int], None]) -> None:
+        """Set callback for command_output drawer events (SPEC-activity-drawer §2.5).
 
-        cb(session_key, command, output) — fired when an exec_command completes.
-        `command` is the shell command string captured at start time.
-        `output` is the last 10 lines of stdout/stderr from the ToolResult.
+        cb(session_key, command, output, exit_code, duration_ms) — fired when
+        an exec_command completes.
+        - `command` is the shell command string captured at start time.
+        - `output` is the last 10 lines of stdout/stderr from the ToolResult.
+        - `exit_code` is the int exit code from the ToolResult (0 if not set).
+        - `duration_ms` is the int tool execution time in ms.
 
         Wired in connection_sync_handler.sync() to the drawer's append_event
-        with a dict constructed from these three arguments.
+        with a dict constructed from these five arguments.
         """
         self._on_command_output = cb
 
@@ -646,9 +651,10 @@ class AgentRuntimeHandler:
                 # Persist the updated card data and re-render the widget
                 self._fh.update_card(card_id, card)
 
-        # SPEC-activity-drawer: fire command_output callback for exec_command.
+        # SPEC-activity-drawer §2.5: fire command_output callback for exec_command.
         # Captures the command from start time, takes the last 10 lines of output
-        # from the ToolResult. Output may be empty for silent commands.
+        # from the ToolResult, plus exit_code and duration_ms for the drawer's
+        # exit badge and duration display. Output may be empty for silent commands.
         if name == "exec_command" and self._on_command_output is not None:
             cmd = self._pending_exec_commands.pop(session_key, "")
             output_text = ""
@@ -656,10 +662,14 @@ class AgentRuntimeHandler:
                 output_text = result.output
             elif isinstance(result, str):
                 output_text = result
+            # Extract exit_code (ToolResult.exit_code is int | None; default to 0)
+            exit_code = getattr(result, "exit_code", 0) or 0
+            # Extract duration_ms (ToolResult.duration_ms is int; default to 0)
+            duration_ms = getattr(result, "duration_ms", 0) or 0
             # Tail to last 10 lines (matches drawer's OUTPUT_LINE_CAP)
             lines = output_text.splitlines()
             tail = "\n".join(lines[-10:]) if lines else ""
-            self._on_command_output(session_key, cmd, tail)
+            self._on_command_output(session_key, cmd, tail, exit_code, duration_ms)
 
         # Phase 1.5 review staging — if write_file succeeds and review is active,
         # copy the written file to a shadow staging directory so the PM can Accept/Reject
