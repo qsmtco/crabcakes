@@ -310,7 +310,8 @@ class ActivityHandler:
                         self._activity_bubble_callback(
                             ActivityBubble(type=btype, session_key=sk, tool_name=item_name,
                                            duration_ms=duration_ms, icon=icon,
-                                           status=ToolStatus.ERROR if is_error else ToolStatus.SUCCESS)
+                                           status=ToolStatus.ERROR if is_error else ToolStatus.SUCCESS,
+                                           agent_name=_agent_name)
                         )
             elif stream == "plan":
                 # ── Activity bubble: plan update ───────────────────────────

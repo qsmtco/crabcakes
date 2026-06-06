@@ -258,6 +258,73 @@ class TestActivityHandlerActivityBubbles:
 
         lc_cb.assert_called_once_with("sk-1", "Final response text")
 
+    def test_tool_start_bubble_has_agent_name(self, fake_glib):
+        """Tool bubbles carry agent_name from the gateway payload (spec §2.4).
+
+        Regression test for PHASE 4 — guards against removing the
+        agent_name=_agent_name keyword arg from the tool_start ActivityBubble
+        construction site. Without it, the drawer would show "[Agent]" instead
+        of the actual agent name.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+        cb = MagicMock()
+        handler.set_on_activity_bubble(cb)
+        handler.on_gateway_event("agent", {
+            "stream": "item",
+            "sessionKey": "sk-1",
+            "runId": "run-1",
+            "data": {"phase": "start", "kind": "tool", "name": "web_search", "status": "running", "agentName": "Coder"},
+        })
+        bubble = cb.call_args[0][0]
+        assert bubble.agent_name == "Coder"
+
+    def test_tool_end_bubble_has_agent_name(self, fake_glib):
+        """Tool end bubbles also carry agent_name (spec §2.4).
+
+        Companion to test_tool_start_bubble_has_agent_name — covers the second
+        ActivityBubble construction site (tool_end/tool_error) added in PHASE 4.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+        cb = MagicMock()
+        handler.set_on_activity_bubble(cb)
+        handler.on_gateway_event("agent", {
+            "stream": "item",
+            "sessionKey": "sk-1",
+            "runId": "run-1",
+            "data": {
+                "phase": "end", "kind": "tool", "name": "web_search",
+                "status": "ok", "startedAt": 1000, "endedAt": 2247,
+                "agentName": "Debugger",
+            },
+        })
+        bubble = cb.call_args[0][0]
+        assert bubble.agent_name == "Debugger"
+        # Sanity: duration_ms still works (regression check that we didn't break the line)
+        assert bubble.duration_ms == 1247
+
+    def test_tool_bubble_agent_name_defaults_to_empty(self, fake_glib):
+        """When the gateway doesn't send agentName on tool events, agent_name defaults to ''.
+
+        Defensive — per audit TODO, the gateway may not always send agentName
+        on stream=item events. The drawer falls back to "[Agent]" for unknown
+        agents, which is acceptable.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+        cb = MagicMock()
+        handler.set_on_activity_bubble(cb)
+        handler.on_gateway_event("agent", {
+            "stream": "item",
+            "sessionKey": "sk-1",
+            "runId": "run-1",
+            "data": {"phase": "start", "kind": "tool", "name": "web_search", "status": "running"},
+            # Note: no agentName key
+        })
+        bubble = cb.call_args[0][0]
+        assert bubble.agent_name == ""
+
 
 class TestChatHandlerActivityBubbleRender:
     """ChatHandler integration tests for activity/lifecycle routing (Phase 2 SPEC-smarter-chat-ux).
