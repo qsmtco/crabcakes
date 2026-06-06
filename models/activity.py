@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
+from datetime import datetime
 
 
 # Supported activity types — exhaustive list from gateway event catalog
@@ -152,7 +153,6 @@ class ActivityBubble:
         Returns:
             A new dict. Safe to mutate by the caller.
         """
-        from datetime import datetime
         ts = datetime.now().strftime("%H:%M:%S")
         return {
             "agent": self.agent_name or "Agent",

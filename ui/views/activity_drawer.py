@@ -336,7 +336,7 @@ class ActivityDrawer(Gtk.Box):
 
         # Store metadata on the row box for in-place mutation
         # We attach via setattr (Gtk.Box allows arbitrary attribute assignment in Python).
-        row_box._qtr_row_meta = {  # type: ignore[attr-defined]
+        row_box._row_meta = {  # type: ignore[attr-defined]
             "agent": row.get("agent", "Agent"),
             "activity_type": activity_type,
             "summary_label": label,
@@ -453,7 +453,7 @@ class ActivityDrawer(Gtk.Box):
         Updates the summary label text, the agent's running totals in
         _agent_counters, and the stored metadata.
         """
-        meta = getattr(row_widget, "_qtr_row_meta", None)
+        meta = getattr(row_widget, "_row_meta", None)
         if meta is None:
             return
 
@@ -539,7 +539,7 @@ class ActivityDrawer(Gtk.Box):
                 break
             child = lb_row.get_child()
             if child is not None:
-                meta = getattr(child, "_qtr_row_meta", None)
+                meta = getattr(child, "_row_meta", None)
                 if meta is not None:
                     if self._passes_filter(meta["agent"], meta["activity_type"]):
                         count += 1
@@ -672,7 +672,7 @@ class ActivityDrawer(Gtk.Box):
                 break
             child = lb_row.get_child()
             if child is not None:
-                meta = getattr(child, "_qtr_row_meta", None)
+                meta = getattr(child, "_row_meta", None)
                 if meta is not None:
                     visible = self._passes_filter(meta["agent"], meta["activity_type"])
                     lb_row.set_visible(visible)
