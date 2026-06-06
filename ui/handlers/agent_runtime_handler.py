@@ -198,6 +198,27 @@ class AgentRuntimeHandler:
         """Return the SpecialAgentDef for a session key, or None."""
         return self._agents.get(session_key)
 
+    def get_agent_name_for_session(self, session_key: str) -> str:
+        """Return the display name of the local special agent that owns this session, or ''.
+
+        Used by the local exec adapter (in connection_sync_handler.py) to populate
+        ActivityBubble.agent_name so the activity drawer shows the right agent name
+        in the [Agent] column. Mirrors the fallback chain in
+        ActivityHandler._resolve_agent_name, but resolves locally via session_key
+        since local exec bubbles don't have a gateway payload to read data.agentName
+        from.
+
+        Args:
+            session_key: The agent's session key.
+
+        Returns:
+            The agent's display name (e.g. "Coder"), or "" if not found.
+        """
+        agent_def = self._agents.get(session_key)
+        if agent_def is None:
+            return ""
+        return getattr(agent_def, "display_name", "") or ""
+
     def approve_exec(self, approval_id: str, approved: bool) -> None:
         """
         Resolve a pending exec_command approval.

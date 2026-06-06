@@ -204,6 +204,13 @@ class ConnectionSyncHandler:
 
                 def _on_command_output(sk, command, output, exit_code, duration_ms):
                     from models.activity import ActivityBubble
+                    # Resolve agent name via AgentRuntimeHandler (mirrors the fallback
+                    # chain in ActivityHandler._resolve_agent_name). Local exec bubbles
+                    # don't have a gateway payload to read data.agentName from, so we
+                    # resolve locally via session_key.
+                    agent_name = ""
+                    if agent_runtime is not None:
+                        agent_name = agent_runtime.get_agent_name_for_session(sk) or ""
                     bubble = ActivityBubble(
                         type="command_output",
                         session_key=sk,
@@ -213,6 +220,7 @@ class ConnectionSyncHandler:
                         exit_code=exit_code,
                         duration_ms=duration_ms,
                         icon="💻",
+                        agent_name=agent_name,
                     )
                     drawer.append_event(bubble.to_drawer_row())
                 agent_runtime.set_on_command_output(_on_command_output)
