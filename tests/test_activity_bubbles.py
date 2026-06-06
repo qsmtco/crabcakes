@@ -200,27 +200,6 @@ class TestActivityHandlerActivityBubbles:
         assert bubble.approval_id == "ap-1"
         assert bubble.icon == "🔒"
 
-    def test_command_output_end_fires_callback(self, fake_glib):
-        from ui.handlers.activity_handler import ActivityHandler
-        from models.activity import ActivityBubble
-        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
-        cb = MagicMock()
-        handler.set_on_activity_bubble(cb)
-
-        handler.on_gateway_event("agent", {
-            "stream": "command_output",
-            "sessionKey": "sk-1",
-            "runId": "run-1",
-            "data": {"phase": "end", "name": "git diff", "exitCode": 0, "durationMs": 1200}
-        })
-
-        bubble = cb.call_args[0][0]
-        assert bubble.type == "command_output"
-        assert bubble.tool_name == "git diff"
-        assert bubble.exit_code == 0
-        assert bubble.duration_ms == 1200
-        assert bubble.icon == "💻"
-
     def test_patch_end_fires_callback(self, fake_glib):
         from ui.handlers.activity_handler import ActivityHandler
         from models.activity import ActivityBubble
@@ -281,104 +260,11 @@ class TestActivityHandlerActivityBubbles:
 
 
 class TestChatHandlerActivityBubbleRender:
-    """ChatHandler._render_activity_bubble routes to render_activity."""
+    """ChatHandler integration tests for activity/lifecycle routing (Phase 2 SPEC-smarter-chat-ux).
 
-    def test_render_activity_bubble_impl_calls_render_activity(self, fake_glib):
-        """_render_activity_bubble_impl calls render_activity with text and type."""
-        from ui.handlers.chat_handler import ChatHandler
-        mock_mc = MagicMock()
-        mock_chat_box = MagicMock()
-        mock_mc.get_chat_box_for_session.return_value = mock_chat_box
-
-        handler = ChatHandler(
-            main_content=mock_mc,
-            gateway_client=MagicMock(),
-            agent_to_project=MagicMock(),
-            projects_module=MagicMock(),
-            GLib_module=fake_glib,
-        )
-
-        mock_render = MagicMock(return_value=MagicMock())
-        handler._chat_render_handler = MagicMock()
-        handler._chat_render_handler.render_activity = mock_render
-        mock_mc.scroll_chat_to_bottom = MagicMock()
-
-        handler._render_activity_bubble_impl("sk-1", "search", "tool_start")
-
-        mock_render.assert_called_once_with("search", "tool_start")
-        mock_chat_box.append.assert_called_once()
-
-    def test_render_activity_no_render_when_no_chat_box(self, fake_glib):
-        """No crash when chat_box is None."""
-        from ui.handlers.chat_handler import ChatHandler
-        mock_mc = MagicMock()
-        mock_mc.get_chat_box_for_session.return_value = None
-
-        handler = ChatHandler(
-            main_content=mock_mc,
-            gateway_client=MagicMock(),
-            agent_to_project=MagicMock(),
-            projects_module=MagicMock(),
-            GLib_module=fake_glib,
-        )
-
-        handler._chat_render_handler = MagicMock()
-        handler._render_activity_bubble_impl("sk-1", "✅ read_file (83ms)", "tool_end")
-        # No crash, no render
-        handler._chat_render_handler.render_activity.assert_not_called()
-
-    def test_render_activity_routes_via_project_table(self, fake_glib):
-        """If agent key has no direct tab, resolve via routing table to project tab."""
-        from ui.handlers.chat_handler import ChatHandler
-
-        class FakeRouting:
-            def get_project(self, sk):
-                return "crabwatch" if sk == "agent:qaster" else None
-        
-        routing = FakeRouting()
-        mock_project_chat_box = MagicMock()
-        mock_mc = MagicMock()
-        mock_mc.get_chat_box_for_session = lambda sk: mock_project_chat_box if sk == "project:crabwatch" else None
-
-        handler = ChatHandler(
-            main_content=mock_mc,
-            gateway_client=MagicMock(),
-            agent_to_project=routing,
-            projects_module=MagicMock(),
-            GLib_module=fake_glib,
-        )
-
-        mock_render = MagicMock(return_value=MagicMock())
-        handler._chat_render_handler = MagicMock()
-        handler._chat_render_handler.render_activity = mock_render
-
-        handler._render_activity_bubble_impl("agent:qaster", "search nodes", "tool_start")
-        # Should resolve to project:crabwatch chat box and render
-        mock_render.assert_called_once_with("search nodes", "tool_start")
-        mock_project_chat_box.append.assert_called_once()
-
-    def test_render_activity_skips_when_routing_table_returns_none(self, fake_glib):
-        """If routing table returns no project, silently skip — no crash."""
-        from ui.handlers.chat_handler import ChatHandler
-
-        class FakeRouting:
-            def get_project(self, sk):
-                return None
-        
-        mock_mc = MagicMock()
-        mock_mc.get_chat_box_for_session.return_value = None
-
-        handler = ChatHandler(
-            main_content=mock_mc,
-            gateway_client=MagicMock(),
-            agent_to_project=FakeRouting(),
-            projects_module=MagicMock(),
-            GLib_module=fake_glib,
-        )
-
-        handler._chat_render_handler = MagicMock()
-        handler._render_activity_bubble_impl("agent:unknown", "search", "tool_start")
-        handler._chat_render_handler.render_activity.assert_not_called()
+    The 4 _render_activity_bubble tests were REMOVED in SPEC-activity-drawer Phase 1
+    (those methods are deleted; activity now flows to ActivityDrawer, not chat).
+    """
 
     def test_lifecycle_fallback_routes_to_project_tab(self, fake_glib):
         """Lifecycle fallback resolves to project tab when agent has no direct tab."""

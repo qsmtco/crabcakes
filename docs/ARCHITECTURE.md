@@ -122,8 +122,11 @@ crabcakes/
 │   │   ├── agent_command_handler.py # AgentCommandHandler — agent response slash-command parser (Phase 6.2)
 │   │   ├── feed_handler.py        # ~867 lines — FeedHandler — feed card lifecycle, persistence, review actions (Phase 5)
 │   │   └── session_handler.py     # ~164 lines — SessionHandler — session switching commands (Phase 7)
+│   │   ├── connection_sync_handler.py  # post-connect wiring (Phase 3a extraction)
+│   │   ├── forward_handler.py     # 17 tests (Phase 3b extraction)
 │   └── views/                 # View widgets
 │       ├── __init__.py
+│       ├── activity_drawer.py  # NEW (SPEC-activity-drawer) — collapsible activity event panel
 │       ├── chat_bubble.py      # build_role_bubble() — chat bubble widget factories (Phase 1)
 │       ├── chat_control_bar.py # ChatControlBar — planned stub (update() not wired)
 │       ├── feedbar.py          # FeedBar — Response Status Bar + progress bar + ActivityHandler public API (Phase 6)
@@ -259,6 +262,7 @@ client.send_message(session_key, text, on_sent=cb)
 | `CommandRegistry` | `command.py` | Maps command names to handlers; extensible |
 | `StreamingBubble` | `streaming.py` | Dataclass for streaming bubble state (Phase 5) |
 | `FeedCardData` | `feed_card.py` | Dataclass for Project Feed cards (Phase 5) |
+| `ActivityBubble` | `activity.py` | Dataclass for activity event state; `to_drawer_row()` builds the dict the ActivityDrawer consumes (SPEC-activity-drawer) |
 | `Task`, `TaskStore` | `task.py` | Task data model + in-memory store (Phase 3) |
 | `ReviewState` | `review_state.py` | Per-project review session data (Phase 7) |
 
@@ -781,6 +785,40 @@ Right-clicking a project tab now shows a project-specific menu (All / member ent
 - All content is `set_selectable(True)` for copy
 
 **Architecture:** Each segment becomes a child widget inside a vertical `Gtk.Box`. The bubble's CSS class (`.chat-bubble-you` / `.chat-bubble-agent`) controls bubble background.
+
+
+### 3.14j `ui/views/activity_drawer.py` — Activity Drawer (SPEC-activity-drawer)
+
+**Responsibility:** Collapsible GTK panel below the chat that displays activity events (tool calls, plans, approvals, command output, patches, lifecycle separators) in a scrollable `Gtk.ListBox`. Pure view — no business logic, no gateway calls, no state mutations beyond its own widget tree.
+
+**Owns:** Internal widget tree (header bar, list, filter state, per-agent counters, separator tracking, expanded revealers). All state is private to the drawer.
+
+**Public API:**
+```python
+class ActivityDrawer(Gtk.Box):
+    def __init__(self) -> None
+    def append_event(self, row: dict) -> None     # row from ActivityBubble.to_drawer_row()
+    def on_agent_start(self, session_key: str, agent_name: str) -> None
+    def on_agent_end(self, session_key: str, agent_name: str) -> None
+    def clear_events(self) -> None                  # remove all rows, reset state
+    def toggle(self) -> None                       # programmatic expand/collapse
+```
+
+**Counter-collapse behavior:** Consecutive events with the same `(agent_name, activity_type)` are merged in place — count increments, duration sums. The first event of a new `(agent, type)` pair opens a new row.
+
+**Filter semantics:** Two filter dropdowns (agent, type) with AND semantics. Empty set = all pass. Filter state lives in `self._visible_agents` and `self._visible_types`. Filter resets on `clear_events()`.
+
+**Click-to-expand:** Rows with `output` set (command_output, tool_end, tool_error) get a `Gtk.Revealer` that toggles on row click, showing the last 10 lines.
+
+**Lifecycle separators:** `on_agent_start` / `on_agent_end` insert marker rows that break the counter chain for the named agent and show per-agent stats on end.
+
+**Thread safety:** `append_event`, `on_agent_start`, `on_agent_end`, `clear_events`, `toggle` must all be called on the GTK main thread. ActivityHandler already dispatches via `GLib.idle_add()` before firing callbacks.
+
+**Architecture rules:**
+- Lives in `ui/views/` — no imports from `gateway/`, `agent/`, `ui/handlers/`
+- Receives data as flat dicts (see `models/activity.py:ActivityBubble.to_drawer_row()`)
+- Pure view — no business logic, no state beyond the widget tree
+- Connected to ActivityHandler via `set_on_activity_bubble` (adapter in `connection_sync_handler.sync()` converts `ActivityBubble` to dict via `to_drawer_row()`)
 
 
 ### 3.15 `ui/handlers/gateway_handler.py` — Gateway Handler (Phase 2)
@@ -1786,6 +1824,7 @@ Public setters for the recovery callbacks:
 set_on_assistant_buffer(cb)                     # cb(session_key, text) — forward each assistant delta
 set_on_lifecycle_completed(cb)                 # cb(session_key, text) — lifecycle end/error fires this; ChatHandler renders fallback
 set_on_activity_bubble(cb)                     # cb(ActivityBubble) — tool/plan/approval/command_output/patch events; Phase 2 of SPEC-smarter-chat-ux
+set_on_agent_lifecycle(cb)                      # NEW (SPEC-activity-drawer) — cb(session_key, agent_name, "start"|"end") for per-agent separator rows in the drawer
 set_on_agent_start(cb)                          # cb(session_key) — clears ChatHandler render guard for next round. Receives RAW session_key from the gateway event (the agent key), not _active_session() key.
 set_agent_routing(routing_table)                # Injected by window.py._build(). Enables _is_ui_active() to resolve project tabs for agent session keys.
 ```
@@ -1798,13 +1837,12 @@ ActivityHandler fires `_activity_bubble_callback` for each gateway event that wa
 - `stream=tool phase=end` → ✅ {name} ({durationMs}ms)  or  ❌ {name} — error
 - `stream=plan` → 📋 Plan: {title} ({n} steps)
 - `stream=approval phase=requested` → 🔒 Approval needed: {command}
-- `stream=command_output phase=end` → 💻 {name}: exit {exitCode} ({durationMs}ms)
 - `stream=patch phase=end` → ✏️ {name}: +{added} ~{modified} -{deleted} files
 
-Architecture: ActivityHandler only creates ActivityBubble dataclass instances and fires the callback. ChatHandler owns all rendering decisions — `_render_activity_bubble()` calls `_render_activity_bubble_impl()` which calls `render_sync(role="System", text=...)`.
+Architecture: ActivityHandler only creates ActivityBubble dataclass instances and fires the callback. As of SPEC-activity-drawer Phase 1, the callback target is `ActivityDrawer.append_event(bubble.to_drawer_row())` — the adapter that converts the dataclass to the drawer's dict shape lives in `connection_sync_handler.sync()`. ChatHandler no longer renders activity bubbles.
 
 Activity bubbles (Phase 2 of SPEC-smarter-chat-ux):
-- `on_gateway_event()` parses `stream` values `tool`, `plan`, `approval`, `command_output`, `patch`
+- `on_gateway_event()` parses `stream` values `tool`, `plan`, `approval`, `patch`
 - Constructs `ActivityBubble` (from `models/activity.py`) and fires the callback
 - ChatHandler's `render_activity_bubble()` renders via `ChatRenderHandler.render_activity()`
 
@@ -2999,8 +3037,11 @@ crabcakes/
 │   │   ├── prompts_handler.py    # ~208 lines — favorites, search, last-used, load_prompt()
 │   │   ├── review_handler.py     # ~400 lines — review session lifecycle: checkpoint/check/accept/reject (Phase 7)
 │   │   └── session_handler.py    # ~164 lines — SessionHandler — session switching commands (Phase 7)
+│   │   ├── connection_sync_handler.py  # post-connect wiring
+│   │   ├── forward_handler.py     # 17 tests (Phase 3b extraction)
 │   └── views/
 │       ├── __init__.py           # 1 line
+│       ├── activity_drawer.py     # NEW (SPEC-activity-drawer) — collapsible activity event panel
 │       ├── agent_builder.py      # AgentBuilderDialog — modal dialog for creating/editing agents
 │       ├── chat_bubble.py        # ~1015 lines — build_role_bubble() factory (Phase 1 + 2 block-level)
 │       ├── chat_control_bar.py   # ~58 lines — ChatControlBar (stub — update() not wired)
@@ -3080,6 +3121,7 @@ tests/                           # 61 files (57 test + 4 support)
     ├── generate_synthetic_conversations.py  # Test data generator
     ├── fixtures/
     ├── test_activity_bubbles.py
+    ├── test_activity_drawer.py     # NEW (SPEC-activity-drawer) — drawer view tests
     ├── test_agent_builder_handler.py
     ├── test_agent_command_handler.py  # ~713 lines
     ├── test_agent_defs.py

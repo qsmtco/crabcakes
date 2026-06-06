@@ -586,46 +586,6 @@ class ChatRenderHandler:
         # Reset message grouping key so next message starts fresh
         self._last_message_key = None
 
-    def render_activity(self, text: str, activity_type: str = ""):
-        """Render a centered, pill-shaped activity bubble.
-
-        Activity bubbles are ephemeral status indicators — visually distinct from
-        conversation messages. Centered, semi-transparent, rounded pill that only
-        grows to fit its content.
-
-        Args:
-            text: Display text (already formatted by ActivityBubble.format_text())
-            activity_type: ActivityType value string (for CSS class targeting)
-
-        Returns:
-            Gtk.Box widget (outer centering wrapper), or None on error.
-        """
-        try:
-            # Inner pill container
-            pill = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-            pill.add_css_class("activity-bubble")
-            if activity_type:
-                pill.add_css_class(f"activity-{activity_type}")
-
-            label = Gtk.Label(label=text)
-            label.set_wrap(False)  # Single line, let pill size naturally
-            label.set_xalign(0.5)
-            label.add_css_class("activity-bubble-text")
-
-            pill.append(label)
-            pill.set_margin_top(3)
-            pill.set_margin_bottom(3)
-
-            # Outer wrapper: centers the pill horizontally, doesn't stretch full width
-            wrapper = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-            wrapper.set_halign(Gtk.Align.CENTER)
-            wrapper.append(pill)
-            return wrapper
-        except Exception as e:
-            import logging as _logging
-            _logging.getLogger(__name__).warning("Failed to render activity bubble: %s", e)
-            return None
-
     def render_event_card(self, event_type: str, container: Gtk.Box, session_key: str = None, **kwargs):
         """
         Render a special event card into container.

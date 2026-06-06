@@ -75,6 +75,11 @@ class ActivityBubble:
     modified: int = 0
     deleted: int = 0
     raw_text: str = ""
+    # SPEC-activity-drawer Phase 1: enrichment fields for the drawer view.
+    # Defaulted to "" so existing call sites that don't supply them still work.
+    agent_name: str = ""      # Display name of the agent that emitted the event (e.g. "Coder")
+    file_path: str = ""       # Relative file path for read/write/edit events
+    output: str = ""          # Last N lines of stdout/stderr for command_output click-to-expand
 
     def format_text(self) -> str:
         """
@@ -127,6 +132,96 @@ class ActivityBubble:
             return f"{self.tool_name}  {label}"
         else:
             return self.raw_text or self.type
+
+    def to_drawer_row(self) -> dict:
+        """
+        Build the dict the ActivityDrawer view consumes.
+
+        The drawer (ui/views/activity_drawer.py) expects a flat dict with these
+        keys (see _format_summary and _build_row_widget):
+            agent, agent_name, session_key, activity_type, icon, type_label,
+            title, command, file_path, output, exit_code, duration, duration_ms,
+            timestamp, raw_text, added, modified, deleted
+
+        Notes:
+        - The drawer reads `agent` (not `agent_name`); we map agent_name → agent.
+        - `type_label` is a human label derived from activity_type.
+        - `duration` is a pre-formatted string (e.g. "1.2s"); duration_ms is the raw int.
+        - `timestamp` is HH:MM:SS formatted for header display; None until set by caller.
+
+        Returns:
+            A new dict. Safe to mutate by the caller.
+        """
+        from datetime import datetime
+        ts = datetime.now().strftime("%H:%M:%S")
+        return {
+            "agent": self.agent_name or "Agent",
+            "agent_name": self.agent_name,
+            "session_key": self.session_key,
+            "activity_type": self.type,
+            "icon": self.icon,
+            "type_label": _type_label(self.type),
+            "title": self.title,
+            "command": self.command,
+            "file_path": self.file_path,
+            "output": self.output,
+            "exit_code": self.exit_code if self.type == "command_output" else None,
+            "duration": _format_duration(self.duration_ms) if self.duration_ms else "",
+            "duration_ms": self.duration_ms,
+            "timestamp": ts,
+            "raw_text": self.raw_text,
+            "added": self.added,
+            "modified": self.modified,
+            "deleted": self.deleted,
+        }
+
+
+def _type_label(activity_type: str) -> str:
+    """
+    Map an ActivityType literal to a short human label for the drawer row.
+
+    Mirrors the helper in ui/views/activity_drawer.py — both modules use the
+    same logic. Keep in sync if you change one.
+
+    Returns the input verbatim if no mapping exists.
+    """
+    if not activity_type:
+        return ""
+    mapping = {
+        "command_output": "exec",
+        "lifecycle_start": "lifecycle",
+        "lifecycle_end": "lifecycle",
+        "plan": "plan",
+        "approval_request": "approval",
+        "patch": "patch",
+        "tool_start": "tool",
+        "tool_end": "tool",
+        "tool_error": "tool",
+    }
+    return mapping.get(activity_type, activity_type)
+
+
+def _format_duration(ms: int) -> str:
+    """
+    Format a duration in milliseconds as a short human string.
+
+    Mirrors the helper in ui/views/activity_drawer.py — both modules use the
+    same logic. Keep in sync if you change one.
+
+    Rules:
+    - ms < 1000      → "Nms"            (e.g. "847ms")
+    - ms < 60_000    → "N.Ns"           (e.g. "1.2s")
+    - ms >= 60_000   → "Nm Ns"          (e.g. "1m 23s")
+    - ms <= 0        → ""               (no duration to show)
+    """
+    if ms is None or ms <= 0:
+        return ""
+    if ms < 1000:
+        return f"{ms}ms"
+    if ms < 60_000:
+        return f"{ms / 1000:.1f}s"
+    minutes, secs = divmod(ms // 1000, 60)
+    return f"{minutes}m {secs}s"
 
 
 def _friendly_tool_name(name: str) -> str:

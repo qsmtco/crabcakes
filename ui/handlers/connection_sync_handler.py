@@ -88,6 +88,18 @@ class ConnectionSyncHandler:
         self._agent_to_project = agent_to_project
         self._on_forward_clicked = on_forward_clicked
         self._project_path_provider = project_path_provider
+        # ActivityDrawer (SPEC-activity-drawer Phase 1) — set via setter after construction
+        self._activity_drawer = None
+
+    def set_activity_drawer(self, drawer) -> None:
+        """Set the ActivityDrawer for activity bubble routing (SPEC-activity-drawer).
+
+        Called by window.py._build() after both connection_sync_handler and the
+        drawer are constructed. The actual set_on_activity_bubble wiring happens
+        in sync() (called after gateway connect) so that the drawer's append_event
+        is the target from the first gateway event onward.
+        """
+        self._activity_drawer = drawer
 
     def sync(self, gw: "GatewayClient") -> None:
         """
@@ -157,5 +169,43 @@ class ConnectionSyncHandler:
         self._activity_handler.set_on_assistant_buffer(self._chat_handler._buffer_assistant_text)
         # Wire agent start → clear render guard so subsequent responses render
         self._activity_handler.set_on_agent_start(self._chat_handler._clear_render_guard)
-        # Wire activity bubbles: ActivityHandler → ChatHandler (Phase 2 of SPEC-smarter-chat-ux)
-        self._activity_handler.set_on_activity_bubble(self._chat_handler._render_activity_bubble)
+        # Wire activity bubbles: ActivityHandler → ActivityDrawer (SPEC-activity-drawer Phase 1)
+        # The drawer's append_event(row_dict) is the new target; ChatHandler no longer renders activity.
+        # We wrap with a small adapter that converts the ActivityBubble dataclass
+        # into the dict shape the drawer expects (via ActivityBubble.to_drawer_row()).
+        if self._activity_drawer is not None:
+            drawer = self._activity_drawer
+
+            def _bubble_to_row(bubble):
+                return drawer.append_event(bubble.to_drawer_row())
+
+            self._activity_handler.set_on_activity_bubble(_bubble_to_row)
+            # Lifecycle separators (start/end) — drawer tracks per-agent counter
+            # chain breaks via these. Adapter splits the single callback into
+            # on_agent_start / on_agent_end on the drawer.
+            def _on_lifecycle(sk, agent_name, phase):
+                if phase == "start":
+                    drawer.on_agent_start(sk, agent_name)
+                elif phase == "end":
+                    drawer.on_agent_end(sk, agent_name)
+            self._activity_handler.set_on_agent_lifecycle(_on_lifecycle)
+            # Wire local exec_command output → drawer (SPEC-activity-drawer Phase 2).
+            # AgentRuntimeHandler fires (session_key, command, output) when a local
+            # exec_command completes. Adapter builds an ActivityBubble and routes to
+            # the drawer's append_event() via to_drawer_row() — same path as gateway
+            # bubbles. Runtime may be None if special agents aren't loaded.
+            if self._chat_handler._agent_runtime_handler is not None:
+                agent_runtime = self._chat_handler._agent_runtime_handler
+
+                def _on_command_output(sk, command, output):
+                    from models.activity import ActivityBubble
+                    bubble = ActivityBubble(
+                        type="command_output",
+                        session_key=sk,
+                        tool_name=command,
+                        command=command,
+                        output=output,
+                        icon="💻",
+                    )
+                    drawer.append_event(bubble.to_drawer_row())
+                agent_runtime.set_on_command_output(_on_command_output)

@@ -36,6 +36,7 @@ from ui.toolbar import Toolbar
 from ui.views.feedbar import FeedBar
 from ui.views.left_panel import LeftPanel
 from ui.views.main_content import MainContent
+from ui.views.activity_drawer import ActivityDrawer
 from ui.handlers.chat_handler import ChatHandler
 from ui.handlers.gateway_handler import GatewayHandler
 from ui.handlers.media_handler import MediaHandler
@@ -355,6 +356,8 @@ class MainWindow(Gtk.ApplicationWindow):
                 self._crabwatch_handler.start_watching(p, n),
                 self._chat_render_handler.set_project_name(n),
                 self._agent_runtime_handler.set_active_project(n, p),
+                # SPEC-activity-drawer: clear stale events when switching projects
+                self._activity_drawer.clear_events(),
                 self._on_feed_bar_update(n, len(self._project_handler.get_project_members(n)) if n else 0),
             )
         )
@@ -476,6 +479,18 @@ class MainWindow(Gtk.ApplicationWindow):
         # Wire the sync callback to fire on gateway connect
         self._gateway_handler.set_sync_callback(self._connection_sync_handler.sync)
 
+        # SPEC-activity-drawer Phase 1: construct the ActivityDrawer BEFORE the
+        # connection sync handler tries to wire it. The drawer widget itself is
+        # lightweight (a Gtk.Box shell), so constructing it here is safe; the
+        # actual re-parenting of main_content into the vertical Paned happens
+        # in the drawer block at the end of _build().
+        self._activity_drawer = ActivityDrawer()
+        # The actual bubble + lifecycle wiring happens in sync() (after gateway
+        # connect) so the drawer's append_event / on_agent_start /
+        # on_agent_end are the targets from the first gateway event onward.
+        # ChatHandler no longer renders activity.
+        self._connection_sync_handler.set_activity_drawer(self._activity_drawer)
+
         # Wire project lifecycle → ReviewHandler
         self._project_handler.set_on_project_opened(
             lambda n, p: (self._review_handler.on_project_opened(n, p))
@@ -511,6 +526,24 @@ class MainWindow(Gtk.ApplicationWindow):
         main_box.append(paned)
 
         self.set_child(main_box)
+
+        # ── Activity Drawer (SPEC-activity-drawer Phase 1) ───────────────
+        # Wrap main_content in a vertical Paned with the drawer below.
+        # The drawer is global (one per window), not per-tab.
+        # NOTE: self._activity_drawer is constructed earlier in _build() so
+        # ConnectionSyncHandler can hold a reference to it. This block now
+        # only handles the re-parenting of main_content into the Paned.
+        self._activity_paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+        self._activity_paned.set_end_child(self._activity_drawer)
+        # Default: most space to chat (chat ~600px of ~800px window)
+        self._activity_paned.set_position(600)
+        self._activity_paned.set_shrink_end_child(True)
+        self._activity_paned.set_resize_end_child(False)
+        # Remove main_content from right_box BEFORE re-parenting it into the
+        # new vertical Paned (GTK4 paned asserts child is unparented).
+        right_box.remove(self._main_content)
+        self._activity_paned.set_start_child(self._main_content)
+        right_box.append(self._activity_paned)
 
     # ── Keyboard shortcuts ───────────────────────────────────────────────────
 

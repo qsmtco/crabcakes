@@ -398,9 +398,24 @@ class TestActivityHandlerWiring:
     def test_sync_calls_activity_handler_set_on_activity_bubble(
         self, handler, deps, gw
     ):
+        # SPEC-activity-drawer Phase 1: set_on_activity_bubble is only called
+        # when an ActivityDrawer has been provided via set_activity_drawer().
+        # Without a drawer, no wiring happens (drawer is None by default).
+        handler.sync(gw)
+        # No drawer was set in this test, so set_on_activity_bubble should not have been called.
+        deps["activity_handler"].set_on_activity_bubble.assert_not_called()
+
+    def test_sync_with_drawer_routes_set_on_activity_bubble_to_drawer(
+        self, handler, deps, gw
+    ):
+        # SPEC-activity-drawer Phase 1: when an ActivityDrawer is set,
+        # set_on_activity_bubble is wired to drawer.append_event (not the
+        # removed _render_activity_bubble).
+        mock_drawer = MagicMock()
+        handler.set_activity_drawer(mock_drawer)
         handler.sync(gw)
         deps["activity_handler"].set_on_activity_bubble.assert_called_once_with(
-            deps["chat_handler"]._render_activity_bubble
+            mock_drawer.append_event
         )
 
 

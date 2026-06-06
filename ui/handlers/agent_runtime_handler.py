@@ -80,6 +80,14 @@ class AgentRuntimeHandler:
         self._on_agent_start_cb: Callable[[str], None] | None = None
         self._on_agent_end_cb: Callable[[str], None] | None = None
         self._on_agent_response: Callable[[str, str, str | None], None] | None = None  # Phase 6.2
+        # SPEC-activity-drawer Phase 1: command_output callback.
+        # cb(session_key, command, output) — drawer uses command for the row
+        # label and output for click-to-expand revealer.
+        self._on_command_output: Callable[[str, str, str], None] | None = None
+        # Per-session pending exec_command text — captured in _do_tool_call_start,
+        # consumed in _do_tool_call_result. Keyed by session_key (one in-flight
+        # exec per session is the realistic case).
+        self._pending_exec_commands: dict[str, str] = {}
 
     def set_on_agent_start(self, cb: Callable[[str], None]) -> None:
         """Set callback fired when a local agent starts processing. Signature: cb(session_key)."""
@@ -96,6 +104,18 @@ class AgentRuntimeHandler:
         session key, full response text, and active project name.
         """
         self._on_agent_response = cb
+
+    def set_on_command_output(self, cb: Callable[[str, str, str], None]) -> None:
+        """Set callback for command_output drawer events (SPEC-activity-drawer).
+
+        cb(session_key, command, output) — fired when an exec_command completes.
+        `command` is the shell command string captured at start time.
+        `output` is the last 10 lines of stdout/stderr from the ToolResult.
+
+        Wired in connection_sync_handler.sync() to the drawer's append_event
+        with a dict constructed from these three arguments.
+        """
+        self._on_command_output = cb
 
     def set_review_handler(self, review_handler) -> None:
         """Set ReviewHandler after construction (deferred to avoid circular deps with window._build)."""
@@ -530,6 +550,10 @@ class AgentRuntimeHandler:
         elif name == "exec_command":
             cmd = args.get("command", "?")
             title = f"{agent_name} is running: {cmd[:60]}"
+            # SPEC-activity-drawer: capture the command for the command_output
+            # drawer row that fires when the result comes back. Stored per-session
+            # so _do_tool_call_result can resolve it.
+            self._pending_exec_commands[session_key] = cmd
         elif name == "list_files":
             title = f"{agent_name} is listing {args.get('path', '.')}"
         elif name == "search_files":
@@ -621,6 +645,21 @@ class AgentRuntimeHandler:
 
                 # Persist the updated card data and re-render the widget
                 self._fh.update_card(card_id, card)
+
+        # SPEC-activity-drawer: fire command_output callback for exec_command.
+        # Captures the command from start time, takes the last 10 lines of output
+        # from the ToolResult. Output may be empty for silent commands.
+        if name == "exec_command" and self._on_command_output is not None:
+            cmd = self._pending_exec_commands.pop(session_key, "")
+            output_text = ""
+            if hasattr(result, "output") and result.output:
+                output_text = result.output
+            elif isinstance(result, str):
+                output_text = result
+            # Tail to last 10 lines (matches drawer's OUTPUT_LINE_CAP)
+            lines = output_text.splitlines()
+            tail = "\n".join(lines[-10:]) if lines else ""
+            self._on_command_output(session_key, cmd, tail)
 
         # Phase 1.5 review staging — if write_file succeeds and review is active,
         # copy the written file to a shadow staging directory so the PM can Accept/Reject

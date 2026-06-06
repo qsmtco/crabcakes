@@ -64,6 +64,10 @@ class ActivityHandler:
         self._lifecycle_completed_callback: Callable[[str, str], None] | None = None  # cb(sk, text)
         self._activity_bubble_callback: Callable[['ActivityBubble'], None] | None = None  # cb(bubble)
         self._on_agent_start_callback: Callable[[str], None] | None = None  # cb(sk) — clears render guard
+        # SPEC-activity-drawer Phase 1: lifecycle separator callback.
+        # cb(session_key, agent_name, "start"|"end") — drawer uses this to insert
+        # per-agent separator rows. agent_name may be "" (drawer defaults to "Agent").
+        self._on_agent_lifecycle: Callable[[str, str, str], None] | None = None
 
     # ── Public entry points (called from gateway event handlers in window) ──
 
@@ -154,6 +158,17 @@ class ActivityHandler:
         """
         self._activity_bubble_callback = cb
 
+    def set_on_agent_lifecycle(self, cb: Callable[[str, str, str], None]) -> None:
+        """Set callback for agent lifecycle: cb(session_key, agent_name, phase).
+
+        phase is "start" or "end". ActivityHandler fires this on every
+        stream=lifecycle phase=start and phase=end (or phase=error) event.
+        The drawer uses this to insert per-agent separator rows.
+
+        agent_name comes from payload.data.agentName when present; otherwise "".
+        """
+        self._on_agent_lifecycle = cb
+
     def set_agent_routing(self, routing_table) -> None:
         """Inject AgentRoutingTable. Called by window.py._build().
 
@@ -223,6 +238,9 @@ class ActivityHandler:
                             self._on_assistant_buffer(sk, text)
             if stream == "lifecycle":
                 phase = payload.get("data", {}).get("phase", "")
+                # Extract agentName from payload if gateway supplies it (SPEC-activity-drawer).
+                # Falls back to "" — drawer will show "[Agent]" for unknown agents.
+                _agent_name = payload.get("data", {}).get("agentName", "") or ""
                 # Track lifecycle end for missing-message recovery.
                 # Cleanup runs on both end and error — fixes memory leak.
                 if phase in ("end", "error"):
@@ -237,13 +255,22 @@ class ActivityHandler:
                         self._assistant_text_buffer.pop(sk, None)
                     if run_id:
                         self._lifecycle_ended.pop(run_id, None)
+                    # SPEC-activity-drawer: fire agent_lifecycle "end" so the drawer
+                    # can insert a per-agent summary separator row.
+                    if sk and self._on_agent_lifecycle:
+                        self._on_agent_lifecycle(sk, _agent_name, "end")
                 elif phase == "start":
                     # ── Activity bubble: lifecycle start ──────────────────
                     sk = payload.get("sessionKey", "") or session_key
                     if sk and self._activity_bubble_callback:
                         from models.activity import ActivityBubble, ToolStatus
-                        bubble = ActivityBubble(type="lifecycle_start", session_key=sk, icon="⏳")
+                        bubble = ActivityBubble(type="lifecycle_start", session_key=sk,
+                                                agent_name=_agent_name, icon="⏳")
                         self._activity_bubble_callback(bubble)
+                    # SPEC-activity-drawer: fire agent_lifecycle "start" so the
+                    # drawer can insert a per-agent separator row.
+                    if sk and self._on_agent_lifecycle:
+                        self._on_agent_lifecycle(sk, _agent_name, "start")
             elif stream == "item":
                 # ── Activity bubble: item events (tool/command/patch) ────────
                 # NOTE: stream="tool" events are NOT broadcast to clients — only sent to
@@ -301,18 +328,6 @@ class ActivityHandler:
                     if cmd and self._activity_bubble_callback:
                         from models.activity import ActivityBubble, ToolStatus
                         bubble = ActivityBubble(type="approval_request", session_key=sk, icon="🔒", command=cmd, reason=reason, approval_id=approval_id)
-                        self._activity_bubble_callback(bubble)
-            elif stream == "command_output":
-                # ── Activity bubble: shell command output ──────────────────
-                data = payload.get("data", {})
-                if data.get("phase") == "end":
-                    name = data.get("name", "") or ""
-                    exit_code = data.get("exitCode", 0)
-                    duration_ms = data.get("durationMs", 0)
-                    sk = payload.get("sessionKey", "") or session_key
-                    if name and self._activity_bubble_callback:
-                        from models.activity import ActivityBubble, ToolStatus
-                        bubble = ActivityBubble(type="command_output", session_key=sk, tool_name=name, exit_code=exit_code, duration_ms=duration_ms, icon="💻")
                         self._activity_bubble_callback(bubble)
             elif stream == "patch":
                 # ── Activity bubble: file edit summary ────────────────────

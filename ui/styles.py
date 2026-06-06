@@ -459,56 +459,6 @@ notebook > header > tabs > tab {
 .bubble-thinking        { border-left: 3px solid #f59e0b; }
 .bubble-streaming       { border-left: 3px solid #6366f1; }
 
-/* -- Activity bubbles (Phase 2 SPEC-smarter-chat-ux) -------------------- */
-.activity-bubble {
-    background-color: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 14px;
-    padding: 5px 14px;
-}
-.activity-bubble-text {
-    color: rgba(255, 255, 255, 0.45);
-    font-size: 0.82em;
-    letter-spacing: 0.02em;
-}
-.activity-tool_start {
-    border-left: 3px solid #3b82f6;
-}
-.activity-tool_end {
-    border-left: 3px solid #22c55e;
-}
-.activity-tool_error {
-    border-left: 3px solid #ef4444;
-}
-.activity-tool_error .activity-bubble-text {
-    color: rgba(239, 68, 68, 0.7);
-}
-.activity-plan {
-    border-left: 3px solid #6366f1;
-}
-.activity-command_output {
-    border-left: 3px solid #94a3b8;
-}
-.activity-patch {
-    border-left: 3px solid #a855f7;
-}
-.activity-approval_request {
-    border: 1px solid rgba(245, 158, 11, 0.25);
-    border-left: 3px solid #f59e0b;
-    background-color: rgba(245, 158, 11, 0.08);
-}
-.activity-approval_request .activity-bubble-text {
-    color: rgba(245, 158, 11, 0.8);
-}
-.activity-lifecycle_start {
-    border: 1px solid rgba(139, 92, 246, 0.2);
-    border-left: 3px solid #6366f1;
-    background-color: rgba(139, 92, 246, 0.08);
-}
-.activity-lifecycle_start .activity-bubble-text {
-    color: rgba(139, 92, 246, 0.6);
-}
-
 /* -- Terminal blocks ---------------------------------------------------- */
 .terminal-block {
     background: rgba(20, 20, 30, 0.95);
@@ -1024,6 +974,71 @@ notebook > header > tabs > tab {
     letter-spacing: 0.03em;
 }
 .welcome-logo {
+}
+
+/* -- Activity Drawer (SPEC-activity-drawer Phase 1) --------------------- */
+.activity-drawer {
+    background-color: rgba(255, 255, 255, 0.03);
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 0;
+}
+
+.activity-drawer-header {
+    background-color: rgba(20, 20, 25, 0.95);
+    padding: 4px 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    min-height: 32px;
+}
+
+.activity-drawer-row {
+    padding: 3px 8px;
+    font-family: monospace;
+    font-size: 0.9em;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.activity-drawer-row-lifecycle_start,
+.activity-drawer-row-lifecycle_end {
+    background-color: rgba(255, 255, 255, 0.05);
+    font-style: italic;
+}
+
+.activity-drawer-row-tool_start,
+.activity-drawer-row-tool_end {
+    background-color: rgba(99, 102, 241, 0.03);
+}
+
+.activity-drawer-row-tool_error {
+    background-color: rgba(239, 68, 68, 0.06);
+}
+
+.activity-drawer-row-command_output {
+    background-color: rgba(34, 197, 94, 0.04);
+}
+
+.activity-drawer-row-patch {
+    background-color: rgba(168, 85, 247, 0.04);
+}
+
+.activity-drawer-row-plan {
+    background-color: rgba(99, 102, 241, 0.02);
+}
+
+.activity-drawer-output {
+    font-family: monospace;
+    font-size: 0.85em;
+    padding: 4px 8px 4px 32px;
+    background-color: rgba(20, 20, 25, 0.5);
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.activity-drawer-separator {
+    padding: 4px 8px;
+    background-color: rgba(255, 255, 255, 0.02);
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.85em;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 """
 

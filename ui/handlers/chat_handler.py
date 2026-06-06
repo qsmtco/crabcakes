@@ -12,10 +12,8 @@
 # If GLib is None (e.g. in tests), GTK calls are made directly — only safe
 # when the caller is already on the main thread.
 
-from typing import Callable, TYPE_CHECKING
+from typing import Callable
 
-if TYPE_CHECKING:
-    from models.activity import ActivityBubble
 import logging
 
 _logger = logging.getLogger(__name__)
@@ -64,7 +62,6 @@ class ChatHandler:
         self._pending_req_id: str | None = None  # tracks last sent req_id for res correlation
         self._on_agent_response: Callable[[str, str, str | None], None] | None = None  # agent response hook (Phase 6.2)
         self._on_res_confirmed: Callable[[str], None] | None = None  # pre-flight confirm via res
-        self._activity_bubble_callback: Callable[['ActivityBubble'], None] | None = None  # activity bubble render from ActivityHandler
         self._agent_runtime_handler = None  # injected via set_agent_runtime_handler()
         self._awareness_sent: set[str] = set()  # track "project:agent" pairs that received awareness
         self._agent_mgr = None  # injected via set_agent_manager() after gateway connect
@@ -147,49 +144,6 @@ class ChatHandler:
         for the same session after the first render.
         """
         self._chat_final_rendered.pop(session_key, None)
-
-    def _render_activity_bubble(self, bubble: 'ActivityBubble'):
-        """Render an activity bubble for a tool/plan/approval event.
-
-        Called by ActivityHandler via set_on_activity_bubble callback.
-        Uses build_role_bubble with role='System' and bubble.format_text().
-        Activity bubbles are NOT guarded by _chat_final_rendered — they're
-        ephemeral status indicators that appear during the round.
-        """
-        text = bubble.format_text()
-        if not text:
-            return
-        session_key = bubble.session_key
-        if self._chat_render_handler is None:
-            return
-        # Dispatch to main thread if needed (may be called from gateway thread)
-        self._dispatch(lambda sk=session_key, txt=text, at=bubble.type: (
-            self._render_activity_bubble_impl(sk, txt, at)
-        ))
-
-    def _render_activity_bubble_impl(self, session_key: str, text: str, activity_type: str = ""):
-        """Thread-unsafe internal render — must be called on GTK main thread."""
-        if self._chat_render_handler is None:
-            return
-        chat_box = self._mc.get_chat_box_for_session(session_key)
-        # If no direct tab exists for this agent key, look up project via routing table.
-        if chat_box is None and self._agent_to_project is not None:
-            project_name = self._agent_to_project.get_project(session_key)
-            if project_name is not None:
-                chat_box = self._mc.get_chat_box_for_session(f"project:{project_name}")
-        if chat_box is None:
-            return
-        bubble = self._chat_render_handler.render_activity(text, activity_type)
-        if bubble is not None:
-            chat_box.append(bubble)
-            self._mc.scroll_chat_to_bottom()
-
-    def set_on_activity_bubble(self, cb: Callable[['ActivityBubble'], None]):
-        """Set callback for activity bubble events from ActivityHandler.
-
-        ChatHandler renders each ActivityBubble via build_role_bubble(role='System').
-        """
-        self._activity_bubble_callback = cb
 
     def _handle_lifecycle_completed(self, session_key: str, buffered_text: str):
         """Render fallback bubble when lifecycle ended without a chat final.
