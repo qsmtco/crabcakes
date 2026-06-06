@@ -163,6 +163,10 @@ class TestActivityDrawer:
             "ui.views.activity_drawer.ActivityDrawer._auto_scroll_to_bottom",
             lambda self: None,
         )
+        monkeypatch.setattr(
+            "ui.views.activity_drawer.ActivityDrawer._build_separator_widget",
+            lambda self, text: MagicMock(),
+        )
 
         # Mock Gtk widgets: provide just enough surface for the drawer to track state
         fake_list = MagicMock()
@@ -178,7 +182,6 @@ class TestActivityDrawer:
         d = ActivityDrawer()
         # Inject the fake list — drawer reads self._list for append_event logic
         d._list = fake_list
-        d._listbox = fake_list  # backward-compat alias in case
         return d
 
     def test_append_event_new_row(self, drawer):
@@ -265,7 +268,7 @@ class TestActivityDrawer:
         assert drawer._total_count == 1
 
     def test_clear_events_resets_state(self, drawer):
-        """clear_events() empties _total_count, _last_row_key, _agent_counters."""
+        """clear_events() empties _total_count, _last_row_key, _agent_counters AND iterates the list."""
         row = {
             "agent": "Coder", "activity_type": "tool_start", "type_label": "tool", "icon": "🔧",
         }
@@ -273,9 +276,14 @@ class TestActivityDrawer:
         drawer.append_event(row)
         assert drawer._total_count == 2
         assert drawer._last_row_key is not None
-        # Make get_row_at_index return None (no rows) so the while-loop exits
-        drawer._list.get_row_at_index.return_value = None
+        # Mock get_row_at_index to return a real-looking row, then None to terminate the loop
+        fake_row = MagicMock()
+        drawer._list.get_row_at_index.side_effect = [fake_row, fake_row, None]
         drawer.clear_events()
+        # NEW: assert the list was actually iterated
+        assert drawer._list.remove.call_count == 2, \
+            f"expected clear_events to call .remove() 2 times, got {drawer._list.remove.call_count}"
+        # Existing state assertions
         assert drawer._total_count == 0
         assert drawer._last_row_key is None
         assert drawer._agent_counters == {}
@@ -293,6 +301,62 @@ class TestActivityDrawer:
         assert drawer._passes_filter("Coder", "tool_start") is True
         assert drawer._passes_filter("Debugger", "plan") is True
         assert drawer._passes_filter("Crabcakes", "tool_start") is False
+
+    def test_on_agent_start_inserts_separator(self, drawer):
+        """on_agent_start appends a separator row, breaks the counter chain, tracks state."""
+        # Baseline: a prior tool_end row sets _last_row_key
+        drawer.append_event({
+            "agent": "Coder", "activity_type": "tool_end", "type_label": "tool", "icon": "🔧",
+        })
+        assert drawer._last_row_key == ("Coder", "tool_end")
+        # Agent start fires
+        drawer.on_agent_start("sk-1", "Coder")
+        # 2 appends total: 1 from the tool_end above, 1 from the separator
+        assert drawer._list.append.call_count == 2
+        # State tracked
+        assert drawer._last_separator_agent == ("Coder", "start")
+        # Counter chain broken — next same-(agent, type) event will append, not collapse
+        assert drawer._last_row_key is None
+        assert drawer._last_row_widget is None
+
+    def test_on_agent_end_inserts_summary(self, drawer):
+        """on_agent_end appends a summary row, pops the per-agent counter, tracks state."""
+        # Seed an _agent_counters entry by appending events with explicit counters;
+        # the public append_event path doesn't populate _agent_counters (that happens
+        # inside _mutate_counter_row), so set it directly for this test.
+        drawer._agent_counters["Coder"] = {"count": 3, "total_duration_ms": 1247}
+        drawer.on_agent_end("sk-1", "Coder")
+        # 1 append (the summary separator)
+        assert drawer._list.append.call_count == 1
+        # Counter was popped
+        assert "Coder" not in drawer._agent_counters
+        # State tracked
+        assert drawer._last_separator_agent == ("Coder", "end")
+        # Counter chain broken
+        assert drawer._last_row_key is None
+        assert drawer._last_row_widget is None
+
+    def test_toggle_flips_state(self, drawer):
+        """toggle() flips self._expanded; _apply_expanded_state is patched to no-op."""
+        # Initial state: _expanded = False (set in __init__)
+        assert drawer._expanded is False
+        drawer.toggle()
+        assert drawer._expanded is True
+        drawer.toggle()
+        assert drawer._expanded is False
+
+    def test_on_agent_start_is_idempotent_for_same_agent(self, drawer):
+        """Sad-path: on_agent_start called twice for the same agent inserts only 1 separator.
+
+        The double-separator guard prevents a glitchy gateway from flooding the drawer
+        with redundant separator rows for the same (agent, "start") tuple.
+        """
+        drawer.on_agent_start("sk-1", "Coder")
+        drawer.on_agent_start("sk-1", "Coder")  # second call: should be a no-op
+        assert drawer._list.append.call_count == 1, \
+            f"double-separator guard failed: expected 1 append, got {drawer._list.append.call_count}"
+        # State unchanged after the no-op second call
+        assert drawer._last_separator_agent == ("Coder", "start")
 
 
 # ── Class 3: TestActivityHandlerLifecycleCallback ────────────────
