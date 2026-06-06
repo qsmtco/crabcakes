@@ -152,6 +152,11 @@ class ConnectionSyncHandler:
         self._session_handler.set_agent_manager(self._gateway_handler.agent_mgr)
         # Wire ChatHandler with AgentManager for display name resolution
         self._chat_handler.set_agent_manager(self._gateway_handler.agent_mgr)
+        # PHASE 6: Inject AgentManager into ActivityHandler for agent_name
+        # fallback (SPEC-activity-drawer §2.4). Placed before the activity
+        # wiring block below so AgentManager is available by the time
+        # activity events arrive.
+        self._activity_handler.set_agent_manager(self._gateway_handler.agent_mgr)
         # Wire forward button callback
         self._chat_handler.set_on_forward_message(self._on_forward_clicked)
         # Wire send-initiated → ActivityHandler pre-flight state

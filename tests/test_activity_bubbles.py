@@ -325,6 +325,105 @@ class TestActivityHandlerActivityBubbles:
         bubble = cb.call_args[0][0]
         assert bubble.agent_name == ""
 
+    def test_tool_bubble_falls_back_to_agent_manager(self, fake_glib):
+        """When data.agentName is empty, fall back to AgentManager.get_name(session_key)."""
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+        cb = MagicMock()
+        handler.set_on_activity_bubble(cb)
+
+        # Mock AgentManager
+        agent_mgr = MagicMock()
+        agent_mgr.get_name = MagicMock(return_value="Coder")
+        handler.set_agent_manager(agent_mgr)
+
+        # Payload WITHOUT agentName — bug-trigger scenario
+        handler.on_gateway_event("agent", {
+            "stream": "item",
+            "sessionKey": "agent:coder",
+            "runId": "run-1",
+            "data": {"phase": "start", "kind": "tool", "name": "web_search", "status": "running"},
+            # NO "agentName" key
+        })
+
+        bubble = cb.call_args[0][0]
+        assert bubble.agent_name == "Coder", f"expected AgentManager fallback, got {bubble.agent_name!r}"
+        agent_mgr.get_name.assert_called_once_with("agent:coder")
+
+    def test_lifecycle_falls_back_to_agent_manager(self, fake_glib):
+        """Lifecycle event without agentName also falls back to AgentManager.
+
+        Mirror of test_tool_bubble_falls_back_to_agent_manager for the
+        lifecycle branch — both extraction sites use the same helper.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+        lifecycle_cb = MagicMock()
+        handler.set_on_agent_lifecycle(lifecycle_cb)
+
+        agent_mgr = MagicMock()
+        agent_mgr.get_name = MagicMock(return_value="Debugger")
+        handler.set_agent_manager(agent_mgr)
+
+        handler.on_gateway_event("agent", {
+            "stream": "lifecycle",
+            "sessionKey": "agent:debugger",
+            "runId": "run-1",
+            "data": {"phase": "start"},  # no agentName
+        })
+
+        lifecycle_cb.assert_called_once_with("agent:debugger", "Debugger", "start")
+
+    def test_agent_manager_exception_is_swallowed(self, fake_glib):
+        """If AgentManager.get_name() raises, the resolution silently falls through to ''.
+
+        Defensive — AgentManager may not be ready, may not have the session,
+        may raise for any reason. The handler should not crash; the drawer
+        will show "[Agent]" for the unknown agent.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+        cb = MagicMock()
+        handler.set_on_activity_bubble(cb)
+
+        agent_mgr = MagicMock()
+        agent_mgr.get_name = MagicMock(side_effect=RuntimeError("not ready"))
+        handler.set_agent_manager(agent_mgr)
+
+        # Should not raise
+        handler.on_gateway_event("agent", {
+            "stream": "item",
+            "sessionKey": "agent:coder",
+            "runId": "run-1",
+            "data": {"phase": "start", "kind": "tool", "name": "web_search", "status": "running"},
+        })
+        bubble = cb.call_args[0][0]
+        assert bubble.agent_name == ""  # fallback chain exhausted
+
+    def test_agent_manager_returns_empty_string(self, fake_glib):
+        """If AgentManager.get_name() returns '', fall through to '' (drawer shows [Agent]).
+
+        Edge case — AgentManager knows the session but has no display name
+        (e.g., the agent hasn't been registered yet). agent_name stays "".
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+        cb = MagicMock()
+        handler.set_on_activity_bubble(cb)
+
+        agent_mgr = MagicMock()
+        agent_mgr.get_name = MagicMock(return_value="")
+        handler.set_agent_manager(agent_mgr)
+
+        handler.on_gateway_event("agent", {
+            "stream": "item",
+            "sessionKey": "agent:coder",
+            "runId": "run-1",
+            "data": {"phase": "start", "kind": "tool", "name": "web_search", "status": "running"},
+        })
+        bubble = cb.call_args[0][0]
+        assert bubble.agent_name == ""
+
 
 class TestChatHandlerActivityBubbleRender:
     """ChatHandler integration tests for activity/lifecycle routing (Phase 2 SPEC-smarter-chat-ux).

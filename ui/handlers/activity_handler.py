@@ -68,6 +68,9 @@ class ActivityHandler:
         # cb(session_key, agent_name, "start"|"end") — drawer uses this to insert
         # per-agent separator rows. agent_name may be "" (drawer defaults to "Agent").
         self._on_agent_lifecycle: Callable[[str, str, str], None] | None = None
+        # PHASE 6: AgentManager for session_key → agent_name fallback when the
+        # gateway payload's data.agentName is empty (SPEC §2.4 fallback chain).
+        self._agent_mgr = None
 
     # ── Public entry points (called from gateway event handlers in window) ──
 
@@ -176,6 +179,41 @@ class ActivityHandler:
         """
         self._agent_to_project = routing_table
 
+    def set_agent_manager(self, agent_mgr) -> None:
+        """Inject AgentManager for session_key → agent_name fallback (SPEC-activity-drawer §2.4).
+
+        Called by ConnectionSyncHandler.sync() after the gateway connects.
+        Used to resolve agent_name when the gateway payload's data.agentName is empty.
+        """
+        self._agent_mgr = agent_mgr
+
+    def _resolve_agent_name(self, payload: dict) -> str:
+        """Resolve the agent display name from a gateway payload.
+
+        Resolution order (SPEC-activity-drawer §2.4 fallback chain):
+        1. payload.data.agentName — gateway-supplied agent name (may be empty)
+        2. AgentManager.get_name(payload.sessionKey) — local session_key → name lookup
+        3. "" — drawer will display "[Agent]" as last-resort fallback
+
+        Args:
+            payload: The gateway event payload dict.
+
+        Returns:
+            The agent display name, or "" if unknown.
+        """
+        direct = payload.get("data", {}).get("agentName", "") or ""
+        if direct:
+            return direct
+        session_key = payload.get("sessionKey", "") or ""
+        if session_key and self._agent_mgr is not None:
+            try:
+                name = self._agent_mgr.get_name(session_key)
+                if name:
+                    return name
+            except Exception:
+                pass  # AgentManager may not be ready; fall through
+        return ""
+
     def on_send_initiated(self, session_key: str):
         """Send button pressed — enter pre-flight (sending) state with 30s timeout.
 
@@ -238,9 +276,9 @@ class ActivityHandler:
                             self._on_assistant_buffer(sk, text)
             if stream == "lifecycle":
                 phase = payload.get("data", {}).get("phase", "")
-                # Extract agentName from payload if gateway supplies it (SPEC-activity-drawer).
-                # Falls back to "" — drawer will show "[Agent]" for unknown agents.
-                _agent_name = payload.get("data", {}).get("agentName", "") or ""
+                # Resolve agent name with AgentManager fallback (SPEC-activity-drawer §2.4 / PHASE 6).
+                # When the gateway's data.agentName is empty, fall back to AgentManager.
+                _agent_name = self._resolve_agent_name(payload)
                 # Track lifecycle end for missing-message recovery.
                 # Cleanup runs on both end and error — fixes memory leak.
                 if phase in ("end", "error"):
@@ -285,11 +323,10 @@ class ActivityHandler:
                 item_status = data.get("status", "")
                 started_at = data.get("startedAt")
                 ended_at = data.get("endedAt")
-                # SPEC-activity-drawer §2.4: tool bubbles carry agentName from
-                # the gateway payload so the drawer can group per-agent. Same
-                # extraction pattern as the lifecycle branch above — defaults
-                # to "" if the gateway doesn't send agentName on item events.
-                _agent_name = data.get("agentName", "") or ""
+                # SPEC-activity-drawer §2.4: tool bubbles carry agent_name with
+                # AgentManager fallback (PHASE 6). When the gateway's data.agentName
+                # is empty on stream=item kind=tool events, fall back to AgentManager.
+                _agent_name = self._resolve_agent_name(payload)
                 sk = payload.get("sessionKey", "") or session_key
 
                 if kind == "tool" and self._activity_bubble_callback:
