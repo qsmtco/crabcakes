@@ -370,7 +370,7 @@ class ActivityHandler:
                 sk = payload.get("sessionKey", "") or session_key
                 if title and self._activity_bubble_callback:
                     from models.activity import ActivityBubble, ToolStatus
-                    bubble = ActivityBubble(type="plan", session_key=sk, icon="📋", title=title, steps=steps)
+                    bubble = ActivityBubble(type="plan", session_key=sk, icon="📋", title=title, steps=steps, agent_name=_agent_name)
                     self._activity_bubble_callback(bubble)
             elif stream == "approval":
                 # ── Activity bubble: approval request ─────────────────────
@@ -382,7 +382,7 @@ class ActivityHandler:
                     sk = payload.get("sessionKey", "") or session_key
                     if cmd and self._activity_bubble_callback:
                         from models.activity import ActivityBubble, ToolStatus
-                        bubble = ActivityBubble(type="approval_request", session_key=sk, icon="🔒", command=cmd, reason=reason, approval_id=approval_id)
+                        bubble = ActivityBubble(type="approval_request", session_key=sk, icon="🔒", command=cmd, reason=reason, approval_id=approval_id, agent_name=_agent_name)
                         self._activity_bubble_callback(bubble)
             elif stream == "patch":
                 # ── Activity bubble: file edit summary ────────────────────
@@ -395,7 +395,7 @@ class ActivityHandler:
                     sk = payload.get("sessionKey", "") or session_key
                     if name and self._activity_bubble_callback:
                         from models.activity import ActivityBubble, ToolStatus
-                        bubble = ActivityBubble(type="patch", session_key=sk, tool_name=name, added=added, modified=modified, deleted=deleted, icon="✏️")
+                        bubble = ActivityBubble(type="patch", session_key=sk, tool_name=name, added=added, modified=modified, deleted=deleted, icon="✏️", agent_name=_agent_name)
                         self._activity_bubble_callback(bubble)
         if event == "agent":
             # BUG FIX: lifecycle events (stream="lifecycle") nest phase in data.phase.
