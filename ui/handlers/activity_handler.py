@@ -368,6 +368,11 @@ class ActivityHandler:
                 steps_raw = data.get("steps", []) or []
                 steps = [s.get("title", "") or str(s) for s in steps_raw]
                 sk = payload.get("sessionKey", "") or session_key
+                # SPEC-activity-drawer §2.4: resolve agent_name with the same
+                # fallback chain used by the item/branch (PHASE 6). The plan,
+                # approval, and patch branches are siblings of `item`, so they
+                # need their own resolution — _agent_name is not in scope here.
+                _agent_name = self._resolve_agent_name(payload)
                 if title and self._activity_bubble_callback:
                     from models.activity import ActivityBubble, ToolStatus
                     bubble = ActivityBubble(type="plan", session_key=sk, icon="📋", title=title, steps=steps, agent_name=_agent_name)
@@ -380,6 +385,8 @@ class ActivityHandler:
                     reason = data.get("reason", "") or ""
                     approval_id = data.get("approvalId", "") or ""
                     sk = payload.get("sessionKey", "") or session_key
+                    # SPEC-activity-drawer §2.4: see plan/branch comment.
+                    _agent_name = self._resolve_agent_name(payload)
                     if cmd and self._activity_bubble_callback:
                         from models.activity import ActivityBubble, ToolStatus
                         bubble = ActivityBubble(type="approval_request", session_key=sk, icon="🔒", command=cmd, reason=reason, approval_id=approval_id, agent_name=_agent_name)
@@ -393,6 +400,8 @@ class ActivityHandler:
                     modified = len(data.get("modified", []) or [])
                     deleted = len(data.get("deleted", []) or [])
                     sk = payload.get("sessionKey", "") or session_key
+                    # SPEC-activity-drawer §2.4: see plan/branch comment.
+                    _agent_name = self._resolve_agent_name(payload)
                     if name and self._activity_bubble_callback:
                         from models.activity import ActivityBubble, ToolStatus
                         bubble = ActivityBubble(type="patch", session_key=sk, tool_name=name, added=added, modified=modified, deleted=deleted, icon="✏️", agent_name=_agent_name)
