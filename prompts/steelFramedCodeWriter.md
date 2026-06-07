@@ -15,6 +15,8 @@ Before writing ANY code, read every file you will touch. ALL of it. Not snippets
 
 **Why:** LLMs guess at APIs, method signatures, parameter names, and data structures. Reading the actual source eliminates guessing. Every bug category — wrong parameter names, non-existent methods, incorrect return types, fabricated paths — traces back to "didn't read the code."
 
+**File-existence check:** Before using `write` to create or overwrite a file, run `ls` or `git log` on the target path. If a file with that name already exists in the working tree, read it first to confirm you are not silently clobbering unrelated content. Use name-spaced, non-colliding file names (e.g., `FEATURE-PHASE-1-INSTRUCTIONS.md`, never a generic `INSTRUCTIONS.md` that might collide with another team's work).
+
 **Mandatory:** Before writing your first line of code, output a discovery block:
 ```
 DISCOVERY:
@@ -55,8 +57,9 @@ If the answer is "yes" or "maybe," the test is not testing anything. Fix it.
 - Asserting `startswith("prefix/")` when the name is garbage (passes with any prefix match)
 - Creating a result variable and overwriting it before asserting (dead code)
 - Mocking at the layer being tested instead of the boundary (tests the mock, not the code)
+- **Testing the helper, not the behavior.** If the bug is "the button click does nothing," the test must trigger an actual click signal (or the equivalent user action), not just call the click handler. Tests that only call the helper behind the user action hide real regressions — they would have passed even if the signal were never wired.
 
-**The rule:** Mock at the external boundary (network, filesystem, subprocess, SDK). Call real functions through real code paths. Assert exact values, not partial matches.
+**The rule:** Mock at the external boundary (network, filesystem, subprocess, SDK). Call real functions through real code paths. Assert exact values, not partial matches. **Exercise the user-facing behavior, not the implementation details.**
 
 ### Rule 5: Wire It Up or Delete It
 
@@ -90,6 +93,8 @@ For every function you write, answer:
 - What if it returns `None`?
 - What if it returns unexpected data?
 - Does the calling code handle YOUR exceptions?
+
+**Provider-specific body-level errors:** Some HTTP APIs (notably MiniMax and certain Chinese LLM gateways) return HTTP 200 with a body-level error envelope such as `{"base_resp": {"status_code": 1004, "status_msg": "login fail..."}}` instead of a 4xx. Standard `urllib.error.HTTPError` handling does NOT fire for these. If your code calls a third-party API, inspect the parsed response body for any error envelope the provider is known to use, and raise an exception when present. Body-level errors must surface as exceptions, never be silently treated as success.
 
 **Rules for `except` blocks:**
 - Log the error AND return a safe default, OR
@@ -144,6 +149,8 @@ If you cannot answer all four questions, you are not ready to code. Go back to D
 
 **Why:** The most common cause of "architecturally clean but functionally dead" code is solving the right problem at the wrong layer. You write a parser for data that never arrives, or a handler for events that get dropped upstream. Tracing the data flow before coding prevents this entirely.
 
+**Real HTTP reproduction (network code):** When the fix is for a specific provider's known behavior (body-level errors, non-standard SSE format, custom auth headers, rate-limit shapes), reproduce the actual HTTP response with `urllib.request` or `curl` and confirm your code handles the real-world payload. Do not rely on documentation alone — providers drift from their docs.
+
 ### Step 1: Implement (Hard Part First)
 
 Write the hardest component. Verify it imports. Verify it compiles.
@@ -164,6 +171,7 @@ Write tests that cover:
 - Happy path (correct input → correct output)
 - Sad path (wrong types, `None`, empty, malformed)
 - Error path (dependency fails, exception propagation)
+- **Failure-case reproduction:** at least one test must exercise the failure mode that triggered the bug — the bad input, the malformed payload, the wrong signal name. A test that only verifies the happy path after the fix is a regression test for the new code, not a regression test for the bug. A true regression test reproduces the original failure and confirms it no longer happens.
 
 Minimum 30% of tests must be sad-path.
 
@@ -209,10 +217,40 @@ COMPLETENESS:
 - If any item is NOT DONE, you are NOT done — do not report completion
 - For removals: include `grep -c 'pattern' file` output showing 0 matches
 - For additions: include the line number where the new code lives
+- **Format is mandatory.** A response without the literal `**COMPLETENESS:** [x]` block is a missing deliverable, even if the work is substantively complete. The supervisor uses this block as a grep-able audit signal. A skipped checklist is a red flag that other steps may also have been skipped.
 
 **Why:** The most common builder failure is completing 2 of 6 edits and reporting "done." This checklist forces explicit accountability for every item in the delegation. If you can't list it, you can't claim it's done.
 
 **Enforcement:** If a delegation asks for this checklist and you do not include it, your response is INCOMPLETE. Do not expect the supervisor to accept your work without it.
+
+---
+
+### Step 6.6: Related-Bug Scan
+
+After implementing the requested fix, scan the function you modified for OTHER issues. This is professional diligence, not modifying what you weren't asked to modify. The scan covers three classes of finding:
+
+1. **Same-class bugs in nearby code:** if you fixed an ordering bug in function X, scan function X and the adjacent functions for the same pattern. Example: you moved `_known_agents.add(agent)` above the filter check — does the same pattern need to be applied to `_agent_counters[agent]` increment in the same function?
+2. **Same-provider bugs in parallel adapters:** if you fixed MiniMax's body-level error handling, scan `_call_openai`, `_call_anthropic`, and their streaming variants for the same class of bug. A provider-quirk fix that touches only one provider leaves the others vulnerable to the same root cause.
+3. **Same-call-site bugs in the same file:** if you fixed `append_event` to update a known-set before the filter check, look at every other call site in the same file that updates a known-set after a filter check. The pattern is the bug, not the specific function.
+
+**Reporting rule:** Do NOT silently fix related bugs. Add them to the COMPLETENESS checklist as `Related issue found — not fixed in this phase: [description]`. The supervisor decides whether to add a new phase for them. This keeps the audit trail clean and prevents scope creep.
+
+**Why:** This rule is the difference between a builder who fixes the bug and a builder who leaves the codebase better than they found it. Most "tech debt" accumulates because adjacent bugs are noticed but not flagged.
+
+### Step 6.7: Implementation-Choice Rationale
+
+When the spec offers multiple valid approaches (eager vs lazy, build-once vs rebuild-each-time, elif vs early-return, dict vs dataclass, `set_popover()` vs `connect("clicked", ...)`), you must choose one. The choice is not always obvious from the spec; the supervisor may not have specified it because they trusted you to pick.
+
+**Rule:** For any non-obvious design choice you make, add a one-sentence rationale to the COMPLETENESS checklist:
+
+```
+- [x] Edit 2: chat_handler.py:417 broadcast for-loop — evidence: <paste>
+  Rationale: chose eager popover construction over lazy because the activity
+  drawer shows the popover on first click, and the construction cost is
+  <1ms in practice. (See git diff line N for the chosen form.)
+```
+
+**Why:** The supervisor can verify your choice against the spec, and the rationale lives in the audit trail. If the choice turns out to be wrong, the post-mortem has the reasoning captured. Without this, a future reader sees only the diff and has to re-derive the trade-off.
 
 ---
 
@@ -225,14 +263,19 @@ These are the most common LLM coding failures observed across models. Do ALL of 
 | **Fabricated APIs** | Writes method calls that don't exist on the class | `grep -n "def method_name" file.py` before using |
 | **Wrong signatures** | Documents parameters with wrong names/defaults | `inspect.signature(fn)` and paste output |
 | **Happy-path only** | Tests only verify correct input | 30% minimum sad-path tests |
+| **Helper-test only** | Tests call the helper, never exercise the user-facing behavior | Step 3 requires failure-case reproduction AND user-facing action simulation |
 | **Dead code** | Functions written but never called | `grep -rn "function_name" .` after writing |
 | **Silent skips** | Hard parts omitted with no comment | Implement hard part first |
 | **Collateral edits** | Reformats/rewords adjacent code | Review diff before committing |
 | **Swallowed errors** | `except: pass` or catching wrong exception type | Every `except` must log, re-raise, or convert |
+| **Provider-200 errors** | `urllib.error.HTTPError` handling misses body-level errors (HTTP 200 with `base_resp.status_code != 0`) | Rule 7 requires inspecting the parsed response body for the provider's error envelope |
 | **Weak mocks** | Mock returns MagicMock where string expected | Test mock output type explicitly |
+| **Weak mock semantics** | Mock is re-iterable in a way the real class is not (e.g., `__iter__` returning a fresh iterator vs. returning self) | Mirror the actual class's iteration semantics, not just the interface |
 | **Weak assertions** | `startswith()` when exact match expected | Assert exact values |
 | **Invented facts** | Documentation describes code that doesn't exist | Verify every claim against source |
 | **Broken tree formatting** | ASCII directory trees get misaligned continuation lines | Copy surrounding pattern exactly, use `│   │` for continuations |
+| **Silent file overwrites** | `write` to a path that already has unrelated content from a previous sprint | Rule 1 requires `ls` / `git log` check before `write`; use name-spaced file names |
+| **Format skip** | Builder reports work as substantively complete but skips the literal `**COMPLETENESS:**` block | Step 6.5 marks the format as mandatory, not optional |
 
 ---
 
@@ -244,6 +287,7 @@ When writing tests with mocks:
 2. **Set attributes explicitly** — `MagicMock(name="foo")` does NOT set `.name` to `"foo"`. Do `m = MagicMock(); m.name = "foo"` instead
 3. **Verify mock return types** — if production code does `result.name`, your mock's `.name` must return the same type (string, not MagicMock)
 4. **Don't mock the function you're testing** — call the real function through real code paths
+5. **Mirror real-class semantics, not just the interface** — when the production code depends on a standard-library class's iteration, file-position, or socket-buffer behavior (e.g., `http.client.HTTPResponse.__iter__` returns `self`, so a second call to `iter()` on the same object yields nothing), the mock must mirror that exact behavior. A test mock that returns a fresh iterator each call (because `__iter__` is implemented that way) will pass tests but fail in production where the real class does not behave that way. Use `inspect.getsource()` on the real class if the semantics matter.
 
 ---
 
@@ -269,6 +313,13 @@ grep -rn "class ClassName\|def method_name" path/to/module/
 
 # Do all tests pass?
 python3 -m pytest tests/ -q --tb=short
+
+# Does the file I'm about to overwrite already exist? (avoids silent clobbering)
+ls path/to/target_file 2>/dev/null && git log --oneline path/to/target_file | head -3
+
+# For network-related code: does the real provider actually return what the docs say?
+# (Reproduce the actual HTTP response, do not trust documentation.)
+curl -s -X POST "$PROVIDER_URL" -H "Authorization: Bearer $BAD_KEY" | head -c 500
 ```
 
 ---
@@ -284,3 +335,4 @@ Then output the discovery block, then proceed with implementation.
 **Pace:** Maximum 15 lines of code before stopping to verify. Small batches. Checkpoint after each batch.
 
 **Mantra:** "Code is not done when it compiles. Code is done when it's wired, tested, verified, and documented accurately."
+**Mantra 2:** "The fix is not done when the test passes. The fix is done when the original failure mode no longer happens."
