@@ -222,6 +222,170 @@ class TestActivityHandlerActivityBubbles:
         assert bubble.deleted == 0
         assert bubble.icon == "✏️"
 
+    def test_command_output_end_fires_callback(self, fake_glib):
+        """stream=command_output phase=end fires a command_output ActivityBubble."""
+        from ui.handlers.activity_handler import ActivityHandler
+        from models.activity import ActivityBubble
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+        cb = MagicMock()
+        handler.set_on_activity_bubble(cb)
+
+        handler.on_gateway_event("agent", {
+            "stream": "command_output",
+            "sessionKey": "sk-1",
+            "runId": "run-1",
+            "data": {
+                "phase": "end",
+                "name": "exec",
+                "title": "exec ls -la",
+                "output": "total 42\ndrwxr-xr-x",
+                "exitCode": 0,
+                "durationMs": 2345,
+                "status": "completed",
+            }
+        })
+
+        cb.assert_called_once()
+        bubble = cb.call_args[0][0]
+        assert isinstance(bubble, ActivityBubble)
+        assert bubble.type == "command_output"
+        assert bubble.tool_name == "exec"
+        assert bubble.command == "exec ls -la"
+        assert bubble.output == "total 42\ndrwxr-xr-x"
+        assert bubble.exit_code == 0
+        assert bubble.duration_ms == 2345
+        assert bubble.icon == "💻"
+        assert bubble.agent_name == ""  # no agentName in payload, no AgentManager resolution
+
+    def test_command_output_end_error_fires_callback(self, fake_glib):
+        """stream=command_output phase=end with non-zero exit_code fires error bubble."""
+        from ui.handlers.activity_handler import ActivityHandler
+        from models.activity import ActivityBubble, ToolStatus
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+        cb = MagicMock()
+        handler.set_on_activity_bubble(cb)
+
+        handler.on_gateway_event("agent", {
+            "stream": "command_output",
+            "sessionKey": "sk-1",
+            "runId": "run-1",
+            "data": {
+                "phase": "end",
+                "name": "exec",
+                "title": "exec rm -rf /",
+                "exitCode": 1,
+                "durationMs": 100,
+                "status": "failed",
+            }
+        })
+
+        cb.assert_called_once()
+        bubble = cb.call_args[0][0]
+        assert isinstance(bubble, ActivityBubble)
+        assert bubble.type == "command_output"
+        assert bubble.exit_code == 1
+        assert bubble.status == ToolStatus.ERROR
+
+    def test_command_output_string_exit_code_zero_is_success(self, fake_glib):
+        """BUGFIX-1 audit BUG A: string "0" exitCode must be treated as success.
+        JSON serialization can deliver "0" as a string; int coercion handles it.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        from models.activity import ToolStatus
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+        cb = MagicMock()
+        handler.set_on_activity_bubble(cb)
+
+        handler.on_gateway_event("agent", {
+            "stream": "command_output",
+            "sessionKey": "sk-1",
+            "runId": "run-1",
+            "data": {
+                "phase": "end",
+                "name": "exec",
+                "title": "exec ls",
+                "exitCode": "0",  # string, not int
+                "status": "completed",
+            }
+        })
+
+        bubble = cb.call_args[0][0]
+        assert bubble.exit_code == 0  # coerced to int
+        assert bubble.status == ToolStatus.SUCCESS
+
+    def test_command_output_string_exit_code_one_is_error(self, fake_glib):
+        """BUGFIX-1 audit BUG A: string "1" exitCode must be treated as error."""
+        from ui.handlers.activity_handler import ActivityHandler
+        from models.activity import ToolStatus
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+        cb = MagicMock()
+        handler.set_on_activity_bubble(cb)
+
+        handler.on_gateway_event("agent", {
+            "stream": "command_output",
+            "sessionKey": "sk-1",
+            "runId": "run-1",
+            "data": {
+                "phase": "end",
+                "name": "exec",
+                "title": "exec false",
+                "exitCode": "1",  # string, not int
+                "status": "failed",
+            }
+        })
+
+        bubble = cb.call_args[0][0]
+        assert bubble.exit_code == 1  # coerced to int
+        assert bubble.status == ToolStatus.ERROR
+
+    def test_command_output_status_failed_with_no_exit_code_is_error(self, fake_glib):
+        """BUGFIX-1 audit BUG B: status='failed' with missing exitCode must show ERROR.
+        Gateway may send status='failed' with no exitCode (timeout, killed signal).
+        The error determination must honor status even when exit_code is 0/absent.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        from models.activity import ToolStatus
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+        cb = MagicMock()
+        handler.set_on_activity_bubble(cb)
+
+        handler.on_gateway_event("agent", {
+            "stream": "command_output",
+            "sessionKey": "sk-1",
+            "runId": "run-1",
+            "data": {
+                "phase": "end",
+                "name": "exec",
+                "title": "exec long-running-cmd",
+                "status": "failed",
+                # no exitCode field at all
+            }
+        })
+
+        bubble = cb.call_args[0][0]
+        assert bubble.status == ToolStatus.ERROR  # not SUCCESS
+
+    def test_command_output_delta_does_not_fire(self, fake_glib):
+        """stream=command_output phase=delta should NOT fire a bubble (ignored, same as spec)."""
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+        cb = MagicMock()
+        handler.set_on_activity_bubble(cb)
+
+        handler.on_gateway_event("agent", {
+            "stream": "command_output",
+            "sessionKey": "sk-1",
+            "runId": "run-1",
+            "data": {
+                "phase": "delta",
+                "name": "exec",
+                "output": "streaming...",
+                "status": "running",
+            }
+        })
+
+        cb.assert_not_called()
+
     def test_no_crash_when_callback_not_set(self, fake_glib):
         from ui.handlers.activity_handler import ActivityHandler
         handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)

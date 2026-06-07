@@ -406,6 +406,46 @@ class ActivityHandler:
                         from models.activity import ActivityBubble, ToolStatus
                         bubble = ActivityBubble(type="patch", session_key=sk, tool_name=name, added=added, modified=modified, deleted=deleted, icon="✏️", agent_name=_agent_name)
                         self._activity_bubble_callback(bubble)
+            elif stream == "command_output":
+                # ── Activity bubble: gateway exec result ───────────────────
+                # Mirrors the local exec adapter in connection_sync_handler.py:225
+                # but for gateway agents (Qaster, etc.) that run tools remotely.
+                # Only handle phase=end; phase=delta streams are ignored (same
+                # design as the patch branch — we render the final summary, not
+                # the streaming chunks).
+                data = self._safe_data(payload)
+                if data.get("phase") == "end":
+                    name = data.get("name", "") or ""
+                    output = data.get("output", "") or ""
+                    # BUGFIX-1 audit: exitCode may arrive as a string from
+                    # JSON serialization edge cases. Coerce to int so "0"
+                    # is treated as success (not error). `or 0` handles both
+                    # None and 0 cleanly.
+                    exit_code = int(data.get("exitCode", 0) or 0)
+                    duration_ms = data.get("durationMs", 0)
+                    command = data.get("title", "") or ""
+                    sk = payload.get("sessionKey", "") or session_key
+                    # SPEC-activity-drawer §2.4: see plan/branch comment.
+                    _agent_name = self._resolve_agent_name(payload)
+                    if name and self._activity_bubble_callback:
+                        from models.activity import ActivityBubble, ToolStatus
+                        # BUGFIX-1 audit: honor both exit_code AND status.
+                        # Gateway may send status="failed" with exitCode=0
+                        # (e.g. timeout, killed signal). Either signal means error.
+                        is_error = exit_code != 0 or data.get("status") == "failed"
+                        bubble = ActivityBubble(
+                            type="command_output",
+                            session_key=sk,
+                            tool_name=name,
+                            icon="💻",
+                            command=command,
+                            output=output,
+                            exit_code=exit_code,
+                            duration_ms=duration_ms,
+                            status=ToolStatus.ERROR if is_error else ToolStatus.SUCCESS,
+                            agent_name=_agent_name,
+                        )
+                        self._activity_bubble_callback(bubble)
         if event == "agent":
             # BUG FIX: lifecycle events (stream="lifecycle") nest phase in data.phase.
             # Item-level events (stream="item") put phase directly in payload.phase.
