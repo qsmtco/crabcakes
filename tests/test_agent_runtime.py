@@ -999,3 +999,154 @@ class TestPerProjectEnforcement:
         assert "syntax" in tiers_run, "Syntax should still run"
         assert "tests" not in tiers_run, "Tests should be disabled by project config"
         assert "lint" not in tiers_run, "Lint should be disabled by project config"
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Phase 2: MiniMax body-level error surfacing (SPEC-LOCAL-AGENT-NO-RESPONSE-FIX)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestMinimaxBodyLevelError:
+    """MiniMax returns body-level errors with HTTP 200 (base_resp.status_code != 0).
+    The runtime must raise RuntimeError so the error surfaces to the user."""
+
+    def test_minimax_body_level_error_raises(self):
+        """_call_minimax with base_resp.status_code=1004 raises RuntimeError."""
+        from agent.runtime import _call_minimax
+        error_body = json.dumps({
+            "base_resp": {
+                "status_code": 1004,
+                "status_msg": "login fail: Please carry the API secret key"
+            }
+        }).encode()
+        mock_resp = unittest.mock.MagicMock()
+        mock_resp.read.return_value = error_body
+        mock_resp.__enter__ = unittest.mock.MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = unittest.mock.MagicMock(return_value=False)
+
+        with unittest.mock.patch("urllib.request.urlopen", return_value=mock_resp):
+            with pytest.raises(RuntimeError, match="status_code=1004"):
+                _call_minimax(
+                    base_url="https://api.minimax.chat/v1",
+                    api_key="invalid-key",
+                    model="minimax/MiniMax-M2.7",
+                    messages=[{"role": "user", "content": "hi"}],
+                    tools=None,
+                    timeout=30,
+                )
+
+    def test_streaming_minimax_body_error_raises(self):
+        """_stream_minimax_events with base_resp.status_code=1004 raises RuntimeError."""
+        from agent.runtime import _stream_minimax_events
+        error_body = json.dumps({
+            "base_resp": {
+                "status_code": 1004,
+                "status_msg": "login fail: Please carry the API secret key"
+            }
+        }).encode()
+
+        # Simulate HTTP response whose lines yield the error JSON
+        mock_resp = unittest.mock.MagicMock()
+        mock_resp.__iter__ = unittest.mock.MagicMock(return_value=iter([error_body]))
+        mock_resp.__enter__ = unittest.mock.MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = unittest.mock.MagicMock(return_value=False)
+
+        with unittest.mock.patch("urllib.request.urlopen", return_value=mock_resp):
+            with pytest.raises(RuntimeError, match="status_code=1004"):
+                # Must consume the generator to trigger the error
+                list(_stream_minimax_events(
+                    base_url="https://api.minimax.chat/v1",
+                    api_key="invalid-key",
+                    model="minimax/MiniMax-M2.7",
+                    messages=[{"role": "user", "content": "hi"}],
+                    tools=None,
+                    timeout=30,
+                ))
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Phase 3: Empty-choices response handling (SPEC-LOCAL-AGENT-NO-RESPONSE-FIX)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestEmptyChoicesResponse:
+    """When the LLM returns a response with no choices and empty content,
+    _run_loop must dispatch _on_error instead of _on_response_complete."""
+
+    def test_empty_choices_response_dispatches_on_error(self):
+        """Response with no choices key and empty content → _on_error fires."""
+        rt = AgentRuntime(_make_cfg())
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        errors = []
+        rt._on_error = lambda sk2, msg: errors.append(msg)
+
+        # Response with no choices key — mimics a body-level error that
+        # slipped through (e.g. MiniMax returning {"base_resp":{...}} with status_code 0
+        # but still no choices)
+        empty_response = {"usage": {}}
+
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: empty_response):
+            rt._run_loop(sk, "hello")
+
+        assert len(errors) == 1, f"Expected 1 error, got: {errors}"
+        assert "no content" in errors[0].lower() or "configuration error" in errors[0].lower(), \
+            f"Error message should mention the issue, got: {errors[0]}"
+        rt.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Phase 4: Defensive empty-response bubble (SPEC-LOCAL-AGENT-NO-RESPONSE-FIX)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestEmptyResponseFallbackBubble:
+    """When _do_response_complete is called with empty text and no streaming
+    was active, a fallback bubble must be rendered so the user sees feedback."""
+
+    def _make_handler(self):
+        """Create a minimal AgentRuntimeHandler with mocked deps."""
+        from ui.handlers.agent_runtime_handler import AgentRuntimeHandler
+        mc = unittest.mock.MagicMock()
+        crh = unittest.mock.MagicMock()
+        crh.is_streaming.return_value = False
+        crh.render_sync.return_value = unittest.mock.MagicMock()  # fake bubble widget
+        handler = AgentRuntimeHandler(
+            main_content=mc,
+            chat_render_handler=crh,
+            GLib_module=None,  # no GLib in tests — runs synchronously
+        )
+        return handler, mc, crh
+
+    def test_empty_response_renders_fallback_bubble(self):
+        """_do_response_complete with empty text + not streaming → fallback bubble rendered."""
+        handler, mc, crh = self._make_handler()
+        chat_box = unittest.mock.MagicMock()
+        handler._resolve_chat_box = unittest.mock.MagicMock(return_value=chat_box)
+
+        handler._do_response_complete("special:coder", "")
+
+        # render_sync must have been called with a fallback message
+        crh.render_sync.assert_called_once()
+        call_args = crh.render_sync.call_args
+        assert call_args[0][0] == "System"  # role
+        assert "no content" in call_args[0][1].lower() or "configuration error" in call_args[0][1].lower()
+        # Bubble was appended to chat_box
+        chat_box.append.assert_called_once()
+
+    def test_empty_response_with_streaming_does_not_render_extra_bubble(self):
+        """_do_response_complete with empty text + streaming active → no extra fallback bubble.
+        The streaming bubble finalization handles display."""
+        handler, mc, crh = self._make_handler()
+        crh.is_streaming.return_value = True  # streaming WAS active
+        chat_box = unittest.mock.MagicMock()
+        handler._resolve_chat_box = unittest.mock.MagicMock(return_value=chat_box)
+
+        handler._do_response_complete("special:coder", "")
+
+        # render_sync should NOT have been called for fallback (streaming handles it)
+        # Note: end_streaming IS called (that's fine), but no additional render
+        # The key assertion: render_sync was never called with the fallback text
+        for call_args in crh.render_sync.call_args_list:
+            text = call_args[0][1]
+            assert "no content" not in text.lower() and "Agent returned" not in text, \
+                f"Fallback bubble should not render during streaming, got: {text}"

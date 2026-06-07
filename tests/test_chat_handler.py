@@ -575,3 +575,131 @@ class TestCommandErrorDisplay:
 
         # render_sync should NOT be called — nothing to display
         mock_render.render_sync.assert_not_called()
+
+
+# ── Tests: Inline @mention routing for special agents (Phase 1, SPEC-LOCAL-AGENT-NO-RESPONSE-FIX) ──
+
+class TestInlineMentionRouting:
+    """Inline @Agent and @all mentions in project tabs must route special agents
+    through AgentRuntimeHandler, not gateway. Otherwise messages are silently dropped."""
+
+    def _make_handler_with_inline_mention(
+        self,
+        input_text: str,
+        mention_resolution,
+        special_agents: dict[str, str] | None = None,
+        connected: bool = True,
+    ):
+        """Create a ChatHandler wired for the inline @mention path.
+
+        Sets up:
+        - session_key = "project:crabcakes" (triggers inline mention branch)
+        - command handler returns handled=False, resolve_inline_mention returns given resolution
+        - agent_runtime_handler mock with get_special_agents returning special_agents
+        """
+        from models.command import CommandResult
+        gw = FakeGatewayClient(connected=connected)
+        mc = FakeMainContent(session_key="project:crabcakes", input_text=input_text)
+        handler = make_handler(mc, gw)
+
+        # Mock command handler — returns handled=False so we fall through to inline mention
+        mock_cmd = MagicMock()
+        mock_cmd.process_input.return_value = CommandResult(handled=False)
+        mock_cmd.resolve_inline_mention.return_value = mention_resolution
+        handler.set_command_handler(mock_cmd)
+
+        # Mock chat render handler
+        mock_render = MagicMock()
+        mock_render.render_sync.return_value = MagicMock()
+        handler.set_chat_render_handler(mock_render)
+
+        # Mock agent runtime handler
+        mock_arh = MagicMock()
+        mock_arh.get_special_agents.return_value = special_agents or {}
+        handler.set_agent_runtime_handler(mock_arh)
+
+        return handler, mc, gw, mock_arh
+
+    def test_inline_mention_to_special_agent_routes_to_runtime(self):
+        """Inline @Coder hello from project tab → routes to AgentRuntimeHandler, not gateway."""
+        from models.command import MentionResolution
+        resolution = MentionResolution(
+            target_session_key="special:coder",
+            clean_text="hello",
+        )
+        handler, mc, gw, mock_arh = self._make_handler_with_inline_mention(
+            "@Coder hello",
+            resolution,
+            special_agents={"special:coder": "Coder"},
+        )
+
+        handler.on_send()
+
+        # Must route through AgentRuntimeHandler
+        mock_arh.send_to_special_agent.assert_called_once_with("special:coder", "hello")
+        # Must NOT send to gateway
+        assert gw.get_sent() == []
+
+    def test_inline_mention_to_gateway_agent_routes_to_gw(self):
+        """Inline @QTR status from project tab → routes to gateway (not a special agent)."""
+        from models.command import MentionResolution
+        resolution = MentionResolution(
+            target_session_key="agent:qtr",
+            clean_text="status",
+        )
+        handler, mc, gw, mock_arh = self._make_handler_with_inline_mention(
+            "@QTR status",
+            resolution,
+            special_agents={"special:coder": "Coder"},  # qtr NOT in special agents
+        )
+
+        handler.on_send()
+
+        # Must NOT call AgentRuntimeHandler
+        mock_arh.send_to_special_agent.assert_not_called()
+        # Must send to gateway
+        assert gw.get_sent() == [("agent:qtr", "status")]
+
+    def test_inline_mention_broadcast_with_special_member_routes_to_runtime(self):
+        """Inline @all hello with mixed members → special agents via runtime, gateway agents via gw."""
+        from models.command import MentionResolution
+        resolution = MentionResolution(
+            broadcast_targets=["special:coder", "agent:qtr"],
+            clean_text="hello",
+            is_broadcast=True,
+        )
+        handler, mc, gw, mock_arh = self._make_handler_with_inline_mention(
+            "@all hello",
+            resolution,
+            special_agents={"special:coder": "Coder"},
+        )
+
+        handler.on_send()
+
+        # Coder routed through AgentRuntimeHandler
+        mock_arh.send_to_special_agent.assert_called_once_with("special:coder", "hello")
+        # QTR routed through gateway
+        assert gw.get_sent() == [("agent:qtr", "hello")]
+
+    def test_inline_mention_to_special_agent_does_not_call_gw(self):
+        """Regression guard: inline @Coder must NOT call gw.send_message at all."""
+        from models.command import MentionResolution
+        resolution = MentionResolution(
+            target_session_key="special:coder",
+            clean_text="hello",
+        )
+        handler, mc, gw, mock_arh = self._make_handler_with_inline_mention(
+            "@Coder hello",
+            resolution,
+            special_agents={"special:coder": "Coder"},
+        )
+
+        handler.on_send()
+
+        # Explicit regression check: gateway was never called with special:coder
+        for sk, text in gw.get_sent():
+            assert sk != "special:coder", (
+                f"gw.send_message called with special:coder — should route via AgentRuntimeHandler instead"
+            )
+        # And runtime was called
+        mock_arh.send_to_special_agent.assert_called_once_with("special:coder", "hello")

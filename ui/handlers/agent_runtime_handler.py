@@ -834,6 +834,19 @@ class AgentRuntimeHandler:
         self._crh.end_streaming(session_key)
 
         # Non-streaming fallback: render from text argument with crabcard extraction
+        # Defensive: if response completed with empty text and no streaming bubble,
+        # render a fallback message so the user sees feedback instead of silence.
+        if not was_streaming and not text:
+            chat_box = self._resolve_chat_box(session_key)
+            if chat_box is not None:
+                fallback_text = "⚠️ Agent returned no content. This may indicate a configuration error or an issue with the LLM provider."
+                bubble = self._crh.render_sync(
+                    "System", fallback_text, session_key, agent_name="System"
+                )
+                if bubble is not None:
+                    chat_box.append(bubble)
+                self._mc.scroll_chat_to_bottom()
+
         if not was_streaming and text:
             if project_name and self._fh is not None:
                 from utils.crabcard_parser import extract_crabcards

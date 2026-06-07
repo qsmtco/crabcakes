@@ -385,7 +385,13 @@ class ChatHandler:
                                 on_forward_click=self._on_forward_message,
                                 agent_name="You",
                             )
-                    if self._gw is not None and self._gw.is_connected():
+                    # Special agents route through AgentRuntimeHandler, not gateway
+                    # (they have no gateway session; gateway would silently drop the message)
+                    is_special = (self._agent_runtime_handler is not None
+                                  and resolution.target_session_key in self._agent_runtime_handler.get_special_agents())
+                    if is_special:
+                        self._agent_runtime_handler.send_to_special_agent(resolution.target_session_key, forward_text)
+                    elif self._gw is not None and self._gw.is_connected():
                         self._gw.send_message(resolution.target_session_key, forward_text)
                 self._dispatch(_show_and_route_solo)
                 if self._on_send_initiated:
@@ -414,6 +420,15 @@ class ChatHandler:
                             )
                     if self._gw is not None and self._gw.is_connected():
                         for target in resolution.broadcast_targets:
+                            # Special agents route through AgentRuntimeHandler, not gateway
+                            is_special = (self._agent_runtime_handler is not None
+                                          and target in self._agent_runtime_handler.get_special_agents())
+                            if is_special:
+                                self._agent_runtime_handler.send_to_special_agent(target, forward_text)
+                                continue
+                            # Gateway agent — skip silently when offline
+                            if self._gw is None or not self._gw.is_connected():
+                                continue
                             self._gw.send_message(target, forward_text)
                 self._dispatch(_show_and_route_broadcast)
                 if self._on_send_initiated:

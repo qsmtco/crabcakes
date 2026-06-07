@@ -144,7 +144,17 @@ def _call_minimax(
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read())
+            result = json.loads(resp.read())
+            # MiniMax returns body-level errors with HTTP 200:
+            # {"base_resp":{"status_code":1004,"status_msg":"login fail..."}}
+            base_resp = result.get("base_resp", {})
+            status_code = base_resp.get("status_code", 0)
+            if status_code != 0:
+                status_msg = base_resp.get("status_msg", "unknown error")
+                raise RuntimeError(
+                    f"MiniMax API error (status_code={status_code}): {status_msg}"
+                )
+            return result
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         raise RuntimeError(
@@ -382,6 +392,53 @@ def _stream_minimax_events(
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
+        # MiniMax may return a body-level error with HTTP 200 (not SSE).
+        # Check the first non-empty line before entering SSE parsing.
+        first_line = None
+        for line in _sse_lines(resp):
+            if line.strip():
+                first_line = line
+                break
+        if first_line is not None:
+            # Check if this is a non-SSE JSON error response
+            try:
+                parsed = json.loads(first_line.decode("utf-8"))
+                base_resp = parsed.get("base_resp", {})
+                status_code = base_resp.get("status_code", 0)
+                if status_code != 0:
+                    status_msg = base_resp.get("status_msg", "unknown error")
+                    raise RuntimeError(
+                        f"MiniMax API error (status_code={status_code}): {status_msg}"
+                    )
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass  # Not JSON — likely SSE data, fall through
+
+            # First line wasn't an error — process it as SSE
+            ev = _parse_sse_line(first_line)
+            if ev is not None:
+                if ev.type == "done":
+                    yield SSEEvent(type="done", data={})
+                    return
+                if ev.type == "raw":
+                    d = ev.data
+                    delta = d.get("choices", [{}])[0].get("delta", {})
+                    content = delta.get("content")
+                    if content is not None:
+                        yield SSEEvent(type="text_delta", data={"content": content})
+                    tc_delta = delta.get("tool_calls", [])
+                    for tcd in tc_delta:
+                        idx = tcd.get("index", 0)
+                        if "function" in tcd:
+                            fname = tcd["function"].get("name") or ""
+                            fargs = tcd["function"].get("arguments", "") or ""
+                            yield SSEEvent(type="tool_call_delta", data={
+                                "index": idx, "name": fname, "arguments": fargs
+                            })
+                    finish_reason = d.get("choices", [{}])[0].get("finish_reason")
+                    if finish_reason in ("stop", "tool_calls", "length"):
+                        yield SSEEvent(type="done", data={})
+                        return
+
         for line in _sse_lines(resp):
             ev = _parse_sse_line(line)
             if ev is None:
@@ -1053,6 +1110,18 @@ class AgentRuntime:
                              prompt_tok + comp_tok, cost)
 
                 if not tool_calls_raw:
+                    # Text-only response — but check for empty/missing content
+                    # which may indicate a provider error that wasn't raised (e.g. body-level
+                    # error that slipped through, or malformed response with no choices)
+                    if not text_content and not response.get("choices"):
+                        logger.warning("[tool-loop] sk=%s LLM returned no choices and no content — treating as error",
+                                       session_key)
+                        conv.add_assistant_message("", [])
+                        self._dispatch(self._on_error, session_key,
+                                        "Agent returned no content. This may indicate a configuration error "
+                                        "or an issue with the LLM provider.")
+                        self._auto_save(session_key, conv)
+                        return
                     # Text-only response — done
                     logger.debug("[tool-loop] sk=%s text-only response, dispatching on_response_complete len=%d",
                                  session_key, len(text_content or ""))
