@@ -476,6 +476,63 @@ class TestActivityDrawer:
         drawer.append_event({"agent": "Coder", "activity_type": "tool_start", "type_label": "tool", "icon": "🔧"})
         assert refresh_spy.call_count == 3, "Re-using known agent+type should not refresh"
 
+    def test_known_sets_updated_even_when_filter_blocks_event(self, drawer):
+        """FILTERFIX-2: events that fail the filter check must still update
+        _known_agents / _known_types so they appear in the dropdown.
+
+        Pre-FILTERFIX-2, the known-set update happened AFTER the early-return
+        in append_event. If a filter blocked a new agent's first event, that
+        agent was never added to _known_agents and could never be re-enabled
+        from the dropdown.
+        """
+        # Set a filter that blocks all events (only "Coder"/"tool_start" pass)
+        drawer._visible_agents = {"Coder"}
+        drawer._visible_types = {"tool_start"}
+
+        # Send a Debugger/plan event — blocked by the filter
+        drawer.append_event({
+            "agent": "Debugger",
+            "activity_type": "plan",
+            "type_label": "plan",
+            "icon": "📋",
+        })
+
+        # _known_agents / _known_types MUST include "Debugger" and "plan"
+        # even though the row was filtered out and not appended to the list.
+        assert "Debugger" in drawer._known_agents, (
+            "FILTERFIX-2: filtered-out events must still update _known_agents "
+            "so the agent is discoverable in the dropdown"
+        )
+        assert "plan" in drawer._known_types, (
+            "FILTERFIX-2: filtered-out events must still update _known_types "
+            "so the type is discoverable in the dropdown"
+        )
+
+    def test_filtered_event_does_not_increment_visible_rows_but_still_counts(self, drawer):
+        """FILTERFIX-2: a filtered-out event does not add a visible row,
+        but does increment _total_count (existing behavior). Companion to
+        test_known_sets_updated_even_when_filter_blocks_event — verifies
+        we preserved the original counting semantics after the reorder.
+        """
+        drawer._visible_agents = {"Coder"}
+        drawer._visible_types = {"tool_start"}
+
+        initial_total = drawer._total_count
+        # Send a blocked event
+        drawer.append_event({
+            "agent": "Debugger",
+            "activity_type": "plan",
+            "type_label": "plan",
+            "icon": "📋",
+        })
+        # _total_count went up (existing semantics — count is global, not filtered)
+        assert drawer._total_count == initial_total + 1
+        # But no row was appended to the list (filter blocks it)
+        # fake_list is a MagicMock; we just verify append was NOT called
+        assert not drawer._list.append.called, (
+            "FILTERFIX-2: a filtered-out event must not append a row to the list"
+        )
+
     def test_on_agent_start_inserts_separator(self, drawer):
         """on_agent_start appends a separator row, breaks the counter chain, tracks state."""
         # Baseline: a prior tool_end row sets _last_row_key

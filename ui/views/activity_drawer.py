@@ -208,13 +208,13 @@ class ActivityDrawer(Gtk.Box):
         activity_type = row.get("activity_type", "")
         key = (agent, activity_type)
 
-        # Filter check — drop the row if filtered out
-        if not self._passes_filter(agent, activity_type):
-            self._total_count += 1  # still counted in total, just not visible
-            self._update_count_label()
-            return
-
-        # Track known agents/types for the filter dropdowns.
+        # FILTERFIX-2: track known agents/types BEFORE the filter check.
+        # If the filter is set to a specific agent (e.g. {"Coder"}) and a new
+        # event from "Debugger" arrives, the filter check would early-return
+        # below — but the user can never re-enable "Debugger" from the
+        # dropdown if it never gets added to _known_agents. By tracking
+        # the known-set first, every seen agent/type is discoverable.
+        #
         # FILTERFIX-1 audit: capture whether the sets actually changed BEFORE
         # the .add() calls — once added, we can't tell if it was new. Refreshing
         # on every event is O(N widgets) per event; a 50-event session from the
@@ -229,6 +229,14 @@ class ActivityDrawer(Gtk.Box):
         # if the set actually changed.
         if new_agent or new_type:
             self._refresh_filter_popovers()
+
+        # Filter check — drop the row if filtered out. The known-set was
+        # updated above, so filtered-out agents/types are still discoverable
+        # in the dropdown even though their rows are not displayed.
+        if not self._passes_filter(agent, activity_type):
+            self._total_count += 1  # still counted in total, just not visible
+            self._update_count_label()
+            return
 
         # Counter-collapse check
         if self._last_row_key == key and self._last_row_widget is not None:
