@@ -210,6 +210,23 @@ class ActivityDrawer(Gtk.Box):
         self._last_row_key = key
         self._last_row_widget = row_widget
 
+        # BUGFIX-3: Track this event in the agent's running counter so that
+        # on_agent_end() can produce an accurate summary even when no counter-
+        # collapse happens (mixed event types from the same agent). The
+        # counter-collapse path (_mutate_counter_row) only initializes on
+        # the first collapse, so agents with no collapsed sequences would
+        # otherwise show "ended" instead of the real count and total duration.
+        # Use count=0 (not 1): this is the actual event count, not an anchor.
+        # _mutate_counter_row's setdefault is a no-op once this entry exists,
+        # so its count += 1 correctly adds collapsed events on top.
+        agent_counter = self._agent_counters.setdefault(
+            agent, {"count": 0, "total_duration_ms": 0, "last_command": ""}
+        )
+        agent_counter["count"] += 1
+        agent_counter["total_duration_ms"] += row.get("duration_ms", 0)
+        if row.get("command"):
+            agent_counter["last_command"] = row["command"]
+
         self._total_count += 1
         self._update_count_label()
         self._trim_old_rows_if_needed()

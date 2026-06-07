@@ -336,6 +336,116 @@ class TestActivityDrawer:
         assert drawer._last_row_key is None
         assert drawer._last_row_widget is None
 
+    def test_mixed_types_produce_accurate_agent_end_summary(self, drawer, monkeypatch):
+        """BUGFIX-3: 3 events from the same agent with DIFFERENT activity_types
+        (no counter-collapse) must still produce an accurate 'N events in Xms'
+        summary separator on on_agent_end — not 'ended'.
+        """
+        # Re-patch _build_separator_widget to capture the summary text it
+        # receives, so we can assert what on_agent_end() emitted.
+        captured_text = []
+        monkeypatch.setattr(
+            "ui.views.activity_drawer.ActivityDrawer._build_separator_widget",
+            lambda self, text: captured_text.append(text) or MagicMock(),
+        )
+
+        # Three different activity types from "Coder" — no two share a key,
+        # so no counter-collapse fires; only the new-row path runs.
+        for activity_type, duration in [
+            ("tool_start", 100),
+            ("plan", 250),
+            ("tool_end", 415),
+        ]:
+            drawer.append_event({
+                "agent": "Coder",
+                "activity_type": activity_type,
+                "type_label": activity_type.split("_")[0],
+                "icon": "🔧",
+                "duration_ms": duration,
+            })
+
+        # After 3 new-row appends, the counter must reflect all 3 events.
+        assert drawer._agent_counters["Coder"]["count"] == 3
+        assert drawer._agent_counters["Coder"]["total_duration_ms"] == 765  # 100+250+415
+
+        drawer.on_agent_end("sk-1", "Coder")
+
+        # Without BUGFIX-3, captured_text would contain "...ended...".
+        # With BUGFIX-3, it must contain the accurate count + duration.
+        assert len(captured_text) == 1
+        summary = captured_text[0]
+        assert "Coder" in summary
+        assert "3 events" in summary, f"summary {summary!r} should report 3 events"
+        assert "765" in summary or "765ms" in summary, (
+            f"summary {summary!r} should report 765ms total duration"
+        )
+        assert "ended" not in summary, (
+            f"summary {summary!r} should not say 'ended' (BUGFIX-3 fix)"
+        )
+
+    def test_mixed_new_row_and_collapse_total_count(self, drawer, monkeypatch):
+        """BUGFIX-3: mixed scenario — 1 new-row event + 2 counter-collapsed events
+        + 1 new-row event of a different type = 4 total events reported on
+        on_agent_end. Verifies the interaction between BUGFIX-3's new-row
+        counter and _mutate_counter_row's setdefault (which must NOT
+        double-count the first collapsed event).
+        """
+        captured_text = []
+        monkeypatch.setattr(
+            "ui.views.activity_drawer.ActivityDrawer._build_separator_widget",
+            lambda self, text: captured_text.append(text) or MagicMock(),
+        )
+
+        # Event 1: type A, new row. BUGFIX-3 path → count=1.
+        drawer.append_event({
+            "agent": "Debugger",
+            "activity_type": "tool_start",
+            "type_label": "tool",
+            "icon": "🔧",
+            "duration_ms": 100,
+        })
+        # Event 2: type A, counter-collapse. _mutate_counter_row runs:
+        #   setdefault finds existing (count=1), count += 1 → 2.
+        drawer.append_event({
+            "agent": "Debugger",
+            "activity_type": "tool_start",
+            "type_label": "tool",
+            "icon": "🔧",
+            "duration_ms": 200,
+        })
+        # Event 3: type A, counter-collapse. setdefault still finds existing
+        #   (count=2), count += 1 → 3.
+        drawer.append_event({
+            "agent": "Debugger",
+            "activity_type": "tool_start",
+            "type_label": "tool",
+            "icon": "🔧",
+            "duration_ms": 300,
+        })
+        # Event 4: type B (plan), new row. Different (agent, type) key breaks
+        #   the chain — new-row path. BUGFIX-3 → count += 1 → 4.
+        drawer.append_event({
+            "agent": "Debugger",
+            "activity_type": "plan",
+            "type_label": "plan",
+            "icon": "📋",
+            "duration_ms": 50,
+        })
+
+        # After all 4 events: count=4, duration=100+200+300+50=650.
+        assert drawer._agent_counters["Debugger"]["count"] == 4
+        assert drawer._agent_counters["Debugger"]["total_duration_ms"] == 650
+
+        drawer.on_agent_end("sk-1", "Debugger")
+
+        assert len(captured_text) == 1
+        summary = captured_text[0]
+        assert "4 events" in summary, (
+            f"summary {summary!r} should report 4 total events (the BUGFIX-3 + "
+            f"_mutate_counter_row interaction must not double-count)"
+        )
+        assert "ended" not in summary
+
     def test_toggle_flips_state(self, drawer):
         """toggle() flips self._expanded; _apply_expanded_state is patched to no-op."""
         # Initial state: _expanded = False (set in __init__)
