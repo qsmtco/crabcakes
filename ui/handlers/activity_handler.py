@@ -447,19 +447,21 @@ class ActivityHandler:
                         )
                         self._activity_bubble_callback(bubble)
         if event == "agent":
-            # BUG FIX: lifecycle events (stream="lifecycle") nest phase in data.phase.
-            # Item-level events (stream="item") put phase directly in payload.phase.
+            # BUGFIX-4: State machine transitions only apply to lifecycle events.
+            # Other stream types (item, plan, approval, patch, command_output)
+            # should NOT trigger on_agent_start/end/error — they nest their
+            # own status inside `data` (or lack a `phase` field entirely) and
+            # would otherwise mis-fire the state machine if a future gateway
+            # payload ever surfaced a top-level `phase` on a non-lifecycle event.
             stream = payload.get("stream", "")
             if stream == "lifecycle":
                 phase = self._safe_data(payload).get("phase", "")
-            else:
-                phase = payload.get("phase", "")
-            if phase == "start":
-                self.on_agent_start(session_key, payload)
-            elif phase == "end":
-                self.on_agent_end(session_key, payload)
-            elif phase == "error":
-                self.on_agent_error(session_key)
+                if phase == "start":
+                    self.on_agent_start(session_key, payload)
+                elif phase == "end":
+                    self.on_agent_end(session_key, payload)
+                elif phase == "error":
+                    self.on_agent_error(session_key)
 
         elif event == "chat":
             state = payload.get("state", "")

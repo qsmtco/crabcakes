@@ -676,6 +676,132 @@ class TestActivityHandlerActivityBubbles:
         )
 
 
+# ── Class: TestActivityHandlerStateMachineGuard — BUGFIX-4 ──────
+
+
+class TestActivityHandlerStateMachineGuard:
+    """BUGFIX-4: state machine transitions (on_agent_start/end/error) must
+    only fire for `stream == "lifecycle"` events. Other stream types
+    (item, plan, approval, patch, command_output) must NOT trigger the
+    state machine even if they carry a top-level `phase` field, because
+    a future gateway payload could surface a `phase: "end"` on a non-
+    lifecycle event and prematurely end the agent session.
+
+    Pre-BUGFIX-4: the second `if event == "agent":` block fell to
+    `else: phase = payload.get("phase", "")` for non-lifecycle streams,
+    so a `stream="item"` with `phase="end"` would call `on_agent_end`.
+    Post-BUGFIX-4: only `stream="lifecycle"` is processed.
+    """
+
+    def _make_handler(self, fake_glib):
+        """Construct an ActivityHandler with main_content.get_current_session_key
+        returning "sk-1" so the _is_ui_active() guard in _set_state passes.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        mc = MagicMock()
+        mc.get_current_session_key.return_value = "sk-1"
+        handler = ActivityHandler(
+            feedbar=MagicMock(), main_content=mc, GLib_module=fake_glib,
+        )
+        return handler
+
+    def test_item_end_does_not_trigger_state_machine(self, fake_glib):
+        """stream=item phase=end must NOT trigger on_agent_end state transition."""
+        handler = self._make_handler(fake_glib)
+        # Start a session first — enters "reasoning" state
+        handler.on_gateway_event("agent", {
+            "stream": "lifecycle",
+            "sessionKey": "sk-1",
+            "runId": "run-1",
+            "data": {"phase": "start"},
+        })
+        assert handler._state == "reasoning", (
+            f"lifecycle phase=start should transition to 'reasoning', got {handler._state!r}"
+        )
+
+        # Send a stream=item event with phase=end at the top level.
+        # Pre-BUGFIX-4: this would call on_agent_end() → _state = "done".
+        # Post-BUGFIX-4: state stays "reasoning".
+        handler.on_gateway_event("agent", {
+            "stream": "item",
+            "sessionKey": "sk-1",
+            "runId": "run-1",
+            "phase": "end",  # top-level phase — the latent trap
+            "data": {"phase": "end", "kind": "tool", "name": "exec", "status": "completed"},
+        })
+
+        assert handler._state == "reasoning", (
+            f"stream=item phase=end must NOT trigger on_agent_end state transition, "
+            f"got _state={handler._state!r}"
+        )
+
+    def test_lifecycle_end_triggers_state_machine(self, fake_glib):
+        """stream=lifecycle phase=end MUST trigger on_agent_end state transition (regression guard)."""
+        handler = self._make_handler(fake_glib)
+        handler.on_gateway_event("agent", {
+            "stream": "lifecycle",
+            "sessionKey": "sk-1",
+            "runId": "run-1",
+            "data": {"phase": "start"},
+        })
+        assert handler._state == "reasoning"
+
+        handler.on_gateway_event("agent", {
+            "stream": "lifecycle",
+            "sessionKey": "sk-1",
+            "runId": "run-1",
+            "data": {"phase": "end"},
+        })
+        assert handler._state == "done", (
+            f"stream=lifecycle phase=end MUST transition to 'done', got {handler._state!r}"
+        )
+
+    def test_item_start_does_not_trigger_state_machine(self, fake_glib):
+        """stream=item phase=start (top-level) must NOT trigger on_agent_start.
+        Variant of the regression guard — start is just as dangerous as end.
+        """
+        handler = self._make_handler(fake_glib)
+        # Initial state: idle. Send a stream=item with phase=start.
+        handler.on_gateway_event("agent", {
+            "stream": "item",
+            "sessionKey": "sk-1",
+            "runId": "run-1",
+            "phase": "start",  # top-level phase on a non-lifecycle event
+            "data": {"phase": "start", "kind": "tool", "name": "exec", "status": "starting"},
+        })
+        assert handler._state == "idle", (
+            f"stream=item phase=start must NOT trigger on_agent_start, got {handler._state!r}"
+        )
+
+    def test_command_output_end_does_not_trigger_state_machine(self, fake_glib):
+        """stream=command_output phase=end must NOT trigger on_agent_end.
+        Real-world BUGFIX-1+ scenario: gateway sends command_output end events
+        with a phase field. They must not end the agent session.
+        """
+        handler = self._make_handler(fake_glib)
+        # Start the session
+        handler.on_gateway_event("agent", {
+            "stream": "lifecycle",
+            "sessionKey": "sk-1",
+            "runId": "run-1",
+            "data": {"phase": "start"},
+        })
+        assert handler._state == "reasoning"
+
+        # Send command_output with phase=end (real gateway shape)
+        handler.on_gateway_event("agent", {
+            "stream": "command_output",
+            "sessionKey": "sk-1",
+            "runId": "run-1",
+            "phase": "end",  # top-level
+            "data": {"phase": "end", "name": "exec", "exitCode": 0, "output": "ok"},
+        })
+        assert handler._state == "reasoning", (
+            f"stream=command_output phase=end must NOT trigger on_agent_end, "
+            f"got _state={handler._state!r}"
+        )
+
+
 class TestChatHandlerActivityBubbleRender:
     """ChatHandler integration tests for activity/lifecycle routing (Phase 2 SPEC-smarter-chat-ux).
 
