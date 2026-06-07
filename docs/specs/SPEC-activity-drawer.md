@@ -1897,6 +1897,34 @@ After implementation, update the following sections of `docs/ARCHITECTURE.md`:
 
 ---
 
+## 9. Gateway Event Limitations
+
+The following activity drawer event types depend on gateway emission policies that are outside Crabcakes' control. The code handles these events correctly when they arrive, but they may not appear in all sessions.
+
+### Patch Events (`stream: "patch"`)
+
+**Limitation:** The gateway (`openclaw 2026.5.18`) only emits patch events inside an `if (isPatchToolName(toolName))` block where `isPatchToolName` returns `toolName === "apply_patch"`. Agents that use `write`, `edit`, `write_file`, `edit_file`, or `str_replace_editor` tools will NOT produce patch events from the gateway. The Crabcakes code is correct — it handles patch events when they arrive — but they simply never arrive for most tools.
+
+**Workaround options:**
+- (A) Add client-side detection: treat `stream: "item" kind: "tool"` end events with `name` in `{write, edit, write_file, edit_file}` as patch-like events
+- (B) Document the limitation and rely on the tool_start/tool_end rows for file-edit visibility
+
+### Plan Events (`stream: "plan"`)
+
+**Limitation:** The gateway only emits plan events during a planning-only-retry loop (when the model outputs a plan and needs to retry). Normal agent turns where the model responds directly do NOT emit plan events. The Crabcakes code is correct — it handles plan events when they arrive.
+
+**Impact:** In most sessions, no plan rows will appear. This is expected behavior.
+
+### Approval Events (`stream: "approval"`)
+
+**Limitation:** Approval events only fire when an exec requires interactive approval (`status: "approval-pending"`). In sessions where all execs are auto-approved, no approval rows appear. This is expected behavior — the activity drawer only shows approval rows when the user needs to act.
+
+### Command Output Events (`stream: "command_output"`)
+
+**No limitation as of BUGFIX-1.** The handler now correctly processes gateway command_output events. Previously these were silently dropped.
+
+---
+
 ## Verification Cheat Sheet (Rule 10)
 
 Run these before declaring complete:
