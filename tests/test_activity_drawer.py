@@ -302,6 +302,47 @@ class TestActivityDrawer:
         assert drawer._passes_filter("Debugger", "plan") is True
         assert drawer._passes_filter("Crabcakes", "tool_start") is False
 
+    def test_passes_filter_handles_non_string_agent(self, drawer):
+        """BUGFIX-9: _passes_filter must not crash on non-string agent values.
+
+        Pre-BUGFIX-9, `agent not in self._visible_agents` would raise TypeError
+        when agent was None or an int. Post-fix, non-string agents are coerced
+        to a sensible string (None -> "Agent"; int -> str(int)) before the
+        membership test.
+        """
+        drawer._visible_agents = {"Coder", "Agent"}
+        # String agent still works
+        assert drawer._passes_filter("Coder", "tool_start") is True
+        # None is coerced to "Agent" — matches the drawer fallback for missing
+        # agent names, so it lands in the "Agent" bucket.
+        assert drawer._passes_filter(None, "tool_start") is True
+        # int is coerced to its str form — no crash, and the resulting str
+        # is unlikely to match any agent, so this should fail the filter
+        # rather than the membership check itself.
+        assert drawer._passes_filter(42, "tool_start") is False
+        # Empty filter set still passes everything regardless of type
+        drawer._visible_agents = set()
+        assert drawer._passes_filter(None, "tool_start") is True
+        assert drawer._passes_filter(42, "tool_start") is True
+
+    def test_passes_filter_handles_non_string_activity_type(self, drawer):
+        """BUGFIX-9: _passes_filter must not crash on non-string activity_type.
+
+        Symmetric guard to the agent check — malformed activity_type values
+        (None, int) must be coerced before the `in self._visible_types` test.
+        """
+        drawer._visible_types = {"tool_start"}
+        # String type matches
+        assert drawer._passes_filter("Coder", "tool_start") is True
+        # None is coerced to "" — won't match the filter set, so it drops.
+        assert drawer._passes_filter("Coder", None) is False
+        # int is coerced to "42" — also won't match.
+        assert drawer._passes_filter("Coder", 42) is False
+        # Empty filter set passes regardless of type
+        drawer._visible_types = set()
+        assert drawer._passes_filter("Coder", None) is True
+        assert drawer._passes_filter("Coder", 42) is True
+
     def test_on_agent_start_inserts_separator(self, drawer):
         """on_agent_start appends a separator row, breaks the counter chain, tracks state."""
         # Baseline: a prior tool_end row sets _last_row_key
