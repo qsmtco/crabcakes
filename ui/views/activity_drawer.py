@@ -89,7 +89,9 @@ class ActivityDrawer(Gtk.Box):
         self._agent_counters: dict[str, dict] = {}
 
         # Known agent list — collected from events as they arrive. Used to populate
-        # the agent filter dropdown. Cleared on clear_events().
+        # the agent filter dropdown. NOTE: not currently cleared on clear_events() —
+        # the filter and known-sets persist across clears (a separate bug, see
+        # FILTERFIX-1 audit post-mortem).
         self._known_agents: set[str] = set()
 
         # Known type list — same idea, for the type filter dropdown.
@@ -133,13 +135,32 @@ class ActivityDrawer(Gtk.Box):
         self._header.append(self._count_label)
 
         # Agent filter dropdown — menu button. Label is "Agent: all" by default.
+        # FILTERFIX-1: Gtk.MenuButton in GTK4 has no custom signals (no "activate",
+        # "clicked", or "toggled"). The popover-opening is handled AUTOMATICALLY
+        # by Gtk.MenuButton once a popover is set via set_popover(). The previous
+        # implementation connected "activate" which never fires, so the dropdowns
+        # were dead. Build the popover eagerly, store the inner box for refresh.
         self._agent_filter_btn = Gtk.MenuButton(label="Agent: all")
-        self._agent_filter_btn.connect("activate", self._on_agent_filter_clicked)
+        self._agent_popover = Gtk.Popover()
+        self._agent_popover_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        self._agent_popover_box.set_margin_top(4)
+        self._agent_popover_box.set_margin_bottom(4)
+        self._agent_popover_box.set_margin_start(4)
+        self._agent_popover_box.set_margin_end(4)
+        self._agent_popover.set_child(self._agent_popover_box)
+        self._agent_filter_btn.set_popover(self._agent_popover)
         self._header.append(self._agent_filter_btn)
 
-        # Type filter dropdown — menu button. Label is "Type: all" by default.
+        # Type filter dropdown — same pattern as agent filter.
         self._type_filter_btn = Gtk.MenuButton(label="Type: all")
-        self._type_filter_btn.connect("activate", self._on_type_filter_clicked)
+        self._type_popover = Gtk.Popover()
+        self._type_popover_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        self._type_popover_box.set_margin_top(4)
+        self._type_popover_box.set_margin_bottom(4)
+        self._type_popover_box.set_margin_start(4)
+        self._type_popover_box.set_margin_end(4)
+        self._type_popover.set_child(self._type_popover_box)
+        self._type_filter_btn.set_popover(self._type_popover)
         self._header.append(self._type_filter_btn)
 
         # Clear button
@@ -193,9 +214,21 @@ class ActivityDrawer(Gtk.Box):
             self._update_count_label()
             return
 
-        # Track known agents/types for the filter dropdowns
+        # Track known agents/types for the filter dropdowns.
+        # FILTERFIX-1 audit: capture whether the sets actually changed BEFORE
+        # the .add() calls — once added, we can't tell if it was new. Refreshing
+        # on every event is O(N widgets) per event; a 50-event session from the
+        # same agent would destroy and recreate ~18 widgets per event for no
+        # observable change.
+        new_agent = agent not in self._known_agents
+        new_type = activity_type not in self._known_types
         self._known_agents.add(agent)
         self._known_types.add(activity_type)
+        # FILTERFIX-1: refresh the popover content so newly-seen agents/types
+        # appear in the dropdowns in real-time. Only do the (expensive) rebuild
+        # if the set actually changed.
+        if new_agent or new_type:
+            self._refresh_filter_popovers()
 
         # Counter-collapse check
         if self._last_row_key == key and self._last_row_widget is not None:
@@ -618,39 +651,27 @@ class ActivityDrawer(Gtk.Box):
     def _on_clear_clicked(self, _btn) -> None:
         self.clear_events()
 
-    def _on_agent_filter_clicked(self, _btn) -> None:
-        """Open a popover menu listing all known agents with checkboxes."""
-        self._show_filter_popover(self._agent_filter_btn, "agent", self._known_agents,
-                                  self._visible_agents, self._agent_filter_btn,
-                                  new_label_fn=lambda n: f"Agent: {n}" if n else "Agent: all")
-
-    def _on_type_filter_clicked(self, _btn) -> None:
-        """Open a popover menu listing all known types with checkboxes."""
-        self._show_filter_popover(self._type_filter_btn, "type", self._known_types,
-                                  self._visible_types, self._type_filter_btn,
-                                  new_label_fn=lambda n: f"Type: {n}" if n else "Type: all")
-
-    def _show_filter_popover(
+    def _build_filter_popover_content(
         self,
-        anchor: Gtk.Widget,
+        box: Gtk.Box,
         kind: str,
         all_values: set[str],
         visible_set: set[str],
         label_widget: Gtk.Widget,
         new_label_fn: Callable[[str], str],
     ) -> None:
-        """Build and present a popover with checkboxes for each filter value.
+        """Clear `box` and rebuild the checkbox list for a filter popover.
 
-        Toggling a checkbox updates visible_set, refreshes the row list visibility,
-        and updates the label_widget text.
+        The popovers are created once in _build_header and the inner boxes
+        are stored. This function is called from _refresh_filter_popovers to
+        update the content in place when new agents/types are seen.
         """
-        popover = Gtk.Popover()
-        popover.set_parent(anchor)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        box.set_margin_top(4)
-        box.set_margin_bottom(4)
-        box.set_margin_start(4)
-        box.set_margin_end(4)
+        # Clear existing children
+        while True:
+            child = box.get_first_child()
+            if child is None:
+                break
+            box.remove(child)
 
         # "All" toggle — clears the filter set
         all_check = Gtk.CheckButton(label=f"All {kind}s")
@@ -665,8 +686,22 @@ class ActivityDrawer(Gtk.Box):
             cb.connect("toggled", self._on_filter_value_toggled, kind, value, label_widget, new_label_fn)
             box.append(cb)
 
-        popover.set_child(box)
-        popover.popup()
+    def _refresh_filter_popovers(self) -> None:
+        """Rebuild the checkbox content of both filter popovers.
+
+        Called from append_event after _known_agents / _known_types are
+        updated, so newly-seen agents/types appear in the dropdowns.
+        """
+        self._build_filter_popover_content(
+            self._agent_popover_box, "agent", self._known_agents,
+            self._visible_agents, self._agent_filter_btn,
+            new_label_fn=lambda n: f"Agent: {n}" if n else "Agent: all",
+        )
+        self._build_filter_popover_content(
+            self._type_popover_box, "type", self._known_types,
+            self._visible_types, self._type_filter_btn,
+            new_label_fn=lambda n: f"Type: {n}" if n else "Type: all",
+        )
 
     def _on_filter_all_toggled(self, btn: Gtk.CheckButton, kind: str) -> None:
         """When 'All' is toggled, clear the filter set for that kind."""

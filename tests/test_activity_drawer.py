@@ -182,6 +182,25 @@ class TestActivityDrawer:
         d = ActivityDrawer()
         # Inject the fake list — drawer reads self._list for append_event logic
         d._list = fake_list
+        # FILTERFIX-1: inject the popover-box attributes that _build_header
+        # would normally create. Tests patch _build_header to a no-op, so
+        # the production code that sets _agent_popover_box / _type_popover_box
+        # never runs. We set them here so the new _refresh_filter_popovers()
+        # call in append_event doesn't AttributeError.
+        d._agent_popover = MagicMock()
+        d._agent_popover_box = MagicMock()
+        d._agent_popover_box.get_first_child.return_value = None
+        d._type_popover = MagicMock()
+        d._type_popover_box = MagicMock()
+        d._type_popover_box.get_first_child.return_value = None
+        # Filter buttons are also injected as MagicMocks so _refresh_filter_popovers
+        # (which passes them as label_widget) doesn't AttributeError either.
+        # get_popover() must return the popover that set_popover() was called with —
+        # this is the contract that makes Gtk.MenuButton open the dropdown on click.
+        d._agent_filter_btn = MagicMock()
+        d._agent_filter_btn.get_popover.return_value = d._agent_popover
+        d._type_filter_btn = MagicMock()
+        d._type_filter_btn.get_popover.return_value = d._type_popover
         return d
 
     def test_append_event_new_row(self, drawer):
@@ -342,6 +361,120 @@ class TestActivityDrawer:
         drawer._visible_types = set()
         assert drawer._passes_filter("Coder", None) is True
         assert drawer._passes_filter("Coder", 42) is True
+
+    def test_filter_buttons_have_popovers(self, drawer):
+        """FILTERFIX-1: filter buttons must be configured with set_popover()
+        so GTK4 auto-opens the dropdown on click. The previous implementation
+        relied on the broken 'activate' signal which never fires on
+        Gtk.MenuButton in GTK4.
+
+        We verify the API contract: each filter button exposes get_popover()
+        returning the popover that was set via set_popover(). The fixture
+        injects MagicMock for the buttons (Gtk.MenuButton requires a display
+        to construct in tests), so we can't do an isinstance check, but
+        MagicMock supports the full MenuButton API surface.
+        """
+        # Popovers should be set on the buttons (this is what makes them open).
+        assert drawer._agent_filter_btn.get_popover() is not None, (
+            "FILTERFIX-1: _agent_filter_btn.get_popover() must return the popover, "
+            "not None — set_popover() is what makes MenuButton open on click"
+        )
+        assert drawer._type_filter_btn.get_popover() is not None, (
+            "FILTERFIX-1: _type_filter_btn.get_popover() must return the popover, "
+            "not None — set_popover() is what makes MenuButton open on click"
+        )
+        # The popovers should contain the inner boxes that hold the checkboxes.
+        assert drawer._agent_popover is drawer._agent_filter_btn.get_popover()
+        assert drawer._type_popover is drawer._type_filter_btn.get_popover()
+
+    def test_append_event_refreshes_filter_popovers(self, drawer):
+        """FILTERFIX-1: append_event must call _refresh_filter_popovers so
+        newly-seen agents/types appear in the filter popover content.
+
+        Pre-FILTERFIX-1, the popovers were built only on first click (via
+        _show_filter_popover, which is now removed). Post-fix, _build_filter_popover_content
+        is called from append_event and clears + rebuilds the box.
+        """
+        # Before any events, the popover box has no children (fixture sets
+        # get_first_child.return_value = None).
+        assert drawer._agent_popover_box.get_first_child() is None
+        # Spy on the refresh method to verify it runs.
+        refresh_calls = []
+        original_refresh = drawer._refresh_filter_popovers
+        drawer._refresh_filter_popovers = lambda: (refresh_calls.append(1) or original_refresh())
+        try:
+            drawer.append_event({
+                "agent": "Coder",
+                "activity_type": "tool_start",
+                "type_label": "tool",
+                "icon": "🔧",
+            })
+            # _refresh_filter_popovers was called from append_event
+            assert len(refresh_calls) == 1
+            # _known_agents / _known_types were updated as a side effect
+            assert "Coder" in drawer._known_agents
+            assert "tool_start" in drawer._known_types
+        finally:
+            drawer._refresh_filter_popovers = original_refresh
+
+    def test_build_filter_popover_content_clears_and_repopulates(self, drawer):
+        """FILTERFIX-1: _build_filter_popover_content must clear the box
+        and rebuild the checkbox list with the current known/visible sets.
+        Guards against stale state if the same drawer is reused across
+        multiple sessions.
+        """
+        # Pre-seed the box with a "stale" child to verify clearing works.
+        stale = MagicMock()
+        # get_first_child returns stale on first call, None on second
+        drawer._agent_popover_box.get_first_child.side_effect = [stale, None]
+        # Simulate: "All agents" + "Coder" + "Debugger" should be appended.
+        # The fixture's Gtk.Box = MagicMock, so box.append is a MagicMock.
+        drawer._build_filter_popover_content(
+            drawer._agent_popover_box, "agent",
+            {"Coder", "Debugger"}, set(),  # all known, none visible (filter off)
+            drawer._agent_filter_btn,
+            new_label_fn=lambda n: f"Agent: {n}" if n else "Agent: all",
+        )
+        # The stale child was removed
+        assert drawer._agent_popover_box.remove.called
+        # get_first_child was called at least twice (once to find stale, once to confirm None)
+        assert drawer._agent_popover_box.get_first_child.call_count >= 2
+        # Three appends: "All agents" + "Coder" + "Debugger" (sorted)
+        assert drawer._agent_popover_box.append.call_count == 3
+
+    def test_popovers_not_refreshed_when_known_sets_unchanged(self, drawer, monkeypatch):
+        """FILTERFIX-1 audit: _refresh_filter_popovers must only be called when
+        _known_agents or _known_types actually changes.
+
+        Pre-audit, every append_event destroyed and recreated ~18 widgets per
+        popover, even when the agent/type was already known. This test guards
+        the perf bug from regressing.
+        """
+        refresh_spy = MagicMock()
+        monkeypatch.setattr(drawer, "_refresh_filter_popovers", refresh_spy)
+
+        # First event — new agent/type, refresh expected
+        drawer.append_event({"agent": "Coder", "activity_type": "tool_start", "type_label": "tool", "icon": "🔧"})
+        assert refresh_spy.call_count == 1, "First event with new agent/type should refresh"
+
+        # Second event — same agent AND same type, no refresh expected
+        drawer.append_event({"agent": "Coder", "activity_type": "tool_start", "type_label": "tool", "icon": "🔧"})
+        assert refresh_spy.call_count == 1, (
+            "Should NOT refresh when both agent and type are unchanged "
+            "(FILTERFIX-1 audit: avoid widget churn on every event)"
+        )
+
+        # Third event — new agent, refresh expected
+        drawer.append_event({"agent": "Debugger", "activity_type": "plan", "type_label": "plan", "icon": "📋"})
+        assert refresh_spy.call_count == 2, "New agent should trigger a refresh"
+
+        # Fourth event — same agent as #3, but new type, refresh expected
+        drawer.append_event({"agent": "Debugger", "activity_type": "approval", "type_label": "approval", "icon": "✅"})
+        assert refresh_spy.call_count == 3, "New type (with known agent) should trigger a refresh"
+
+        # Fifth event — back to "Coder" agent, "tool_start" type, both already known, no refresh
+        drawer.append_event({"agent": "Coder", "activity_type": "tool_start", "type_label": "tool", "icon": "🔧"})
+        assert refresh_spy.call_count == 3, "Re-using known agent+type should not refresh"
 
     def test_on_agent_start_inserts_separator(self, drawer):
         """on_agent_start appends a separator row, breaks the counter chain, tracks state."""
