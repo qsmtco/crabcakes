@@ -509,8 +509,21 @@ class ActivityDrawer(Gtk.Box):
                 if len(to_remove) >= self.TRIM_BATCH:
                     break
             idx += 1
+        # BUGFIX-2: Track removed rows in a set for the post-trim cleanup check.
+        removed_set = set(to_remove)
         for r in to_remove:
             self._list.remove(r)
+        # BUGFIX-2: If the last counter-collapsed row was among those trimmed,
+        # _last_row_widget now points at a detached (unparented) Gtk.Box. The
+        # next counter-collapse call (_mutate_counter_row) would then mutate
+        # a dead widget and potentially crash PyGObject. Clear the references
+        # in that case. Use get_parent() to walk from the child Box up to its
+        # ListBoxRow wrapper, then check membership in the removed set.
+        if self._last_row_widget is not None:
+            parent_row = self._last_row_widget.get_parent()
+            if parent_row in removed_set:
+                self._last_row_key = None
+                self._last_row_widget = None
 
     def _auto_scroll_to_bottom(self) -> None:
         """Scroll the drawer's internal scrolled window to the bottom."""

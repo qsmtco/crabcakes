@@ -359,7 +359,179 @@ class TestActivityDrawer:
         assert drawer._last_separator_agent == ("Coder", "start")
 
 
-# ── Class 3: TestActivityHandlerLifecycleCallback ────────────────
+# ── Class 3: TestActivityDrawerTrim — BUGFIX-2 ─────────────────
+
+
+class TestActivityDrawerTrim:
+    """BUGFIX-2: _trim_old_rows_if_needed must clear _last_row_widget when
+    the widget's parent row was among the trimmed rows. Otherwise the next
+    counter-collapse call mutates a detached GTK widget and may crash
+    PyGObject.
+
+    The default `drawer` fixture patches _trim_old_rows_if_needed to a
+    no-op, so this class uses a fresh drawer fixture that leaves trim
+    intact and lets the test set up the list state directly.
+    """
+
+    @pytest.fixture
+    def trim_drawer(self, monkeypatch):
+        """Construct a drawer with _trim_old_rows_if_needed UN-patched (real method)."""
+        # Same GTK builder patches as the default fixture
+        monkeypatch.setattr(
+            "ui.views.activity_drawer.ActivityDrawer._build_header",
+            lambda self: None,
+        )
+        monkeypatch.setattr(
+            "ui.views.activity_drawer.ActivityDrawer._build_list",
+            lambda self: None,
+        )
+        monkeypatch.setattr(
+            "ui.views.activity_drawer.ActivityDrawer._apply_expanded_state",
+            lambda self: None,
+        )
+        monkeypatch.setattr(
+            "ui.views.activity_drawer.ActivityDrawer._update_count_label",
+            lambda self: None,
+        )
+        # NOTE: _trim_old_rows_if_needed is NOT patched — the test invokes
+        # the real method to exercise BUGFIX-2's fix.
+        monkeypatch.setattr(
+            "ui.views.activity_drawer.ActivityDrawer._auto_scroll_to_bottom",
+            lambda self: None,
+        )
+        monkeypatch.setattr(
+            "ui.views.activity_drawer.ActivityDrawer._build_separator_widget",
+            lambda self, text: MagicMock(),
+        )
+
+        # List mock: returns None by default (empty listbox). Test sets up
+        # get_row_at_index side_effect per scenario.
+        fake_list = MagicMock()
+        fake_list.get_row_at_index = MagicMock(return_value=None)
+        fake_list.append = MagicMock()
+        fake_list.remove = MagicMock()
+
+        from gi.repository import Gtk
+        monkeypatch.setattr(Gtk, "Box", MagicMock)
+
+        from ui.views.activity_drawer import ActivityDrawer
+        d = ActivityDrawer()
+        d._list = fake_list
+        return d
+
+    def test_trim_clears_last_row_widget_when_parent_was_removed(self, trim_drawer):
+        """BUGFIX-2: when the row containing _last_row_widget is among those
+        trimmed, _last_row_widget (and _last_row_key) must be cleared to
+        prevent the next counter-collapse from mutating a detached widget.
+        """
+        drawer = trim_drawer
+        # Build 26 listbox rows: first 25 are "old" event rows (exceed MAX_ROWS=100
+        # trigger by setting non_sep_count > 100 in a real scenario, but for this
+        # unit test we directly construct to_remove semantics via the trim loop).
+        # Easier: directly construct a listbox with 26 child rows where rows
+        # 1-25 are non-separator event rows and row 26 is the current
+        # _last_row_widget's parent. Then call trim with MAX_ROWS=0 to force
+        # removal of the first 25 rows, leaving the 26th.
+        # Even easier: build 26 listbox rows, set MAX_ROWS=0 to make
+        # non_sep_count > MAX_ROWS immediately for row 1, and let the trim
+        # process the first 25. We need the LAST row (row 26) to be the parent
+        # of _last_row_widget — but trim removes the OLDEST (lowest index), not
+        # the newest, so row 26 stays. The bug fires only when _last_row_widget's
+        # parent is at a low index. Adjust: set _last_row_widget's parent to
+        # row 1 (one of the to-be-removed), and assert it gets cleared.
+        old_max = drawer.MAX_ROWS
+        drawer.MAX_ROWS = 0  # force every row to be "over the cap"
+        try:
+            # Build 26 listbox rows. Row 0 is the parent of _last_row_widget;
+            # rows 1-25 are filler.
+            rows = []
+            for _ in range(26):
+                lb_row = MagicMock()
+                child = MagicMock()
+                child.get_css_classes.return_value = []  # not a separator
+                lb_row.get_child.return_value = child
+                rows.append(lb_row)
+            # Wire up the listbox
+            drawer._list.get_row_at_index.side_effect = (
+                lambda i: rows[i] if i < len(rows) else None
+            )
+            # Set _last_row_widget to a Box whose get_parent() returns row[0]
+            # (which is among the rows that will be trimmed).
+            last_widget = MagicMock()
+            last_widget.get_parent.return_value = rows[0]
+            drawer._last_row_widget = last_widget
+            drawer._last_row_key = ("Coder", "tool_start")
+
+            drawer._trim_old_rows_if_needed()
+
+            # BUGFIX-2 expected: _last_row_widget and _last_row_key are cleared
+            assert drawer._last_row_widget is None, (
+                "_last_row_widget should be cleared when its parent row was trimmed"
+            )
+            assert drawer._last_row_key is None, (
+                "_last_row_key should be cleared when its row was trimmed"
+            )
+        finally:
+            drawer.MAX_ROWS = old_max
+
+    def test_trim_preserves_last_row_widget_when_parent_not_removed(self, trim_drawer):
+        """BUGFIX-2: when the row containing _last_row_widget is NOT among the
+        trimmed rows, both _last_row_widget and _last_row_key must be preserved.
+        (Regression guard: the fix should not over-clear.)
+        """
+        drawer = trim_drawer
+        old_max = drawer.MAX_ROWS
+        drawer.MAX_ROWS = 0  # force trim
+        try:
+            # Build 30 listbox rows. _last_row_widget's parent is row 29
+            # (the LAST one, not among the first 25 trimmed).
+            rows = []
+            for _ in range(30):
+                lb_row = MagicMock()
+                child = MagicMock()
+                child.get_css_classes.return_value = []
+                lb_row.get_child.return_value = child
+                rows.append(lb_row)
+            drawer._list.get_row_at_index.side_effect = (
+                lambda i: rows[i] if i < len(rows) else None
+            )
+            last_widget = MagicMock()
+            last_widget.get_parent.return_value = rows[29]
+            drawer._last_row_widget = last_widget
+            drawer._last_row_key = ("Coder", "tool_start")
+
+            drawer._trim_old_rows_if_needed()
+
+            # Not trimmed → not cleared
+            assert drawer._last_row_widget is last_widget, (
+                "_last_row_widget should be preserved when its parent was not trimmed"
+            )
+            assert drawer._last_row_key == ("Coder", "tool_start")
+        finally:
+            drawer.MAX_ROWS = old_max
+
+    def test_trim_clears_when_last_row_widget_has_no_parent(self, trim_drawer):
+        """BUGFIX-2 edge case: if _last_row_widget.get_parent() returns None
+        (already detached from before), the cleanup must not crash. The
+        `parent_row in removed_set` check is False for None, so no clearing
+        happens — and that's the safe no-op.
+        """
+        drawer = trim_drawer
+        last_widget = MagicMock()
+        last_widget.get_parent.return_value = None  # already detached
+        drawer._last_row_widget = last_widget
+        drawer._last_row_key = ("Coder", "tool_start")
+
+        # No list setup needed — trim sees an empty listbox, removes nothing,
+        # and the parent_row check is False.
+        drawer._trim_old_rows_if_needed()
+
+        # No crash, no clearing
+        assert drawer._last_row_widget is last_widget
+        assert drawer._last_row_key == ("Coder", "tool_start")
+
+
+# ── Class 4: TestActivityHandlerLifecycleCallback ───────────────
 
 
 class TestActivityHandlerLifecycleCallback:
