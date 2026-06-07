@@ -583,7 +583,18 @@ class ActivityDrawer(Gtk.Box):
         - If _visible_agents is empty, all agents pass.
         - If _visible_agents is non-empty, agent must be in it.
         - Same for _visible_types.
+
+        BUGFIX-9: Coerce non-string inputs to strings before membership tests.
+        `agent in self._visible_agents` would raise TypeError if agent is e.g.
+        None or an int (set membership requires hashable types and the `in`
+        operator on a set[str] with a non-string key raises TypeError in
+        modern Python). Defensive coercion keeps the filter robust against
+        malformed payloads.
         """
+        if not isinstance(agent, str):
+            agent = str(agent) if agent is not None else "Agent"
+        if not isinstance(activity_type, str):
+            activity_type = str(activity_type) if activity_type is not None else ""
         if self._visible_agents and agent not in self._visible_agents:
             return False
         if self._visible_types and activity_type not in self._visible_types:

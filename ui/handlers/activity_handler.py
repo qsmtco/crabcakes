@@ -285,7 +285,7 @@ class ActivityHandler:
                         self._assistant_text_buffer[sk] = text
                         if self._on_assistant_buffer:
                             self._on_assistant_buffer(sk, text)
-            if stream == "lifecycle":
+            elif stream == "lifecycle":
                 phase = self._safe_data(payload).get("phase", "")
                 # Resolve agent name with AgentManager fallback (SPEC-activity-drawer §2.4 / PHASE 6).
                 # When the gateway's data.agentName is empty, fall back to AgentManager.

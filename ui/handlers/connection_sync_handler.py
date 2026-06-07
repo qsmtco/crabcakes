@@ -207,10 +207,9 @@ class ConnectionSyncHandler:
                     # Resolve agent name via AgentRuntimeHandler (mirrors the fallback
                     # chain in ActivityHandler._resolve_agent_name). Local exec bubbles
                     # don't have a gateway payload to read data.agentName from, so we
-                    # resolve locally via session_key.
-                    agent_name = ""
-                    if agent_runtime is not None:
-                        agent_name = agent_runtime.get_agent_name_for_session(sk) or ""
+                    # resolve locally via session_key. The agent_runtime outer guard
+                    # (above the closure) guarantees this is non-None.
+                    agent_name = agent_runtime.get_agent_name_for_session(sk) or ""
                     bubble = ActivityBubble(
                         type="command_output",
                         session_key=sk,
