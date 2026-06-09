@@ -136,17 +136,28 @@ class _ProviderCard:
         self._model_entry.set_text(p.default_model or "")
         self._api_key_entry.set_text(p.api_key or "")
 
-        # Show verification status if available
-        if p.last_verified_at:
-            self._status_label.set_text("✅ Verified")
-            self._status_label.remove_css_class("settings-status-untested")
-            self._status_label.remove_css_class("settings-status-fail")
-            self._status_label.add_css_class("settings-status-ok")
-        elif p.last_error:
-            self._status_label.set_text(f"❌ {p.last_error}")
-            self._status_label.remove_css_class("settings-status-untested")
-            self._status_label.remove_css_class("settings-status-ok")
-            self._status_label.add_css_class("settings-status-fail")
+    def _is_dirty(self) -> bool:
+        """True if any entry field differs from the stored provider values.
+        Used by refresh_providers to decide whether to update a card in place
+        or leave it alone (preserving the user's unsaved edits)."""
+        p = self._provider
+        return (
+            self._name_entry.get_text().strip() != (p.name or "")
+            or self._base_url_entry.get_text().strip() != (p.base_url or "")
+            or self._model_entry.get_text().strip() != (p.default_model or "")
+            or self._api_key_entry.get_text().strip() != (p.api_key or "")
+        )
+
+    def _update_provider_ref(self, provider: ProviderConfig) -> None:
+        """Replace the stored provider reference and refresh the status label.
+        Entry fields are NOT touched — that's the caller's responsibility."""
+        self._provider = provider
+        if provider.last_verified_at:
+            self._set_status("✅ Verified", ok=True)
+        elif provider.last_error:
+            self._set_status(f"❌ {provider.last_error}", fail=True)
+        else:
+            self._set_status("Untested")
 
     def _collect_from_form(self) -> ProviderConfig:
         """Collect current form values into a ProviderConfig."""
@@ -331,27 +342,53 @@ class SettingsDialog:
         self._window.close()
 
     def refresh_providers(self, providers: list[ProviderConfig]) -> None:
-        """Rebuild the card list from the given provider list.
+        """Incrementally update the card list from the given provider list.
 
-        Strategy: remove all existing cards, then rebuild from scratch.
-        This is simpler and avoids stale-widget bugs from partial updates.
-        The trade-off is that unsaved edits are lost on refresh — but
-        refresh only fires after a successful save/remove/test, so the
-        user's edits have already been committed.
+        Strategy: match cards by provider name. Existing cards are updated
+        in place (dirty cards are left alone to preserve unsaved edits),
+        new providers get new cards, removed providers have their cards
+        deleted.
+
+        Clean cards (no unsaved edits) are updated with fresh data from
+        the provider list. Dirty cards keep their entry values but get
+        their provider reference updated so status labels reflect test results.
         """
-        # Remove existing cards
+        # Build lookup of current cards by provider name
+        current_by_name: dict[str, _ProviderCard] = {}
         for card in self._cards:
-            self._list_box.remove(card.get_widget())
-        self._cards.clear()
+            name = card._provider.name
+            if name:
+                current_by_name[name] = card
 
-        # Rebuild cards
+        new_names = {p.name for p in providers}
+        current_names = set(current_by_name.keys())
+
+        # Remove cards for providers that no longer exist in yaml
+        for name in current_names - new_names:
+            card = current_by_name[name]
+            self._list_box.remove(card.get_widget())
+            self._cards.remove(card)
+
+        # Update existing cards or add new ones
         for provider in providers:
-            card = _ProviderCard(self, provider)
-            self._cards.append(card)
-            self._list_box.append(card.get_widget())
+            if provider.name in current_by_name:
+                card = current_by_name[provider.name]
+                if card._is_dirty():
+                    # Dirty card — preserve unsaved edits, just update
+                    # the provider ref so status labels stay current
+                    card._update_provider_ref(provider)
+                else:
+                    # Clean card — update in place from new data
+                    card._provider = provider
+                    card._populate_from_provider()
+            else:
+                # New provider — create a card
+                card = _ProviderCard(self, provider)
+                self._cards.append(card)
+                self._list_box.append(card.get_widget())
 
         # Toggle empty state
-        self._empty_state.set_visible(len(providers) == 0)
+        self._empty_state.set_visible(len(self._cards) == 0)
 
     # ── Internal ──────────────────────────────────────────────────────
 

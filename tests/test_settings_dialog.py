@@ -156,9 +156,87 @@ class TestRefreshProviders:
         h = SettingsHandler()
         h.add_or_update(_make_provider("a"))
         d = SettingsDialog(parent=None, handler=h)
-        # User edits the entry without saving
+        # User edits the entry without saving — card is now dirty
         d._cards[0]._name_entry.set_text("edited-but-unsaved")
         # Refresh from handler (which still has "a")
         d.refresh_providers(h.list_providers())
-        # Card is rebuilt from handler data — unsaved edit is lost
+        # Dirty card preserves the unsaved edit (new behavior)
+        assert d._cards[0]._name_entry.get_text() == "edited-but-unsaved"
+        # But the stored provider ref is updated
+        assert d._cards[0]._provider.name == "a"
+
+    def test_refresh_updates_clean_card_in_place(self, tmp_config_dir):
+        """A clean card (no unsaved edits) gets updated in place on refresh."""
+        h = SettingsHandler()
+        h.add_or_update(_make_provider("a"))
+        d = SettingsDialog(parent=None, handler=h)
         assert d._cards[0]._name_entry.get_text() == "a"
+        # Update the provider via handler (simulates external change)
+        h.add_or_update(_make_provider("a", default_model="new-model"))
+        d.refresh_providers(h.list_providers())
+        # Clean card should reflect the new data
+        assert d._cards[0]._model_entry.get_text() == "new-model"
+
+
+class TestRefreshProvidersPreservesUnsavedEdits:
+    """BUG #4 fix: unsaved edits on one card survive a refresh triggered
+    by saving or testing another card."""
+
+    def test_unsaved_edits_survive_save_on_other_card(self, tmp_config_dir):
+        """Saving card B should not wipe unsaved edits on card A."""
+        h = SettingsHandler()
+        h.add_or_update(_make_provider("alpha"))
+        h.add_or_update(_make_provider("beta"))
+        d = SettingsDialog(parent=None, handler=h)
+
+        assert len(d._cards) == 2
+        alpha_card = d._cards[0]
+        beta_card = d._cards[1]
+
+        # User edits alpha's name without saving — card is dirty
+        alpha_card._name_entry.set_text("alpha-edited")
+        assert alpha_card._is_dirty()
+
+        # Save beta (fires on_providers_changed → refresh_providers)
+        beta_card._on_save_clicked(None)
+        d.refresh_providers(h.list_providers())
+
+        # Alpha's unsaved edit must survive
+        assert alpha_card._name_entry.get_text() == "alpha-edited"
+
+    def test_unsaved_edits_survive_remove_of_other_card(self, tmp_config_dir):
+        """Removing card B should not wipe unsaved edits on card A."""
+        h = SettingsHandler()
+        h.add_or_update(_make_provider("alpha"))
+        h.add_or_update(_make_provider("beta"))
+        d = SettingsDialog(parent=None, handler=h)
+
+        alpha_card = d._cards[0]
+
+        # User edits alpha's base_url without saving
+        alpha_card._base_url_entry.set_text("https://edited.example.com/v1")
+        assert alpha_card._is_dirty()
+
+        # Remove beta via handler (fires on_providers_changed)
+        h.remove("beta")
+        d.refresh_providers(h.list_providers())
+
+        # Alpha's unsaved edit survives, and beta is gone
+        assert len(d._cards) == 1
+        assert d._cards[0]._base_url_entry.get_text() == "https://edited.example.com/v1"
+
+    def test_clean_card_updates_on_refresh(self, tmp_config_dir):
+        """A clean card (no edits) gets updated with fresh data on refresh."""
+        h = SettingsHandler()
+        h.add_or_update(_make_provider("alpha"))
+        d = SettingsDialog(parent=None, handler=h)
+
+        # Card is clean — no edits
+        assert not d._cards[0]._is_dirty()
+
+        # Externally update the provider
+        h.add_or_update(_make_provider("alpha", default_model="updated-model"))
+        d.refresh_providers(h.list_providers())
+
+        # Clean card reflects the new data
+        assert d._cards[0]._model_entry.get_text() == "updated-model"
