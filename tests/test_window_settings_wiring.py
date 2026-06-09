@@ -136,6 +136,8 @@ class TestOnProvidersChanged:
 
 # ── GTK availability for lifecycle tests ──────────────────────────────
 try:
+    import gi
+    gi.require_version('Gtk', '4.0')
     from gi.repository import Gtk as _Gtk
     _GTK_AVAILABLE = True
 except (ImportError, ValueError):
