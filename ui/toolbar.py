@@ -12,7 +12,7 @@ class Toolbar(Gtk.Box):
     """
     Top toolbar widget.
     A horizontal bar that will contain app-level actions.
-    Currently: Connect button (right-justified) with status label.
+    Layout: [Stream toggle | ⚙ Settings]  ←—expanding spacer—→  [status label | Connect button]
     Extends Gtk.Box with horizontal orientation.
     """
 
@@ -70,14 +70,18 @@ class Toolbar(Gtk.Box):
         self._status_dot.set_visible(False)  # hidden until needed
         overlay.add_overlay(self._status_dot)
 
-        # Add spacing between buttons (if more are added later)
+        # Left-aligned box: Stream + Settings
+        left_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        left_box.append(self._stream_btn)
+        left_box.append(overlay)
+
+        # Right-aligned box: status + Connect
         right_box.set_spacing(6)
         right_box.append(self._status_label)
-        right_box.append(overlay)
         right_box.append(self._connect_btn)
 
-        # Assemble: stream btn | spacer | right content
-        self.append(self._stream_btn)
+        # Assemble: left cluster | spacer | right content
+        self.append(left_box)
         self.append(spacer)
         self.append(right_box)
 

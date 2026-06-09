@@ -360,15 +360,18 @@ class TaskStore:
 
 ### 3.4 `ui/toolbar.py` — Top Bar
 
-**Responsibility:** App-level actions bar (Connect button + status).
+**Responsibility:** App-level actions bar (Stream toggle, Settings button, status label, Connect button).
+
+**Layout:** `[Stream | ⚙ Settings]  ←—expanding spacer—→  [status label | Connect]`
 
 **Public API:**
 ```python
-toolbar = Toolbar(on_connect_clicked=callback_fn)
-toolbar.update_connection_state("disconnected" | "connecting" | "connected")
+toolbar = Toolbar(on_connect_clicked=callback_fn, on_settings_clicked=callback_fn)
+toolbar.update_connection_state("disconnected" | "connecting" | "connected" | "offline")
+toolbar.set_settings_status(has_verified_provider: bool)  # shows/hides the red dot on ⚙ Settings
 ```
 
-**Internal state:** Owns the Connect button and status label widgets. Updates them based on calls to `update_connection_state()`.
+**Internal state:** Owns the Stream toggle, Settings button (wrapped in a `Gtk.Overlay` with a status dot), status label, and Connect button. Updates them based on calls to `update_connection_state()` and `set_settings_status()`.
 
 ### 3.5 `ui/styles.py` — Global CSS (~1045 lines)
 
