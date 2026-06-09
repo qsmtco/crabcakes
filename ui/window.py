@@ -749,6 +749,13 @@ class MainWindow(Gtk.ApplicationWindow):
                 handler=self._settings_handler,
                 on_close=lambda: None,
             )
+            # Lifecycle: clear the cache when GTK destroys the window.
+            # _on_close_request returns False (allow close), so the
+            # underlying Gtk.Window is truly destroyed — present() on a
+            # destroyed window wedges the app.
+            self._settings_dialog._window.connect(
+                "destroy", lambda *_, ref=self: setattr(ref, "_settings_dialog", None)
+            )
         self._settings_dialog.show()
 
     def _on_providers_changed(self, providers: list) -> None:

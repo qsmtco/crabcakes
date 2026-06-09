@@ -132,3 +132,85 @@ class TestOnProvidersChanged:
         h.add_or_update(_make_provider("p"))
         # Should not crash; status callback should still fire
         assert t.status_calls[-1] is False
+
+
+# ── GTK availability for lifecycle tests ──────────────────────────────
+try:
+    from gi.repository import Gtk as _Gtk
+    _GTK_AVAILABLE = True
+except (ImportError, ValueError):
+    _GTK_AVAILABLE = False
+
+
+@pytest.mark.skipif(not _GTK_AVAILABLE, reason="GTK not available")
+class TestSettingsDialogLifecycle:
+    """Regression: closing the dialog must invalidate the cache so the
+    next open constructs a fresh dialog, not reuse a destroyed one."""
+
+    def test_close_then_reopen_constructs_fresh_dialog(
+        self, tmp_config_dir
+    ):
+        """Open → close (real GTK close) → reopen must construct a
+        fresh SettingsDialog, not present() on the destroyed one.
+
+        In a headless GTK4 environment, close() hides the window but
+        does not fire the destroy signal (no display running). We
+        simulate the real destroy path by emitting the signal directly,
+        which is exactly what GTK does in a real display environment
+        after close-request returns False.
+        """
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import Gtk, GLib
+        from ui.handlers.settings_handler import SettingsHandler
+        from ui.views.settings_dialog import SettingsDialog
+
+        # Build a minimal harness that mirrors window._open_settings
+        class _Harness:
+            def __init__(self):
+                self._settings_dialog = None
+                self._settings_handler = SettingsHandler()
+
+            def _open_settings(self) -> None:
+                if not hasattr(self, "_settings_dialog") or self._settings_dialog is None:
+                    self._settings_dialog = SettingsDialog(
+                        parent=None,
+                        handler=self._settings_handler,
+                        on_close=lambda: None,
+                    )
+                    # Lifecycle hook — same as window.py
+                    self._settings_dialog._window.connect(
+                        "destroy",
+                        lambda *_, ref=self: setattr(ref, "_settings_dialog", None),
+                    )
+                self._settings_dialog.show()
+
+        win = _Harness()
+
+        # First open
+        win._open_settings()
+        dlg1 = win._settings_dialog
+        assert dlg1 is not None
+
+        # Verify close-request returns False (allows close → destroy
+        # in a real display)
+        result = dlg1._window.emit("close-request")
+        assert result is False, "close-request should return False to allow destroy"
+
+        # In a real display, GTK would now destroy the window.
+        # In headless GTK4, we must emit the signal directly.
+        dlg1._window.emit("destroy")
+
+        # Cache should now be cleared
+        assert getattr(win, "_settings_dialog", None) is None, (
+            "Cache was not cleared after destroy — bug not fixed"
+        )
+
+        # Reopen — must construct fresh
+        win._open_settings()
+        dlg2 = win._settings_dialog
+        assert dlg2 is not None
+        assert dlg2 is not dlg1, "Reopen reused the destroyed dialog"
+
+        # Cleanup
+        dlg2._window.emit("destroy")
