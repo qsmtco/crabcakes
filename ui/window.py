@@ -749,12 +749,13 @@ class MainWindow(Gtk.ApplicationWindow):
                 handler=self._settings_handler,
                 on_close=lambda: None,
             )
-            # Lifecycle: clear the cache when GTK destroys the window.
-            # _on_close_request returns False (allow close), so the
-            # underlying Gtk.Window is truly destroyed — present() on a
-            # destroyed window wedges the app.
+            # Lifecycle: clear the cache when the window is hidden.
+            # In GTK4, close-request returning False hides (not destroys)
+            # the window. The hide signal fires, clearing the cache so the
+            # next open constructs a fresh dialog instead of calling
+            # present() on an already-visible window.
             self._settings_dialog._window.connect(
-                "destroy", lambda *_, ref=self: setattr(ref, "_settings_dialog", None)
+                "hide", lambda *_, ref=self: setattr(ref, "_settings_dialog", None)
             )
         self._settings_dialog.show()
 

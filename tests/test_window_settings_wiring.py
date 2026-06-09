@@ -145,25 +145,21 @@ except (ImportError, ValueError):
 
 
 @pytest.mark.skipif(not _GTK_AVAILABLE, reason="GTK not available")
-class TestSettingsDialogLifecycle:
+class TestSettingsDialogHideLifecycle:
     """Regression: closing the dialog must invalidate the cache so the
-    next open constructs a fresh dialog, not reuse a destroyed one."""
+    next open constructs a fresh dialog, not reuse a hidden one.
+
+    In GTK4, close-request returning False hides the window (it does NOT
+    destroy it). The hide signal is what we connect to for cache
+    invalidation."""
 
     def test_close_then_reopen_constructs_fresh_dialog(
         self, tmp_config_dir
     ):
-        """Open → close (real GTK close) → reopen must construct a
-        fresh SettingsDialog, not present() on the destroyed one.
-
-        In a headless GTK4 environment, close() hides the window but
-        does not fire the destroy signal (no display running). We
-        simulate the real destroy path by emitting the signal directly,
-        which is exactly what GTK does in a real display environment
-        after close-request returns False.
-        """
+        """Open → close → reopen must construct a fresh SettingsDialog."""
         import gi
         gi.require_version('Gtk', '4.0')
-        from gi.repository import Gtk, GLib
+        from gi.repository import Gtk
         from ui.handlers.settings_handler import SettingsHandler
         from ui.views.settings_dialog import SettingsDialog
 
@@ -180,9 +176,9 @@ class TestSettingsDialogLifecycle:
                         handler=self._settings_handler,
                         on_close=lambda: None,
                     )
-                    # Lifecycle hook — same as window.py
+                    # Lifecycle hook — same as window.py (hide signal)
                     self._settings_dialog._window.connect(
-                        "destroy",
+                        "hide",
                         lambda *_, ref=self: setattr(ref, "_settings_dialog", None),
                     )
                 self._settings_dialog.show()
@@ -194,25 +190,80 @@ class TestSettingsDialogLifecycle:
         dlg1 = win._settings_dialog
         assert dlg1 is not None
 
-        # Note: we deliberately do NOT assert emit("close-request") return value.
-        # GTK < 4.10 returns None regardless of the handler's return; GTK >= 4.10
-        # propagates it. The core regression test below (cache cleared, fresh
-        # dialog on reopen) is the actual proof that the fix works.
+        # Real close — hides the window (GTK4 default behavior)
+        dlg1._window.close()
+        assert not dlg1._window.get_visible(), "Window should be hidden after close"
 
-        # In a real display, GTK would now destroy the window.
-        # In headless GTK4, we must emit the signal directly.
-        dlg1._window.emit("destroy")
+        # In headless GTK4, close() hides but doesn't fire the hide
+        # signal. In a real display it would. Emit it directly to
+        # simulate the real behavior.
+        dlg1._window.emit("hide")
 
         # Cache should now be cleared
         assert getattr(win, "_settings_dialog", None) is None, (
-            "Cache was not cleared after destroy — bug not fixed"
+            "Cache was not cleared after hide — bug not fixed"
         )
 
         # Reopen — must construct fresh
         win._open_settings()
         dlg2 = win._settings_dialog
         assert dlg2 is not None
-        assert dlg2 is not dlg1, "Reopen reused the destroyed dialog"
+        assert dlg2 is not dlg1, "Reopen reused the hidden dialog"
 
         # Cleanup
-        dlg2._window.emit("destroy")
+        dlg2._window.close()
+        dlg2._window.emit("hide")
+
+    def test_no_gtk_warning_on_second_open(
+        self, tmp_config_dir, capfd
+    ):
+        """Opening, closing, and reopening must not produce Gtk-WARNING."""
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import Gtk
+        from ui.handlers.settings_handler import SettingsHandler
+        from ui.views.settings_dialog import SettingsDialog
+
+        class _Harness:
+            def __init__(self):
+                self._settings_dialog = None
+                self._settings_handler = SettingsHandler()
+
+            def _open_settings(self) -> None:
+                if not hasattr(self, "_settings_dialog") or self._settings_dialog is None:
+                    self._settings_dialog = SettingsDialog(
+                        parent=None,
+                        handler=self._settings_handler,
+                        on_close=lambda: None,
+                    )
+                    self._settings_dialog._window.connect(
+                        "hide",
+                        lambda *_, ref=self: setattr(ref, "_settings_dialog", None),
+                    )
+                self._settings_dialog.show()
+
+        win = _Harness()
+
+        # First open
+        win._open_settings()
+        dlg1 = win._settings_dialog
+
+        # Close
+        dlg1._window.close()
+        dlg1._window.emit("hide")
+
+        # Flush any pending output
+        capfd.readouterr()
+
+        # Reopen — should not produce Gtk-WARNING
+        win._open_settings()
+        dlg2 = win._settings_dialog
+
+        captured = capfd.readouterr()
+        assert "Gtk-WARNING" not in captured.err, (
+            f"Gtk-WARNING on second open:\n{captured.err}"
+        )
+
+        # Cleanup
+        dlg2._window.close()
+        dlg2._window.emit("hide")
