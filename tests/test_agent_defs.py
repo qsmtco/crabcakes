@@ -235,7 +235,17 @@ class TestValidateAgentDef:
         errors = ad.validate_agent_def(agent)
         assert any("not_a_real_tool" in e for e in errors)
 
-    def test_unknown_provider(self):
+    def test_unknown_provider(self, monkeypatch, tmp_path):
+        # Set up providers.yaml so get_available_providers returns known names
+        config_dir = str(tmp_path / ".config" / "crabcakes")
+        os.makedirs(config_dir, exist_ok=True)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        from utils.providers_store import save_providers
+        from models.providers import ProviderConfig
+        save_providers([
+            ProviderConfig(name="minimax", base_url="https://api.minimax.chat/v1",
+                           api_key="sk-test", default_model="MiniMax-M2.7"),
+        ])
         agent = {
             "name": "BadProvider",
             "prompts": ["system/coder.md"],
@@ -283,7 +293,18 @@ class TestAvailableOptions:
         assert len(prompts) > 0
         assert all("name" in p and "filepath" in p for p in prompts)
 
-    def test_get_available_providers(self):
+    def test_get_available_providers(self, monkeypatch, tmp_path):
+        # get_available_providers now reads from providers.yaml
+        config_dir = str(tmp_path / ".config" / "crabcakes")
+        os.makedirs(config_dir, exist_ok=True)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        from utils.providers_store import save_providers
+        from models.providers import ProviderConfig
+        save_providers([
+            ProviderConfig(name="openrouter", base_url="https://openrouter.ai/api/v1",
+                           api_key="sk-test", default_model="deepseek/deepseek-v4-pro"),
+        ])
         providers = ad.get_available_providers()
         assert len(providers) > 0
-        assert all("name" in p and "base_url" in p for p in providers)
+        assert all("name" in p and "base_url" in p and "default_model" in p for p in providers)
+        assert providers[0]["name"] == "openrouter"

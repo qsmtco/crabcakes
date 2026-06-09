@@ -35,6 +35,9 @@ class LLMProviderConfig:
     supports_tools: bool = True
     supports_streaming: bool = True
     max_tokens: int = 128_000          # context window size
+    enabled: bool = True
+    last_verified_at: str | None = None
+    last_error: str | None = None
 
 
 @dataclass
@@ -121,6 +124,66 @@ def _fix_config_dir_permissions(dir_path: str) -> None:
         logger.warning("Could not fix config dir permissions on %s: %s", dir_path, e)
 
 
+def _to_llm_provider(p) -> LLMProviderConfig:
+    """Convert a models.providers.ProviderConfig to agent.config.LLMProviderConfig."""
+    return LLMProviderConfig(
+        name=p.name,
+        base_url=p.base_url,
+        api_key=p.api_key,
+        default_model=p.default_model,
+        supports_tools=p.supports_tools,
+        supports_streaming=p.supports_streaming,
+        max_tokens=p.max_tokens,
+        enabled=p.enabled,
+        last_verified_at=p.last_verified_at,
+        last_error=p.last_error,
+    )
+
+
+def _load_providers_from_yaml_or_fallback(
+    config_path: str, raw: dict[str, Any]
+) -> dict[str, LLMProviderConfig]:
+    """Load providers: prefer providers.yaml; fall back to agent.json providers.
+
+    1. Try utils/providers_store.load_providers() (reads providers.yaml).
+    2. If non-empty: convert each ProviderConfig → LLMProviderConfig, return dict.
+    3. If empty (file missing or empty list): read agent.json `providers` section
+       from the already-parsed `raw` dict. Log a deprecation warning.
+    4. If both unavailable: return empty dict.
+    """
+    # Attempt 1: providers.yaml (canonical)
+    try:
+        from utils.providers_store import load_providers
+        yaml_providers = load_providers()
+        if yaml_providers:
+            return {p.name: _to_llm_provider(p) for p in yaml_providers}
+    except Exception as e:
+        logger.debug("providers.yaml load failed: %s", e)
+
+    # Attempt 2: agent.json providers section (fallback)
+    providers: dict[str, LLMProviderConfig] = {}
+    raw_providers = raw.get("providers", {})
+    if raw_providers:
+        logger.warning(
+            "agent.json: providers section is deprecated and will be ignored "
+            "once providers.yaml is created. Use Settings → Providers to migrate."
+        )
+        for name, prov in raw_providers.items():
+            if not isinstance(prov, dict):
+                continue
+            providers[name] = LLMProviderConfig(
+                name=name,
+                base_url=prov.get("base_url", ""),
+                api_key=prov.get("api_key", ""),
+                default_model=prov.get("default_model", ""),
+                supports_tools=prov.get("supports_tools", True),
+                supports_streaming=prov.get("supports_streaming", True),
+                max_tokens=prov.get("max_tokens", 128_000),
+            )
+
+    return providers
+
+
 def load_agent_config(config_path: str | None = None) -> AgentConfig:
     """
     Load agent configuration from <config_dir>/agent.json.
@@ -158,20 +221,8 @@ def load_agent_config(config_path: str | None = None) -> AgentConfig:
         logger.error("agent.json is not valid JSON: %s — using defaults", e)
         return AgentConfig()
 
-    # Parse providers
-    providers: dict[str, LLMProviderConfig] = {}
-    for name, prov in raw.get("providers", {}).items():
-        if not isinstance(prov, dict):
-            continue
-        providers[name] = LLMProviderConfig(
-            name=name,
-            base_url=prov.get("base_url", ""),
-            api_key=prov.get("api_key", ""),
-            default_model=prov.get("default_model", ""),
-            supports_tools=prov.get("supports_tools", True),
-            supports_streaming=prov.get("supports_streaming", True),
-            max_tokens=prov.get("max_tokens", 128_000),
-        )
+    # Parse providers — prefer providers.yaml (canonical) over agent.json providers
+    providers = _load_providers_from_yaml_or_fallback(config_path, raw)
 
     # Parse enforcement config
     enf_raw = raw.get("enforcement", {})
@@ -240,6 +291,47 @@ def _create_default_config(path: str) -> None:
         logger.info("Created example agent.json at %s — add your API keys", path)
     except OSError as e:
         logger.warning("Could not create example agent.json at %s: %s", path, e)
+
+
+def ensure_providers_yaml_exists(config_path: str) -> str:
+    """Ensure providers.yaml exists in the same directory as agent.json.
+
+    Called on startup if neither providers.yaml nor agent.json's providers
+    section has any provider entries. Creates an empty providers.yaml so
+    the UI's Settings dialog has a file to write to.
+
+    Returns the path to providers.yaml.
+    """
+    dir_path = os.path.dirname(config_path)
+    yaml_path = os.path.join(dir_path, "providers.yaml")
+
+    # Don't overwrite an existing providers.yaml
+    if os.path.isfile(yaml_path):
+        return yaml_path
+
+    # Don't create providers.yaml if agent.json has a providers section —
+    # that's the fallback path; user must explicitly migrate via Settings.
+    if os.path.isfile(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            if raw.get("providers"):
+                return yaml_path
+        except (OSError, json.JSONDecodeError) as e:
+            logger.debug("Could not read agent.json: %s", e)
+
+    # Create empty providers.yaml
+    try:
+        os.makedirs(dir_path, exist_ok=True)
+        # Match the format used by utils/providers_store.save_providers
+        with open(yaml_path, "w", encoding="utf-8") as f:
+            f.write("providers: []\n")
+        os.chmod(yaml_path, 0o600)
+        logger.info("Created empty providers.yaml at %s", yaml_path)
+    except OSError as e:
+        logger.warning("Could not create providers.yaml at %s: %s", yaml_path, e)
+
+    return yaml_path
 
 
 def get_api_key(provider_name: str) -> str | None:

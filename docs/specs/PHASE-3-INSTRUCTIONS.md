@@ -1,125 +1,256 @@
-# PHASE 3 — Create `tests/test_activity_drawer.py`
+# PHASE 3 of 9 — `utils/agent_defs.py` (Drop api_key/provider_keys validation, switch provider source)
 
-**Date:** 2026-06-05
-**Supervisor:** Qaster
-**Builder:** QTR
-**Source spec:** `docs/specs/SPEC-activity-drawer.md` §2.10
-**Audit context:** `docs/post-mortems/2026-06-05-SPEC-activity-drawer-AUDIT.md` P0 #3
-**Predecessor:** PHASE 1 + 2 complete (24/24 tests pass in test_activity_bubbles.py, working tree clean)
+## Master spec
+`docs/specs/SPEC-LLM-PROVIDER-SETTINGS-DIALOGUE.md` §2.14, §2.16
+(Implementation Order step 7: "drop `api_key`/`provider_keys` validation, change `get_available_providers` source.")
 
-## Goal
+## Files to change (1 file)
 
-The spec mandates a new test file `tests/test_activity_drawer.py` with ~15 tests. ARCHITECTURE.md §12 already references this file. The spec's own Verification Cheat Sheet instructs running `pytest tests/test_activity_drawer.py -v` — but the file doesn't exist. PHASE 3 creates it.
+1. `utils/agent_defs.py` — two focused edits:
+   - **Edit 1 (lines 383-388):** remove the `api_key` / `provider_keys` validation block in `validate_agent_def`.
+   - **Edit 2 (lines 471-487):** rewire `get_available_providers` to read from `utils.providers_store.load_providers()` instead of `agent.config.load_agent_config()`.
 
-## Files to change (1 file, 1 sub-phase)
+## Hard rules
 
-### 1. `tests/test_activity_drawer.py` — NEW FILE
+- **Use the steelFramedCodeWriter prompt** at `prompts/steelFramedCodeWriter.md`. Follow exactly. No deviation.
+- **Operating from authorized project channel** (crabcakes CLI). Trigger word `write` is in this delegation.
+- **Single file, two sub-phases.** Do `validate_agent_def` first, verify, then `get_available_providers`. Both are tiny — but keeping them separate makes regression analysis easier.
+- **Do NOT touch `save_provider` or `delete_provider` (lines 500-560).** These are the legacy agent.json mutators. They will be removed in a later phase, but for now they must stay so any code that still imports them doesn't break. (Verified: `ui/handlers/agent_builder_handler.py:191-198` still calls them; tests/test_bug_fixes.py:171-198 still uses them.) Just don't add new callers.
+- **Do NOT touch `validate_agent_def`'s other checks** (required fields, type checks, tool-name checks, prompt-file existence, provider-existence, default-model check, filename-collision check). Only the api_key/provider_keys block at lines 383-388 is removed.
+- **You MUST include a literal `**COMPLETENESS:**` block** at the end of your report. Format is mandatory.
 
-**Discovery first.** Read these files in full before writing any code:
-- `ui/views/activity_drawer.py` (680 lines) — the view under test
-- `models/activity.py` (250 lines) — the `ActivityBubble` dataclass
-- `ui/handlers/activity_handler.py` (637 lines) — the lifecycle callback firings
-- `tests/test_activity_bubbles.py` (read the imports/fixture patterns) — for style consistency
-- `tests/conftest.py` — to understand the `fake_glib` fixture
+## Discovery — read these files first
 
-**Test classes to write** (per spec §2.10 + audit P0 #3):
+1. `utils/agent_defs.py` lines 1-30 (imports), 300-400 (validate_agent_def), 460-510 (get_available_providers), 500-560 (save_provider / delete_provider — read only, do not modify)
+2. `models/providers.py` (Phase 1 deliverable) — confirm `ProviderConfig` has `name`, `base_url`, `default_model`, `api_key`
+3. `utils/providers_store.py` (Phase 1 deliverable) — confirm `load_providers() -> list[ProviderConfig]` and that it returns `[]` on missing file
+4. `tests/test_agent_defs.py` lines 200-250 (existing `test_valid_agent_no_errors` and friends — should still pass after the validation change)
+5. `tests/test_bug_fixes.py` lines 165-200 (the `save_provider` / `delete_provider` round-trip test — must still pass; do not touch those functions)
 
-#### Class 1: `TestToDrawerRow` (~5 tests)
-Tests the `ActivityBubble.to_drawer_row()` method.
+Output a DISCOVERY block listing each file read and what you learned.
 
-- `test_basic_fields_present` — construct a minimal ActivityBubble, call `to_drawer_row()`, assert all 12 spec-required keys exist in the returned dict
-- `test_agent_name_default_is_Agent` — when `agent_name=""`, the dict's `agent` key is `"Agent"`
-- `test_timestamp_format` — the `timestamp` field is `HH:MM:SS` (3 colon-separated 2-digit groups)
-- `test_duration_formatting` — for `duration_ms=1247`, dict's `duration` is `"1.2s"`; for `duration_ms=60000`, it's `"1m 0s"`; for `duration_ms=0`, it's `""`
-- `test_exit_code_only_for_command_output` — for non-command_output types, `exit_code` is `None`; for command_output, it's the bubble's value
+## SUB-PHASE 3.1: `validate_agent_def` — drop the api_key/provider_keys check
 
-#### Class 2: `TestActivityDrawer` (~6 tests)
-Tests the `ActivityDrawer` view itself.
+**Spec §2.14.** The block at lines 383-388 of `utils/agent_defs.py` is the only validation that requires API-key material on the agent. Phase B moves that responsibility to "Test Connection in Settings" — the YAML only stores `provider` + `model`.
 
-Use `MagicMock` for all GTK widget dependencies. Don't construct real `Gtk.Box`/`Gtk.ListBox` instances in unit tests — they're complex GTK objects that need a running main loop. Test the drawer's LOGIC (state dicts, filter checks, counter-collapse decisions) by inspecting internal state, not by rendering widgets.
+**Patch (lines 383-388):**
 
-- `test_append_event_new_row` — fresh drawer, `append_event({"agent": "Coder", "activity_type": "tool_start", ...})` → 1 row in `_last_row_key`, total_count=1
-- `test_append_event_counter_collapse` — two `append_event` calls with same `(agent, activity_type)` → counter collapsed, count=N, but only 1 row in the list
-- `test_append_event_different_type_new_row` — same agent, different activity_type → 2 rows, counter chain broken
-- `test_filter_drop_unmatched` — set `_visible_agents = {"Coder"}` then `append_event` with `agent="Debugger"` → row is dropped (not appended), but total_count still increments
-- `test_filter_pass_matched` — same setup, `append_event` with `agent="Coder"` → row is appended
-- `test_clear_events_resets_state` — `append_event` twice, then `clear_events` → total_count=0, `_last_row_key is None`, `_agent_counters` empty
+Before:
+```python
+    # Validate API key for selected provider (skip if built-in)
+    if not agent_def.get("api_key_built_in"):
+        provider_keys = agent_def.get("provider_keys", {})
+        if provider and not provider_keys.get(provider):
+            # Check legacy api_key as fallback
+            if not agent_def.get("api_key"):
+                errors.append(f"API key required for provider '{provider}'")
+```
 
-To inspect the row list, use `self._list.get_row_at_index(0)` (real Gtk.ListBox method that works without a main loop for the first call). To count rows, walk via `get_row_at_index(i)` until it returns `None`.
+After:
+```python
+    # Per Phase B: API keys are validated at config time (Test Connection in Settings),
+    # not at agent-def-save time. The agent YAML stores provider+model only.
+```
 
-**GTK4 testing caveat:** `ActivityDrawer.__init__` calls `Gtk.Box.__init__` and creates real `Gtk.Button`/`Gtk.MenuButton`/`Gtk.ScrolledWindow`/`Gtk.ListBox` widgets. This will work in a test environment if GTK is initialized; it will FAIL in a headless test runner that doesn't have a display. Mitigation:
-- Use `pytest.skip("requires GTK display")` if `Gtk.init` fails
-- Or, use `unittest.mock` to patch `ActivityDrawer._build_header` and `_build_list` to no-ops, then test only the data-state methods. This is the preferred approach for headless CI.
+Replace the entire 6-line block with the 2-line comment above. No other changes to `validate_agent_def`.
 
-**Recommended approach:** in `setUp` (or pytest fixture), patch `ui.views.activity_drawer.Gtk.Box.__init__` to a no-op, then call `ActivityDrawer.__init__` with mocked widget creation. The drawer's state-mutation methods (`append_event`, `clear_events`, `on_agent_start`, `on_agent_end`, `_passes_filter`) should work without actual GTK widgets IF the GTK-dependent helpers (`_build_row_widget`, `_trim_old_rows_if_needed`, `_update_count_label`, `_auto_scroll_to_bottom`) are also mocked.
+**Rationale (per spec §2.14 + §6.2 acceptance criteria):**
+- `validate_agent_def` MUST NOT reject an agent for missing `api_key` / `provider_keys`.
+- Legacy `api_key` / `provider_keys` keys in agent YAMLs are silently ignored (the dataclass fields aren't read; see spec §2.5 backward-compat note).
 
-This is more complex than the other phases. If full GTK mocking is too much, QTR may write SIMPLER tests that just exercise `to_drawer_row()` (Class 1) and direct state mutation (Class 2 with heavy Gtk mocks). Minimum bar: 6 tests across the two classes.
+## SUB-PHASE 3.2: `get_available_providers` — read from providers.yaml
 
-#### Class 3: `TestActivityHandlerLifecycleCallback` (~3 tests)
-Tests that `ActivityHandler` fires `set_on_agent_lifecycle` for lifecycle events.
+**Spec §2.14.** `get_available_providers` currently calls `agent.config.load_agent_config()` and reads `config.providers` (which is the `LLMProviderConfig` map). After Phase 1/2, the canonical source is `utils.providers_store.load_providers()` (returns `list[ProviderConfig]`). The UI dropdown needs the same shape it always did (`[{"name", "base_url", "default_model"}]`), so the function signature and return shape are unchanged.
 
-- `test_lifecycle_start_fires_callback` — set up handler with mocked lifecycle callback, fire `stream=lifecycle phase=start` event, assert callback called with `(session_key, agent_name, "start")`
-- `test_lifecycle_end_fires_callback` — same with `phase=end`, assert `(session_key, agent_name, "end")`
-- `test_lifecycle_end_without_agent_name` — gateway payload has no `agentName`, assert callback called with `(session_key, "", "end")` (empty string, drawer defaults to "Agent")
+**Patch (lines 471-487 of current file):**
 
-**Use the existing `fake_glib` fixture from `conftest.py`** — same pattern as `TestActivityHandlerActivityBubbles` in `test_activity_bubbles.py`.
+Before:
+```python
+def get_available_providers() -> list[dict]:
+    """Load agent.json providers → [{name, base_url, default_model}].
 
-## Rules for the builder
+    Used by the UI to show provider dropdown.
+    """
+    try:
+        from agent.config import load_agent_config
+        config = load_agent_config()
+        return [
+            {
+                "name": name,
+                "base_url": prov.base_url,
+                "default_model": prov.default_model,
+            }
+            for name, prov in config.providers.items()
+        ]
+    except Exception as e:
+        logger.debug("Cannot load agent config for providers: %s", e)
+        return []
+```
 
-- **Use the `steelFramedCodeWriter` prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`** — word for word, no deviation. Start with: "Starting Discovery Phase — reading all relevant files before writing any code."
-- Discovery is mandatory: read all 5 files listed above COMPLETELY before writing any code.
-- Maximum 15 lines of code per checkpoint, then verify.
-- Do NOT modify any other file in this phase. Do NOT modify activity_drawer.py itself.
-- 30% minimum sad-path tests (the spec's iron rule from the steelFramedCodeWriter prompt).
-- If full GTK mocking is impossible, prefer simpler tests over no tests. Minimum 6 tests.
+After:
+```python
+def get_available_providers() -> list[dict]:
+    """Load providers from providers.yaml → [{name, base_url, default_model}].
 
-## Verification (run yourself, paste output in your report)
+    Used by the UI to show provider dropdown. Returns empty list when no
+    providers.yaml exists or it's empty (first-run state).
+    """
+    try:
+        from utils.providers_store import load_providers
+        return [
+            {
+                "name": p.name,
+                "base_url": p.base_url,
+                "default_model": p.default_model,
+            }
+            for p in load_providers()
+        ]
+    except Exception as e:
+        logger.debug("Cannot load providers.yaml: %s", e)
+        return []
+```
+
+**Do NOT add new imports at the top of the file** — the `from utils.providers_store import load_providers` lives inside the function (deferred import) to match the pattern in `save_provider` / `delete_provider` (lines 503, 545) and avoid pulling in yaml at module-import time. The spec's verified-imports note (lines 1-15: `os, json, logging, shutil, typing.Any`) confirms no top-level changes are needed.
+
+## Verification commands (run between sub-phases AND at the end)
 
 ```bash
-# 1. New file exists
-ls -la tests/test_activity_drawer.py
-# Expected: file present
+cd /home/q/projects/crabcakes
 
-# 2. New tests pass
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_activity_drawer.py -v
-# Expected: 6+ tests pass (target 15, minimum 6)
+# 3.1: validation no longer rejects missing api_key
+python3 -c "
+from utils.agent_defs import validate_agent_def
+agent = {
+    'name': 'NoKeyAgent',
+    'prompts': ['system/coder.md'],
+    'tools': ['read_file'],
+    'provider': 'minimax',
+    'model': 'MiniMax-M2.7',
+    # NOTE: no api_key, no provider_keys, no api_key_built_in
+}
+errs = validate_agent_def(agent)
+print('errors:', errs)
+assert not any('API key' in e for e in errs), 'validate_agent_def still requires api_key'
+print('OK: validate_agent_def no longer requires api_key')
+"
+echo "---"
 
-# 3. Existing tests still pass (no regressions)
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_activity_bubbles.py -q
-# Expected: 24 passed
+# 3.1: agent with legacy provider_keys in YAML is accepted (silently ignored)
+python3 -c "
+from utils.agent_defs import validate_agent_def
+agent = {
+    'name': 'LegacyAgent',
+    'prompts': ['system/coder.md'],
+    'tools': ['read_file'],
+    'provider': 'minimax',
+    'model': 'MiniMax-M2.7',
+    'api_key': 'sk-legacy',
+    'provider_keys': {'minimax': 'sk-legacy-2'},
+}
+errs = validate_agent_def(agent)
+print('errors (legacy):', errs)
+assert not any('API key' in e for e in errs), 'legacy keys should be silently ignored'
+print('OK: legacy api_key/provider_keys silently ignored')
+"
+echo "---"
 
-# 4. Combined run
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_activity_bubbles.py tests/test_activity_drawer.py -q
-# Expected: 30+ tests pass (24 + 6+)
+# 3.2: get_available_providers reads from providers.yaml
+python3 -c "
+import os, tempfile
+os.environ['HOME'] = tempfile.mkdtemp()
+from utils.config import get_config_dir
+os.makedirs(get_config_dir(), exist_ok=True)
+from utils.providers_store import save_providers
+from models.providers import ProviderConfig
+save_providers([
+    ProviderConfig(name='openrouter', base_url='https://openrouter.ai/api/v1',
+                   api_key='sk-or-xxx', default_model='deepseek/deepseek-v4-pro'),
+    ProviderConfig(name='minimax', base_url='https://api.minimax.chat/v1',
+                   api_key='sk-mm-xxx', default_model='MiniMax-M2.7'),
+])
+from utils.agent_defs import get_available_providers
+provs = get_available_providers()
+print('providers from yaml:', [p['name'] for p in provs])
+assert {p['name'] for p in provs} == {'openrouter', 'minimax'}, 'get_available_providers not reading yaml'
+assert all('base_url' in p and 'default_model' in p for p in provs), 'shape changed'
+print('OK: get_available_providers reads from providers.yaml')
+" 2>&1 | tail -5
+echo "---"
 
-# 5. AST parse the new file
-python3 -c "import ast; ast.parse(open('tests/test_activity_drawer.py').read()); print('PARSE OK')"
+# 3.2: get_available_providers returns [] when no yaml exists
+python3 -c "
+import os, tempfile
+os.environ['HOME'] = tempfile.mkdtemp()
+from utils.config import get_config_dir
+os.makedirs(get_config_dir(), exist_ok=True)
+# no providers.yaml created
+from utils.agent_defs import get_available_providers
+provs = get_available_providers()
+print('providers (empty home):', provs)
+assert provs == [], f'expected empty list, got {provs}'
+print('OK: get_available_providers returns [] when no yaml')
+"
+echo "---"
+
+# compile check
+python3 -m py_compile utils/agent_defs.py
+echo "compile exit: $?"
+echo "---"
+
+# regression: save_provider and delete_provider are untouched
+grep -n "^def save_provider\|^def delete_provider\|^def get_available_providers\|^def validate_agent_def" utils/agent_defs.py
+echo "---"
+
+# full test suite — no regressions
+python3 -m pytest tests/ -q --tb=short 2>&1 | tail -20
 ```
+
+## Acceptance criteria for this phase
+
+- [ ] `validate_agent_def` no longer adds `"API key required for provider 'X'"` to errors
+- [ ] An agent def with **no** `api_key`, **no** `provider_keys`, **no** `api_key_built_in` validates cleanly (modulo other unrelated errors)
+- [ ] An agent def with legacy `api_key` + `provider_keys` validates cleanly (keys silently ignored)
+- [ ] `get_available_providers` returns `[{name, base_url, default_model}, ...]` from `providers.yaml`
+- [ ] `get_available_providers` returns `[]` when no `providers.yaml` exists
+- [ ] Return shape unchanged: same dict keys, same dict values, same order semantics (yaml order)
+- [ ] `save_provider` and `delete_provider` are UNCHANGED (still mutate `agent.json` — to be removed in a later phase)
+- [ ] All other `validate_agent_def` checks UNCHANGED (required fields, type checks, tool names, prompt files, provider existence, default-model fallback, filename collision)
+- [ ] Full test suite passes (no regressions; the pre-existing `test_connection_sync_handler.py` failure stays pre-existing)
+- [ ] **COMPLETENESS block** at end of report
 
 ## Report format
 
-At the end, include the COMPLETENESS checklist:
-
 ```
-COMPLETENESS:
-- [x/not done] Edit 1: created tests/test_activity_drawer.py with N tests across M classes
- Evidence: ls -la output, test count, pytest output
-- [x/not done] Edit 2: TestToDrawerRow class — N tests covering [list what each tests]
- Evidence: pytest -v output for those tests
-- [x/not done] Edit 3: TestActivityDrawer class — N tests covering [list what each tests]
- Evidence: pytest -v output for those tests
-- [x/not done] Edit 4: TestActivityHandlerLifecycleCallback class — N tests covering [list what each tests]
- Evidence: pytest -v output for those tests
-- [x/not done] Test result: pytest tests/test_activity_bubbles.py — paste full output
-- [x/not done] Test result: pytest tests/test_activity_drawer.py — paste full output
-- [x/not done] Combined: pytest tests/test_activity_bubbles.py tests/test_activity_drawer.py — paste full output
+PHASE 3 of 9 — COMPLETE
+
+Files changed:
+- utils/agent_defs.py — +N / -M lines (paste git diff stats)
+
+Verification (paste outputs of every command listed above):
+- 3.1 validate_agent_def no api_key check: ...
+- 3.1 legacy keys ignored: ...
+- 3.2 get_available_providers reads yaml: ...
+- 3.2 get_available_providers empty when no yaml: ...
+- compile: ...
+- save_provider / delete_provider / get_available_providers / validate_agent_def still defined: ...
+- full test suite: ...
+
+**COMPLETENESS:**
+- [x] Sub-phase 3.1: validate_agent_def lines 383-388 replaced with comment — evidence: <grep + diff>
+- [x] Sub-phase 3.1: no-api_key agent validates cleanly — evidence: <paste errors list>
+- [x] Sub-phase 3.1: legacy keys silently ignored — evidence: <paste errors list>
+- [x] Sub-phase 3.1: other validate_agent_def checks UNCHANGED — evidence: <grep output of required/prompts/tools/provider checks>
+- [x] Sub-phase 3.2: get_available_providers reads from providers.yaml — evidence: <paste provider names>
+- [x] Sub-phase 3.2: get_available_providers returns [] when no yaml — evidence: <paste>
+- [x] Sub-phase 3.2: return shape unchanged (name/base_url/default_model) — evidence: <paste dict>
+- [x] save_provider and delete_provider UNCHANGED — evidence: <git diff of lines 500-560 = empty>
+- [x] Full test suite passes — evidence: <paste test summary line>
+
+**Related issues found — not fixed in this phase:**
+- (list any adjacent bugs you noticed but did not touch)
+
+**Implementation choices made:**
+- (list any non-obvious design choices with one-sentence rationale)
 ```
 
-If you cannot include this checklist, your response is INCOMPLETE. Do not expect acceptance.
-
-## Post-phase commit
-
-**The Captain has authorized Qaster to commit when the code is clean.** After QTR reports done, Qaster will:
-1. Verify the file independently (run the same checks above)
-2. If clean, `git add` and `git commit` with a descriptive message
-3. Report the commit SHA back to the Captain
+When done, please write: `Phase 3 complete — ready for audit.`

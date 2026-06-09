@@ -122,7 +122,8 @@ def _load_registry() -> dict[str, SpecialAgentDef]:
             can_write="write_file" in tools or "edit_file" in tools,
             provider=agent_def.get("provider"),
             model=agent_def.get("model"),
-            api_key=agent_def.get("provider_keys", {}).get(agent_def.get("provider", ""), "") or agent_def.get("api_key"),
+            # Per Phase B: keys are resolved from providers.yaml at runtime, not stored on the agent.
+            api_key=agent_def.get("api_key_built_in") and agent_def.get("api_key", "") or "",
             app_title=agent_def.get("app_title"),
             self_improvement=agent_def.get("self_improvement", {}),
             mcp_servers=raw_mcp,  # Phase B: MCP server list (coerced)

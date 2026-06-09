@@ -1,0 +1,134 @@
+# tests/test_window_settings_wiring.py
+# Tests for ui/wiring.py — verifies that the SettingsHandler's callbacks
+# are correctly wired to the toolbar and the settings dialog factory.
+# No GTK widgets required — we use simple stubs.
+
+import pytest
+
+from ui.handlers.settings_handler import SettingsHandler
+from ui.wiring import wire_settings_handler
+
+from models.providers import ProviderConfig
+
+
+class StubToolbar:
+    """Captures set_settings_status calls."""
+    def __init__(self):
+        self.status_calls: list[bool] = []
+    def set_settings_status(self, has_verified: bool) -> None:
+        self.status_calls.append(has_verified)
+
+
+class StubDialog:
+    """Captures refresh_providers calls."""
+    def __init__(self):
+        self.refresh_calls: list[list] = []
+    def refresh_providers(self, providers: list) -> None:
+        self.refresh_calls.append(list(providers))
+
+
+def _make_provider(name: str = "test", **overrides) -> ProviderConfig:
+    defaults = dict(
+        name=name,
+        base_url=f"https://api.{name}.example.com/v1",
+        api_key="test-key",
+        default_model=f"{name}/model-v1",
+    )
+    defaults.update(overrides)
+    return ProviderConfig(**defaults)
+
+
+class TestWireSettingsHandler:
+    def test_returns_the_handler(self, tmp_config_dir):
+        h = SettingsHandler()
+        t = StubToolbar()
+        result = wire_settings_handler(h, t)
+        assert result is h
+
+    def test_sets_initial_toolbar_status(self, tmp_config_dir):
+        h = SettingsHandler()
+        t = StubToolbar()
+        wire_settings_handler(h, t)
+        # No providers → status is False
+        assert t.status_calls == [False]
+
+    def test_initial_status_true_when_verified_provider_exists(self, tmp_config_dir, monkeypatch):
+        from ui.handlers import settings_handler as sh
+        from utils.provider_test import TestResult
+        monkeypatch.setattr(sh, "test_connection", lambda **kw:
+            TestResult(ok=True, latency_ms=1, error=None, model_used=kw["model"]))
+        h = SettingsHandler()
+        p = _make_provider("p")
+        h.add_or_update(p)
+        # Now test the provider to set last_verified_at
+        import threading
+        event = threading.Event()
+        h.test_provider(p, lambda r: event.set())
+        assert event.wait(timeout=2.0)
+        t = StubToolbar()
+        wire_settings_handler(h, t)
+        assert t.status_calls == [True]
+
+
+class TestOnStatusChanged:
+    def test_add_fires_status_changed(self, tmp_config_dir):
+        h = SettingsHandler()
+        t = StubToolbar()
+        wire_settings_handler(h, t)
+        t.status_calls.clear()
+        h.add_or_update(_make_provider("p"))
+        # After add, status should be False (no verified yet)
+        assert t.status_calls[-1] is False
+
+    def test_remove_fires_status_changed(self, tmp_config_dir):
+        h = SettingsHandler()
+        h.add_or_update(_make_provider("p"))
+        t = StubToolbar()
+        wire_settings_handler(h, t)
+        t.status_calls.clear()
+        h.remove("p")
+        assert t.status_calls[-1] is False
+
+
+class TestOnProvidersChanged:
+    def test_add_fires_providers_changed_with_factory(self, tmp_config_dir):
+        h = SettingsHandler()
+        t = StubToolbar()
+        dlg = StubDialog()
+        factory = lambda: dlg
+        wire_settings_handler(h, t, settings_dialog_factory=factory)
+        h.add_or_update(_make_provider("p1"))
+        # StubDialog should have received the new list
+        assert len(dlg.refresh_calls) == 1
+        assert len(dlg.refresh_calls[0]) == 1
+        assert dlg.refresh_calls[0][0].name == "p1"
+
+    def test_remove_fires_providers_changed_with_factory(self, tmp_config_dir):
+        h = SettingsHandler()
+        h.add_or_update(_make_provider("p1"))
+        t = StubToolbar()
+        dlg = StubDialog()
+        factory = lambda: dlg
+        wire_settings_handler(h, t, settings_dialog_factory=factory)
+        h.remove("p1")
+        assert len(dlg.refresh_calls) >= 1
+        # Last refresh should have empty list
+        assert dlg.refresh_calls[-1] == []
+
+    def test_no_factory_is_safe(self, tmp_config_dir):
+        h = SettingsHandler()
+        t = StubToolbar()
+        wire_settings_handler(h, t, settings_dialog_factory=None)
+        # Adding a provider should not crash even with no dialog factory
+        h.add_or_update(_make_provider("p"))
+        # Status callback should still fire
+        assert t.status_calls[-1] is False
+
+    def test_factory_returning_none_is_safe(self, tmp_config_dir):
+        h = SettingsHandler()
+        t = StubToolbar()
+        factory = lambda: None  # dialog not open
+        wire_settings_handler(h, t, settings_dialog_factory=factory)
+        h.add_or_update(_make_provider("p"))
+        # Should not crash; status callback should still fire
+        assert t.status_calls[-1] is False

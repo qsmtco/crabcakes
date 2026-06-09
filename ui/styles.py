@@ -1040,6 +1040,66 @@ notebook > header > tabs > tab {
     border-top: 1px solid rgba(255, 255, 255, 0.06);
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
+
+/* -- Toolbar status dot -------------------------------------------- */
+.toolbar-status-dot {
+    color: #ef4444;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+/* -- Settings dialog ------------------------------------------------ */
+.settings-dialog {
+    min-width: 560px;
+    min-height: 480px;
+}
+
+.settings-provider-card {
+    background: rgba(40, 40, 55, 0.45);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 8px;
+}
+
+button.settings-test-btn {
+    background: rgba(99, 102, 241, 0.25);
+    color: #c7d2fe;
+    border-radius: 6px;
+    border: none;
+}
+button.settings-test-btn:hover {
+    background: rgba(99, 102, 241, 0.45);
+    color: #e0e7ff;
+}
+
+button.settings-remove-btn {
+    background: rgba(244, 63, 94, 0.18);
+    color: #fda4af;
+    border-radius: 6px;
+    border: none;
+}
+button.settings-remove-btn:hover {
+    background: rgba(244, 63, 94, 0.35);
+    color: #fecdd3;
+}
+
+.settings-status-ok {
+    color: #22c55e;
+    font-weight: 600;
+}
+.settings-status-fail {
+    color: #f87171;
+    font-weight: 600;
+}
+.settings-status-untested {
+    color: #6b6b7a;
+}
+
+.settings-empty-state {
+    color: #6b6b7a;
+    font-size: 14px;
+    padding: 32px;
+}
 """
 
 

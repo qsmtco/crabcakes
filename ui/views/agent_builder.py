@@ -49,8 +49,10 @@ class AgentBuilderDialog:
         self._tool_checks: dict[str, Gtk.CheckButton] = {}
         self._tool_count_label: Gtk.Label | None = None
         self._mcp_checks: dict[str, Gtk.CheckButton] = {}
-        self._provider_keys: dict[str, str] = {}  # provider_id → api_key (loaded from agent def)
+        self._provider_keys: dict[str, str] = {}  # provider_id → api_key (legacy, unused in Phase C)
         self._manual_mode: bool = False  # True when manual provider/model entry is active
+        self._providers: list = []  # list[ProviderConfig] — populated via set_provider_options()
+        self._provider_models: dict[str, list[tuple[str, str]]] = {}  # name → [(display, id), ...]
 
         # ── Window setup ──────────────────────────────────────────────
         title = "Edit Agent" if self._is_edit else "Create Agent"
@@ -139,12 +141,6 @@ class AgentBuilderDialog:
 
         form_box.append(provider_model_row)
 
-        # API key / access token
-        self._api_key_entry = self._add_field(form_box, "API Key", Gtk.Entry(), "API key for selected provider")
-        self._api_key_entry.set_input_purpose(Gtk.InputPurpose.PASSWORD)
-        self._api_key_entry.set_visibility(False)
-        self._api_key_entry.connect("changed", lambda *_: self._update_save_button())
-
         # Prompts multi-select
         self._prompts_list = self._build_prompts_list()
         self._add_labeled(form_box, "System Prompts", self._prompts_list, expand=True)
@@ -181,7 +177,9 @@ class AgentBuilderDialog:
     # ── Public API ────────────────────────────────────────────────────
 
     def get_values(self) -> dict:
-        """Extract current form values into an agent_def dict."""
+        """Extract current form values into an agent_def dict.
+        Per Phase C: no api_key, no provider_keys — keys live in providers.yaml.
+        """
         name = self._name_entry.get_text().strip()
         emoji = self._emoji_entry.get_text().strip() or "🤖"
         role = self._role_entry.get_text().strip() or name.lower().replace(" ", "-")
@@ -193,12 +191,6 @@ class AgentBuilderDialog:
         else:
             provider = self._get_selected_provider_id()
             model = self._get_selected_model()
-        api_key = self._api_key_entry.get_text().strip()
-
-        # Build per-provider keys dict: preserve existing, update current provider
-        provider_keys = dict(self._provider_keys)
-        if api_key:
-            provider_keys[provider] = api_key
 
         prompts = self._get_selected_prompts()
         tools = self._get_selected_tools()
@@ -211,7 +203,6 @@ class AgentBuilderDialog:
             "tools": tools,
             "provider": provider,
             "model": model,
-            "provider_keys": provider_keys,
             "mcp_servers": self._get_selected_mcp_servers(),
             "self_improvement": self._get_si_config(tools),
         }
@@ -307,74 +298,71 @@ class AgentBuilderDialog:
     # ── Provider + Model dropdowns ────────────────────────────────────
 
     # Providers matching openclaw.json format: (display_name, provider_id)
-    _PROVIDERS = [
-        ("MiniMax",     "minimax"),
-        ("ZAI",         "zai"),
-        ("OpenRouter",  "openrouter"),
-    ]
+    def set_provider_options(self, providers) -> None:
+        """Replace the provider list with the given providers.
+        Called by the window when the Settings dialog fires on_providers_changed.
+        Each provider's default_model becomes the only entry in its model dropdown.
+        """
+        self._providers = list(providers) if providers else []
+        self._provider_models = {
+            p.name: [(p.default_model, p.default_model)]
+            for p in self._providers
+            if p.default_model
+        }
+        self._rebuild_provider_dropdown()
 
-    # Models keyed by provider_id: [(display_name, model_id)]
-    # model_id is the part after provider/ in openclaw.json
-    _PROVIDER_MODELS = {
-        "minimax": [
-            ("MiniMax-M2.7", "MiniMax-M2.7"),
-        ],
-        "zai": [
-            ("GLM-5.1",               "glm-5.1"),
-            ("GLM-5V-Turbo (vision)", "glm-5v-turbo"),
-        ],
-        "openrouter": [
-            ("Qwen3.7 Max",     "qwen/qwen3.7-max"),
-            ("DeepSeek V4 Pro", "deepseek/deepseek-v4-pro"),
-            ("CoBuddy (free)",  "baidu/cobuddy:free"),
-        ],
-    }
+    def _rebuild_provider_dropdown(self) -> None:
+        """Rebuild the provider dropdown from self._providers."""
+        if not self._providers:
+            names = Gtk.StringList.new(["(no providers — open Settings)"])
+        else:
+            names = Gtk.StringList.new([p.name for p in self._providers])
+        self._provider_dropdown.set_model(names)
+        # Select first provider by default
+        if self._providers:
+            self._on_provider_changed(self._provider_dropdown, None)
 
     def _build_provider_dropdown(self) -> Gtk.DropDown:
-        names = Gtk.StringList.new([p[0] for p in self._PROVIDERS])
-        dropdown = Gtk.DropDown(model=names)
+        dropdown = Gtk.DropDown(model=Gtk.StringList.new(["(loading...)"]))
         dropdown.connect("notify::selected", self._on_provider_changed)
         return dropdown
 
     def _get_selected_provider_id(self) -> str:
         idx = self._provider_dropdown.get_selected()
-        if idx < len(self._PROVIDERS):
-            return self._PROVIDERS[idx][1]
-        return self._PROVIDERS[0][1]
+        if idx < len(self._providers):
+            return self._providers[idx].name
+        if self._providers:
+            return self._providers[0].name
+        return ""
 
     def _on_provider_changed(self, dropdown, _param) -> None:
-        """When provider changes, rebuild model dropdown + update API key field."""
+        """When provider changes, rebuild model dropdown."""
         self._rebuild_model_dropdown()
-        # Update API key field for the new provider
-        provider_id = self._get_selected_provider_id()
-        key = self._provider_keys.get(provider_id, "")
-        self._api_key_entry.set_text(key)
         self._update_save_button()
 
     def _build_model_dropdown(self) -> Gtk.DropDown:
         provider_id = self._get_selected_provider_id()
-        models = self._PROVIDER_MODELS.get(provider_id, [])
+        models = self._provider_models.get(provider_id, [])
         names = Gtk.StringList.new([m[0] for m in models] or ["(none)"])
         return Gtk.DropDown(model=names)
 
     def _rebuild_model_dropdown(self) -> None:
         """Rebuild the model dropdown for the current provider."""
         provider_id = self._get_selected_provider_id()
-        models = self._PROVIDER_MODELS.get(provider_id, [])
+        models = self._provider_models.get(provider_id, [])
         names = Gtk.StringList.new([m[0] for m in models] or ["(none)"])
         # Replace the model dropdown in the parent layout
         parent = self._model_dropdown.get_parent()
         if parent is not None:
-            # Walk up to the labeled box (label + widget), then replace
             labeled_box = parent
             labeled_box.remove(self._model_dropdown)
             self._model_dropdown = Gtk.DropDown(model=names)
             labeled_box.append(self._model_dropdown)
 
     def _get_selected_model(self) -> str:
-        """Return full model string in provider/model format (e.g. 'minimax-portal/MiniMax-M2.7')."""
+        """Return full model string in provider/model format (e.g. 'minimax/MiniMax-M2.7')."""
         provider_id = self._get_selected_provider_id()
-        models = self._PROVIDER_MODELS.get(provider_id, [])
+        models = self._provider_models.get(provider_id, [])
         idx = self._model_dropdown.get_selected()
         if idx < len(models):
             return f"{provider_id}/{models[idx][1]}"
@@ -403,8 +391,8 @@ class AgentBuilderDialog:
         else:
             # Try to match manual values back to dropdowns
             manual_provider = self._manual_provider_entry.get_text().strip()
-            for i, (_, pid) in enumerate(self._PROVIDERS):
-                if pid == manual_provider:
+            for i, p in enumerate(self._providers):
+                if p.name == manual_provider:
                     self._provider_dropdown.set_selected(i)
                     break
 
@@ -691,8 +679,8 @@ class AgentBuilderDialog:
         # Select provider dropdown
         provider_id = provider_from_model or agent_def.get("provider", "")
         known_provider = False
-        for i, (_, pid) in enumerate(self._PROVIDERS):
-            if pid == provider_id:
+        for i, p in enumerate(self._providers):
+            if p.name == provider_id:
                 self._provider_dropdown.set_selected(i)
                 known_provider = True
                 break
@@ -707,7 +695,7 @@ class AgentBuilderDialog:
             # We need to select AFTER rebuild, so defer with idle
             known_model = False
             if provider_id:
-                models = self._PROVIDER_MODELS.get(provider_id, [])
+                models = self._provider_models.get(provider_id, [])
                 for _, mid in models:
                     if mid == model_id_part:
                         known_model = True
@@ -719,24 +707,13 @@ class AgentBuilderDialog:
                 self._manual_model_entry.set_text(model_id_part)
             else:
                 def _select_model():
-                    models = self._PROVIDER_MODELS.get(provider_id, [])
+                    models = self._provider_models.get(provider_id, [])
                     for j, (_, mid) in enumerate(models):
                         if mid == model_id_part:
                             self._model_dropdown.set_selected(j)
                             break
                     return False  # don't repeat
                 GLib.idle_add(_select_model)
-
-        # Load per-provider keys (new format) with fallback to legacy api_key
-        self._provider_keys = dict(agent_def.get("provider_keys", {}))
-        legacy_key = agent_def.get("api_key", "")
-        if legacy_key and provider_id not in self._provider_keys:
-            self._provider_keys[provider_id] = legacy_key
-
-        # Pre-fill API key for current provider
-        key = self._provider_keys.get(provider_id, "")
-        if key:
-            self._api_key_entry.set_text(key)
 
         # Check prompts
         selected_prompts = set(agent_def.get("prompts", []))
@@ -760,13 +737,12 @@ class AgentBuilderDialog:
     # ── Save button state ────────────────────────────────────────────
 
     def _update_save_button(self) -> None:
-        """Enable Save only when: name, prompts, tools, AND api_key are present.
+        """Enable Save only when: name, prompts, tools, AND provider/model are present.
 
         This is widget state management (is the form complete?), NOT validation.
         Actual validation lives in validate_agent_def().
         """
         has_name = bool(self._name_entry.get_text().strip())
-        has_api_key = bool(self._api_key_entry.get_text().strip())
         has_prompts = any(c.get_active() for c in self._prompt_checks.values())
         has_tools = any(c.get_active() for c in self._tool_checks.values())
         has_provider_model = (
@@ -776,7 +752,7 @@ class AgentBuilderDialog:
             or not self._manual_mode
         )
 
-        self._save_btn.set_sensitive(has_name and has_api_key and has_prompts and has_tools and has_provider_model)
+        self._save_btn.set_sensitive(has_name and has_prompts and has_tools and has_provider_model)
 
     # ── Actions ───────────────────────────────────────────────────────
 

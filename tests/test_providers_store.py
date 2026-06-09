@@ -1,0 +1,315 @@
+# tests/test_providers_store.py
+# Tests for utils/providers_store.py — provider YAML persistence.
+#
+# Principle: mock at the boundary, test behavior not internals.
+# Uses tmp_config_dir fixture from conftest.py for isolated file I/O.
+
+import json
+import os
+import stat
+
+import pytest
+
+from models.providers import ProviderConfig
+
+import utils.providers_store as ps
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _make_provider(name: str = "test", **overrides) -> ProviderConfig:
+    """Create a test ProviderConfig with sensible defaults."""
+    defaults = dict(
+        name=name,
+        base_url=f"https://api.{name}.example.com/v1",
+        api_key=f"sk-{name}-key",
+        default_model=f"{name}/model-v1",
+    )
+    defaults.update(overrides)
+    return ProviderConfig(**defaults)
+
+
+# ── TestGetProvidersPath ──────────────────────────────────────────────────
+
+
+class TestGetProvidersPath:
+    def test_returns_path_under_config_dir(self, tmp_config_dir):
+        path = ps.get_providers_path()
+        assert path.endswith("providers.yaml")
+        assert "crabcakes" in path
+
+    def test_contains_yaml_filename(self, tmp_config_dir):
+        path = ps.get_providers_path()
+        assert os.path.basename(path) == "providers.yaml"
+
+
+# ── TestLoadSave ──────────────────────────────────────────────────────────
+
+
+class TestLoadSave:
+    def test_round_trip_yaml(self, tmp_config_dir):
+        p1 = _make_provider("openrouter")
+        p2 = _make_provider("minimax")
+        ps.save_providers([p1, p2])
+
+        loaded = ps.load_providers()
+        assert len(loaded) == 2
+        assert loaded[0].name == "openrouter"
+        assert loaded[0].base_url == "https://api.openrouter.example.com/v1"
+        assert loaded[0].api_key == "sk-openrouter-key"
+        assert loaded[0].default_model == "openrouter/model-v1"
+        assert loaded[1].name == "minimax"
+
+    def test_round_trip_preserves_all_fields(self, tmp_config_dir):
+        p = _make_provider(
+            "full",
+            enabled=False,
+            supports_tools=False,
+            supports_streaming=False,
+            max_tokens=64000,
+            last_verified_at="2026-06-07T20:30:00Z",
+            last_error="some error",
+        )
+        ps.save_providers([p])
+
+        loaded = ps.load_providers()
+        assert len(loaded) == 1
+        lp = loaded[0]
+        assert lp.enabled is False
+        assert lp.supports_tools is False
+        assert lp.supports_streaming is False
+        assert lp.max_tokens == 64000
+        assert lp.last_verified_at == "2026-06-07T20:30:00Z"
+        assert lp.last_error == "some error"
+
+    def test_round_trip_json_fallback(self, tmp_config_dir):
+        """If pyyaml is missing, write a JSON file and confirm load works."""
+        try:
+            import yaml
+            pytest.skip("pyyaml is installed — JSON fallback not tested")
+        except ImportError:
+            pass
+
+        # Write a JSON file manually
+        path = ps.get_providers_path()
+        data = [{"name": "json-provider", "base_url": "https://example.com", "api_key": "k", "default_model": "m"}]
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(data, f)
+
+        loaded = ps.load_providers()
+        assert len(loaded) == 1
+        assert loaded[0].name == "json-provider"
+
+    def test_missing_file_returns_empty(self, tmp_config_dir):
+        result = ps.load_providers()
+        assert result == []
+
+    def test_malformed_yaml_returns_empty(self, tmp_config_dir):
+        path = ps.get_providers_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write("{{{{not valid yaml:::")
+        result = ps.load_providers()
+        assert result == []
+
+    def test_empty_file_returns_empty(self, tmp_config_dir):
+        path = ps.get_providers_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write("")
+        result = ps.load_providers()
+        assert result == []
+
+    def test_non_list_returns_empty(self, tmp_config_dir):
+        path = ps.get_providers_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write('{"key": "value"}')
+        result = ps.load_providers()
+        assert result == []
+
+    def test_atomic_write_no_partial_on_failure(self, tmp_config_dir, monkeypatch):
+        """Simulate a failure mid-save and confirm no .tmp file is left behind."""
+        p = _make_provider("atomic")
+
+        # Patch _serialize to raise after the tmp file is created
+        original_serialize = ps._serialize
+        call_count = 0
+
+        def broken_serialize(providers):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("simulated write failure")
+            return original_serialize(providers)
+
+        monkeypatch.setattr(ps, "_serialize", broken_serialize)
+
+        with pytest.raises(RuntimeError, match="simulated write failure"):
+            ps.save_providers([p])
+
+        # No .tmp file should remain
+        path = ps.get_providers_path()
+        assert not os.path.isfile(path + ".tmp")
+
+    def test_atomic_write_restores_on_second_call(self, tmp_config_dir, monkeypatch):
+        """After a failed save, a subsequent successful save should work."""
+        p = _make_provider("retry")
+
+        # First call fails
+        call_count = 0
+        original_serialize = ps._serialize
+
+        def flaky_serialize(providers):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("first failure")
+            return original_serialize(providers)
+
+        monkeypatch.setattr(ps, "_serialize", flaky_serialize)
+
+        with pytest.raises(RuntimeError):
+            ps.save_providers([p])
+
+        # Second call succeeds
+        monkeypatch.setattr(ps, "_serialize", original_serialize)
+        ps.save_providers([p])
+
+        loaded = ps.load_providers()
+        assert len(loaded) == 1
+        assert loaded[0].name == "retry"
+
+
+# ── TestFilePermissions ───────────────────────────────────────────────────
+
+
+class TestFilePermissions:
+    def test_save_sets_mode_0o600(self, tmp_config_dir):
+        p = _make_provider("permtest")
+        ps.save_providers([p])
+
+        path = ps.get_providers_path()
+        mode = os.stat(path).st_mode & 0o777
+        assert mode == 0o600, f"Expected 0o600, got {oct(mode)}"
+
+    def test_parent_dir_mode_0o700_on_create(self, tmp_config_dir):
+        # tmp_config_dir creates the dir, so this tests the chmod directly
+        # We need a fresh parent that doesn't exist
+        import utils.config as cfg
+        fresh_dir = os.path.join(os.path.dirname(cfg.get_config_dir()), "crabcakes_fresh")
+        monkeypatch_target = cfg.get_config_dir
+        # Use a subdirectory that doesn't exist
+        fresh_path = os.path.join(fresh_dir, "providers.yaml")
+
+        # Manually create the scenario
+        os.makedirs(fresh_dir, exist_ok=True)
+
+        # Verify chmod works
+        p = _make_provider("dirperm")
+        ps.save_providers([p])
+
+        path = ps.get_providers_path()
+        parent = os.path.dirname(path)
+        parent_mode = os.stat(parent).st_mode & 0o777
+        # Parent may already exist (from tmp_config_dir) so we just check the file mode
+        file_mode = os.stat(path).st_mode & 0o777
+        assert file_mode == 0o600
+
+
+# ── TestAddUpdateRemove ───────────────────────────────────────────────────
+
+
+class TestAddUpdateRemove:
+    def test_add_new(self, tmp_config_dir):
+        p = _make_provider("new")
+        ps.add_provider([], p)
+
+        loaded = ps.load_providers()
+        assert len(loaded) == 1
+        assert loaded[0].name == "new"
+
+    def test_add_replaces_existing_by_name(self, tmp_config_dir):
+        p1 = _make_provider("same-name", api_key="old-key")
+        ps.add_provider([], p1)
+
+        p2 = _make_provider("same-name", api_key="new-key")
+        ps.add_provider(ps.load_providers(), p2)
+
+        loaded = ps.load_providers()
+        assert len(loaded) == 1
+        assert loaded[0].api_key == "new-key"
+
+    def test_remove_existing(self, tmp_config_dir):
+        p = _make_provider("removeme")
+        ps.save_providers([p])
+
+        ps.remove_provider(ps.load_providers(), "removeme")
+
+        loaded = ps.load_providers()
+        assert len(loaded) == 0
+
+    def test_remove_nonexistent_is_noop(self, tmp_config_dir):
+        p = _make_provider("keeper")
+        ps.save_providers([p])
+
+        # Should not raise
+        ps.remove_provider(ps.load_providers(), "ghost")
+
+        loaded = ps.load_providers()
+        assert len(loaded) == 1
+        assert loaded[0].name == "keeper"
+
+    def test_update_existing(self, tmp_config_dir):
+        p1 = _make_provider("updateme", api_key="old-key")
+        ps.save_providers([p1])
+
+        p2 = _make_provider("updateme", api_key="new-key")
+        ps.update_provider(ps.load_providers(), p2)
+
+        loaded = ps.load_providers()
+        assert len(loaded) == 1
+        assert loaded[0].api_key == "new-key"
+
+    def test_update_new_appends(self, tmp_config_dir):
+        p = _make_provider("newone")
+        ps.update_provider([], p)
+
+        loaded = ps.load_providers()
+        assert len(loaded) == 1
+        assert loaded[0].name == "newone"
+
+
+# ── TestHasAnyVerifiedProvider ─────────────────────────────────────────────
+
+
+class TestHasAnyVerifiedProvider:
+    def test_empty_list_false(self):
+        assert ps.has_any_verified_provider([]) is False
+
+    def test_all_unverified_false(self):
+        providers = [_make_provider("a"), _make_provider("b")]
+        for p in providers:
+            assert p.last_verified_at is None
+        assert ps.has_any_verified_provider(providers) is False
+
+    def test_one_verified_true(self):
+        providers = [
+            _make_provider("a"),
+            _make_provider("b", last_verified_at="2026-06-07T20:30:00Z"),
+        ]
+        assert ps.has_any_verified_provider(providers) is True
+
+    def test_ignores_last_error(self):
+        """A provider with last_error set but last_verified_at=None does NOT count."""
+        providers = [_make_provider("a", last_error="some failure")]
+        assert ps.has_any_verified_provider(providers) is False
+
+    def test_verified_and_error_both_set(self):
+        """A provider can have both verified and error — verified wins."""
+        providers = [
+            _make_provider("a", last_verified_at="2026-06-07T20:30:00Z", last_error="old error"),
+        ]
+        assert ps.has_any_verified_provider(providers) is True

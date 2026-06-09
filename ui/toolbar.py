@@ -16,7 +16,7 @@ class Toolbar(Gtk.Box):
     Extends Gtk.Box with horizontal orientation.
     """
 
-    def __init__(self, on_connect_clicked=None):
+    def __init__(self, on_connect_clicked=None, *, on_settings_clicked=None):
         # Initialize as a horizontal box — children lay out left to right
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL)
         # Fixed height of 40 pixels, width stretches to fill window (-1 = stretch)
@@ -24,6 +24,7 @@ class Toolbar(Gtk.Box):
 
         # Store the connect button callback
         self._on_connect_clicked = on_connect_clicked
+        self._on_settings_clicked = on_settings_clicked
 
         # Stream toggle — left side of toolbar
         self._stream_btn = Gtk.ToggleButton(label="Stream: OFF")
@@ -53,9 +54,26 @@ class Toolbar(Gtk.Box):
         self._connect_btn.set_size_request(90, -1)
         self._connect_btn.connect("clicked", self._on_connect_click)
 
+        # Settings button + red status dot
+        self._settings_btn = Gtk.Button(label="⚙ Settings")
+        self._settings_btn.add_css_class("settings-toolbar-btn")
+        self._settings_btn.set_size_request(110, -1)
+        self._settings_btn.connect("clicked", self._on_settings_click)
+
+        # Wrap settings button in an overlay to show a red dot
+        overlay = Gtk.Overlay()
+        overlay.set_child(self._settings_btn)
+        self._status_dot = Gtk.Label(label="●")
+        self._status_dot.add_css_class("toolbar-status-dot")
+        self._status_dot.set_halign(Gtk.Align.END)
+        self._status_dot.set_valign(Gtk.Align.START)
+        self._status_dot.set_visible(False)  # hidden until needed
+        overlay.add_overlay(self._status_dot)
+
         # Add spacing between buttons (if more are added later)
         right_box.set_spacing(6)
         right_box.append(self._status_label)
+        right_box.append(overlay)
         right_box.append(self._connect_btn)
 
         # Assemble: stream btn | spacer | right content
@@ -80,6 +98,15 @@ class Toolbar(Gtk.Box):
         self._stream_btn.set_label(
             "Stream: ON" if chat_handler.STREAMING_ENABLED else "Stream: OFF"
         )
+
+    def _on_settings_click(self, *args):
+        """Called when ⚙ Settings button is clicked. Delegates to window's callback."""
+        if self._on_settings_clicked is not None:
+            self._on_settings_clicked()
+
+    def set_settings_status(self, has_verified_provider: bool) -> None:
+        """Show/hide the red dot. Window calls this on startup and after providers change."""
+        self._status_dot.set_visible(not has_verified_provider)
 
     # ── State update methods ─────────────────────────────────────────────────
 

@@ -168,9 +168,21 @@ class TestRenameCleanup:
 
 
 class TestProviderManagement:
-    def test_save_and_delete_provider(self):
-        """save_provider and delete_provider work round-trip."""
-        from utils.agent_defs import save_provider, delete_provider, get_available_providers
+    def test_save_and_delete_provider(self, monkeypatch, tmp_path):
+        """save_provider and delete_provider work round-trip on agent.json."""
+        # Note: save_provider/delete_provider still mutate agent.json (legacy).
+        # get_available_providers() now reads from providers.yaml, so we verify
+        # agent.json directly instead of going through get_available_providers.
+        config_dir = str(tmp_path / ".config" / "crabcakes")
+        os.makedirs(config_dir, exist_ok=True)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        # Create a minimal agent.json so save_provider has something to write to
+        agent_json_path = os.path.join(config_dir, "agent.json")
+        with open(agent_json_path, "w") as f:
+            json.dump({"providers": {}, "default_provider": "openrouter"}, f)
+
+        from utils.agent_defs import save_provider, delete_provider, _get_agent_json_path
 
         ok = save_provider("test-prov", {
             "base_url": "http://localhost:11434/v1",
@@ -179,16 +191,18 @@ class TestProviderManagement:
         })
         assert ok
 
-        providers = get_available_providers()
-        names = [p["name"] for p in providers]
-        assert "test-prov" in names
+        # Verify directly in agent.json (not via get_available_providers)
+        with open(agent_json_path) as f:
+            raw = json.load(f)
+        assert "test-prov" in raw["providers"]
+        assert raw["providers"]["test-prov"]["api_key"] == "test-key"
 
         ok = delete_provider("test-prov")
         assert ok
 
-        providers = get_available_providers()
-        names = [p["name"] for p in providers]
-        assert "test-prov" not in names
+        with open(agent_json_path) as f:
+            raw = json.load(f)
+        assert "test-prov" not in raw["providers"]
 
     def test_delete_nonexistent_provider(self):
         from utils.agent_defs import delete_provider

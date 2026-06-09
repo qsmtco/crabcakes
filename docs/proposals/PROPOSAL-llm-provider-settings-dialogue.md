@@ -116,20 +116,24 @@ The runtime (`agent/config.py`) is updated to read from `providers.yaml` instead
 
 The `provider_keys` field is **removed** from agent YAMLs. Agents reference a model by its fully-qualified ID (e.g. `minimax/MiniMax-M2.7`). The runtime resolves the provider from the prefix and uses the provider's API key from `providers.yaml`.
 
+**`app_title` stays per-agent.** The OpenRouter X-Title header (e.g., `"Coder:Crabcakes"`) is an agent-level concern (which LLM is acting as which agent), not a model-level concern. It remains in the agent YAML and is passed to the runtime by `agent_builder.py`. It is not migrated to `providers.yaml`.
+
 Agent YAML before:
 ```yaml
 provider: minimax
 model: minimax/MiniMax-M2.7
 provider_keys:
   minimax: sk-cp-some-key
+app_title: Coder:Crabcakes
 ```
 
 Agent YAML after:
 ```yaml
 model: minimax/MiniMax-M2.7
+app_title: Coder:Crabcakes
 ```
 
-No `provider` field needed — the provider is implied by the model prefix. No `provider_keys` — keys live in `providers.yaml`.
+No `provider` field needed — the provider is implied by the model prefix. No `provider_keys` — keys live in `providers.yaml`. `app_title` unchanged.
 
 ---
 
@@ -144,6 +148,36 @@ Add a **Settings** button (gear icon ⚙️) to the main toolbar (`ui/toolbar.py
 ```
 
 The button opens the Settings dialogue as a modal window. Callback wired through `window.py` (composition root) following the same pattern as the agent builder.
+
+### 3.1.1 Settings Discoverability (Killer Feature)
+
+**This is the most important UX section in the proposal.** Today's debugging session revealed the failure mode: a user configured the agent edit dialog, sent a message, and got a cryptic MiniMax error. They had no in-app path to discover the Settings dialog, and the runtime surfaced the error as a `[Error] ...` bubble far from where the configuration actually lives. The user shouldn't have to debug the runtime to find the config.
+
+The Settings dialog must be **discoverable from four different surfaces** so a user always finds it:
+
+**Surface 1 — Toolbar button (always visible).** The ⚙️ button on the main toolbar is the primary entry point. When the user opens the app for the first time, the button is visible. No hidden menu, no obscure keybinding.
+
+**Surface 2 — Status indicator on the Settings button (the killer feature).** The ⚙️ button displays a small red dot (●) in its corner when **any** provider in `providers.yaml` has an unconfigured or invalid state. This includes:
+- A provider with an empty `api_key`
+- A provider with no `models` defined
+- A provider whose last "Test Connection" failed
+- A provider that has never been "Test Connection"-ed (untested = unverified)
+
+The red dot disappears when the user opens the Settings dialog, fixes the issue, and either (a) saves with all fields filled, or (b) clicks "Test Connection" and gets a ✅. The dot is the visual signal that the configuration needs attention — it does not require the user to read logs or run a test message.
+
+**Surface 3 — Agent edit dialog inline link.** When the user opens the agent edit dialog for an agent whose model references a provider that has a red-dot status, the dialog displays an inline warning at the top of the form:
+
+> ⚠ The provider for this model (`minimax`) has not been configured or its credentials failed validation. [Open Settings →]
+
+The link opens the Settings dialog with the relevant provider card pre-expanded and focused. This catches the case where the user is editing an agent and discovers the provider is misconfigured.
+
+**Surface 4 — First-run hint.** On the very first launch of the app (or first launch after this feature lands), if `providers.yaml` doesn't exist, a one-time modal greeting explains:
+
+> Welcome to CrabCakes. Before you can chat with agents, configure at least one LLM provider in Settings. [Open Settings →]
+
+The hint fires once per user, not once per session.
+
+**Why four surfaces and not one:** Users arrive at the configuration from different mental models. The toolbar button is for users who already know what they're looking for. The status indicator is for users who don't know something is wrong. The inline link is for users editing an agent. The first-run hint is for users who haven't configured anything yet. All four must exist. Missing any one of them reproduces today's debugging session for that user type.
 
 ### 3.2 Settings Dialogue (`ui/views/settings_dialog.py`)
 
@@ -368,20 +402,27 @@ Request payload for testing:
 
 ## 7. Migration Plan
 
-### Phase A: Create new infrastructure (no breaking changes)
+### Phase A: Create new infrastructure (no migration logic)
+
+The new way replaces the old way. No data migration. No fallback to `agent.json`. If `providers.yaml` doesn't exist, it's empty; the user configures their providers fresh in the Settings dialog.
 
 1. Create `utils/provider_config.py` with load/save/test functions
 2. Create `ui/views/settings_dialog.py` and `ui/handlers/settings_handler.py`
-3. Add Settings button to `ui/toolbar.py`
-4. Wire in `ui/window.py`
-5. Test: Settings dialogue opens, loads `agent.json` data, saves to `providers.yaml`, Test Connection works
+3. Add Settings button to `ui/toolbar.py` with status-indicator dot (per §3.1.1)
+4. Add inline-link warning in `ui/views/agent_builder.py` for misconfigured providers
+5. Add first-run greeting in `ui/window.py` for users with no `providers.yaml`
+6. Wire in `ui/window.py` (composition root)
+7. Test: Settings dialogue opens, saves to `providers.yaml`, Test Connection works, status dot updates correctly
 
-### Phase B: Switch runtime to new config
+### Phase B: Switch runtime to new config (hard cutover)
 
-1. Update `agent/config.py` to read `providers.yaml` (fallback to `agent.json` if `providers.yaml` doesn't exist)
+The new way is the only way. The old `agent.json` is deleted, not migrated.
+
+1. Update `agent/config.py` to read `providers.yaml` only. Delete the `agent.json` loader.
 2. Update `agent/runtime.py` `_call_llm()` to use new config
-3. Update `agent/special_agents.py` to remove `api_key` from `SpecialAgentDef`
-4. Test: agents still work end-to-end with both old and new config files
+3. Update `agent/special_agents.py` to remove `api_key` from `SpecialAgentDef` (keep `app_title` as a per-agent field)
+4. Delete the file `~/.config/crabcakes/agent.json` on the user's machine (one-time cleanup, no data preserved — the user will re-enter keys in the new Settings dialog)
+5. Test: agents still work end-to-end with the new `providers.yaml`-only config
 
 ### Phase C: Simplify agent edit dialogue
 
@@ -389,13 +430,8 @@ Request payload for testing:
 2. Replace with dynamic model dropdown from `provider_config.py`
 3. Remove API key field and `provider_keys` from agent YAML handling
 4. Remove `provider` field from agent YAML (model prefix implies provider)
-5. Test: agent edit dialogue shows all models from `providers.yaml`, saves correct YAML
-
-### Phase D: Deprecate `agent.json`
-
-1. Migration logic: if `providers.yaml` exists → use it; if only `agent.json` exists → migrate on first load
-2. Remove `agent.json` references from all code paths
-3. Update `docs/ARCHITECTURE.md` and `knowledge/configuration.md`
+5. **Keep `app_title` in the agent YAML** (per §2.3) and the corresponding form field in the agent edit dialog
+6. Test: agent edit dialogue shows all models from `providers.yaml`, saves correct YAML, `app_title` preserved
 
 ---
 
@@ -405,7 +441,10 @@ Request payload for testing:
 - **OAuth flows.** The Settings dialogue handles API key entry only. OAuth (like MiniMax's Coding Plan OAuth) stays in OpenClaw's domain. Users paste the resulting access token as an API key.
 - **Provider-specific UI.** No special forms per provider. All providers use the same generic fields (base_url, api_key, models).
 - **Encrypted key storage.** Keys stored in plaintext in `providers.yaml` with `chmod 600`. Same security model as current `agent.json`. Keyring integration would be a separate proposal.
-- **Auto-discovery of available models.** The model list is manually configured. Auto-fetching from provider APIs would be a separate feature.
+- **Auto-discovery of available models.** The model list is manually configured by the user via the Settings dialog when a new model ships from a provider. Auto-fetching from provider APIs would be a separate feature.
+- **Per-agent API key overrides.** All agents sharing a provider use the same key from `providers.yaml`. If per-agent keys are needed in the future, it would be a separate feature.
+- **Migration from `agent.json`.** The new config file `providers.yaml` is the only source of truth. There is no migration path from the old `agent.json` — users configure providers fresh in the new Settings dialog. The old file is deleted as part of Phase B.
+- **`app_title` in `providers.yaml`.** Per-agent OpenRouter attribution headers remain in the agent YAML, not in the global provider config. `app_title` is an agent-level concern, not a model-level concern.
 
 ---
 
@@ -424,8 +463,13 @@ Request payload for testing:
 | 9 | Agent edit dialogue model dropdown populated from `providers.yaml` | Open agent edit → model dropdown shows all models from file |
 | 10 | Agent YAML saves without `provider_keys` or `provider` field | Edit agent → save → YAML has only `model: provider/model-id` |
 | 11 | Agent sends message using provider from `providers.yaml` | Send to Coder → uses key from `providers.yaml` → gets response |
-| 12 | Migration: `agent.json` → `providers.yaml` on first load | Delete `providers.yaml` → open app → `providers.yaml` created, `agent.json.deprecated` exists |
-| 13 | No regressions in existing agent functionality | Full test suite passes |
+| 12 | **`app_title` stays per-agent in agent YAML** | Edit agent → save → YAML still has `app_title: Coder:Crabcakes` |
+| 13 | **Status indicator (red dot) on Settings button** | Configure a provider with empty key → open app → red dot visible on ⚙️ button |
+| 14 | **Status dot disappears after valid Test Connection** | Click Test Connection with valid key → ✅ → red dot disappears |
+| 15 | **Inline warning in agent edit dialog** | Open agent edit for an agent whose provider has no key → see "provider not configured" warning with link to Settings |
+| 16 | **First-run greeting** | Delete `providers.yaml` → open app → one-time greeting modal appears with "Open Settings" button |
+| 17 | **User-driven model addition** | New provider ships a new model → user opens Settings → clicks Add Model → enters ID → save → model appears in agent edit dropdown |
+| 18 | No regressions in existing agent functionality | Full test suite passes |
 
 ---
 

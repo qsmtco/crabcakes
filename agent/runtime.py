@@ -1318,6 +1318,18 @@ class AgentRuntime:
 
         # Use per-agent API key if set, otherwise fall back to provider config
         effective_api_key = conv.api_key or provider_cfg.api_key
+        if not effective_api_key:
+            # Phase B: providers.yaml is the canonical store for API keys.
+            # Fall back to scanning the yaml file when neither conv.api_key nor
+            # provider_cfg.api_key is set.
+            try:
+                from utils.providers_store import load_providers
+                for p in load_providers():
+                    if p.name == provider_name and p.api_key:
+                        effective_api_key = p.api_key
+                        break
+            except Exception as e:
+                logger.warning("Cannot load providers.yaml fallback for %s: %s", provider_name, e)
         # Use app_title as X-Title header for OpenRouter attribution
         x_title = conv.app_title or ""
 

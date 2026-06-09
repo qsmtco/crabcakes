@@ -380,13 +380,8 @@ def validate_agent_def(agent_def: dict) -> list[str]:
                     errors.append(f"No model specified and provider '{provider}' has no default")
                 break
 
-    # Validate API key for selected provider (skip if built-in)
-    if not agent_def.get("api_key_built_in"):
-        provider_keys = agent_def.get("provider_keys", {})
-        if provider and not provider_keys.get(provider):
-            # Check legacy api_key as fallback
-            if not agent_def.get("api_key"):
-                errors.append(f"API key required for provider '{provider}'")
+    # Per Phase B: API keys are validated at config time (Test Connection in Settings),
+    # not at agent-def-save time. The agent YAML stores provider+model only.
 
     # Check for filename collision (sanitized names may collide)
     name = agent_def.get("name", "")
@@ -471,23 +466,23 @@ def get_available_prompts() -> list[dict]:
 
 
 def get_available_providers() -> list[dict]:
-    """Load agent.json providers → [{name, base_url, default_model}].
+    """Load providers from providers.yaml → [{name, base_url, default_model}].
 
-    Used by the UI to show provider dropdown.
+    Used by the UI to show provider dropdown. Returns empty list when no
+    providers.yaml exists or it's empty (first-run state).
     """
     try:
-        from agent.config import load_agent_config
-        config = load_agent_config()
+        from utils.providers_store import load_providers
         return [
             {
-                "name": name,
-                "base_url": prov.base_url,
-                "default_model": prov.default_model,
+                "name": p.name,
+                "base_url": p.base_url,
+                "default_model": p.default_model,
             }
-            for name, prov in config.providers.items()
+            for p in load_providers()
         ]
     except Exception as e:
-        logger.debug("Cannot load agent config for providers: %s", e)
+        logger.debug("Cannot load providers.yaml: %s", e)
         return []
 
 

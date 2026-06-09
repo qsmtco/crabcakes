@@ -105,7 +105,10 @@ class MainWindow(Gtk.ApplicationWindow):
         self._chat_render_handler = ChatRenderHandler(GLib_module=GLib)
 
         # Create UI components
-        toolbar = Toolbar(on_connect_clicked=self._on_connect_clicked)
+        toolbar = Toolbar(
+            on_connect_clicked=self._on_connect_clicked,
+            on_settings_clicked=self._open_settings,
+        )
         self._toolbar = toolbar
         self._toolbar.update_connection_state("offline")
 
@@ -207,6 +210,23 @@ class MainWindow(Gtk.ApplicationWindow):
         self._left_panel.set_on_create_agent(lambda: self._open_agent_builder())
         self._left_panel.set_on_edit_agent(lambda name: self._open_agent_builder(name))
         self._left_panel.set_on_delete_agent(lambda name: self._agent_builder_handler.delete_agent_with_confirmation(name))
+
+        # Settings handler — manages provider list, save/delete/test operations
+        from ui.handlers.settings_handler import SettingsHandler
+        self._settings_handler = SettingsHandler(
+            GLib_module=GLib,
+            parent_window=self,
+            on_providers_changed=None,  # wired via wire_settings_handler below
+            on_status_changed=None,
+        )
+
+        # Wire the SettingsHandler callbacks to the toolbar (and lazily to the settings dialog)
+        from ui.wiring import wire_settings_handler
+        self._settings_handler = wire_settings_handler(
+            self._settings_handler,
+            self._toolbar,
+            settings_dialog_factory=lambda: getattr(self, "_settings_dialog", None),
+        )
 
         # Prompts handler — wired to left_panel after both are created
         from ui.handlers.prompts_handler import PromptsHandler
@@ -717,6 +737,31 @@ class MainWindow(Gtk.ApplicationWindow):
     def _on_builder_cancel(self) -> None:
         """Called when the builder dialog is cancelled."""
         pass  # dialog already closes itself
+
+    # ── Settings integration ─────────────────────────────────────────────
+
+    def _open_settings(self) -> None:
+        """Open the Settings dialog (constructed lazily on first click)."""
+        from ui.views.settings_dialog import SettingsDialog
+        if not hasattr(self, "_settings_dialog") or self._settings_dialog is None:
+            self._settings_dialog = SettingsDialog(
+                parent=self,
+                handler=self._settings_handler,
+                on_close=lambda: None,
+            )
+        self._settings_dialog.show()
+
+    def _on_providers_changed(self, providers: list) -> None:
+        """Refresh the agent builder's provider dropdown after Settings edits.
+
+        NOTE: The spec §2.12 references `self._builder_dialog.set_provider_options(providers)`
+        but no such method exists on AgentBuilderDialog. The current architecture builds
+        the provider dropdown once at dialog construction from handler.get_provider_options().
+        Adding a set_provider_options method is Phase C (spec §2.10) work. For now,
+        we log and move on — the user can close/reopen the builder to see new providers.
+        """
+        if hasattr(self, "_builder_dialog") and self._builder_dialog is not None:
+            logger.info("Settings changed; agent builder provider list may be stale until reopened")
 
 
 
