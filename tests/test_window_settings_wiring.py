@@ -192,10 +192,10 @@ class TestSettingsDialogLifecycle:
         dlg1 = win._settings_dialog
         assert dlg1 is not None
 
-        # Verify close-request returns False (allows close → destroy
-        # in a real display)
-        result = dlg1._window.emit("close-request")
-        assert result is False, "close-request should return False to allow destroy"
+        # Note: we deliberately do NOT assert emit("close-request") return value.
+        # GTK < 4.10 returns None regardless of the handler's return; GTK >= 4.10
+        # propagates it. The core regression test below (cache cleared, fresh
+        # dialog on reopen) is the actual proof that the fix works.
 
         # In a real display, GTK would now destroy the window.
         # In headless GTK4, we must emit the signal directly.
