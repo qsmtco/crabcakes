@@ -225,7 +225,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self._settings_handler = wire_settings_handler(
             self._settings_handler,
             self._toolbar,
-            settings_dialog_factory=lambda: getattr(self, "_settings_dialog", None),
+            settings_dialog_factory=lambda: None,
         )
 
         # Prompts handler — wired to left_panel after both are created
@@ -741,23 +741,14 @@ class MainWindow(Gtk.ApplicationWindow):
     # ── Settings integration ─────────────────────────────────────────────
 
     def _open_settings(self) -> None:
-        """Open the Settings dialog (constructed lazily on first click)."""
+        """Open the Settings dialog (fresh instance each time)."""
         from ui.views.settings_dialog import SettingsDialog
-        if not hasattr(self, "_settings_dialog") or self._settings_dialog is None:
-            self._settings_dialog = SettingsDialog(
-                parent=self,
-                handler=self._settings_handler,
-                on_close=lambda: None,
-            )
-            # Lifecycle: clear the cache when the window is hidden.
-            # In GTK4, close-request returning False hides (not destroys)
-            # the window. The hide signal fires, clearing the cache so the
-            # next open constructs a fresh dialog instead of calling
-            # present() on an already-visible window.
-            self._settings_dialog._window.connect(
-                "hide", lambda *_, ref=self: setattr(ref, "_settings_dialog", None)
-            )
-        self._settings_dialog.show()
+        dialog = SettingsDialog(
+            parent=self,
+            handler=self._settings_handler,
+            on_close=lambda: None,
+        )
+        dialog.show()
 
     def _on_providers_changed(self, providers: list) -> None:
         """Refresh the agent builder's provider dropdown after Settings edits.
