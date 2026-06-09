@@ -5,10 +5,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Callable
 
 from ui.handlers.settings_handler import SettingsHandler
 from utils.providers_store import has_any_verified_provider, load_providers
+
+logger = logging.getLogger(__name__)
 
 
 def wire_settings_handler(
@@ -35,8 +38,10 @@ def wire_settings_handler(
                 dialog = settings_dialog_factory()
                 if dialog is not None:
                     dialog.refresh_providers(providers)
-            except Exception:
-                pass  # dialog may not be open / already destroyed
+            except Exception as e:
+                logger.warning(
+                    "Settings dialog refresh failed (dialog may not be open): %s", e
+                )
 
     # Mutate the handler's private callback slots (per the handler's __init__ API)
     handler._on_status_changed = _on_status_changed
