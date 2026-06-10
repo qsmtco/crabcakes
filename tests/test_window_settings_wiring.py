@@ -133,6 +133,28 @@ class TestOnProvidersChanged:
         # Should not crash; status callback should still fire
         assert t.status_calls[-1] is False
 
+    def test_on_providers_changed_updates_agent_builder(self, tmp_config_dir):
+        """When providers change and the agent builder is open, set_provider_options is called."""
+        from unittest.mock import MagicMock
+
+        builder = MagicMock()
+        h = SettingsHandler()
+        h = wire_settings_handler(
+            h, MagicMock(),
+            settings_dialog_factory=lambda: None,
+            agent_builder_factory=lambda: builder,
+        )
+
+        providers = [{"name": "openai", "base_url": "u", "default_model": "gpt-4o"}]
+        h._on_providers_changed(providers)
+
+        builder.set_provider_options.assert_called_once()
+        args, _ = builder.set_provider_options.call_args
+        assert len(args) == 1
+        # First arg is the providers list — passed through as-is from the handler
+        assert len(args[0]) == 1
+        assert args[0][0]["name"] == "openai"
+
 
 # ── GTK availability for lifecycle tests ──────────────────────────────
 try:
