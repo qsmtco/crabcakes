@@ -1413,17 +1413,60 @@ class AgentBuilderHandler:
 
 **Responsibility:** GTK4 modal dialog for creating and editing agents. Pure view — receives data from `AgentBuilderHandler`, emits user actions via callbacks.
 
-**Layout:** Name, Emoji, Role, Provider dropdown, Model, Prompts multi-select, Tools checkboxes with presets (Full Access / Read Only / Custom).
+**Layout:** Name, Emoji, Role, **Provider dropdown (populated from `handler.get_provider_options()` at construction)**, Prompts multi-select, Tools checkboxes with presets (Full Access / Read Only / Custom).
+
+**Simplifications (Phase 4 of SPEC-AGENT-BUILDER-PROVIDER-DROPDOWN):**
+- **No Model dropdown** — the agent's model is resolved at runtime from `providers.yaml` using the provider's `default_model`. The runtime in `agent/runtime.py` handles this.
+- **No Manual entry mode** — the user adds providers only via the Settings dialog.
+- **No API key field** — API keys live in `providers.yaml`, never in agent definitions.
+
+**Save button enables when:** name (non-empty) AND prompts (≥1 selected) AND tools (≥1 selected) AND provider (selected in dropdown).
+
+**`get_values()` returns:** `{"name", "emoji", "role", "prompts", "tools", "provider", "model": "", "mcp_servers", "self_improvement"}`. The `model` field is always empty string for new agents; the runtime resolves it from the provider's `default_model`.
 
 **Public API:**
 ```python
 class AgentBuilderDialog:
     def __init__(parent, *, handler, agent_def=None, on_save=None, on_cancel=None)
     def get_values() -> dict
+    def set_provider_options(providers: list[ProviderConfig]) -> None
     def show() -> None
     def close() -> None
     def show_errors(errors: list[str]) -> None
 ```
+
+**Live updates:** When providers change in Settings while the dialog is open, the wiring (`ui/wiring.py`) calls `set_provider_options()` on this dialog. The dropdown rebuilds. The handler resolves the new model from `providers.yaml` at save time, not at dialog open time.
+
+### 3.21u.a `ui/wiring.py` — SettingsHandler Callback Wiring (Phase 1 of SPEC-AGENT-BUILDER-PROVIDER-DROPDOWN)
+
+**Responsibility:** Wire the `SettingsHandler`'s `on_status_changed` and `on_providers_changed` callbacks to the toolbar and dialogs. Pure composition — no business logic, no GTK widget creation.
+
+**Owns:** None — this is a stateless wiring function. The handler is owned by the window; the toolbar is owned by the window; the dialogs are owned by the window.
+
+**Public API:**
+```python
+def wire_settings_handler(
+    handler: SettingsHandler,
+    toolbar,
+    *,
+    settings_dialog_factory: Callable[[], Any] | None = None,
+    agent_builder_factory: Callable[[], Any] | None = None,
+) -> SettingsHandler
+```
+
+**Idempotency:** The function is idempotent — calling it twice on the same handler is a no-op (uses a `_wired` flag on the handler). The composition root (`ui/window.py`) calls it exactly once during `_build()`.
+
+**Factories:** Both `settings_dialog_factory` and `agent_builder_factory` are LAZY factories that return a dialog or `None` if the dialog is not open. This is critical — the dialogs may not exist when the wiring is set up (e.g., the agent builder is only created when the user clicks the `+ Agent` button). The factory is called only when `on_providers_changed` fires.
+
+**Behavior:**
+- Initial call: `toolbar.set_settings_status(has_any_verified_provider(load_providers()))` is invoked (wrapped in try/except so a toolbar failure doesn't break the wiring).
+- On `on_status_changed`: forwards to `toolbar.set_settings_status(has_any_verified_provider(providers))`.
+- On `on_providers_changed`: calls both factories, forwards the providers list to whichever returned non-None.
+
+**Architecture compliance:**
+- Composition root pattern: the wiring is a function, not a class. It has no state.
+- Lazy factories: dialogs are constructed on demand, not at wiring time. This matches the "dialogs are not widgets, they're ephemeral UI" principle in §3.6.
+- Idempotency: makes the wiring safe to call from tests (multiple wire_settings_handler calls in a test do not produce double-callbacks).
 
 ### 3.21u `agent/enforcement.py` — Post-Write Verification (Phase 3)
 
@@ -2528,6 +2571,26 @@ agent/tools.py execute_tool():
 **Cleanup on conversation end:** `create_conversation(session_key)` with same key → `mcp_disconnect_all(session_key)` to kill stale MCP subprocesses.
 
 **Graceful degradation:** If MCP server fails (not found, can't spawn, network timeout), `execute_tool` returns `ToolResult(success=False, error=...)` and logs warning. Built-in tools still work.
+
+### 4.13 Provider Change → Open Agent Builder Refresh
+
+User adds a provider in Settings while the Agent Builder is open
+  → SettingsDialog._on_add_provider()
+    → handler.add_or_update(ProviderConfig)
+      → handler._on_providers_changed(providers)  (if handler is the SettingsHandler)
+        → wire_settings_handler._on_providers_changed(providers)  (closure)
+          → settings_dialog_factory() → None (or settings dialog) → refresh_providers(providers)
+          → agent_builder_factory() → AgentBuilderDialog or None
+            → dialog.set_provider_options(providers)  (rebuilds dropdown)
+
+User removes a provider in Settings while the Agent Builder is open (with that provider selected)
+  → same chain as above
+    → agent_builder._providers updates
+      → _rebuild_provider_dropdown() runs
+        → if no providers left: dropdown shows "(no providers — open Settings)"
+        → if providers remain: dropdown shows remaining names
+        → _get_selected_provider_id() returns "" if the selected index is now invalid
+          → _update_save_button() disables Save
 
 ## 5. Callback Pattern
 
