@@ -69,7 +69,7 @@ class TestValidateAgentDef:
     def test_missing_provider_still_errors(self):
         agent_def = self._valid_def(provider="")
         errors = validate_agent_def(agent_def)
-        assert any("provider" in e.lower() for e in errors)
+        assert any("llm_name" in e.lower() for e in errors)
 
     def test_missing_name_still_errors(self):
         agent_def = self._valid_def(name="")

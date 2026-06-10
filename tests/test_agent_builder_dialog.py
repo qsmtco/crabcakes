@@ -88,7 +88,8 @@ class TestProviderDropdownPopulation:
         dlg = _make_dlg(gtk_parent, providers)
         dlg._name_entry.set_text("test-agent")
         values = dlg.get_values()
-        assert values["provider"] == "openai"
-        assert values["model"] == ""  # resolved at runtime
+        assert values["llm_name"] == "openai"
+        assert "model" not in values
+        assert "provider" not in values
         assert "provider_keys" not in values
         assert "api_key" not in values

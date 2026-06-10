@@ -35,7 +35,7 @@ class TestSpecialAgentDef:
             tools=["read_file"],
             can_write=False,
         )
-        assert agent.provider is None
+        assert agent.llm_name is None
         assert agent.model is None
         assert agent.self_improvement == {}
 
@@ -48,11 +48,11 @@ class TestSpecialAgentDef:
             color="#00ff00",
             tools=["read_file", "write_file"],
             can_write=True,
-            provider="minimax",
+            llm_name="minimax",
             model="MiniMax-M2.7",
             self_improvement={"bug_journal": False},
         )
-        assert agent.provider == "minimax"
+        assert agent.llm_name == "minimax"
         assert agent.model == "MiniMax-M2.7"
         assert agent.self_improvement["bug_journal"] is False
 
@@ -149,7 +149,7 @@ class TestRegistry:
         with patch("utils.agent_defs.load_agent_defs", return_value=[coder_def]):
             reload_registry()
             coder = get_special_agent("special:coder")
-            assert coder.provider == "minimax"
+            assert coder.llm_name == "minimax"
             assert coder.model == "MiniMax-M2.7"
 
     def test_coder_si_full_stack(self):

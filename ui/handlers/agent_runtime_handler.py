@@ -263,7 +263,7 @@ class AgentRuntimeHandler:
             Full model string like "minimax/MiniMax-M2.7", or None to use
             the runtime's default_model.
         """
-        provider = getattr(agent_def, "provider", None)
+        provider = getattr(agent_def, "llm_name", None) or getattr(agent_def, "provider", None)
         model = getattr(agent_def, "model", None)
 
         # No overrides → use global default

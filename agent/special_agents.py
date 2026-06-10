@@ -25,7 +25,7 @@ class SpecialAgentDef:
     """Definition of a Crabcakes Special Agent.
 
     Can be loaded from YAML/JSON config files or created programmatically.
-    Fields provider, model, and self_improvement are optional overrides —
+    Fields llm_name, model, and self_improvement are optional overrides —
     when None, the global agent config defaults apply.
     """
     conv_id_prefix: str           # e.g. "special:coder" — used as session_key
@@ -35,7 +35,7 @@ class SpecialAgentDef:
     color: str                    # hex color from AGENT_COLORS
     tools: list[str]              # tool names this agent can use
     can_write: bool               # whether write_file is in the default tool set
-    provider: str | None = None   # per-agent provider override (None → global default)
+    llm_name: str | None = None   # per-agent provider card name (None → global default)
     model: str | None = None      # per-agent model override (None → global default)
     api_key: str | None = None    # per-agent API key override (None → provider config)
     app_title: str | None = None   # OpenRouter X-Title header (e.g. "Coder:Crabcakes")
@@ -120,7 +120,7 @@ def _load_registry() -> dict[str, SpecialAgentDef]:
             color=color,
             tools=tools,
             can_write="write_file" in tools or "edit_file" in tools,
-            provider=agent_def.get("provider"),
+            llm_name=agent_def.get("llm_name") or agent_def.get("provider"),
             model=agent_def.get("model"),
             # Per Phase B: keys are resolved from providers.yaml at runtime, not stored on the agent.
             api_key=agent_def.get("api_key_built_in") and agent_def.get("api_key", "") or "",

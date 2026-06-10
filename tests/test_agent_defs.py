@@ -223,7 +223,7 @@ class TestValidateAgentDef:
         assert any("name" in e for e in errors)
         assert any("prompts" in e for e in errors)
         assert any("tools" in e for e in errors)
-        assert any("provider" in e for e in errors)
+        assert any("llm_name" in e for e in errors)
 
     def test_unknown_tool_name(self):
         agent = {

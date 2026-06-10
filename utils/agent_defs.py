@@ -324,8 +324,8 @@ def validate_agent_def(agent_def: dict) -> list[str]:
         errors.append("Missing required field: prompts (must be a non-empty list)")
     if not agent_def.get("tools"):
         errors.append("Missing required field: tools (must be a non-empty list)")
-    if not agent_def.get("provider"):
-        errors.append("Missing required field: provider")
+    if not (agent_def.get("llm_name") or agent_def.get("provider")):
+        errors.append("Missing required field: llm_name")
 
     # Type checks
     prompts = agent_def.get("prompts")
@@ -361,8 +361,8 @@ def validate_agent_def(agent_def: dict) -> list[str]:
                 if not any(os.path.isfile(c) for c in candidates):
                     errors.append(f"Prompt file not found: {p}")
 
-    # Validate provider exists in agent.json
-    provider = agent_def.get("provider")
+    # Validate provider exists in providers.yaml
+    provider = agent_def.get("llm_name") or agent_def.get("provider")
     if provider:
         providers = get_available_providers()
         provider_names = {p["name"] for p in providers}

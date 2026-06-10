@@ -157,7 +157,7 @@ class AgentBuilderDialog:
         name = self._name_entry.get_text().strip()
         emoji = self._emoji_entry.get_text().strip() or "🤖"
         role = self._role_entry.get_text().strip() or name.lower().replace(" ", "-")
-        provider = self._get_selected_provider_id()
+        llm_name = self._get_selected_llm_name()
 
         prompts = self._get_selected_prompts()
         tools = self._get_selected_tools()
@@ -168,8 +168,7 @@ class AgentBuilderDialog:
             "role": role,
             "prompts": prompts,
             "tools": tools,
-            "provider": provider,
-            "model": "",  # resolved at runtime from providers.yaml
+            "llm_name": llm_name,
             "mcp_servers": self._get_selected_mcp_servers(),
             "self_improvement": self._get_si_config(tools),
         }
@@ -325,7 +324,7 @@ class AgentBuilderDialog:
         dropdown.connect("notify::selected", self._on_provider_changed)
         return dropdown
 
-    def _get_selected_provider_id(self) -> str:
+    def _get_selected_llm_name(self) -> str:
         idx = self._provider_dropdown.get_selected()
         if idx < len(self._providers):
             return self._providers[idx].name
@@ -605,7 +604,7 @@ class AgentBuilderDialog:
         self._role_entry.set_text(agent_def.get("role", ""))
 
         # Select provider dropdown
-        provider_id = agent_def.get("provider", "")
+        provider_id = agent_def.get("llm_name") or agent_def.get("provider", "")
         for i, p in enumerate(self._providers):
             if p.name == provider_id:
                 self._provider_dropdown.set_selected(i)
@@ -641,7 +640,7 @@ class AgentBuilderDialog:
         has_name = bool(self._name_entry.get_text().strip())
         has_prompts = any(c.get_active() for c in self._prompt_checks.values())
         has_tools = any(c.get_active() for c in self._tool_checks.values())
-        has_provider = bool(self._get_selected_provider_id())
+        has_provider = bool(self._get_selected_llm_name())
 
         self._save_btn.set_sensitive(
             has_name and has_prompts and has_tools and has_provider

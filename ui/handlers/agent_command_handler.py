@@ -65,75 +65,107 @@ def _extract_quoted_commands(text: str, command_names: set[str] | None = None) -
     Returns list of ParsedCommand namedtuples.
     """
     results = []
-    
-    for m in re.finditer(r'(?:^|\s)/([^\s/\n][^/\n]*)', text):
-        inner = m.group(1)
-        tokens = inner.split()
-        if not tokens:
-            continue
-        
-        raw_cmd = tokens[0]
-        cmd = raw_cmd.lower()  # commands are case-insensitive
-        rest = tokens[1:]
-        
-        # Implicit ask: /@Agent ... → treat as /ask @Agent ...
-        is_implicit = raw_cmd.startswith('@')
-        if is_implicit:
-            agent = raw_cmd   # @Agent token (preserve case)
-            cmd = 'ask'       # implicit ask command
-            # rest stays as payload tokens (already after @Agent)
-        
-        # Reject unknown command names (file paths, URLs, etc.)
+    seen_spans: set[tuple[int, int]] = set()  # avoid double-matching
+
+    def _emit(cmd: str, agent: str, payload: str, span: tuple[int, int]):
+        if span in seen_spans:
+            return
+        seen_spans.add(span)
         if command_names and cmd not in command_names:
-            continue
-        
-        # For explicit commands, find @Agent in rest
-        if not is_implicit:
-            # Normal: find @Agent in rest
-            agent = None
-            for i, tok in enumerate(rest):
-                if tok.startswith('@'):
-                    agent = tok
-                    rest = rest[i + 1:]
-                    break
-            if agent is None:
-                continue  # No @Agent → skip
-        
-        # Parse payload using the shared escape-aware scanner (spec §5.2)
-        # After @Agent, rejoin remaining tokens and find the quoted payload.
-        payload_text = ' '.join(rest)
-        if cmd in ('ask', 'tell', 'delegate'):
-            # Find the opening quote in the rejoined text after @Agent
-            q_pos = 0
-            while q_pos < len(payload_text) and payload_text[q_pos] != '"':
-                q_pos += 1
-            if q_pos >= len(payload_text):
-                continue  # No opening quote → skip per spec §4.3
-            payload, after_q = _parse_quoted_payload(payload_text, q_pos)
-            if payload is None:
-                # Distinguish empty payload vs unclosed quote (agent auto-close §4.4)
-                after_open = payload_text[q_pos + 1:]  # text after opening "
-                if not after_open or after_open[0] == '"':
-                    continue  # Empty (closed-but-empty or bare ") → silently drop
-                # Auto-close: treat end of text as closing quote
-                payload = after_open
-                if len(payload) > _QUOTED_PAYLOAD_MAX:
-                    payload = payload[:_QUOTED_PAYLOAD_MAX] + '…'
-            elif len(payload) > _QUOTED_PAYLOAD_MAX:
-                payload = payload[:_QUOTED_PAYLOAD_MAX] + '…'
-        elif cmd == 'stop':
-            payload = ''
-        else:
-            continue  # Unknown command → skip
-        
+            return
         results.append(ParsedCommand(
             command=cmd,
             agent=agent,
             payload=payload,
-            raw_start=m.start(),
-            raw_end=m.end()
+            raw_start=span[0],
+            raw_end=span[1],
         ))
-    
+
+    # ── Pass 1: explicit commands with closing quote ────────────────────────
+    # Pattern: /cmd @Agent "payload" where payload may contain / (file paths)
+    # and escaped quotes (\" \\). The closing " must be unescaped.
+    # Inner payload: (non-quote/non-backslash) | (backslash + any char)
+    for m in re.finditer(
+        r'(?:^|\s)/([a-zA-Z]+)\s+(@[^\s"]+)\s+"((?:[^"\\]|\\.)*)"',
+        text,
+    ):
+        cmd = m.group(1).lower()
+        agent = m.group(2)
+        raw_payload = m.group(3)
+        if cmd not in ('ask', 'tell', 'delegate', 'stop'):
+            continue
+        if cmd == 'stop':
+            _emit(cmd, agent, '', m.span())
+            continue
+        # Unescape \" and \\ in payload
+        try:
+            payload, _ = _parse_quoted_payload('"' + raw_payload + '"', 0)
+        except Exception:
+            payload = None
+        if payload is None:
+            continue
+        if len(payload) > _QUOTED_PAYLOAD_MAX:
+            payload = payload[:_QUOTED_PAYLOAD_MAX] + '…'
+        _emit(cmd, agent, payload, m.span())
+
+    # ── Pass 2: explicit commands with auto-close (unclosed trailing quote) ──
+    # Only matches when no closing " exists before end-of-string. Avoids
+    # duplicating matches already found in Pass 1.
+    for m in re.finditer(
+        r'(?:^|\s)/([a-zA-Z]+)\s+(@[^\s"]+)\s+"([^"]*)$',
+        text,
+    ):
+        if m.span() in seen_spans:
+            continue
+        cmd = m.group(1).lower()
+        agent = m.group(2)
+        if cmd not in ('ask', 'tell', 'delegate'):
+            continue
+        raw_payload = m.group(3)
+        if not raw_payload:
+            continue  # bare " → silently drop per spec §4.5
+        if len(raw_payload) > _QUOTED_PAYLOAD_MAX:
+            raw_payload = raw_payload[:_QUOTED_PAYLOAD_MAX] + '…'
+        _emit(cmd, agent, raw_payload, m.span())
+
+    # ── Pass 3: implicit ask /@Agent "payload" (with closing quote) ─────────
+    for m in re.finditer(
+        r'(?:^|\s)/(@[^\s"]+)\s+"((?:[^"\\]|\\.)*)"',
+        text,
+    ):
+        agent = m.group(1)
+        raw_payload = m.group(2)
+        try:
+            payload, _ = _parse_quoted_payload('"' + raw_payload + '"', 0)
+        except Exception:
+            payload = None
+        if payload is None:
+            continue
+        if len(payload) > _QUOTED_PAYLOAD_MAX:
+            payload = payload[:_QUOTED_PAYLOAD_MAX] + '…'
+        _emit('ask', agent, payload, m.span())
+
+    # ── Pass 4: implicit ask /@Agent "payload" (auto-close) ─────────────────
+    for m in re.finditer(
+        r'(?:^|\s)/(@[^\s"]+)\s+"([^"]*)$',
+        text,
+    ):
+        if m.span() in seen_spans:
+            continue
+        agent = m.group(1)
+        raw_payload = m.group(2)
+        if not raw_payload:
+            continue
+        if len(raw_payload) > _QUOTED_PAYLOAD_MAX:
+            raw_payload = raw_payload[:_QUOTED_PAYLOAD_MAX] + '…'
+        _emit('ask', agent, raw_payload, m.span())
+
+    # ── Pass 5: payload-free /stop @Agent (no quotes at all) ────────────────
+    for m in re.finditer(r'(?:^|\s)/stop\s+(@[^\s"]+)', text):
+        if m.span() in seen_spans:
+            continue
+        _emit('stop', m.group(1), '', m.span())
+
     return results
 
 
