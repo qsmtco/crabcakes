@@ -189,13 +189,21 @@ Convert all enforcement subprocess calls to argv lists. No more `shell=True`. Th
 - Stop sourcing `.venv/bin/activate` via POSIX dot — invoke the venv interpreter by absolute path (`<venv>/bin/python -m pytest`)
 - Validate `.crabcakes/enforcement.json` command templates against a binary allowlist: `{python3, pytest, ruff, mypy, eslint, npx, node, go}`. Reject templates whose first token is not on the list.
 
-#### 5.3 HIGH-1 — gate sensitive-path writes
+#### 5.3 HIGH-1 — gate sensitive-path writes (one-time dialog per project)
 
-Add an approval (or project-trust) gate for `write_file`/`edit_file` when the path is sensitive:
+Add a project-scoped trust gate for `write_file`/`edit_file` when the path is sensitive:
 - `.git/`, `.crabcakes/`, leading-dot basenames, `*hook*`, `*venv*`
 - `Makefile`, `.github/*.yml`, `pyproject.toml`
 
-An `is_sensitive_path(rel_path)` helper, plus reuse of the existing `_dispatch_approval` handshake. **No behavior change for normal writes** (`src/foo.py` stays unapproved). UX impact: a dialog appears for writes to the listed paths.
+**UX: one-time dialog per project, not per write.** On the first sensitive-path write in a project, show a dialog explaining the risk and what the agent is about to write. If the user approves, the project is recorded as "sensitive paths trusted" in project metadata. Subsequent sensitive-path writes in that project are silent — no further dialogs. If a different sensitive path category is touched (e.g. user previously approved `.crabcakes/` writes and a `.git/hooks/` write shows up), the dialog fires again for the new category. A project can be reset to "ask every time" via a project settings menu.
+
+**Implementation:**
+- An `is_sensitive_path(rel_path)` helper categorizes the path (`.git/` | `.crabcakes/` | leading-dot | hooks | venv | Makefile | `.github/` | `pyproject.toml`)
+- Reuse the existing `_dispatch_approval` handshake
+- Per-project trust state lives in `.crabcakes/trust.json` (or similar — colocated with the project, not global, so trust doesn't leak across projects)
+- **No behavior change for normal writes** (`src/foo.py` stays unapproved)
+
+**Test:** first sensitive-path write in a fresh project triggers dialog; approval suppresses subsequent dialogs for the same category; a new category re-triggers; per-project state doesn't leak across projects.
 
 #### 5.4 HIGH-5 — fence untrusted project text in system prompts
 
@@ -277,49 +285,6 @@ Wrap every project-sourced text block (bug journal, rules, `project.md`, `contex
 | MED-3: strict or configurable per project? | **Strict default** | Per-project override adds complexity. Default-strict is safer. |
 | MED-13: fix streaming usage or drop cost limits? | **Fix streaming usage** | Cost limits are a feature. |
 
-#### 6.1 HIGH-3 — stop persisting `api_key` in conversation files
-- Remove `"api_key": conv.api_key` from the serialized dict in `_save_conversation_to_disk`
-- On load, re-resolve `api_key` from `providers.yaml` keyed by provider/model
-- `chmod 0o600` each conversation file after write
-- Create `_conversations_dir()` with `0o700`
-
-#### 6.2 HIGH-2 — provenance-tag messages, gate remote-originated A2A
-- Tag every message with its provenance: `local` | `remote` | `user`
-- A2A commands that arrive from a `remote` source must require PM approval before they trigger local file-mutating or exec tools
-- Alternative: restrict remote-originated commands to read-only operations (looser, but simpler)
-
-#### 6.3 HIGH-6 — allowlist `http`/`https`/`mailto` for rendered links
-- In `format_markdown()` and `escape_for_pango()`: emit non-allowlisted links as escaped text, not `<a>` tags
-- Add an `activate-link` guard in `chat_bubble.py` and `feed_card.py`: cancel navigation for non-allowlisted schemes
-
-#### 6.4 HIGH-4 — `wss://`-or-loopback, channel binding, least-privilege scopes
-- Refuse non-loopback `ws://` unless `CRABCAKES_ALLOW_INSECURE_WS=1` is explicitly set
-- Add channel binding to the v3 handshake (include server TLS exporter or key fingerprint in `v3_payload`)
-- Make scopes a constructor param; request least-privilege per session
-- Pin gateway identity on first pair
-
-#### 6.5 A-1 — make identity loading lazy
-- Stop running `_load_identity()` at gateway module import
-- Make `GatewayClient.connect()` the first place that touches identity
-- Surface identity errors as a toolbar error state, not an import-time crash
-- Contradicts the "runs standalone, no account required" promise — restore that promise
-
-### Priority 1 Exit Criteria
-
-- [ ] All failing tests from audit Prompts B-3 (links) and B-4 (api_key) pass
-- [ ] HIGH-2 has a passing test that simulates a remote A2A command and verifies PM approval is requested
-- [ ] HIGH-4 has a passing test that `ws://` non-loopback is refused
-- [ ] A-1: importing `gateway.client` does not raise; identity errors only surface at `connect()`
-- [ ] Full suite green
-
-### Priority 1 Trade-offs
-
-| Trade-off | Decision | Rationale |
-|---|---|---|
-| HIGH-2: per-command approval, or restrict to read-only? | **Per-command approval** (default), read-only restrict as opt-in | More flexible. Users can still trust remote agents but get a checkpoint. |
-| HIGH-4: enforce wss, or just warn? | **Enforce wss for non-loopback** | Loopback is acceptable. The risk is MITM, which requires non-loopback. |
-| HIGH-4: channel binding via TLS exporter, or via server key fingerprint? | **Server key fingerprint** | Simpler, no TLS dependency. |
-
 ---
 
 ## 7. Priority 2 — Defense-in-Depth (DEFER)
@@ -330,6 +295,9 @@ Wrap every project-sourced text block (bug journal, rules, `project.md`, `contex
 
 | ID | Deferral trigger (when this becomes relevant) |
 |---|---|
+| HIGH-2 | You connect crabcakes to a remote gateway operated by a third party. **Design is specified below; implement when triggered.** |
+| HIGH-3 | You start backing up `~/.config/crabcakes/` to a shared/public location (Dropbox, public GitHub, shared network drive). |
+| HIGH-4 | You bind the OpenClaw gateway to a non-loopback interface (e.g. `wss://0.0.0.0:18789` for cross-device access). |
 | MED-1 | You start running multiple agents in parallel and notice execution without approval. |
 | MED-2 | No trigger — this is just documentation clarity. **Fix when convenient** (0.5 day). |
 | MED-4 | You start making manual edits to project files and lose them on `/reject`. |
@@ -345,6 +313,42 @@ Wrap every project-sourced text block (bug journal, rules, `project.md`, `contex
 **Note:** MED-3 and MED-13 are in Priority 1, not here. See §6.3 and §6.4.
 
 **Effort: ~1 day to batch-fix all of MED-2/MED-9/MED-10/MED-11 (the trivially small ones).** Skip the rest until triggered.
+
+### HIGH-2 design (specified, not implemented)
+
+**Trigger:** Connect crabcakes to a remote gateway operated by a third party.
+
+**Design (per-source trust list):**
+
+1. **Provenance tagging.** Tag every inbound message with its `source_id` (e.g. `telegram:7478874934`, `gateway:remote:foo.example.com`, `local:agent:QTR`). The `source_id` is set by the transport layer when the message arrives, not by the agent that processes it.
+
+2. **Trust list.** Maintain a per-user trust list at `~/.config/crabcakes/remote_sources.yaml`. Each entry is a `(source_id, trust_level, note)` triple:
+   ```yaml
+   sources:
+     - source_id: telegram:7478874934
+       trust: trusted            # trusted | confirm-each | read-only
+       note: "Captain's own phone"
+     - source_id: gateway:remote:*
+       trust: confirm-each       # default for unknown remote gateway
+     - source_id: <unknown>
+       trust: confirm-each       # default catch-all
+   ```
+   The trust list is hot-reloaded on file change.
+
+3. **Trust levels:**
+   - `trusted` — slash commands from this source run without prompts. Used for sources the user controls (their own phone, their own remote crabcakes instance).
+   - `confirm-each` — every slash command from this source pops a dialog on the local machine. Used for sources the user has interacted with but doesn't fully trust.
+   - `read-only` — slash commands from this source are stripped before processing. The source can send messages and receive responses but cannot trigger any local action.
+
+4. **Default for unknown sources:** `confirm-each` (safer than `trusted`, less friction than `read-only`).
+
+5. **Settings dialog.** A `Settings → Remote Sources` panel lets the user add/remove sources, change trust levels, and see a log of recent actions taken on their behalf by remote sources.
+
+6. **For the Captain's deployment:** the only realistic remote source is Telegram (which is the user themselves, transiting the phone). The expected initial configuration is `telegram:7478874934 = trusted`. If a future remote gateway or third-party integration is added, the user adds it to the trust list with an explicit trust decision.
+
+7. **Audit log.** Every action taken on behalf of a remote source is logged (source, command, target, decision) to `~/.config/crabcakes/remote_audit.log` for later review.
+
+**Effort when triggered: S (0.5 day) for the trust list + provenance tag. M (1 day) for the settings dialog and audit log.**
 
 ### Priority 2 Exit Criteria
 
@@ -453,16 +457,27 @@ Qaster (or an equivalent reviewer) reviews each phase's diff before merge, speci
 
 ---
 
-## 12. Open Decisions Needed
+## 12. Decisions Made
 
-Before Phase 0 work begins, the following decisions are open:
+The following decisions have been resolved (per Captain JAQ, 2026-06-10):
 
-1. **HIGH-1 sensitive-path approval UX** — dialog every time, or one-time per project? (Recommendation: one-time per project. The audit's Prompt B-2 implies this.)
-2. **HIGH-2 remote A2A behavior** — per-command approval (default), or restrict to read-only? (Recommendation: per-command approval, with an opt-in "read-only" mode for untrusted remote agents.)
-3. **MED-3 `web_fetch` SSRF allowlist** — strict, or configurable per project? (Recommendation: strict default, per-project override.)
-4. **A-1 gateway identity loading** — fail at import (current), fail at connect (proposed), or fail at first gateway event? (Recommendation: fail at connect, with a toolbar error state.)
-5. **A-8 `pyproject.toml` backend** — fix to `setuptools.build_meta` (proposed), or migrate to `hatchling`? (Recommendation: `setuptools.build_meta`; minimal change.)
-6. **LOW-6 STT manifest correction** — correct the "no network" line (proposed), or remove the STT module if faster-whisper is too entangled? (Recommendation: correct the manifest, allowlist sizes, pin `download_root` + `local_files_only`.)
+1. **HIGH-1 sensitive-path approval UX** — **DECIDED: one-time per project.** On the first `write_file` to a sensitive path in a given project, show a dialog explaining what's being written and why it matters. If the user approves, the entire project is marked as "sensitive paths trusted" and no further dialogs fire for that project. Re-approval is required if a different sensitive path category is touched (e.g. user approved `.crabcakes/` writes but a `.git/hooks/` write shows up). The dialog is the only point of friction; subsequent writes to the same sensitive category are silent.
+
+2. **HIGH-2 remote A2A behavior** — **DECIDED: per-source trust list.** Maintain a list of remote sources, each with a trust level: `trusted` (commands run without prompts), `confirm-each` (every slash command pops a dialog), or `read-only` (no slash commands execute). The default for unknown sources is `confirm-each`. The user populates the trust list through a settings dialog. For the Captain's deployment, the only realistic remote source is Telegram (which is the user themselves, transiting the phone), so the expected configuration is: `telegram = trusted`.
+
+   The trust list lives in `~/.config/crabcakes/remote_sources.yaml` and is hot-reloaded on change. Each entry looks like:
+   ```yaml
+   - source_id: telegram:7478874934
+     trust: trusted          # trusted | confirm-each | read-only
+     note: "Captain's own phone"
+   - source_id: <unknown>
+     trust: confirm-each     # default for unrecognized sources
+   ```
+
+3. **MED-3 `web_fetch` SSRF allowlist** — open. (Recommendation: strict default, per-project override.)
+4. **A-1 gateway identity loading** — open. (Recommendation: fail at connect, with a toolbar error state.)
+5. **A-8 `pyproject.toml` backend** — open. (Recommendation: `setuptools.build_meta`; minimal change.)
+6. **LOW-6 STT manifest correction** — open. (Recommendation: correct the manifest, allowlist sizes, pin `download_root` + `local_files_only`.)
 
 ---
 
@@ -519,7 +534,7 @@ Caveats:
 
 | Finding | Priority | Notes |
 |---|---|---|
-| HIGH-2 | 2 | "Remote" is you; defer |
+| HIGH-2 | 2 | Per-source trust list design specified in §7; implement when remote gateway added |
 | HIGH-3 | 2 | defer until shared storage |
 | HIGH-4 | 2 | defer until non-loopback gateway |
 | MED-1 | 2 | defer |
