@@ -226,6 +226,7 @@ class MainWindow(Gtk.ApplicationWindow):
             self._settings_handler,
             self._toolbar,
             settings_dialog_factory=lambda: None,
+            agent_builder_factory=lambda: getattr(self, "_builder_dialog", None),
         )
 
         # Prompts handler — wired to left_panel after both are created
@@ -749,18 +750,6 @@ class MainWindow(Gtk.ApplicationWindow):
             on_close=lambda: None,
         )
         dialog.show()
-
-    def _on_providers_changed(self, providers: list) -> None:
-        """Refresh the agent builder's provider dropdown after Settings edits.
-
-        NOTE: The spec §2.12 references `self._builder_dialog.set_provider_options(providers)`
-        but no such method exists on AgentBuilderDialog. The current architecture builds
-        the provider dropdown once at dialog construction from handler.get_provider_options().
-        Adding a set_provider_options method is Phase C (spec §2.10) work. For now,
-        we log and move on — the user can close/reopen the builder to see new providers.
-        """
-        if hasattr(self, "_builder_dialog") and self._builder_dialog is not None:
-            logger.info("Settings changed; agent builder provider list may be stale until reopened")
 
 
 
