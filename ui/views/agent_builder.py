@@ -50,8 +50,6 @@ class AgentBuilderDialog:
         self._tool_checks: dict[str, Gtk.CheckButton] = {}
         self._tool_count_label: Gtk.Label | None = None
         self._mcp_checks: dict[str, Gtk.CheckButton] = {}
-        self._provider_keys: dict[str, str] = {}  # provider_id → api_key (legacy, unused in Phase C)
-        self._manual_mode: bool = False  # True when manual provider/model entry is active
         self._providers: list = []  # list[ProviderConfig] — populated via set_provider_options()
         self._provider_models: dict[str, list[tuple[str, str]]] = {}  # name → [(display, id), ...]
 
@@ -102,45 +100,16 @@ class AgentBuilderDialog:
         self._emoji_entry = Gtk.Entry()
         self._emoji_entry.set_text("🤖")
 
-        # Provider + Model on same row
-        provider_model_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        provider_model_row.set_hexpand(True)
+        # Provider row
+        provider_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        provider_row.set_hexpand(True)
 
-        # Dropdown widgets
+        # Provider dropdown
         self._provider_dropdown = self._build_provider_dropdown()
         self._provider_labeled = self._labeled_box("Provider", self._provider_dropdown)
-        provider_model_row.append(self._provider_labeled)
+        provider_row.append(self._provider_labeled)
 
-        self._model_dropdown = self._build_model_dropdown()
-        self._model_labeled = self._labeled_box("Model", self._model_dropdown)
-        provider_model_row.append(self._model_labeled)
-
-        # Manual entry widgets (hidden by default)
-        self._manual_provider_entry = Gtk.Entry()
-        self._manual_provider_entry.set_placeholder_text("e.g. openrouter")
-        self._manual_provider_entry.set_hexpand(True)
-        self._manual_provider_entry.connect("changed", lambda *_: self._update_save_button())
-        self._manual_provider_labeled = self._labeled_box("Provider", self._manual_provider_entry)
-        self._manual_provider_labeled.set_visible(False)
-        provider_model_row.append(self._manual_provider_labeled)
-
-        self._manual_model_entry = Gtk.Entry()
-        self._manual_model_entry.set_placeholder_text("e.g. qwen/qwen3.7-max")
-        self._manual_model_entry.set_hexpand(True)
-        self._manual_model_entry.connect("changed", lambda *_: self._update_save_button())
-        self._manual_model_labeled = self._labeled_box("Model", self._manual_model_entry)
-        self._manual_model_labeled.set_visible(False)
-        provider_model_row.append(self._manual_model_labeled)
-
-        # Manual toggle button
-        self._manual_toggle = Gtk.ToggleButton(label="Manual")
-        self._manual_toggle.add_css_class("flat")
-        self._manual_toggle.set_valign(Gtk.Align.END)
-        self._manual_toggle.set_margin_bottom(0)
-        self._manual_toggle.connect("toggled", self._on_manual_toggled)
-        provider_model_row.append(self._manual_toggle)
-
-        form_box.append(provider_model_row)
+        form_box.append(provider_row)
 
         # Prompts multi-select
         self._prompts_list = self._build_prompts_list()
@@ -175,23 +144,20 @@ class AgentBuilderDialog:
             # New agent — ensure save button starts disabled
             self._update_save_button()
 
+        # Populate provider dropdown from handler (reads providers.yaml)
+        self.set_provider_options(handler.get_provider_options())
+
     # ── Public API ────────────────────────────────────────────────────
 
     def get_values(self) -> dict:
         """Extract current form values into an agent_def dict.
-        Per Phase C: no api_key, no provider_keys — keys live in providers.yaml.
+        The model field is left empty — the runtime resolves the model
+        from providers.yaml using the provider name.
         """
         name = self._name_entry.get_text().strip()
         emoji = self._emoji_entry.get_text().strip() or "🤖"
         role = self._role_entry.get_text().strip() or name.lower().replace(" ", "-")
-        if self._manual_mode:
-            provider = self._manual_provider_entry.get_text().strip()
-            model_raw = self._manual_model_entry.get_text().strip()
-            # Build full provider/model string; avoid double-prefix if user already typed it
-            model = f"{provider}/{model_raw}" if provider and model_raw and not model_raw.startswith(provider + "/") else model_raw
-        else:
-            provider = self._get_selected_provider_id()
-            model = self._get_selected_model()
+        provider = self._get_selected_provider_id()
 
         prompts = self._get_selected_prompts()
         tools = self._get_selected_tools()
@@ -203,7 +169,7 @@ class AgentBuilderDialog:
             "prompts": prompts,
             "tools": tools,
             "provider": provider,
-            "model": model,
+            "model": "",  # resolved at runtime from providers.yaml
             "mcp_servers": self._get_selected_mcp_servers(),
             "self_improvement": self._get_si_config(tools),
         }
@@ -368,66 +334,7 @@ class AgentBuilderDialog:
         return ""
 
     def _on_provider_changed(self, dropdown, _param) -> None:
-        """When provider changes, rebuild model dropdown."""
-        self._rebuild_model_dropdown()
-        self._update_save_button()
-
-    def _build_model_dropdown(self) -> Gtk.DropDown:
-        provider_id = self._get_selected_provider_id()
-        models = self._provider_models.get(provider_id, [])
-        names = Gtk.StringList.new([m[0] for m in models] or ["(none)"])
-        return Gtk.DropDown(model=names)
-
-    def _rebuild_model_dropdown(self) -> None:
-        """Rebuild the model dropdown for the current provider."""
-        provider_id = self._get_selected_provider_id()
-        models = self._provider_models.get(provider_id, [])
-        names = Gtk.StringList.new([m[0] for m in models] or ["(none)"])
-        # Replace the model dropdown in the parent layout
-        parent = self._model_dropdown.get_parent()
-        if parent is not None:
-            labeled_box = parent
-            labeled_box.remove(self._model_dropdown)
-            self._model_dropdown = Gtk.DropDown(model=names)
-            labeled_box.append(self._model_dropdown)
-
-    def _get_selected_model(self) -> str:
-        """Return full model string in provider/model format (e.g. 'minimax/MiniMax-M2.7')."""
-        provider_id = self._get_selected_provider_id()
-        models = self._provider_models.get(provider_id, [])
-        idx = self._model_dropdown.get_selected()
-        if idx < len(models):
-            return f"{provider_id}/{models[idx][1]}"
-        if models:
-            return f"{provider_id}/{models[0][1]}"
-        return ""
-
-    def _on_manual_toggled(self, btn: Gtk.ToggleButton) -> None:
-        """Toggle between dropdown and manual provider/model entry."""
-        active = btn.get_active()
-        self._manual_mode = active
-
-        # Show/hide widget pairs
-        self._provider_labeled.set_visible(not active)
-        self._model_labeled.set_visible(not active)
-        self._manual_provider_labeled.set_visible(active)
-        self._manual_model_labeled.set_visible(active)
-
-        if active:
-            # Pre-fill manual entries from current dropdown selection
-            self._manual_provider_entry.set_text(self._get_selected_provider_id())
-            full_model = self._get_selected_model()
-            provider_id = self._get_selected_provider_id()
-            model_part = full_model.removeprefix(provider_id + "/") if full_model.startswith(provider_id + "/") else full_model
-            self._manual_model_entry.set_text(model_part)
-        else:
-            # Try to match manual values back to dropdowns
-            manual_provider = self._manual_provider_entry.get_text().strip()
-            for i, p in enumerate(self._providers):
-                if p.name == manual_provider:
-                    self._provider_dropdown.set_selected(i)
-                    break
-
+        """When provider changes, refresh save button state."""
         self._update_save_button()
 
     def _build_prompts_list(self) -> Gtk.ScrolledWindow:
@@ -697,55 +604,12 @@ class AgentBuilderDialog:
         self._emoji_entry.set_text(agent_def.get("emoji", ""))
         self._role_entry.set_text(agent_def.get("role", ""))
 
-        # Parse model string (format: provider/model_id)
-        model_full = agent_def.get("model", "")
-        provider_from_model = ""
-        model_id_part = ""
-        if "/" in model_full:
-            provider_from_model, _, model_id_part = model_full.partition("/")
-        elif model_full:
-            # Legacy format — try to match by provider field
-            provider_from_model = agent_def.get("provider", "")
-            model_id_part = model_full
-
         # Select provider dropdown
-        provider_id = provider_from_model or agent_def.get("provider", "")
-        known_provider = False
+        provider_id = agent_def.get("provider", "")
         for i, p in enumerate(self._providers):
             if p.name == provider_id:
                 self._provider_dropdown.set_selected(i)
-                known_provider = True
                 break
-
-        if not known_provider and provider_id:
-            # Unknown provider — auto-switch to manual mode
-            self._manual_toggle.set_active(True)
-            self._manual_provider_entry.set_text(provider_id)
-            self._manual_model_entry.set_text(model_id_part)
-        else:
-            # Rebuild model dropdown is triggered by provider change, then select model
-            # We need to select AFTER rebuild, so defer with idle
-            known_model = False
-            if provider_id:
-                models = self._provider_models.get(provider_id, [])
-                for _, mid in models:
-                    if mid == model_id_part:
-                        known_model = True
-                        break
-            if not known_model and model_id_part:
-                # Provider known but model not in list — switch to manual
-                self._manual_toggle.set_active(True)
-                self._manual_provider_entry.set_text(provider_id)
-                self._manual_model_entry.set_text(model_id_part)
-            else:
-                def _select_model():
-                    models = self._provider_models.get(provider_id, [])
-                    for j, (_, mid) in enumerate(models):
-                        if mid == model_id_part:
-                            self._model_dropdown.set_selected(j)
-                            break
-                    return False  # don't repeat
-                GLib.idle_add(_select_model)
 
         # Check prompts
         selected_prompts = set(agent_def.get("prompts", []))
@@ -769,7 +633,7 @@ class AgentBuilderDialog:
     # ── Save button state ────────────────────────────────────────────
 
     def _update_save_button(self) -> None:
-        """Enable Save only when: name, prompts, tools, AND provider/model are present.
+        """Enable Save only when: name, prompts, tools, AND provider are set.
 
         This is widget state management (is the form complete?), NOT validation.
         Actual validation lives in validate_agent_def().
@@ -777,14 +641,11 @@ class AgentBuilderDialog:
         has_name = bool(self._name_entry.get_text().strip())
         has_prompts = any(c.get_active() for c in self._prompt_checks.values())
         has_tools = any(c.get_active() for c in self._tool_checks.values())
-        has_provider_model = (
-            (self._manual_mode
-             and bool(self._manual_provider_entry.get_text().strip())
-             and bool(self._manual_model_entry.get_text().strip()))
-            or not self._manual_mode
-        )
+        has_provider = bool(self._get_selected_provider_id())
 
-        self._save_btn.set_sensitive(has_name and has_prompts and has_tools and has_provider_model)
+        self._save_btn.set_sensitive(
+            has_name and has_prompts and has_tools and has_provider
+        )
 
     # ── Actions ───────────────────────────────────────────────────────
 
