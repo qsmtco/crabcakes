@@ -15,6 +15,7 @@ import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gio, GLib
 
+from models.providers import ProviderConfig
 from utils.mcp_config import load_mcp_servers, MCPConfigError
 
 
@@ -300,10 +301,41 @@ class AgentBuilderDialog:
     # Providers matching openclaw.json format: (display_name, provider_id)
     def set_provider_options(self, providers) -> None:
         """Replace the provider list with the given providers.
-        Called by the window when the Settings dialog fires on_providers_changed.
+        Called by the window when the Settings dialog fires on_providers_changed,
+        and by __init__ with handler.get_provider_options().
+        Accepts list[ProviderConfig] (from _on_providers_changed) or list[dict]
+        (from handler.get_provider_options()) and normalizes to ProviderConfig.
         Each provider's default_model becomes the only entry in its model dropdown.
+
+        Raises:
+            TypeError: if providers is not a list or contains non-dict/non-ProviderConfig elements.
         """
-        self._providers = list(providers) if providers else []
+        if not providers:
+            self._providers = []
+        else:
+            if not isinstance(providers, list):
+                raise TypeError(f"providers must be a list, got {type(providers).__name__}")
+            # Normalize: accept both list[ProviderConfig] and list[dict]
+            normalized = []
+            for p in providers:
+                if isinstance(p, dict):
+                    name = p.get("name", "").strip() if isinstance(p.get("name"), str) else ""
+                    if not name:
+                        continue  # skip providers without a name
+                    normalized.append(ProviderConfig(
+                        name=name,
+                        base_url=p.get("base_url", ""),
+                        api_key=p.get("api_key", ""),
+                        default_model=p.get("default_model", ""),
+                    ))
+                elif isinstance(p, ProviderConfig):
+                    normalized.append(p)
+                else:
+                    raise TypeError(
+                        f"Each provider must be dict or ProviderConfig, got {type(p).__name__}"
+                    )
+            self._providers = normalized
+
         self._provider_models = {
             p.name: [(p.default_model, p.default_model)]
             for p in self._providers
