@@ -137,15 +137,16 @@ class AgentBuilderDialog:
 
         self._window.set_child(content)
 
+        # Populate provider dropdown from handler first (reads providers.yaml),
+        # so that _fill_form can match the saved llm_name against self._providers.
+        self.set_provider_options(handler.get_provider_options())
+
         # Pre-fill if editing
         if agent_def:
             self._fill_form(agent_def)
         else:
             # New agent — ensure save button starts disabled
             self._update_save_button()
-
-        # Populate provider dropdown from handler (reads providers.yaml)
-        self.set_provider_options(handler.get_provider_options())
 
     # ── Public API ────────────────────────────────────────────────────
 
