@@ -556,6 +556,7 @@ def _call_llm_streaming(
     base_url: str,
     api_key: str,
     model: str,
+    caller_key: str,  # PHASE-10.5a: resolved via AgentRuntime._resolve_caller_key
     messages: list[dict],
     tools: list[dict] | None,
     timeout: float,
@@ -569,10 +570,16 @@ def _call_llm_streaming(
     Returns:
         Assembled response dict compatible with _extract_tool_calls / _extract_text_content.
     """
-    provider_name = model.split("/")[0] if "/" in model else model
-    streamer = _PROVIDER_STREAMERS.get(provider_name)
+    # PHASE-10.5a: use the caller_key resolved by AgentRuntime._resolve_caller_key
+    # (explicit caller > default_model prefix > model prefix). This is symmetric with
+    # the non-streaming path and fixes the gap where providers with non-slashed
+    # default_model would fail streaming but succeed blocking.
+    streamer = _PROVIDER_STREAMERS.get(caller_key)
     if streamer is None:
-        raise ValueError(f"No streaming caller for provider {provider_name}")
+        raise ValueError(
+            f"No streaming caller for caller_key={caller_key!r} "
+            f"(model={model!r}). Check provider's 'caller' field in Settings → Providers."
+        )
 
     full_content = ""
     # tool_call_index → {name, arguments, done}
@@ -1358,12 +1365,14 @@ class AgentRuntime:
         if self._on_text_delta is not None:
             logger.debug("[call-llm] sk=%s streaming=True provider=%s model=%s msg_count=%d",
                          session_key, provider_name, model, len(messages))
+            caller_key = self._resolve_caller_key(provider_cfg, model)
             return _call_llm_streaming(
                 runtime=self,
                 session_key=session_key,
                 base_url=provider_cfg.base_url,
                 api_key=effective_api_key,
                 model=model,
+                caller_key=caller_key,
                 messages=messages,
                 tools=tools if tools else None,
                 timeout=float(self._config.tool_timeout_seconds),

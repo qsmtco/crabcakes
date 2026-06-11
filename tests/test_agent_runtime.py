@@ -631,6 +631,7 @@ class TestStreaming:
             with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt_module._call_llm_streaming(
                 runtime=rt, session_key=a[0], base_url="https://api.openai.com/v1",
                 api_key="test", model="openai/gpt-4o",
+                caller_key="openai",  # PHASE-10.5a: required positional arg
                 messages=a[1], tools=a[2] if len(a) > 2 else None, timeout=30.0
             )):
                 rt._run_loop(sk, "say hello")
@@ -660,6 +661,7 @@ class TestStreaming:
             with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt_module._call_llm_streaming(
                 runtime=rt, session_key=a[0], base_url="https://api.openai.com/v1",
                 api_key="test", model="openai/gpt-4o",
+                caller_key="openai",  # PHASE-10.5a: required positional arg
                 messages=a[1], tools=a[2] if len(a) > 2 else None, timeout=30.0
             )):
                 rt._run_loop(sk, "say hello")
@@ -687,6 +689,7 @@ class TestStreaming:
             with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt_module._call_llm_streaming(
                 runtime=rt, session_key=a[0], base_url="https://api.openai.com/v1",
                 api_key="test", model="openai/gpt-4o",
+                caller_key="openai",  # PHASE-10.5a: required positional arg
                 messages=a[1], tools=a[2] if len(a) > 2 else None, timeout=30.0
             )):
                 # Mock the tool execution to return immediately
@@ -721,6 +724,7 @@ class TestStreaming:
             with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt_module._call_llm_streaming(
                 runtime=rt, session_key=a[0], base_url="https://api.openai.com/v1",
                 api_key="test", model="openai/gpt-4o",
+                caller_key="openai",  # PHASE-10.5a: required positional arg
                 messages=a[1], tools=a[2] if len(a) > 2 else None, timeout=30.0
             )):
                 rt._run_loop(sk, "say hello")
