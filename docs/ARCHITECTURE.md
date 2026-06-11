@@ -3034,7 +3034,26 @@ else:
 
 ---
 
-## 12. File Inventory
+## 12. Provider Resolution & API Caller
+
+As of PHASE-10, the API caller for a provider is resolved via `provider_cfg.caller`, a per-provider attribute persisted in `providers.yaml`. The runtime's `_resolve_caller_key(provider_cfg, model)` helper returns the explicit `caller` if set, otherwise derives it from `provider_cfg.default_model.split("/")[0]`, and finally falls back to `model.split("/")[0]`. This decouples the model-string prefix structure (which is the API's contract — e.g. `openrouter/owl-alpha` for OpenRouter) from the caller's identity (which is one of the five built-in implementations: `openai`, `minimax`, `anthropic`, `openrouter`, `zai`).
+
+**Resolution priority** (highest to lowest):
+1. `provider_cfg.caller` (explicit, lowercased)
+2. `provider_cfg.default_model.split("/")[0]` (derivation from configured model)
+3. `model.split("/")[0]` (legacy fallback for callers without a `ProviderConfig`)
+
+**Why explicit caller + derivation:** existing providers in `providers.yaml` (pre-PHASE-10) don't have a `caller` field. The derivation fallback (`default_model.split("/")[0]`) handles migration transparently — all 6 of the user's existing providers have slashed `default_model` values, so the runtime resolves the correct caller without requiring a re-save.
+
+**Why the model string is still slashed:** the API caller functions receive the model string verbatim. OpenRouter expects `vendor/model` (e.g. `openrouter/owl-alpha`); Anthropic expects a bare model name (e.g. `claude-3-5-sonnet`); OpenAI expects a bare model name. The slash in the model string is the API's contract, not a caller identifier. The runtime's `_resolve_agent_model` handler (P4) preserves the model string exactly as configured when `default_model` contains a slash.
+
+**Streamer resolution:** the streaming path (`_call_llm_streaming` callers) uses the same `_resolve_caller_key` helper to look up the streamer function in `_PROVIDER_STREAMERS`. The streamer keys mirror the caller keys (`openai`, `minimax`, `anthropic`, `openrouter`, `zai`).
+
+**Test Connection:** the Settings dialog's "Test" button calls `test_connection(base_url, api_key, model, caller=provider.caller)`. The `caller` kwarg (added in PHASE-10) overrides the legacy model-prefix derivation so the test uses the same caller the runtime would use at message-send time.
+
+---
+
+## 13. File Inventory
 
 ```
 crabcakes/
@@ -3249,7 +3268,7 @@ tests/                           # 61 files (57 test + 4 support)
 
 ---
 
-## 13. Principles to Preserve
+## 14. Principles to Preserve
 
 1. **Gateway is foundational.** It must remain independent of UI. Never import `ui/` from `gateway/`.
 

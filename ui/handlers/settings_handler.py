@@ -90,6 +90,10 @@ class SettingsHandler:
         if not provider.default_model or not provider.default_model.strip():
             raise ValueError("Default model is required")
 
+        # PHASE-10: auto-detect caller from default_model prefix when not set
+        if not provider.caller and provider.default_model and "/" in provider.default_model:
+            provider.caller = provider.default_model.split("/")[0]
+
         providers = load_providers()
         # Replace existing or append
         providers = [p for p in providers if p.name != provider.name]
@@ -133,6 +137,7 @@ class SettingsHandler:
                     base_url=provider.base_url,
                     api_key=provider.api_key,
                     model=provider.default_model,
+                    caller=provider.caller or None,
                 )
             except Exception as e:
                 # test_connection itself raised (e.g. unknown provider)

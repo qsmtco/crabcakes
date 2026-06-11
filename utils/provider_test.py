@@ -61,6 +61,7 @@ def test_connection(
     api_key: str,
     model: str,
     timeout_seconds: float = 8.0,
+    caller: str | None = None,          # PHASE-10: explicit caller key from ProviderConfig
 ) -> TestResult:
     """
     Send a 1-token completion to the provider. Returns TestResult.
@@ -73,7 +74,11 @@ def test_connection(
     On MiniMax, a body-level error (HTTP 200 with base_resp.status_code != 0)
     is treated as failure — mirroring agent/runtime._call_minimax.
     """
-    provider = _provider_name(model).lower()
+    # PHASE-10: prefer explicit caller when provided; fall back to model prefix derivation
+    if caller:
+        provider = caller.lower()
+    else:
+        provider = _provider_name(model).lower()
     bare_model = _model_id(model)
 
     if provider in _OPENAI_COMPATIBLE:

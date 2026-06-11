@@ -17,6 +17,7 @@ class ProviderConfig:
     base_url: str
     api_key: str
     default_model: str
+    caller: str = ""                    # API caller key (openai|minimax|anthropic|openrouter|zai)
     enabled: bool = True
     supports_tools: bool = True
     supports_streaming: bool = True

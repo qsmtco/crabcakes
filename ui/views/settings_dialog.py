@@ -35,7 +35,7 @@ class _ProviderCard:
         self._dialog = dialog
         self._is_new = provider is None
         self._provider = provider or ProviderConfig(
-            name="", base_url="", api_key="", default_model="",
+            name="", base_url="", api_key="", default_model="", caller="",
         )
         self._build_widgets()
         if provider is not None:
@@ -90,6 +90,14 @@ class _ProviderCard:
         api_key_row = self._labeled("API Key", api_key_box)
         vbox.append(api_key_row)
 
+        # Read-only caller label — shows the resolved API caller (openai|minimax|...).
+        # Caller is auto-detected by settings_handler.add_or_update when saving.
+        self._caller_label = Gtk.Label()
+        self._caller_label.set_xalign(0.0)
+        self._caller_label.add_css_class("dim-label")
+        caller_row = self._labeled("Caller", self._caller_label)
+        vbox.append(caller_row)
+
         # Status label
         self._status_label = Gtk.Label(label="Untested")
         self._status_label.add_css_class("settings-status-untested")
@@ -135,6 +143,9 @@ class _ProviderCard:
         self._base_url_entry.set_text(p.base_url or "")
         self._model_entry.set_text(p.default_model or "")
         self._api_key_entry.set_text(p.api_key or "")
+        self._caller_label.set_text(
+            f"  {p.caller}" if p.caller else "  (auto-detected on save)"
+        )
 
     def _is_dirty(self) -> bool:
         """True if any entry field differs from the stored provider values.
@@ -167,6 +178,7 @@ class _ProviderCard:
             base_url=self._base_url_entry.get_text().strip(),
             api_key=self._api_key_entry.get_text().strip(),
             default_model=self._model_entry.get_text().strip(),
+            caller=existing.caller if existing else "",
             enabled=existing.enabled if existing else True,
             supports_tools=existing.supports_tools if existing else True,
             supports_streaming=existing.supports_streaming if existing else True,

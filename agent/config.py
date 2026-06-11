@@ -32,6 +32,7 @@ class LLMProviderConfig:
     base_url: str
     api_key: str
     default_model: str
+    caller: str = ""                    # API caller key (openai|minimax|anthropic|openrouter|zai)
     supports_tools: bool = True
     supports_streaming: bool = True
     max_tokens: int = 128_000          # context window size

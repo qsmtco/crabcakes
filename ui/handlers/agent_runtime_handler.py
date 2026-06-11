@@ -285,6 +285,11 @@ class AgentRuntimeHandler:
                 config = load_agent_config()
                 prov_cfg = config.providers.get(provider)
                 if prov_cfg and prov_cfg.default_model:
+                    # If default_model already contains a slash (e.g. "openrouter/owl-alpha"),
+                    # it's a fully-qualified model string — return as-is.
+                    # Otherwise combine with provider name: "minimax/MiniMax-M2.7".
+                    if "/" in prov_cfg.default_model:
+                        return prov_cfg.default_model
                     return f"{provider}/{prov_cfg.default_model}"
             except Exception:
                 logger.warning("Cannot resolve provider default model for %s", provider)

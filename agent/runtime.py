@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from models.conversation import Conversation
+    from agent.config import LLMProviderConfig
 
 from agent.enforcement import check as _enforcement_check
 
@@ -1278,6 +1279,26 @@ class AgentRuntime:
             result_ref[0] = False
         return result_ref[0]
 
+    @staticmethod
+    def _resolve_caller_key(provider_cfg: "LLMProviderConfig | None", model: str) -> str:
+        """Return the API caller key for a provider.
+
+        Resolution order:
+        1. provider_cfg.caller (explicit, persisted in providers.yaml)
+        2. default_model prefix (e.g. "openrouter/owl-alpha" → "openrouter")
+        3. First slash segment of model (legacy behavior)
+
+        Returns the empty string if none of the above yields a non-empty key —
+        the caller will then fail with a clear "no caller" error.
+        """
+        if provider_cfg is not None and provider_cfg.caller:
+            return provider_cfg.caller.lower()
+        # Derive from provider's default_model if present
+        if provider_cfg is not None and provider_cfg.default_model:
+            return provider_cfg.default_model.split("/")[0]
+        # Last resort: model prefix
+        return model.split("/")[0] if "/" in model else model
+
     def _call_llm(
         self,
         session_key: str,
@@ -1349,9 +1370,14 @@ class AgentRuntime:
                 x_title=x_title,
             )
 
-        caller = _PROVIDER_CALLERS.get(provider_name)
+        caller_key = self._resolve_caller_key(provider_cfg, model)
+        caller = _PROVIDER_CALLERS.get(caller_key)
         if caller is None:
-            raise ValueError(f"No caller for provider {provider_name}")
+            raise ValueError(
+                f"No caller for provider {provider_cfg.name if provider_cfg else provider_name} "
+                f"(caller_key={caller_key!r}). "
+                f"Set the 'caller' field in Settings → Providers."
+            )
 
         return caller(
             base_url=provider_cfg.base_url,
