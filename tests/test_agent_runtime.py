@@ -628,10 +628,10 @@ class TestStreaming:
         orig = rt_module._PROVIDER_STREAMERS["openai"]
         rt_module._PROVIDER_STREAMERS["openai"] = lambda *a, **kw: _mock_stream_openai_3_chunks()
         try:
-            with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt_module._call_llm_streaming(
-                runtime=rt, session_key=a[0], base_url="https://api.openai.com/v1",
+            with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt._call_llm_streaming(
+                session_key=a[0], base_url="https://api.openai.com/v1",
                 api_key="test", model="openai/gpt-4o",
-                caller_key="openai",  # PHASE-10.5a: required positional arg
+                caller_key="openai",  # PHASE-11: method on AgentRuntime
                 messages=a[1], tools=a[2] if len(a) > 2 else None, timeout=30.0
             )):
                 rt._run_loop(sk, "say hello")
@@ -658,10 +658,10 @@ class TestStreaming:
         orig = rt_module._PROVIDER_STREAMERS["openai"]
         rt_module._PROVIDER_STREAMERS["openai"] = lambda *a, **kw: _mock_stream_openai_3_chunks()
         try:
-            with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt_module._call_llm_streaming(
-                runtime=rt, session_key=a[0], base_url="https://api.openai.com/v1",
+            with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt._call_llm_streaming(
+                session_key=a[0], base_url="https://api.openai.com/v1",
                 api_key="test", model="openai/gpt-4o",
-                caller_key="openai",  # PHASE-10.5a: required positional arg
+                caller_key="openai",  # PHASE-11: method on AgentRuntime
                 messages=a[1], tools=a[2] if len(a) > 2 else None, timeout=30.0
             )):
                 rt._run_loop(sk, "say hello")
@@ -686,10 +686,10 @@ class TestStreaming:
         orig = rt_module._PROVIDER_STREAMERS["openai"]
         rt_module._PROVIDER_STREAMERS["openai"] = lambda *a, **kw: _mock_stream_with_tool_call()
         try:
-            with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt_module._call_llm_streaming(
-                runtime=rt, session_key=a[0], base_url="https://api.openai.com/v1",
+            with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt._call_llm_streaming(
+                session_key=a[0], base_url="https://api.openai.com/v1",
                 api_key="test", model="openai/gpt-4o",
-                caller_key="openai",  # PHASE-10.5a: required positional arg
+                caller_key="openai",  # PHASE-11: method on AgentRuntime
                 messages=a[1], tools=a[2] if len(a) > 2 else None, timeout=30.0
             )):
                 # Mock the tool execution to return immediately
@@ -721,10 +721,10 @@ class TestStreaming:
         orig = rt_module._PROVIDER_STREAMERS["openai"]
         rt_module._PROVIDER_STREAMERS["openai"] = lambda *a, **kw: _mock_stream_openai_3_chunks()
         try:
-            with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt_module._call_llm_streaming(
-                runtime=rt, session_key=a[0], base_url="https://api.openai.com/v1",
+            with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt._call_llm_streaming(
+                session_key=a[0], base_url="https://api.openai.com/v1",
                 api_key="test", model="openai/gpt-4o",
-                caller_key="openai",  # PHASE-10.5a: required positional arg
+                caller_key="openai",  # PHASE-11: method on AgentRuntime
                 messages=a[1], tools=a[2] if len(a) > 2 else None, timeout=30.0
             )):
                 rt._run_loop(sk, "say hello")
@@ -737,6 +737,84 @@ class TestStreaming:
         assert len(assistant_msgs) >= 1, f"Expected assistant message, got: {[m.role.value for m in conv.messages]}"
         assert assistant_msgs[-1].content == "Hello world!"
         rt.stop()
+
+
+
+class TestStreamingSignature:
+    """
+    PHASE-11 regression test: ensures that the streaming test patches and the
+    production caller use a parameter list that is compatible with the actual
+    `_call_llm_streaming` method signature.
+
+    Catches: future signature changes to `_call_llm_streaming` that would break
+    either the production caller (`_call_llm` in agent/runtime.py) or the 4
+    `TestStreaming` test patches.
+    """
+
+    def test_streaming_method_signature_matches_caller_interface(self):
+        """
+        The streaming method's parameter list (after `self`) should match the
+        keyword arguments used by the production caller AND by the 4 TestStreaming
+        test patches. If any of them drifts, this test fails with a clear
+        "signature mismatch" message.
+        """
+        import inspect
+        from agent.runtime import AgentRuntime
+
+        # 1. Get the actual method signature
+        sig = inspect.signature(AgentRuntime._call_llm_streaming)
+        method_params = [name for name in sig.parameters.keys() if name != "self"]
+
+        # 2. The expected parameter list (must match the production caller at
+        # line ~1283 in agent/runtime.py and the 4 TestStreaming test patches)
+        expected_params = [
+            "session_key",
+            "base_url",
+            "api_key",
+            "model",
+            "caller_key",
+            "messages",
+            "tools",
+            "timeout",
+            "x_title",
+        ]
+
+        assert method_params == expected_params, (
+            f"_call_llm_streaming signature changed.\n"
+            f"  Expected: {expected_params}\n"
+            f"  Actual:   {method_params}\n"
+            f"  If you changed the signature intentionally, update the production\n"
+            f"  caller (agent/runtime.py:_call_llm) and the 4 TestStreaming test\n"
+            f"  patches (tests/test_agent_runtime.py) to match."
+        )
+
+        # 3. Verify the production caller passes all required parameters
+        with open("/home/q/projects/crabcakes/agent/runtime.py") as f:
+            runtime_source = f.read()
+        # Find the call site: `self._call_llm_streaming(`
+        call_site_match = runtime_source.find("self._call_llm_streaming(")
+        assert call_site_match != -1, "Production caller to self._call_llm_streaming not found"
+        # Extract the call (rough — just check for key kwargs)
+        call_chunk = runtime_source[call_site_match:call_site_match + 800]
+        for required_kw in ["session_key=", "base_url=", "api_key=", "model=", "caller_key=", "messages=", "tools=", "timeout="]:
+            assert required_kw in call_chunk, (
+                f"Production caller is missing required kwarg {required_kw!r}.\n"
+                f"Call site: {call_chunk[:200]}"
+            )
+
+        # 4. Verify the 4 TestStreaming patches all use the method on `rt`, not the module
+        with open("/home/q/projects/crabcakes/tests/test_agent_runtime.py") as f:
+            test_source = f.read()
+        # Count actual calls (exclude this test's own source code references)
+        rt_module_calls = test_source.count("rt_module._call_llm_streaming(") - 1  # -1 for the count line
+        rt_method_calls = test_source.count("rt._call_llm_streaming(") - 2  # -2 for count/assert lines
+        assert rt_module_calls == 0, (
+            f"Found {rt_module_calls} test patches still calling rt_module._call_llm_streaming.\n"
+            f"All 4 TestStreaming patches should call rt._call_llm_streaming() (PHASE-11)."
+        )
+        assert rt_method_calls >= 4, (
+            f"Expected at least 4 test patches calling rt._call_llm_streaming, found {rt_method_calls}."
+        )
 
 
 class TestSSEParsing:
