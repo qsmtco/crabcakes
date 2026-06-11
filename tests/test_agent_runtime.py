@@ -37,6 +37,31 @@ def _resp(content="Done.", tool_calls=None):
     }
 
 
+def _make_streaming_lambda(rt):
+    """
+    Return a lambda suitable for patching `_call_llm` in streaming tests.
+
+    The lambda receives `(session_key, messages, tools)` as positional args
+    from `_call_llm`, and forwards them plus boilerplate values to
+    `rt._call_llm_streaming`. This eliminates duplication across the
+    5 TestStreaming test patches.
+
+    Usage:
+        with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+            rt._run_loop(sk, "prompt")
+    """
+    return lambda *a, **kw: rt._call_llm_streaming(
+        session_key=a[0],
+        base_url="https://api.openai.com/v1",
+        api_key="test",
+        model="openai/gpt-4o",
+        caller_key="openai",  # PHASE-11: method on AgentRuntime
+        messages=a[1],
+        tools=a[2] if len(a) > 2 else None,
+        timeout=30.0,
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  Cost computation
 # ═══════════════════════════════════════════════════════════════════
@@ -628,12 +653,7 @@ class TestStreaming:
         orig = rt_module._PROVIDER_STREAMERS["openai"]
         rt_module._PROVIDER_STREAMERS["openai"] = lambda *a, **kw: _mock_stream_openai_3_chunks()
         try:
-            with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt._call_llm_streaming(
-                session_key=a[0], base_url="https://api.openai.com/v1",
-                api_key="test", model="openai/gpt-4o",
-                caller_key="openai",  # PHASE-11: method on AgentRuntime
-                messages=a[1], tools=a[2] if len(a) > 2 else None, timeout=30.0
-            )):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 rt._run_loop(sk, "say hello")
         finally:
             rt_module._PROVIDER_STREAMERS["openai"] = orig
@@ -658,12 +678,7 @@ class TestStreaming:
         orig = rt_module._PROVIDER_STREAMERS["openai"]
         rt_module._PROVIDER_STREAMERS["openai"] = lambda *a, **kw: _mock_stream_openai_3_chunks()
         try:
-            with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt._call_llm_streaming(
-                session_key=a[0], base_url="https://api.openai.com/v1",
-                api_key="test", model="openai/gpt-4o",
-                caller_key="openai",  # PHASE-11: method on AgentRuntime
-                messages=a[1], tools=a[2] if len(a) > 2 else None, timeout=30.0
-            )):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 rt._run_loop(sk, "say hello")
         finally:
             rt_module._PROVIDER_STREAMERS["openai"] = orig
@@ -686,12 +701,7 @@ class TestStreaming:
         orig = rt_module._PROVIDER_STREAMERS["openai"]
         rt_module._PROVIDER_STREAMERS["openai"] = lambda *a, **kw: _mock_stream_with_tool_call()
         try:
-            with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt._call_llm_streaming(
-                session_key=a[0], base_url="https://api.openai.com/v1",
-                api_key="test", model="openai/gpt-4o",
-                caller_key="openai",  # PHASE-11: method on AgentRuntime
-                messages=a[1], tools=a[2] if len(a) > 2 else None, timeout=30.0
-            )):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 # Mock the tool execution to return immediately
                 with unittest.mock.patch("agent.tools.execute_tool") as mock_exec:
                     from agent.tools import ToolResult
@@ -721,12 +731,7 @@ class TestStreaming:
         orig = rt_module._PROVIDER_STREAMERS["openai"]
         rt_module._PROVIDER_STREAMERS["openai"] = lambda *a, **kw: _mock_stream_openai_3_chunks()
         try:
-            with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt._call_llm_streaming(
-                session_key=a[0], base_url="https://api.openai.com/v1",
-                api_key="test", model="openai/gpt-4o",
-                caller_key="openai",  # PHASE-11: method on AgentRuntime
-                messages=a[1], tools=a[2] if len(a) > 2 else None, timeout=30.0
-            )):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 rt._run_loop(sk, "say hello")
         finally:
             rt_module._PROVIDER_STREAMERS["openai"] = orig
@@ -757,12 +762,7 @@ class TestStreaming:
         orig = rt_module._PROVIDER_STREAMERS["openai"]
         rt_module._PROVIDER_STREAMERS["openai"] = streamer_no_index
         try:
-            with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt._call_llm_streaming(
-                session_key=a[0], base_url="https://api.openai.com/v1",
-                api_key="test", model="openai/gpt-4o",
-                caller_key="openai",  # PHASE-11.5: method on AgentRuntime
-                messages=a[1], tools=a[2] if len(a) > 2 else None, timeout=30.0
-            )):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 rt._run_loop(sk, "list files")
         finally:
             rt_module._PROVIDER_STREAMERS["openai"] = orig
@@ -800,19 +800,11 @@ class TestStreamingSignature:
         sig = inspect.signature(AgentRuntime._call_llm_streaming)
         method_params = [name for name in sig.parameters.keys() if name != "self"]
 
-        # 2. The expected parameter list (must match the production caller at
-        # line ~1283 in agent/runtime.py and the 4 TestStreaming test patches)
-        expected_params = [
-            "session_key",
-            "base_url",
-            "api_key",
-            "model",
-            "caller_key",
-            "messages",
-            "tools",
-            "timeout",
-            "x_title",
-        ]
+        # 2. The expected parameter list — derived from the TypedDict so that
+        # adding/removing a field in StreamingCallKwargs automatically updates
+        # this test. Single source of truth (PHASE-FOLLOWUP-1).
+        from agent.runtime import StreamingCallKwargs
+        expected_params = list(StreamingCallKwargs.__annotations__.keys())
 
         assert method_params == expected_params, (
             f"_call_llm_streaming signature changed.\n"
@@ -837,18 +829,19 @@ class TestStreamingSignature:
                 f"Call site: {call_chunk[:200]}"
             )
 
-        # 4. Verify the 4 TestStreaming patches all use the method on `rt`, not the module
+        # 4. Verify the TestStreaming patches use _make_streaming_lambda fixture (PHASE-FOLLOWUP-4)
         with open("/home/q/projects/crabcakes/tests/test_agent_runtime.py") as f:
             test_source = f.read()
-        # Count actual calls (exclude this test's own source code references)
+        # Verify no patches use old rt_module pattern
         rt_module_calls = test_source.count("rt_module._call_llm_streaming(") - 1  # -1 for the count line
-        rt_method_calls = test_source.count("rt._call_llm_streaming(") - 2  # -2 for count/assert lines
         assert rt_module_calls == 0, (
             f"Found {rt_module_calls} test patches still calling rt_module._call_llm_streaming.\n"
-            f"All 4 TestStreaming patches should call rt._call_llm_streaming() (PHASE-11)."
+            f"All TestStreaming patches should use _make_streaming_lambda(rt) instead (PHASE-11)."
         )
-        assert rt_method_calls >= 4, (
-            f"Expected at least 4 test patches calling rt._call_llm_streaming, found {rt_method_calls}."
+        # Verify patches use the fixture — count _make_streaming_lambda(rt) calls in TestStreaming
+        fixture_calls = test_source.count("_make_streaming_lambda(rt)") - 1  # -1 for the helper def
+        assert fixture_calls >= 5, (
+            f"Expected at least 5 test patches using _make_streaming_lambda(rt), found {fixture_calls}."
         )
 
 

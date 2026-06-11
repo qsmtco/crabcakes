@@ -11,9 +11,9 @@
 
 ## What to do
 
-**Edit 1 — Add a new test class at the end of `TestStreaming` (around line 745-750, just before `class TestSSEParsing:`):**
+**Edit 1 — Add a new test class at the end of `TestStreaming` (just before `class TestSSEParsing:`):**
 
-Find the end of `TestStreaming` class. The last test method is `test_streaming_accumulates_text_in_response` (around line 690-745). After its `rt.stop()` line, the class ends, and `class TestSSEParsing:` begins.
+Find `class TestStreamingSignature:` in `tests/test_agent_runtime.py`. Insert the new test class before it. (If `TestStreamingSignature` doesn't exist yet, find `class TestSSEParsing:` and insert the new class before that.)
 
 Insert this new test class between them:
 
@@ -43,26 +43,18 @@ class TestStreamingSignature:
         sig = inspect.signature(AgentRuntime._call_llm_streaming)
         method_params = [name for name in sig.parameters.keys() if name != "self"]
 
-        # 2. The expected parameter list (must match the production caller at
-        # line ~1369 in agent/runtime.py and the 4 TestStreaming test patches)
-        expected_params = [
-            "session_key",
-            "base_url",
-            "api_key",
-            "model",
-            "caller_key",
-            "messages",
-            "tools",
-            "timeout",
-            "x_title",
-        ]
+        # 2. The expected parameter list — derived from StreamingCallKwargs so that
+        # changing the TypedDict automatically updates this test. This is the single
+        # source of truth for the streaming call interface (PHASE-FOLLOWUP-1).
+        from agent.runtime import StreamingCallKwargs
+        expected_params = list(StreamingCallKwargs.__annotations__.keys())
 
         assert method_params == expected_params, (
             f"_call_llm_streaming signature changed.\n"
             f"  Expected: {expected_params}\n"
             f"  Actual:   {method_params}\n"
             f"  If you changed the signature intentionally, update the production\n"
-            f"  caller (agent/runtime.py:_call_llm) and the 4 TestStreaming test\n"
+            f"  caller (agent/runtime.py:_call_llm) and the TestStreaming test\n"
             f"  patches (tests/test_agent_runtime.py) to match."
         )
 

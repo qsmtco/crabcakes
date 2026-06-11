@@ -365,17 +365,28 @@ def validate_agent_def(agent_def: dict) -> list[str]:
     provider = agent_def.get("llm_name") or agent_def.get("provider")
     if provider:
         providers = get_available_providers()
-        provider_names = {p["name"] for p in providers}
-        if provider_names and provider not in provider_names:
+        # Accept provider by display name (e.g. "MiniMax M2.7") or by
+        # caller ID derived from default_model (e.g. "minimax/MiniMax-M2.7" → "minimax").
+        # Mirrors AgentRuntime._resolve_caller_key resolution logic.
+        valid_ids = set()
+        display_names = set()
+        for p in providers:
+            display_names.add(p["name"])
+            valid_ids.add(p["name"])
+            if p.get("default_model") and "/" in p["default_model"]:
+                valid_ids.add(p["default_model"].split("/")[0])
+        if display_names and provider not in valid_ids:
             errors.append(
-                f"Unknown provider: {provider}. Available: {', '.join(sorted(provider_names))}"
+                f"Unknown provider: {provider}. Available: {', '.join(sorted(display_names))}"
             )
 
     # Validate model is present (could come from provider default)
     if not agent_def.get("model") and provider:
         providers = get_available_providers()
         for p in providers:
-            if p["name"] == provider:
+            # Match by display name or derived caller ID
+            p_id = p["default_model"].split("/")[0] if p.get("default_model") and "/" in p.get("default_model", "") else p["name"]
+            if p["name"] == provider or p_id == provider:
                 if not p.get("default_model"):
                     errors.append(f"No model specified and provider '{provider}' has no default")
                 break

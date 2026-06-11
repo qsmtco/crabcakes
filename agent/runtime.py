@@ -22,7 +22,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, TypedDict
 
 if TYPE_CHECKING:
     from models.conversation import Conversation
@@ -30,7 +30,40 @@ if TYPE_CHECKING:
 
 from agent.enforcement import check as _enforcement_check
 
-import logging
+
+# ── Streaming call interface (PHASE-FOLLOWUP-1) ──────────────────────────────────
+
+class StreamingCallKwargs(TypedDict, total=False):
+    """Single source of truth for `_call_llm_streaming` parameters.
+
+    Both the method signature and the regression test reference this TypedDict.
+    If a field is added or removed here, the test will fail until the method
+    and all call sites are updated to match.
+    """
+    session_key: str
+    base_url: str
+    api_key: str
+    model: str
+    caller_key: str
+    messages: list[dict]
+    tools: list[dict] | None
+    timeout: float
+    x_title: str
+
+
+# Public API — symbols explicitly exported for external use (PHASE-FOLLOWUP-5)
+__all__ = [
+    "AgentRuntime",
+    "SSEEvent",
+    "StreamingCallKwargs",
+    "_extract_tool_calls",
+    "_extract_text_content",
+    "_extract_usage",
+    "_cost_for_model",
+    "_PROVIDER_CALLERS",
+    "_PROVIDER_STREAMERS",
+]
+
 logger = logging.getLogger(__name__)
 
 # ── Cost tables (USD per 1M tokens) ─────────────────────────────────────────
@@ -1327,6 +1360,10 @@ class AgentRuntime:
         Call the LLM with streaming. Fires on_text_delta as chunks arrive,
         on_tool_call_start when a tool call is complete, and returns the
         assembled response dict when done.
+
+        Parameter contract: see StreamingCallKwargs — the fields there must
+        match this method's parameters exactly. The regression test
+        (TestStreamingSignature) derives expected_params from the TypedDict.
 
         Returns:
             Assembled response dict compatible with _extract_tool_calls / _extract_text_content.

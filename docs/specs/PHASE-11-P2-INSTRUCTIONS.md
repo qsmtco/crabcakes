@@ -7,7 +7,7 @@
 
 ## Files to change
 
-1. `tests/test_agent_runtime.py` — FOUR edits: update the 4 `TestStreaming` test patches at lines 631, 661, 689, 724
+1. `tests/test_agent_runtime.py` — update all `TestStreaming` test patches that call `rt_module._call_llm_streaming(`
 
 ## What to do
 
@@ -71,7 +71,7 @@ with open('tests/test_agent_runtime.py', 'w') as f:
 
 - Use the implementationSupervisor prompt at `/home/q/projects/crabcakes/prompts/implementationSupervisor.md`
 - Read `tests/test_agent_runtime.py` lines 625-740 COMPLETELY before editing
-- The 4 patches are at lines 631, 661, 689, 724 (verify with `grep -n "rt_module._call_llm_streaming" tests/test_agent_runtime.py`)
+- Find all occurrences of `rt_module._call_llm_streaming(` in `tests/test_agent_runtime.py` (verify with `grep -n "rt_module._call_llm_streaming" tests/test_agent_runtime.py`)
 - Do NOT change any other part of the test file
 - Do NOT change the assertions in the test methods
 - Do NOT change the mock streamers (the `_PROVIDER_STREAMERS` patching above the `with` block)

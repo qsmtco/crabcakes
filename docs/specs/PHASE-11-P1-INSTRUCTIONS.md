@@ -6,13 +6,13 @@
 
 ## Files to change
 
-1. `agent/runtime.py` — TWO edits: (1) delete the module-level `_call_llm_streaming` function (lines 553-650ish), (2) add a new method `def _call_llm_streaming(self, session_key, base_url, api_key, model, caller_key, messages, tools, timeout, x_title="")` inside the `AgentRuntime` class, positioned right after `def _call_llm(self, ...)` ends (find the end of `_call_llm` at line ~1362ish — the `return` at the bottom of the streaming branch — and insert the new method just before the next top-level definition or method), (3) update the call site at line 1369 to call as `self._call_llm_streaming(...)` without the `runtime=` kwarg.
+1. `agent/runtime.py` — TWO edits: (1) delete the module-level `_call_llm_streaming` function, (2) add a new method `def _call_llm_streaming(self, session_key, base_url, api_key, model, caller_key, messages, tools, timeout, x_title="")` inside the `AgentRuntime` class, positioned after `def _call_llm(` ends and before `def _check_stuck(`, (3) update the call site to call as `self._call_llm_streaming(...)` without the `runtime=` kwarg.
 
 ## What to do
 
 **Edit 1 — Delete the module-level function definition:**
 
-Find the function starting at line 553:
+Find the module-level function `def _call_llm_streaming(`:
 ```python
 def _call_llm_streaming(
     runtime,  # AgentRuntime instance — for GLib dispatch
@@ -43,9 +43,7 @@ The function ends where the next top-level definition begins (look for a blank l
 
 **Edit 2 — Add a new method inside `AgentRuntime` class:**
 
-Find the end of `_call_llm` (the method that calls `_call_llm_streaming` at line 1369). The new method should be inserted AFTER `_call_llm` ends, before the next method/function.
-
-Read the area around line 1362-1380 to see what comes after `_call_llm`. The new method should be:
+Find the end of `def _call_llm(` in the `AgentRuntime` class. The new method should be inserted after `_call_llm` ends, before `def _check_stuck(`. Read the area around the end of `_call_llm` to see what comes after it. The new method should be:
 
 ```python
     def _call_llm_streaming(
@@ -101,7 +99,7 @@ Read the area around line 1362-1380 to see what comes after `_call_llm`. The new
 
 **Read the file carefully** — the function body is long (~50 lines). Copy it accurately. Use the read tool to get the exact text.
 
-**Edit 3 — Update the call site at line 1369:**
+**Edit 3 — Update the call site to `_call_llm_streaming`:**
 
 Find:
 ```python
@@ -139,8 +137,8 @@ The only change is `self._call_llm_streaming(` instead of `_call_llm_streaming(`
 ## Rules
 
 - Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
-- Read `agent/runtime.py` lines 550-650 (the function body) AND lines 1300-1400 (the call site + end of `_call_llm`) COMPLETELY before editing
-- Insertion point for the new method: after line 1400 (end of `_call_llm`), before line 1401 (`_check_stuck`)
+- Read `agent/runtime.py` — find `def _call_llm_streaming(` at module level (the function to delete) and `def _call_llm(` in `AgentRuntime` class (the call site location) COMPLETELY before editing
+- Symbol-based insertion point: after `def _call_llm(` ends and before `def _check_stuck(`
 - Do NOT change the body logic of `_call_llm_streaming` — only the indentation, the `runtime.` → `self.` substitutions, and the signature (drop `runtime`, add `self`)
 - Do NOT rename the method (keep `_call_llm_streaming`)
 - Do NOT move `_call_llm` or any other method
