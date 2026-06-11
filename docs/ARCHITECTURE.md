@@ -1270,7 +1270,7 @@ class AgentRuntime:
 
 **Stuck detection (§E):** `_check_stuck()` monitors tool call history for loops (same tool+args 3×, or 8+ writes without verification). Intervention messages are appended to the conversation's tool result with a `⚠️` separator. History is per-session, capped at 20 entries, cleaned up on `cancel()`. Thread-safe via `_tool_history_lock`.
 
-**Providers:** OpenAI (`openai/*`), MiniMax (`minimax/*`), Anthropic (`anthropic/*`) — selected by model prefix. Tool calls normalized to internal `ToolCall` format regardless of provider.
+**Providers:** OpenAI (`openai/*`), MiniMax (`minimax/*`), Anthropic (`anthropic/*`), OpenRouter (`openrouter/*`), ZAI (`zai/*`) — selected by explicit `caller` field on `LLMProviderConfig` (persisted in `providers.yaml`); falls back to model-prefix derivation for legacy configs without an explicit caller. See §12 for full resolution details. Tool calls normalized to internal `ToolCall` format regardless of provider.
 
 **Streaming:** SSE for supported providers. `on_text_delta` fires incrementally. `on_tool_call_start` fires when complete call is received.
 

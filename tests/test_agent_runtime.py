@@ -738,6 +738,41 @@ class TestStreaming:
         assert assistant_msgs[-1].content == "Hello world!"
         rt.stop()
 
+    def test_tool_call_delta_without_index_defaults_to_zero(self):
+        """PHASE-11.5 regression: streamer yields tool_call_delta without 'index' key
+        should default to idx=0, not crash with KeyError. Anthropic's streaming
+        format omits 'index' for single-tool responses.
+        """
+        rt = AgentRuntime(_make_cfg())
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        from agent import runtime as rt_module
+        from agent.runtime import SSEEvent
+
+        def streamer_no_index(*a, **kw):
+            yield SSEEvent(type="tool_call_delta", data={"name": "list_files", "arguments": '{"path": "."}'})
+
+        orig = rt_module._PROVIDER_STREAMERS["openai"]
+        rt_module._PROVIDER_STREAMERS["openai"] = streamer_no_index
+        try:
+            with unittest.mock.patch.object(rt, "_call_llm", lambda *a, **kw: rt._call_llm_streaming(
+                session_key=a[0], base_url="https://api.openai.com/v1",
+                api_key="test", model="openai/gpt-4o",
+                caller_key="openai",  # PHASE-11.5: method on AgentRuntime
+                messages=a[1], tools=a[2] if len(a) > 2 else None, timeout=30.0
+            )):
+                rt._run_loop(sk, "list files")
+        finally:
+            rt_module._PROVIDER_STREAMERS["openai"] = orig
+
+        # If the bug is unfixed, this test crashes with KeyError before reaching here
+        conv = rt.get_conversation(sk)
+        assistant_msgs = [m for m in conv.messages if m.role.value == "assistant"]
+        assert len(assistant_msgs) >= 1, f"Expected assistant message, got: {[m.role.value for m in conv.messages]}"
+        rt.stop()
+
 
 
 class TestStreamingSignature:

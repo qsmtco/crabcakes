@@ -1353,7 +1353,9 @@ class AgentRuntime:
                     self._dispatch(self._on_text_delta, session_key, text)
 
             elif ev.type == "tool_call_delta":
-                idx = ev.data["index"]
+                # PHASE-11.5: default to 0 if streamer omits 'index' (e.g. Anthropic
+                # single-tool responses). Without this, the runtime crashes mid-stream.
+                idx = ev.data.get("index", 0)
                 if idx not in tool_calls_partial:
                     tool_calls_partial[idx] = {"name": "", "arguments": ""}
                 tc = tool_calls_partial[idx]
