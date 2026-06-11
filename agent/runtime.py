@@ -297,6 +297,18 @@ _PROVIDER_CALLERS: dict[str, Any] = {
 }
 
 
+# Response format families — derived from caller configuration.
+# Any provider using _call_openai or _call_minimax returns OpenAI-format responses.
+# Used by _extract_text_content, _extract_tool_calls, _extract_usage to avoid
+# hardcoding provider name lists.
+_RESPONSE_FORMAT: dict[str, str] = {}
+for _pk, _caller in _PROVIDER_CALLERS.items():
+    if _caller is _call_anthropic:
+        _RESPONSE_FORMAT[_pk] = "anthropic"
+    else:
+        _RESPONSE_FORMAT[_pk] = "openai"  # openai, minimax, openrouter, zai, etc.
+
+
 # ── SSE Streaming (Phase 1.3b) ─────────────────────────────────────────────────
 
 import re
@@ -598,8 +610,9 @@ def _extract_tool_calls(response: dict, provider: str) -> list[tuple[str, str, d
     Handles OpenAI, MiniMax, and Anthropic formats.
     """
     calls = []
+    fmt = _RESPONSE_FORMAT.get(provider, "openai")
 
-    if provider in ("openai", "minimax"):
+    if fmt == "openai":
         # OpenAI/MiniMax Chat Completions format
         choices = response.get("choices", [])
         if not choices:
@@ -619,7 +632,7 @@ def _extract_tool_calls(response: dict, provider: str) -> list[tuple[str, str, d
                     args = args_raw or {}
                 calls.append((call_id, name, args))
 
-    elif provider == "anthropic":
+    elif fmt == "anthropic":
         # Anthropic Messages API format
         content = response.get("content", [])
         if not isinstance(content, list):
@@ -636,14 +649,16 @@ def _extract_tool_calls(response: dict, provider: str) -> list[tuple[str, str, d
 
 def _extract_text_content(response: dict, provider: str) -> str:
     """Extract text content from an API response."""
-    if provider in ("openai", "minimax"):
+    fmt = _RESPONSE_FORMAT.get(provider, "openai")
+
+    if fmt == "openai":
         choices = response.get("choices", [])
         if not choices:
             return ""
         msg = choices[0].get("message", {})
         return msg.get("content", "") or ""
 
-    elif provider == "anthropic":
+    elif fmt == "anthropic":
         content = response.get("content", [])
         if not isinstance(content, list):
             return ""
@@ -658,7 +673,8 @@ def _extract_usage(response: dict, provider: str = "openai") -> tuple[int, int]:
     usage = response.get("usage")
     if not usage:
         return 0, 0
-    if provider == "anthropic":
+    fmt = _RESPONSE_FORMAT.get(provider, "openai")
+    if fmt == "anthropic":
         return (
             usage.get("input_tokens", 0),
             usage.get("output_tokens", 0),

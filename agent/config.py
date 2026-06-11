@@ -157,7 +157,16 @@ def _load_providers_from_yaml_or_fallback(
         from utils.providers_store import load_providers
         yaml_providers = load_providers()
         if yaml_providers:
-            return {p.name: _to_llm_provider(p) for p in yaml_providers}
+            result = {}
+            for p in yaml_providers:
+                # Key by provider ID (derived from default_model prefix)
+                # e.g. "minimax/MiniMax-M2.7" → "minimax"
+                # Falls back to display name if no slash in default_model.
+                pid = p.default_model.split("/")[0] if p.default_model and "/" in p.default_model else p.name
+                result[pid] = _to_llm_provider(p)
+                # Also register by display name for UI lookups
+                result[p.name] = _to_llm_provider(p)
+            return result
     except Exception as e:
         logger.debug("providers.yaml load failed: %s", e)
 

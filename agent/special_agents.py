@@ -99,7 +99,7 @@ def _load_registry() -> dict[str, SpecialAgentDef]:
     registry: dict[str, SpecialAgentDef] = {}
 
     for agent_def in defs:
-        role = agent_def.get("role", "")
+        role = agent_def.get("role", "").lower()
         name = agent_def.get("name", "Agent")
         session_key = f"special:{role}"
         tools = agent_def.get("tools", [])
