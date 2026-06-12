@@ -192,7 +192,7 @@ class ChatInputToolbar(Gtk.Box):
 
     def update_match_count(self, current: int, total: int):
         """Update the "N of M" match count label."""
-        if total == 0:
+        if total <= 0 or current < 0:
             self._match_label.set_text("No matches")
         else:
             self._match_label.set_text(f"{current + 1} of {total}")
