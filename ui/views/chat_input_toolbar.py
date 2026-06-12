@@ -520,13 +520,15 @@ class ChatInputToolbar(Gtk.Box):
             self._on_replace()
 
     def _on_find_next_clicked(self, *args):
-        if self._on_find and self._find_entry.get_text():
-            self._on_find(self._find_entry.get_text())  # re-run find
-        # Then advance — but we need a find_next callback
-        # For now, re-running find is sufficient; handler tracks state
+        # Priority: dedicated next callback > re-run search fallback
+        if self._on_find_next:
+            self._on_find_next()
+        elif self._on_find and self._find_entry.get_text():
+            self._on_find(self._find_entry.get_text())
 
     def _on_find_prev_clicked(self, *args):
-        pass  # wired via on_find_next — window.py wires find_next separately
+        if self._on_find_prev:
+            self._on_find_prev()
 
     def _on_find_close_clicked(self, *args):
         self.hide_find_bar()
