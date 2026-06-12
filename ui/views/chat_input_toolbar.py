@@ -214,6 +214,78 @@ class ChatInputToolbar(Gtk.Box):
         )
 
     # -------------------------------------------------------------------------
+    # Spec-required public methods (Section 2.3)
+    # -------------------------------------------------------------------------
+
+    def update_char_count(self, chars: int):
+        """Update the char count badge in the find bar row.
+
+        Only meaningful while the find bar is visible.
+        """
+        if hasattr(self, "_char_count_label"):
+            self._char_count_label.set_markup(
+                f'<span foreground="#6b6b7a" font_desc="Sans 9">'
+                f"{chars:,} chars"
+                f"</span>"
+            )
+
+    def show_suggestions_menu(self, suggestions: list[str], callback: callable):
+        """Show a popover with spelling suggestions for the right-clicked word.
+
+        *suggestions* is a list of replacement strings.
+        *callback* is called with the selected suggestion text when the user clicks one.
+        """
+        popover = Gtk.Popover()
+        popover.set_autohide(True)
+        popover.set_parent(self._spell_btn)
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        vbox.set_spacing(2)
+        vbox.set_margin_start(4)
+        vbox.set_margin_end(4)
+        vbox.set_margin_top(4)
+        vbox.set_margin_bottom(4)
+
+        if not suggestions:
+            lbl = Gtk.Label()
+            lbl.set_markup('<span foreground="#6b6b7a">(no suggestions)</span>')
+            vbox.append(lbl)
+        else:
+            for suggestion in suggestions:
+                btn = Gtk.Button(label=suggestion)
+                btn.add_css_class("flat")
+                btn.connect("clicked", self._on_suggestion_clicked, suggestion, callback, popover)
+                vbox.append(btn)
+
+        popover.set_child(vbox)
+        popover.popup()
+
+    def _on_suggestion_clicked(self, btn: Gtk.Button, suggestion: str, callback: callable, popover: Gtk.Popover):
+        popover.popdown()
+        if callback:
+            callback(suggestion)
+
+    def get_search_text(self) -> str:
+        """Return the current text in the find bar search entry."""
+        if hasattr(self, "_find_entry"):
+            return self._find_entry.get_text()
+        return ""
+
+    def get_replace_text(self) -> str:
+        """Return the current text in the find bar replace entry."""
+        if hasattr(self, "_replace_entry"):
+            return self._replace_entry.get_text()
+        return ""
+
+    def get_input_buffer(self):
+        """Return the input TextBuffer.
+
+        The view does not own the input buffer — it belongs to main_content.
+        Returns None. Window/handler should use main_content directly.
+        """
+        return None
+
+    # -------------------------------------------------------------------------
     # Internal — save menu
     # -------------------------------------------------------------------------
 
