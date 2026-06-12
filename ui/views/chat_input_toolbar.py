@@ -322,9 +322,11 @@ class ChatInputToolbar(Gtk.Box):
         vbox.set_margin_top(4)
         vbox.set_margin_bottom(4)
 
-        open_file_item = Gtk.ModelButton(text="Open File…")
+        open_file_item = Gtk.Button(label="Open File…")
+        open_file_item.add_css_class("flat")
         open_file_item.connect("clicked", self._on_open_file_clicked)
-        open_prompt_item = Gtk.ModelButton(text="Open Prompt…")
+        open_prompt_item = Gtk.Button(label="Open Prompt…")
+        open_prompt_item.add_css_class("flat")
         open_prompt_item.connect("clicked", self._on_open_prompt_clicked)
 
         vbox.append(open_file_item)
@@ -437,9 +439,7 @@ class ChatInputToolbar(Gtk.Box):
         self._find_entry = Gtk.Entry()
         self._find_entry.set_placeholder_text("Find…")
         self._find_entry.set_hexpand(True)
-        self._find_entry.set_keynav_wrapper(
-            lambda e, d: self._find_entry.grab_focus()
-        )
+        # Note: set_keynav_wrapper is GTK3-only; removed for GTK4 compat.
         self._find_entry.connect("changed", self._on_find_entry_changed)
         self._find_entry.connect("activate", self._on_find_next_clicked)
         row1.append(self._find_entry)
