@@ -222,12 +222,11 @@ class ChatInputToolbar(Gtk.Box):
 
         Only meaningful while the find bar is visible.
         """
-        if hasattr(self, "_char_count_label"):
-            self._char_count_label.set_markup(
-                f'<span foreground="#6b6b7a" font_desc="Sans 9">'
-                f"{chars:,} chars"
-                f"</span>"
-            )
+        self._char_count_label.set_markup(
+            f'<span foreground="#6b6b7a" font_desc="Sans 9">'
+            f"{chars:,} chars"
+            f"</span>"
+        )
 
     def show_suggestions_menu(self, suggestions: list[str], callback: callable):
         """Show a popover with spelling suggestions for the right-clicked word.
@@ -531,6 +530,14 @@ class ChatInputToolbar(Gtk.Box):
         )
         self._match_label.set_margin_start(4)
         row1.append(self._match_label)
+
+        self._char_count_label = Gtk.Label()
+        self._char_count_label.set_halign(Gtk.Align.START)
+        self._char_count_label.set_markup(
+            '<span foreground="#6b6b7a" font_desc="Sans 9"></span>'
+        )
+        self._char_count_label.set_margin_start(8)
+        row1.append(self._char_count_label)
 
         prev_btn = _icon_button("go-up-symbolic", "Previous match")
         prev_btn.connect("clicked", self._on_find_prev_clicked)
