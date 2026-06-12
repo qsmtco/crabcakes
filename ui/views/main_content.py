@@ -13,7 +13,7 @@ _logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-from ui.views.chat_control_bar import ChatControlBar
+from ui.views.chat_input_toolbar import ChatInputToolbar
 from ui.views.session_menu import show_session_menu, show_project_menu
 
 class MainContent(Gtk.Box):
@@ -69,7 +69,7 @@ class MainContent(Gtk.Box):
         # Unread tab tracking — session_keys with unseen messages
         self._unread_tabs: set[str] = set()
 
-        self._control_bar = ChatControlBar()
+        self._control_bar = ChatInputToolbar()
 
         # Control bar is updated by ActivityHandler via set_on_control_bar_update()
         self._on_control_bar_update: callable | None = None
@@ -203,9 +203,10 @@ class MainContent(Gtk.Box):
         self._on_control_bar_update = cb
 
     def update_control_bar(self, event_type: str, message: str) -> None:
-        """Update the control bar. Called by ActivityHandler on state transitions."""
-        if self._on_control_bar_update:
-            self._on_control_bar_update(event_type, message)
+        """Legacy — ActivityHandler still calls this. No-op until Phase 6 removes it."""
+        # Phase 4: ChatInputToolbar replaces ChatControlBar. The toolbar is now
+        # managed by InputToolbarHandler, not by activity state updates.
+        pass
 
     def set_on_project_settings_update(self, cb):
         """Set callback for project settings updates. cb(project_name, member_count)."""
