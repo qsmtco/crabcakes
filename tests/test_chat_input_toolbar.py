@@ -18,15 +18,9 @@
 from __future__ import annotations
 
 import ast
-import os
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-# GTK4 requires a display — use headless if no display available
-if "GDK_BACKEND" not in os.environ:
-    os.environ["GDK_BACKEND"] = "headless"
 
 import gi
 
