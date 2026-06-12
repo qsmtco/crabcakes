@@ -6,6 +6,7 @@
 **Implements:** `docs/proposals/PROPOSAL_CHAT_INPUT_TOOLBAR.md`
 **Depends on:** None
 **Target branch:** main
+**Updated:** 2026-06-11 — scoped to v1 features (find/replace, spell check, file I/O)
 
 > Architecture compliance (ARCHITECTURE.md): `ui/views/chat_input_toolbar.py` is a pure view — widgets only, no business logic. `ui/handlers/input_toolbar_handler.py` owns all logic with no GTK imports. `utils/spellcheck.py` is pure Python with no GTK/network dependencies. All CSS classes defined in `ui/styles.py`. Window wires handler to view via callbacks. Follows the exact pattern of `MediaHandler` + `STTEngine` + `main_content.py`.
 
@@ -18,7 +19,6 @@
 - **Read `ui/handlers/media_handler.py`:** Pattern: `MediaHandler.__init__(main_content, improve_module, GLib_module, stt_engine_class)`. Stores `self._mc = main_content`, `self._GLib = GLib_module`. Dispatches GTK calls via `GLib.idle_add`. Accesses `self._mc.user_input.get_buffer()`. **This is the handler pattern to follow.**
 - **Read `ui/window.py`:** `MainWindow.__init__()` at line 59 creates handlers. `_build()` at line 88 is composition root. `MediaHandler` created at line 211 with `main_content`, `improve_module`, `GLib_module`. Wired at lines 425-426 via `set_on_*` callbacks. No destroy/close handler — GTK ApplicationWindow handles lifecycle. **New handler created and wired alongside MediaHandler.**
 - **Read `utils/config.py`:** `get_config_file()` returns `~/.config/crabcakes/config.json`. No Telegram or toolbar config. **No changes needed.**
-- **Read `utils/prompts.py`:** `PROMPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts")`. `load_prompts()` returns `[(display_name, content)]` sorted by filename. **Used by "Open Prompt" and "Save as Prompt" features.**
 - **Read `ui/views/left_panel.py:805-840`:** Existing `Gtk.FileDialog` pattern: create dialog → set filters → `dialog.open(root, None, callback)` → `dialog.open_finish(result)` → `file.get_path()`. Uses `Gio.ListStore` for filters. **Follow this exact pattern for Open/Save File dialogs.**
 - **Read `ui/styles.py`:** CSS in `APP_CSS` string. Existing button classes: `suggested-action`, `btn-improve`, `flat`. Input: `input-bubble`. Feed bar: `project-feed-bar`. **Add toolbar CSS classes to APP_CSS.**
 - **Read `docs/ARCHITECTURE.md`:** §2 directory structure: `ui/views/chat_control_bar.py` listed. §3.16 `media_handler.py` — STT + improve. §3.5 CSS in `styles.py`. §13.4 callbacks as communication mechanism. **Update file tree, add new module descriptions.**
@@ -30,24 +30,29 @@
 ## 1. Overview
 
 ### Problem
-The `ChatControlBar` between the chat tabs and input area is a dead stub — a `Gtk.Label` that was never wired. The input box has no editing tools: no find/replace, no spell check, no file I/O, no word count.
+The `ChatControlBar` between the chat tabs and input area is a dead stub — a `Gtk.Label` that was never wired. The input box has no editing tools: no find/replace, no spell check, no file I/O.
 
 ### Solution
-Replace `ChatControlBar` with `ChatInputToolbar` — a compact toolbar of icon buttons providing editor-level capabilities for the input box. Organized in logical groups: File I/O, Search, Quality, Info.
+Replace `ChatControlBar` with `ChatInputToolbar` — a compact toolbar of icon buttons providing editor-level capabilities for the input box. Organized in logical groups: File I/O, Find/Replace, Quality.
 
 ### Scope
 
-| In Scope | Out of Scope |
+| In Scope (v1) | Out of Scope (v1) |
 |----------|-------------|
 | Save input as file (.txt, .md) | Undo/Redo |
-| Save input as prompt (to prompts/) | Bold/italic formatting |
-| Open file into input (at cursor) | Template insertion |
-| Open prompt into input | Auto-save drafts |
-| Find with highlight + navigation | Regex search |
-| Replace + Replace All | Multi-buffer editing |
-| Spell check via enchant-2 (toggle) | Grammar check |
-| Right-click spell suggestions | Custom dictionary management |
-| Word/char/token count | Reading level |
+| Open file into input (at cursor) | Bold/italic formatting |
+| Find with highlight + navigation | Template insertion |
+| Replace + Replace All | Auto-save drafts |
+| Spell check via enchant-2 (toggle) | Regex search |
+| Right-click spell suggestions | Multi-buffer editing |
+| Char count badge in find bar | Word/token count label |
+| | Grammar check |
+| | Custom dictionary management |
+| | Open Prompt popover |
+| | Save as Prompt |
+
+### Why Find/Replace in v1
+Find/replace is a core workflow need, not just editorial polish. Long prompts containing `@` symbols or `/` characters trigger the parser's slash-command and DM routing logic. Users need a quick way to find and remove/replace these special characters before sending. The find bar includes a char count badge so users know when they've cleaned up enough to send safely.
 
 ### Architecture Principles
 - **§3.5:** All CSS in `ui/styles.py` via `add_css_class()`
@@ -102,14 +107,14 @@ logger = logging.getLogger(__name__)
 
 def check_words(text: str) -> list[str]:
     """Return list of misspelled words found in text.
-    
+
     Uses enchant-2 -l which takes text on stdin and outputs
     misspelled words one per line. Single subprocess call for
     the entire buffer.
-    
+
     Args:
         text: The full text to check.
-    
+
     Returns:
         List of unique misspelled words (order preserved, deduplicated).
     """
@@ -146,14 +151,14 @@ def check_words(text: str) -> list[str]:
 
 def get_suggestions(word: str) -> list[str]:
     """Return up to 8 spelling suggestions for a misspelled word.
-    
+
     Uses enchant-2 -a (ispell pipe mode). Output format:
         @(#) International Ispell Version ...
         & word count offset: sug1, sug2, ...
-    
+
     Args:
         word: The misspelled word to get suggestions for.
-    
+
     Returns:
         List of suggestion strings (max 8). Empty if word is correct.
     """
@@ -203,11 +208,11 @@ def get_suggestions(word: str) -> list[str]:
 
 ```python
 class InputToolbarHandler:
-    """Owns all input toolbar logic: find/replace, spell check, file I/O, word count.
-    
+    """Owns all input toolbar logic: find/replace, spell check, file I/O.
+
     No GTK imports — all GTK dispatch via GLib.idle_add callbacks.
     """
-    
+
     def __init__(
         self,
         main_content,
@@ -215,11 +220,11 @@ class InputToolbarHandler:
     ):
         self._mc = main_content
         self._GLib = GLib_module
-        
+
         # Spell check state
         self._spell_enabled = False
         self._spell_debounce_id = None  # GLib timeout source ID
-        
+
         # Find/replace state
         self._find_matches = []      # list of (start_offset, end_offset)
         self._find_current = -1       # index into _find_matches
@@ -281,10 +286,10 @@ class InputToolbarHandler:
         if not text:
             self._clear_spell_tags()
             return False
-        
+
         from utils.spellcheck import check_words
         misspelled = check_words(text)
-        
+
         # Dispatch tag application to GTK main thread
         if self._GLib:
             self._GLib.idle_add(self._apply_spell_tags, misspelled)
@@ -295,29 +300,25 @@ class InputToolbarHandler:
     def _apply_spell_tags(self, misspelled: list[str]):
         """Apply Pango.Underline.ERROR tag to misspelled words. Runs on GTK thread."""
         buf = self._mc.user_input.get_buffer()
-        
+
         # Get or create the spell-error tag
         tag_table = buf.get_tag_table()
         tag = tag_table.lookup("spell-error")
         if tag is None:
             from gi.repository import Pango
             tag = buf.create_tag("spell-error")
-            # Cannot set Pango underline via create_tag on GTK4 TextTag directly.
-            # Use underline-set + underline property.
-            # Actually, Gtk.TextTag supports "underline" property:
             tag.set_property("underline", Pango.Underline.ERROR)
             tag.set_property("underline-rgba", Gdk.RGBA(1, 0.3, 0.3, 1))  # red
-        
+
         # Clear all existing spell-error tags
         start = buf.get_start_iter()
         end = buf.get_end_iter()
         buf.remove_tag(tag, start, end)
-        
+
         # Find and tag each misspelled word
         text = buf.get_text(start, end, True)
         import re
         for word in misspelled:
-            # Find all occurrences of this word in the buffer
             pattern = re.compile(r'\b' + re.escape(word) + r'\b')
             for match in pattern.finditer(text):
                 ws = buf.get_iter_at_offset(match.start())
@@ -333,7 +334,7 @@ class InputToolbarHandler:
             buf.remove_tag(tag, buf.get_start_iter(), buf.get_end_iter())
 ```
 
-> **Note on `_apply_spell_tags`:** This method uses `gi.repository.Pango` and `Gdk.RGBA` which are GTK-adjacent imports. The handler's "no GTK imports" rule means no `Gtk.*` widget imports, not no GObject introspection types. However, if strict separation is required, this method can be moved to a callback on the view side instead. The handler would set `self._pending_misspelled = misspelled` and the view would call `_apply_spell_tags` from its own code. For simplicity, we allow `Pango` and `Gdk` in the handler since they're data types, not widgets.
+> **Note on `_apply_spell_tags`:** This method uses `gi.repository.Pango` and `Gdk.RGBA` which are GTK-adjacent imports. The handler's "no GTK imports" rule means no `Gtk.*` widget imports, not no GObject introspection types. `Pango` and `Gdk` are data types, not widgets.
 
 **Public methods — Find/Replace:**
 
@@ -346,24 +347,24 @@ class InputToolbarHandler:
         self._find_text = search_text
         self._find_matches.clear()
         self._find_current = -1
-        
+
         if not search_text:
             self._clear_find_tags()
             return (-1, 0)
-        
+
         buf = self._mc.user_input.get_buffer()
         text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
-        
+
         # Case-insensitive search
         import re
         pattern = re.compile(re.escape(search_text), re.IGNORECASE)
         for match in pattern.finditer(text):
             self._find_matches.append((match.start(), match.end()))
-        
+
         if self._find_matches:
             self._find_current = 0
             self._apply_find_tags()
-        
+
         return (self._find_current, len(self._find_matches))
 
     def find_next(self) -> tuple[int, int]:
@@ -388,14 +389,14 @@ class InputToolbarHandler:
         """
         if not self._find_matches or self._find_current < 0:
             return (-1, 0)
-        
+
         buf = self._mc.user_input.get_buffer()
         start_off, end_off = self._find_matches[self._find_current]
         start = buf.get_iter_at_offset(start_off)
         end = buf.get_iter_at_offset(end_off)
         buf.delete(start, end)
         buf.insert(start, replacement)
-        
+
         # Re-run find to recalculate offsets after replacement
         return self.find(self._find_text)
 
@@ -404,19 +405,19 @@ class InputToolbarHandler:
         if not self._find_matches:
             return 0
         count = len(self._find_matches)
-        
+
         buf = self._mc.user_input.get_buffer()
         text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
-        
+
         import re
         pattern = re.compile(re.escape(self._find_text), re.IGNORECASE)
         new_text = pattern.sub(replacement, text)
         buf.set_text(new_text)
-        
+
         self._find_matches.clear()
         self._find_current = -1
         self._clear_find_tags()
-        
+
         return count
 
     def clear_find(self):
@@ -425,6 +426,12 @@ class InputToolbarHandler:
         self._find_current = -1
         self._find_text = ""
         self._clear_find_tags()
+
+    def get_char_count(self) -> int:
+        """Return character count for the current input buffer."""
+        buf = self._mc.user_input.get_buffer()
+        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
+        return len(text)
 ```
 
 **Internal — Find Tags:**
@@ -433,7 +440,7 @@ class InputToolbarHandler:
     def _apply_find_tags(self):
         """Apply find-match and find-current tags in the buffer."""
         buf = self._mc.user_input.get_buffer()
-        
+
         # Get or create tags
         tag_table = buf.get_tag_table()
         match_tag = tag_table.lookup("find-match")
@@ -441,24 +448,24 @@ class InputToolbarHandler:
             match_tag = buf.create_tag("find-match")
             from gi.repository import Gdk
             match_tag.set_property("background-rgba", Gdk.RGBA(0.39, 0.40, 0.95, 0.25))  # semi-transparent indigo
-        
+
         current_tag = tag_table.lookup("find-current")
         if current_tag is None:
             current_tag = buf.create_tag("find-current")
             from gi.repository import Gdk
             current_tag.set_property("background-rgba", Gdk.RGBA(0.39, 0.40, 0.95, 0.75))  # solid indigo
-        
+
         # Clear existing tags
         buf.remove_tag(match_tag, buf.get_start_iter(), buf.get_end_iter())
         buf.remove_tag(current_tag, buf.get_start_iter(), buf.get_end_iter())
-        
+
         # Apply tags
         for i, (start_off, end_off) in enumerate(self._find_matches):
             start = buf.get_iter_at_offset(start_off)
             end = buf.get_iter_at_offset(end_off)
             tag = current_tag if i == self._find_current else match_tag
             buf.apply_tag(tag, start, end)
-        
+
         # Scroll to current match
         if 0 <= self._find_current < len(self._find_matches):
             start_off, _ = self._find_matches[self._find_current]
@@ -481,53 +488,23 @@ class InputToolbarHandler:
         """Save input buffer contents to a file."""
         buf = self._mc.user_input.get_buffer()
         text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(text)
-
-    def save_as_prompt(self, filename: str):
-        """Save input buffer as a .md prompt file in the prompts/ directory.
-        filename should NOT include .md extension — it's added automatically.
-        """
-        from utils.prompts import PROMPTS_DIR
-        buf = self._mc.user_input.get_buffer()
-        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
-        path = os.path.join(PROMPTS_DIR, f"{filename}.md")
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(text)
-        return path
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(text)
+        except (PermissionError, OSError) as e:
+            logger.error("[toolbar] save failed: %s", e)
 
     def load_file(self, file_path: str):
         """Load file contents and insert at cursor position in input buffer."""
-        with open(file_path, 'r', encoding='utf-8') as f:
-            text = f.read()
-        self._mc.append_stt_text(text)
-
-    def load_prompt(self, prompt_name: str):
-        """Load a named prompt from the prompts/ directory into the input buffer.
-        Appends at cursor position.
-        """
-        from utils.prompts import PROMPTS_DIR
-        path = os.path.join(PROMPTS_DIR, f"{prompt_name}.md")
-        if os.path.exists(path):
-            self.load_file(path)
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                text = f.read()
+            self._mc.append_stt_text(text)
+        except (FileNotFoundError, UnicodeDecodeError, PermissionError) as e:
+            logger.error("[toolbar] load failed: %s", e)
 ```
 
-**Public methods — Word Count:**
-
-```python
-    def get_word_count(self) -> tuple[int, int, int]:
-        """Return (words, chars, approx_tokens) for the current input buffer."""
-        buf = self._mc.user_input.get_buffer()
-        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
-        if not text.strip():
-            return (0, 0, 0)
-        words = len(text.split())
-        chars = len(text)
-        tokens = int(words * 1.3)  # rough English token estimate
-        return (words, chars, tokens)
-```
-
-**Line count estimate:** ~280 lines.
+**Line count estimate:** ~240 lines.
 
 ---
 
@@ -541,11 +518,11 @@ class InputToolbarHandler:
 class ChatInputToolbar(Gtk.Box):
     """
     Compact toolbar for the chat input area.
-    Provides file I/O, find/replace, spell check, word count.
-    
+    Provides find/replace, spell check, file I/O.
+
     Pure view — all logic lives in InputToolbarHandler.
     """
-    
+
     def __init__(self):
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL)
         self.set_halign(Gtk.Align.FILL)
@@ -554,12 +531,10 @@ class ChatInputToolbar(Gtk.Box):
         self.set_margin_end(8)
         self.set_spacing(4)
         self.add_css_class("input-toolbar")
-        
+
         # Callbacks — set by window.py
         self._on_save_file = None
-        self._on_save_prompt = None
         self._on_open_file = None
-        self._on_open_prompt = None
         self._on_find = None
         self._on_replace = None
         self._on_spell_toggle = None
@@ -570,15 +545,14 @@ class ChatInputToolbar(Gtk.Box):
 
 ```
 ChatInputToolbar (Gtk.Box, horizontal)
-├── save_btn (Gtk.MenuButton → Gtk.PopoverMenu with Save as File / Save as Prompt)
-├── open_btn (Gtk.MenuButton → Gtk.PopoverMenu with Open File / Open Prompt)
+├── save_btn (Gtk.Button → Save as File)
+├── open_btn (Gtk.Button → Open File)
 ├── separator_1 (Gtk.Separator)
 ├── find_btn (Gtk.Button, icon: 🔍)
 ├── replace_btn (Gtk.Button, icon: 🔀)
 ├── separator_2 (Gtk.Separator)
 ├── spell_btn (Gtk.ToggleButton, icon: ✓ ABC)
-├── spacer (Gtk.Box, hexpand=True)
-└── count_label (Gtk.Label, right-aligned)
+└── spacer (Gtk.Box, hexpand=True)
 ```
 
 **Find/Replace bar (appears below toolbar when activated):**
@@ -588,6 +562,7 @@ find_bar (Gtk.Box, vertical, hidden by default)
 ├── row_1 (Gtk.Box, horizontal)
 │   ├── search_entry (Gtk.Entry, placeholder: "Find...")
 │   ├── match_count_label (Gtk.Label, "3 of 12")
+│   ├── char_count_label (Gtk.Label, "1,247 chars")
 │   ├── prev_btn (Gtk.Button, "▲")
 │   ├── next_btn (Gtk.Button, "▼")
 │   └── close_btn (Gtk.Button, "×")
@@ -597,13 +572,13 @@ find_bar (Gtk.Box, vertical, hidden by default)
     └── replace_all_btn (Gtk.Button, "Replace All")
 ```
 
+The char count badge in the find bar shows the total character count of the input buffer. This helps users who are editing prompts to remove `@` symbols and `/` characters — they can see at a glance how long the text is and whether they've cleaned it up enough to avoid triggering the parser.
+
 **Callbacks emitted:**
 
 ```python
     def set_on_save_file(self, cb): self._on_save_file = cb
-    def set_on_save_prompt(self, cb): self._on_save_prompt = cb
     def set_on_open_file(self, cb): self._on_open_file = cb
-    def set_on_open_prompt(self, cb): self._on_open_prompt = cb
     def set_on_find(self, cb): self._on_find = cb
     def set_on_replace(self, cb): self._on_replace = cb
     def set_on_spell_toggle(self, cb): self._on_spell_toggle = cb
@@ -615,18 +590,18 @@ find_bar (Gtk.Box, vertical, hidden by default)
 ```python
     def show_find_bar(self, show_replace=False):
         """Show the find bar (optionally with replace row)."""
-        
+
     def hide_find_bar(self):
         """Hide the find bar and clear find state."""
-        
+
     def update_match_count(self, current: int, total: int):
         """Update match count label: "3 of 12" or "No matches"."""
-        
+
+    def update_char_count(self, chars: int):
+        """Update char count badge: "1,247 chars"."""
+
     def set_spell_active(self, active: bool):
         """Update spell check toggle button visual state."""
-        
-    def update_word_count(self, words: int, chars: int, tokens: int):
-        """Update word count label: "142 words · 1,847 chars · ~370 tokens"."""
 ```
 
 **File dialogs** follow the existing pattern from `left_panel.py:807-840`:
@@ -640,7 +615,7 @@ find_bar (Gtk.Box, vertical, hidden by default)
         if root is None:
             return
         dialog.save(root, None, self._on_save_file_selected)
-    
+
     def _on_save_file_selected(self, dialog, result):
         try:
             file = dialog.save_finish(result)
@@ -648,7 +623,7 @@ find_bar (Gtk.Box, vertical, hidden by default)
                 self._on_save_file(file.get_path())
         except GLib.Error:
             pass  # cancelled
-    
+
     def _open_open_file_dialog(self):
         """Open GTK4 FileDialog to select a file to load."""
         dialog = Gtk.FileDialog()
@@ -657,7 +632,7 @@ find_bar (Gtk.Box, vertical, hidden by default)
         if root is None:
             return
         dialog.open(root, None, self._on_open_file_selected)
-    
+
     def _on_open_file_selected(self, dialog, result):
         try:
             file = dialog.open_finish(result)
@@ -667,30 +642,7 @@ find_bar (Gtk.Box, vertical, hidden by default)
             pass  # cancelled
 ```
 
-**Open Prompt popover:**
-
-```python
-    def _build_open_prompt_popover(self):
-        """Build popover listing available prompts."""
-        from utils.prompts import load_prompts
-        prompts = load_prompts()  # [(display_name, content)]
-        
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        box.set_spacing(2)
-        for name, _content in prompts:
-            btn = Gtk.Button(label=name)
-            btn.add_css_class("flat")
-            btn.connect("clicked", self._on_prompt_selected, name)
-            box.append(btn)
-        
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_child(box)
-        scroll.set_min_content_height(200)
-        scroll.set_max_content_height(400)
-        return scroll
-```
-
-**Line count estimate:** ~250 lines.
+**Line count estimate:** ~220 lines.
 
 ---
 
@@ -748,12 +700,12 @@ Add a buffer-changed signal emission so the handler can debounce spell checks:
         # In __init__, after self._user_input creation:
         buf = self._user_input.get_buffer()
         buf.connect("changed", self._on_input_buffer_changed)
-        
+
     def _on_input_buffer_changed(self, buf):
-        """Notify toolbar handler of buffer changes for spell check + word count."""
+        """Notify toolbar handler of buffer changes for spell check."""
         if self._toolbar_buffer_changed_cb:
             self._toolbar_buffer_changed_cb()
-    
+
     def set_on_buffer_changed(self, cb):
         """Set callback for input buffer text changes. Used by InputToolbarHandler."""
         self._toolbar_buffer_changed_cb = cb
@@ -776,26 +728,21 @@ Add a buffer-changed signal emission so the handler can debounce spell checks:
 After MediaHandler creation (line ~215):
 
 ```python
-        # Input toolbar handler — owns find/replace, spell check, file I/O, word count
+        # Input toolbar handler — owns find/replace, spell check, file I/O
         from ui.handlers.input_toolbar_handler import InputToolbarHandler
         self._input_toolbar_handler = InputToolbarHandler(
             main_content=self._main_content,
             GLib_module=GLib,
         )
-        
+
         # Wire toolbar callbacks to handler
         toolbar = self._main_content.toolbar
         toolbar.set_on_save_file(self._input_toolbar_handler.save_to_file)
-        toolbar.set_on_save_prompt(self._input_toolbar_handler.save_as_prompt)
         toolbar.set_on_open_file(self._input_toolbar_handler.load_file)
-        toolbar.set_on_open_prompt(self._input_toolbar_handler.load_prompt)
         toolbar.set_on_find(self._on_find_activated)
         toolbar.set_on_replace(self._on_replace_activated)
         toolbar.set_on_spell_toggle(self._on_spell_toggle)
         toolbar.set_on_buffer_changed(self._input_toolbar_handler.on_buffer_changed)
-        
-        # Initial word count
-        self._update_word_count()
 ```
 
 **New methods on MainWindow:**
@@ -805,37 +752,19 @@ After MediaHandler creation (line ~215):
         """Show find bar in toolbar."""
         toolbar = self._main_content.toolbar
         toolbar.show_find_bar(show_replace=False)
-    
+
     def _on_replace_activated(self):
         """Show find+replace bar in toolbar."""
         toolbar = self._main_content.toolbar
         toolbar.show_find_bar(show_replace=True)
-    
+
     def _on_spell_toggle(self):
         """Toggle spell check."""
         active = self._input_toolbar_handler.toggle_spell_check()
         self._main_content.toolbar.set_spell_active(active)
-    
-    def _update_word_count(self):
-        """Update word count display in toolbar."""
-        words, chars, tokens = self._input_toolbar_handler.get_word_count()
-        self._main_content.toolbar.update_word_count(words, chars, tokens)
 ```
 
-**Wire buffer-changed to word count update:**
-
-In the buffer-changed callback chain, also call `_update_word_count`:
-
-```python
-        self._main_content.set_on_buffer_changed(self._on_input_buffer_changed)
-        
-    def _on_input_buffer_changed(self):
-        """Handle input buffer changes — trigger spell check + word count update."""
-        self._input_toolbar_handler.on_buffer_changed()
-        self._update_word_count()
-```
-
-**Line count estimate:** ~40 lines added.
+**Line count estimate:** ~30 lines added.
 
 ---
 
@@ -882,11 +811,6 @@ Add new CSS classes after existing button styles:
     opacity: 0.3;
 }
 
-.input-toolbar .count-label {
-    color: #6b6b7a;
-    font-size: 10px;
-}
-
 /* Find bar */
 .find-bar {
     background: rgba(17, 17, 20, 0.8);
@@ -899,6 +823,11 @@ Add new CSS classes after existing button styles:
     font-size: 11px;
 }
 
+.find-bar .char-count {
+    color: #6b6b7a;
+    font-size: 10px;
+}
+
 /* Spell check toggle active state */
 .spell-active {
     background: rgba(99, 102, 241, 0.2);
@@ -907,7 +836,7 @@ Add new CSS classes after existing button styles:
 }
 ```
 
-**Line count estimate:** +40 lines.
+**Line count estimate:** +38 lines.
 
 ---
 
@@ -933,25 +862,18 @@ Updates required:
 ## 3. Data Flow
 
 ### Save as File:
-1. User clicks Save ▾ → Save as File
+1. User clicks Save button
 2. View opens `Gtk.FileDialog.save()` (async, GTK4 pattern from left_panel.py)
 3. User selects path → `_on_save_file_selected()` callback
 4. View calls `self._on_save_file(path)` → wired to `handler.save_to_file(path)`
 5. Handler reads buffer text → writes to file
 
 ### Open File:
-1. User clicks Open ▾ → Open File
+1. User clicks Open button
 2. View opens `Gtk.FileDialog.open()` (async)
 3. User selects file → `_on_open_file_selected()` callback
 4. View calls `self._on_open_file(path)` → wired to `handler.load_file(path)`
 5. Handler reads file → calls `self._mc.append_stt_text(text)` → inserts at cursor
-
-### Open Prompt:
-1. User clicks Open ▾ → Open Prompt
-2. View shows `Gtk.Popover` with `load_prompts()` list
-3. User clicks prompt name → `_on_prompt_selected(name)` callback
-4. View calls `self._on_open_prompt(name)` → wired to `handler.load_prompt(name)`
-5. Handler reads `.md` file → calls `self._mc.append_stt_text(text)`
 
 ### Find:
 1. User clicks 🔍 Find → view shows find bar
@@ -978,11 +900,10 @@ Updates required:
 5. Right-click on underlined word → view gets iter position → `handler.get_suggestions_at_iter(iter)` → `enchant-2 -a` → suggestions
 6. View shows suggestion popover → user clicks suggestion → view replaces word in buffer
 
-### Word Count:
-1. Buffer `changed` signal → `main_content._on_input_buffer_changed()`
-2. Calls `handler.on_buffer_changed()` (spell check debounce)
-3. Also calls `window._update_word_count()` → `handler.get_word_count()` → `(words, chars, tokens)`
-4. View updates `count_label` → `"142 words · 1,847 chars · ~370 tokens"`
+### Char Count:
+1. Find bar shown → view reads char count from handler
+2. Buffer changes while find bar open → view updates char count badge
+3. Displayed as "1,247 chars" in the find bar row
 
 ---
 
@@ -991,15 +912,15 @@ Updates required:
 | File | Change Type | Lines | Risk |
 |------|-------------|-------|------|
 | `utils/spellcheck.py` | **NEW** | ~90 | Low — subprocess wrapper |
-| `ui/handlers/input_toolbar_handler.py` | **NEW** | ~280 | Medium — find/replace logic |
-| `ui/views/chat_input_toolbar.py` | **NEW** | ~250 | Medium — new widget, dialogs |
+| `ui/handlers/input_toolbar_handler.py` | **NEW** | ~240 | Medium — find/replace logic |
+| `ui/views/chat_input_toolbar.py` | **NEW** | ~220 | Medium — new widget, dialogs |
 | `ui/views/chat_control_bar.py` | **DELETED** | -60 | — |
 | `ui/views/main_content.py` | Modified | ~0 | Low — swap import, add property |
-| `ui/window.py` | Modified | +40 | Low — handler wiring |
+| `ui/window.py` | Modified | +30 | Low — handler wiring |
 | `ui/handlers/activity_handler.py` | Modified | -4 | Low — remove dead code |
-| `ui/styles.py` | Modified | +40 | Low — CSS only |
+| `ui/styles.py` | Modified | +38 | Low — CSS only |
 | `docs/ARCHITECTURE.md` | Modified | +30 | Low — docs |
-| **Total** | | **~670 lines net** | |
+| **Total** | | **~584 lines net** | |
 
 ---
 
@@ -1007,7 +928,7 @@ Updates required:
 
 1. **Create `utils/spellcheck.py`** — `check_words()` + `get_suggestions()` subprocess wrappers
 2. **Test standalone** — `python3 -c "from utils.spellcheck import check_words; print(check_words('hello wrld tset'))"` → `['wrld', 'tset']`
-3. **Create `ui/handlers/input_toolbar_handler.py`** — handler with find/replace/spell/file/count methods
+3. **Create `ui/handlers/input_toolbar_handler.py`** — handler with find/replace/spell/file methods
 4. **Test standalone** — `python3 -c "from ui.handlers.input_toolbar_handler import InputToolbarHandler; print('import OK')"`
 5. **Create `ui/views/chat_input_toolbar.py`** — toolbar widget with buttons, find bar, file dialogs
 6. **Delete `ui/views/chat_control_bar.py`** — replaced by new toolbar
@@ -1024,20 +945,19 @@ Updates required:
 3. Handler methods work with mock main_content → find/replace state correct
 5. Toolbar renders in isolation → buttons clickable, find bar shows/hides
 7. Import swap clean → no references to ChatControlBar remain
-11. Full end-to-end: find highlights matches, replace works, spell check underlines, save/load files, word count updates
+11. Full end-to-end: find highlights matches, replace works, spell check underlines, save/load files, char count updates
 
 ---
 
 ## 6. Acceptance Criteria
 
 - [ ] Toolbar renders between chat tabs and input area (replaces dead ChatControlBar)
-- [ ] Save ▾ → Save as File opens `Gtk.FileDialog`, saves input to selected path
-- [ ] Save ▾ → Save as Prompt saves to `prompts/` as `.md`, immediately available
-- [ ] Open ▾ → Open File opens `Gtk.FileDialog`, inserts file content at cursor
-- [ ] Open ▾ → Open Prompt shows popover listing prompts from `prompts/`
+- [ ] Save button opens `Gtk.FileDialog`, saves input to selected path
+- [ ] Open button opens `Gtk.FileDialog`, inserts file content at cursor
 - [ ] Find: inline search bar with next/prev buttons and match count ("3 of 12")
 - [ ] Find: all matches highlighted with semi-transparent indigo background
 - [ ] Find: current match highlighted with solid indigo background
+- [ ] Find: char count badge shows total chars ("1,247 chars")
 - [ ] Replace: extends find bar with replace entry + Replace/Replace All buttons
 - [ ] Replace: replaces current match and re-finds
 - [ ] Replace All: replaces all matches in one pass via regex.sub
@@ -1045,7 +965,6 @@ Updates required:
 - [ ] Spell check: misspelled words get red error underline (Pango.Underline.ERROR)
 - [ ] Spell check: 300ms debounce — no lag while typing
 - [ ] Spell check: right-click on underlined word shows suggestions from enchant-2
-- [ ] Word/char/token count: always visible, updates on every keystroke
 - [ ] Find bar collapses cleanly on close — no layout jumps
 - [ ] No impact on existing Send/Prompt/Improve button functionality
 - [ ] `chat_control_bar.py` deleted — no dead code remains
@@ -1060,7 +979,7 @@ Updates required:
 
 | Case | Expected Behavior |
 |------|-------------------|
-| Empty input buffer | Save writes empty file. Word count shows "0 words · 0 chars". Spell check returns empty. Find returns 0 matches. |
+| Empty input buffer | Save writes empty file. Spell check returns empty. Find returns 0 matches. Char count shows "0 chars". |
 | Find with empty search | Returns 0 matches, no highlighting |
 | Find with no matches | Match count shows "No matches". No highlighting applied. |
 | Find in very long buffer (>10k chars) | regex.finditer handles it. May take a few ms. Acceptable. |
@@ -1069,11 +988,11 @@ Updates required:
 | Spell check timeout | `TimeoutExpired` caught, returns empty list. Logged. |
 | Open File with binary file | Reads as UTF-8, may raise UnicodeDecodeError → caught, logged, nothing inserted |
 | Save to read-only path | `PermissionError` → caught, logged |
-| Save as Prompt with existing name | Overwrites existing prompt file. No confirmation (user chose the name). |
 | Rapid buffer changes | 300ms debounce cancels previous timer, only last change triggers spell check |
 | Find bar open, user types in input | Buffer changes don't affect find bar. Find matches stay until user edits search field. |
 | Tab switch with find bar open | Find bar stays open. Find tags apply to current buffer (all tabs share one input). |
 | Right-click on correctly spelled word | `get_suggestions()` returns empty list → no suggestion popover shown |
+| Long prompt with many @ symbols | User opens find bar, searches for @, sees all matches highlighted, uses Replace All to remove them. Char count badge confirms length. |
 
 ---
 
@@ -1085,8 +1004,8 @@ Updates required:
    - Add `spellcheck.py` to `utils/`
 
 2. **§3 Module responsibilities:**
-   - Add §3.XX `ui/handlers/input_toolbar_handler.py` — find/replace, spell check scheduling, file I/O, word count
-   - Add §3.XX `ui/views/chat_input_toolbar.py` — toolbar widget, find bar, file dialogs, prompt popover
+   - Add §3.XX `ui/handlers/input_toolbar_handler.py` — find/replace, spell check scheduling, file I/O
+   - Add §3.XX `ui/views/chat_input_toolbar.py` — toolbar widget, find bar, file dialogs
    - Add §3.XX `utils/spellcheck.py` — enchant-2 subprocess wrapper
    - Remove old `chat_control_bar.py` description
 
@@ -1095,7 +1014,7 @@ Updates required:
 
 ---
 
-## Self-Audit (Rule 9)
+## Self-Audit
 
 1. **Does every code sample work against the current codebase?**
    - `ChatControlBar` imported at `main_content.py:16` ✅
@@ -1107,42 +1026,32 @@ Updates required:
    - `MediaHandler.__init__(main_content, improve_module, GLib_module, stt_engine_class)` at line 14 ✅
    - `self._mc = main_content` at media_handler.py:23 ✅
    - `Gtk.FileDialog` pattern from `left_panel.py:807-840` ✅
-   - `load_prompts()` returns `[(display_name, content)]` ✅
-   - `PROMPTS_DIR` from `utils/prompts.py` ✅
    - `enchant-2 -l` verified: outputs misspelled words one per line ✅
    - `enchant-2 -a` verified: ispell format `& word count offset: sug1, sug2, ...` ✅
 
 2. **Did I catch all exception types?**
    - `check_words`: `FileNotFoundError`, `subprocess.TimeoutExpired`, `Exception` ✅
    - `get_suggestions`: `FileNotFoundError`, `subprocess.TimeoutExpired`, `Exception` ✅
-   - `save_to_file`: `PermissionError`, `OSError` (need to add try/except) ⚠️
-   - `load_file`: `FileNotFoundError`, `UnicodeDecodeError`, `PermissionError` (need to add try/except) ⚠️
+   - `save_to_file`: `PermissionError`, `OSError` ✅ (try/except added)
+   - `load_file`: `FileNotFoundError`, `UnicodeDecodeError`, `PermissionError` ✅ (try/except added)
    - `Gtk.FileDialog` callbacks: `GLib.Error` for cancel ✅
 
-3. **Did I verify key structures?**
-   - `_tab_sessions` dict: `page_index → session_key` ✅
-   - `load_prompts()` returns `list[tuple[str, str]]` ✅
-   - `PROMPTS_DIR` is absolute path from `os.path` ✅
-   - `enchant-2 -l` output: newline-separated misspelled words ✅
-
-4. **Did I trace the data flow end-to-end?**
+3. **Did I trace the data flow end-to-end?**
    - Save: click → dialog → path → handler reads buffer → writes file ✅
    - Open: click → dialog → path → handler reads file → append_stt_text → insert_at_cursor ✅
    - Find: type → changed → handler.find() → regex → matches → apply tags → update count ✅
    - Replace: click → handler.replace_current() → delete + insert → re-find ✅
    - Spell: toggle → handler.toggle() → enchant-2 -l → tag application → underline ✅
    - Suggestions: right-click → get_suggestions_at_iter() → enchant-2 -a → parse → popover ✅
-   - Word count: buffer changed → handler.get_word_count() → view.update_word_count() ✅
+   - Char count: find bar shown → handler.get_char_count() → view.update_char_count() ✅
 
-5. **Would an implementer produce working code?**
+4. **Would an implementer produce working code?**
    - Yes, all method signatures, widget hierarchies, callback wiring, and CSS classes specified with exact patterns from existing code. File dialog pattern copied from `left_panel.py`. Handler pattern copied from `media_handler.py`.
 
-6. **Architecture compliance verified?**
+5. **Architecture compliance verified?**
    - `utils/spellcheck.py`: no GTK, no network ✅
    - `input_toolbar_handler.py`: no Gtk.* widget imports ✅
    - `chat_input_toolbar.py`: view only, emits callbacks ✅
    - CSS in `styles.py` only ✅
    - Window wires everything ✅
    - `main_content.py` exposes property, doesn't contain logic ✅
-
-⚠️ **Issue noted:** `save_to_file()` and `load_file()` need try/except for `PermissionError`, `FileNotFoundError`, `UnicodeDecodeError`. Implementer should add these guards. The spec shows the happy path; the edge case table documents expected behavior.
