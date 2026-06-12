@@ -1100,6 +1100,51 @@ button.settings-remove-btn:hover {
     font-size: 14px;
     padding: 32px;
 }
+
+/* -- Input toolbar ------------------------------------------------------ */
+.input-toolbar {
+    background: rgba(17, 17, 20, 0.6);
+    border-radius: 6px;
+    min-height: 28px;
+    padding: 2px 4px;
+}
+
+.input-toolbar button,
+.input-toolbar .flat {
+    min-width: 28px;
+    min-height: 24px;
+    padding: 2px 6px;
+    font-size: 11px;
+}
+
+.input-toolbar .toolbar-separator {
+    margin: 2px 4px;
+    opacity: 0.3;
+}
+
+/* Find bar */
+.find-bar {
+    background: rgba(17, 17, 20, 0.8);
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+
+.find-bar entry {
+    min-width: 200px;
+    font-size: 11px;
+}
+
+.find-bar .char-count {
+    color: #6b6b7a;
+    font-size: 10px;
+}
+
+/* Spell check toggle active state */
+.spell-active {
+    background: rgba(99, 102, 241, 0.2);
+    color: #a5b4fc;
+    border-radius: 4px;
+}
 """
 
 
