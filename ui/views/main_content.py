@@ -195,16 +195,6 @@ class MainContent(Gtk.Box):
             lbl.set_text(text)
         self._project_settings.append(lbl)
 
-    def set_on_control_bar_update(self, cb: "Callable[[str, str], None]") -> None:
-        """Set the callback for control bar updates. cb(event_type, message)."""
-        self._on_control_bar_update = cb
-
-    def update_control_bar(self, event_type: str, message: str) -> None:
-        """Legacy — ActivityHandler still calls this. No-op until Phase 6 removes it."""
-        # Phase 4: ChatInputToolbar replaces ChatControlBar. The toolbar is now
-        # managed by InputToolbarHandler, not by activity state updates.
-        pass
-
     def set_on_project_settings_update(self, cb):
         """Set callback for project settings updates. cb(project_name, member_count)."""
         self._on_feed_bar_update = cb
