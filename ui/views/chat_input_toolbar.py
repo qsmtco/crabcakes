@@ -225,9 +225,11 @@ class ChatInputToolbar(Gtk.Box):
         vbox.set_margin_top(4)
         vbox.set_margin_bottom(4)
 
-        save_file_item = Gtk.ModelButton(text="Save as File…")
+        save_file_item = Gtk.Button(label="Save as File…")
+        save_file_item.add_css_class("flat")
         save_file_item.connect("clicked", self._on_save_file_clicked)
-        save_prompt_item = Gtk.ModelButton(text="Save as Prompt…")
+        save_prompt_item = Gtk.Button(label="Save as Prompt…")
+        save_prompt_item.add_css_class("flat")
         save_prompt_item.connect("clicked", self._on_save_prompt_clicked)
 
         vbox.append(save_file_item)
