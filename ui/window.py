@@ -285,7 +285,19 @@ class MainWindow(Gtk.ApplicationWindow):
         input_toolbar.set_on_find_prev(self._input_toolbar_handler.find_prev)
         input_toolbar.set_on_replace(self._input_toolbar_handler.replace_current)
         input_toolbar.set_on_replace_all(self._input_toolbar_handler.replace_all)
-        input_toolbar.set_on_buffer_changed(self._input_toolbar_handler.on_buffer_changed)
+        # Wire input buffer's 'changed' signal to handler + count update.
+        # The previous set_on_buffer_changed(...) was a no-op storage call
+        # (chat_input_toolbar.set_on_buffer_changed just stores the cb).
+        # Real wiring: main_content exposes its own buffer-changed signal
+        # (added in Phase 8), and we bridge it to (a) handler.on_buffer_changed
+        # for spell-check debounce and (b) toolbar.update_word_count for the
+        # user-visible word/char count label.
+        def _on_input_buffer_changed(_buf):
+            self._input_toolbar_handler.on_buffer_changed()
+            words, chars, tokens = self._input_toolbar_handler.compute_count()
+            self._main_content._control_bar.update_word_count(words, chars, tokens)
+
+        self._main_content.set_on_buffer_changed(_on_input_buffer_changed)
 
         # Project handler — owns active project state + agent-to-project routing (Phase 3)
         from ui.handlers.project_handler import ProjectHandler

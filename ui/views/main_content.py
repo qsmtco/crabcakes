@@ -130,6 +130,12 @@ class MainContent(Gtk.Box):
         self._user_input.add_css_class("input-bubble")
         input_scroll.set_child(self._user_input)
 
+        # Buffer-changed signal — let subscribers react to typing/edits.
+        # Mirrors the pattern used by project_settings / feed_bar in this class.
+        buf = self._user_input.get_buffer()
+        self._on_buffer_changed: callable | None = None
+        buf.connect("changed", self._on_input_buffer_changed)
+
         # Button bar — right-justified buttons below the input
         button_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         button_bar.set_halign(Gtk.Align.END)
@@ -194,6 +200,16 @@ class MainContent(Gtk.Box):
         else:
             lbl.set_text(text)
         self._project_settings.append(lbl)
+
+    def set_on_buffer_changed(self, cb: callable) -> None:
+        """Register callback for input buffer 'changed' events. cb(buffer)."""
+        self._on_buffer_changed = cb
+
+    def _on_input_buffer_changed(self, buf) -> None:
+        """Fire the registered callback (if any). The actual buf.connect
+        is in __init__; this is the indirection layer."""
+        if self._on_buffer_changed is not None:
+            self._on_buffer_changed(buf)
 
     def set_on_project_settings_update(self, cb):
         """Set callback for project settings updates. cb(project_name, member_count)."""

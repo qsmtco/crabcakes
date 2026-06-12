@@ -401,3 +401,11 @@ class InputToolbarHandler:
         chars = len(text)
         tokens = int(words * 1.3)  # rough English token estimate
         return (words, chars, tokens)
+
+    def compute_count(self) -> tuple[int, int, int]:
+        """Public alias for get_word_count() — used by the wiring layer
+        (window.py) to push the count to the toolbar view on every
+        buffer change. Kept separate from get_word_count() so the
+        existing unit tests at tests/test_input_toolbar_handler.py
+        keep passing without modification."""
+        return self.get_word_count()

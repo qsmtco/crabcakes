@@ -25,7 +25,7 @@ import pytest
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk
+from gi.repository import Gtk, GLib
 
 from ui.views.chat_input_toolbar import ChatInputToolbar
 
@@ -668,3 +668,51 @@ def inspect_source(module) -> str:
     import inspect
 
     return inspect.getsource(module)
+
+
+# ── Phase 8 regression: word count label must update on buffer change ──
+
+
+class TestPhase8WordCountLabel:
+    """Regression tests for the Phase 8 bug: word/char label must update
+    when the input buffer changes. See TOOLBAR-PHASE-8-INSTRUCTIONS.md."""
+
+    def test_word_count_label_updates_on_buffer_change(self):
+        from ui.handlers.input_toolbar_handler import InputToolbarHandler
+
+        # Build a real toolbar + handler + buffer, wire them as window.py does
+        toolbar = ChatInputToolbar()
+
+        # Use a stand-in main_content that exposes user_input.get_buffer()
+        class _StubMC:
+            def __init__(self):
+                self._user_input = Gtk.TextView()
+
+            @property
+            def user_input(self):
+                return self._user_input
+
+        mc = _StubMC()
+        handler = InputToolbarHandler(main_content=mc, GLib_module=GLib)
+
+        # Wire the count path the same way window.py does in Edit 3
+        def _on_buf_changed(_buf):
+            handler.on_buffer_changed()
+            words, chars, tokens = handler.compute_count()
+            toolbar.update_word_count(words, chars, tokens)
+
+        buf = mc._user_input.get_buffer()
+        buf.connect("changed", _on_buf_changed)
+
+        # Type some text — the buffer's 'changed' signal should fire
+        buf.set_text("hello world this is a test")
+
+        # Drain the GLib main context so signal handlers run
+        ctx = GLib.MainContext.default()
+        while ctx.iteration(False):
+            pass
+
+        # The label should now reflect 6 words, not 0
+        label = toolbar._count_label.get_label()
+        assert "6 words" in label, f"expected '6 words' in label, got: {label!r}"
+        assert "0 words" not in label, f"label still shows zero: {label!r}"
