@@ -105,8 +105,8 @@ class TestCallbacks:
         toolbar = ChatInputToolbar()
         calls = []
         toolbar.set_on_spell_toggle(lambda: calls.append(True))
-        # Simulate spell toggle signal (the handler passes btn as extra arg)
-        toolbar._on_spell_toggled(toolbar._spell_btn)
+        # Simulate "toggled" signal: passes toggle button as arg + extra data
+        toolbar._on_spell_toggled(toolbar._spell_btn, toolbar._spell_btn)
         assert calls == [True]
 
     def test_on_open_file(self):
