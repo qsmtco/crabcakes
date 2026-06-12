@@ -70,6 +70,8 @@ class MainWindow(Gtk.ApplicationWindow):
         self._gateway_handler = None
         # Media handler — owns STT + improve (Phase 4)
         self._media_handler = None
+        # Input toolbar handler — owns find/replace, spell check, file I/O (Phase 5)
+        self._input_toolbar_handler = None
         # AgentRuntime handler — owns special agent runtimes (Phase 1.4)
         self._agent_runtime_handler = None
         # Agent-to-project routing table — shared between ProjectHandler (writes) and ChatHandler (reads)
@@ -264,6 +266,26 @@ class MainWindow(Gtk.ApplicationWindow):
             improve_module=__import__("utils.improve", fromlist=["improve"]),
             GLib_module=GLib,
         )
+
+        # Input toolbar handler — owns find/replace, spell check, file I/O (Phase 5)
+        from ui.handlers.input_toolbar_handler import InputToolbarHandler
+        self._input_toolbar_handler = InputToolbarHandler(
+            main_content=self._main_content,
+            GLib_module=GLib,
+        )
+
+        # Wire input toolbar callbacks to handler — verified against actual setter names
+        # NOTE: uses 'input_toolbar' to avoid shadowing the app-level 'toolbar' variable
+        input_toolbar = self._main_content._control_bar
+        input_toolbar.set_on_spell_toggle(self._input_toolbar_handler.toggle_spell_check)
+        input_toolbar.set_on_open_file(self._input_toolbar_handler.load_file)
+        input_toolbar.set_on_save_file(self._input_toolbar_handler.save_to_file)
+        input_toolbar.set_on_find(self._input_toolbar_handler.find)
+        input_toolbar.set_on_find_next(self._input_toolbar_handler.find_next)
+        input_toolbar.set_on_find_prev(self._input_toolbar_handler.find_prev)
+        input_toolbar.set_on_replace(self._input_toolbar_handler.replace_current)
+        input_toolbar.set_on_replace_all(self._input_toolbar_handler.replace_all)
+        input_toolbar.set_on_buffer_changed(self._input_toolbar_handler.on_buffer_changed)
 
         # Project handler — owns active project state + agent-to-project routing (Phase 3)
         from ui.handlers.project_handler import ProjectHandler
