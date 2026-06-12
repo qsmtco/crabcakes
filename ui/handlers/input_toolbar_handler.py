@@ -125,6 +125,9 @@ class InputToolbarHandler:
         buf = self._mc.user_input.get_buffer()
 
         # Import GTK types here so the module can be imported without GTK present
+        import gi
+        gi.require_version("Pango", "1.0")
+        gi.require_version("Gdk", "4.0")
         from gi.repository import Pango, Gdk
 
         tag_table = buf.get_tag_table()
@@ -132,7 +135,9 @@ class InputToolbarHandler:
         if tag is None:
             tag = buf.create_tag("spell-error")
             tag.set_property("underline", Pango.Underline.ERROR)
-            tag.set_property("underline-rgba", Gdk.RGBA(1, 0.3, 0.3, 1))
+            rgba = Gdk.RGBA()
+            rgba.parse("rgba(255,77,77,1)")
+            tag.set_property("underline-rgba", rgba)
             self._spell_error_tag = tag
         else:
             # Remove existing tags first
@@ -252,6 +257,8 @@ class InputToolbarHandler:
     def _apply_find_tags(self):
         """Apply find-match / find-current tags in the buffer. Runs on GTK thread."""
         buf = self._mc.user_input.get_buffer()
+        import gi
+        gi.require_version("Gdk", "4.0")
         from gi.repository import Gdk
 
         tag_table = buf.get_tag_table()
@@ -260,18 +267,18 @@ class InputToolbarHandler:
         match_tag = self._find_match_tag
         if match_tag is None:
             match_tag = buf.create_tag("find-match")
-            match_tag.set_property(
-                "background-rgba", Gdk.RGBA(0.39, 0.40, 0.95, 0.25)
-            )
+            rgba_match = Gdk.RGBA()
+            rgba_match.parse("rgba(99,102,241,0.25)")
+            match_tag.set_property("background-rgba", rgba_match)
             self._find_match_tag = match_tag
 
         # Get or create find-current tag (solid indigo)
         current_tag = self._find_current_tag
         if current_tag is None:
             current_tag = buf.create_tag("find-current")
-            current_tag.set_property(
-                "background-rgba", Gdk.RGBA(0.39, 0.40, 0.95, 0.75)
-            )
+            rgba_current = Gdk.RGBA()
+            rgba_current.parse("rgba(99,102,241,0.75)")
+            current_tag.set_property("background-rgba", rgba_current)
             self._find_current_tag = current_tag
 
         # Clear existing tags

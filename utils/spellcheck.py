@@ -24,7 +24,7 @@ def check_words(text: str) -> list[str]:
     Uses ``enchant-2 -l`` (batch mode — one subprocess call for entire text).
     Deduplicates results while preserving order.
     """
-    if not text or not text.strip():
+    if not isinstance(text, str) or not text.strip():
         return []
 
     try:
@@ -61,7 +61,7 @@ def get_suggestions(word: str) -> list[str]:
     Uses ``enchant-2 -a`` (ispell pipe mode).
     Returns empty list if *word* is correctly spelled.
     """
-    if not word or not word.strip():
+    if not isinstance(word, str) or not word.strip():
         return []
 
     try:

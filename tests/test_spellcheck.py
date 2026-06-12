@@ -168,12 +168,53 @@ def test_get_suggestions_correct_word():
     assert suggestions == []
 
 
+@pytest.mark.skipif(not ENCHANT_AVAILABLE, reason="enchant-2 not installed")
 def test_check_words_unicode_text():
     """Text with unicode characters doesn't crash."""
-    mock = _mock_result("")
-    with patch("utils.spellcheck.subprocess.run", return_value=mock):
-        result = check_words("Héllo wörld café")
+    result = check_words("Héllo wörld café résumé")
     assert isinstance(result, list)
+
+
+def test_check_words_unicode_stdout():
+    """enchant-2 returns unicode words in stdout — handled correctly."""
+    mock = _mock_result("café\nrésumé\n")
+    with patch("utils.spellcheck.subprocess.run", return_value=mock):
+        result = check_words("some text")
+    assert result == ["café", "résumé"]
+
+
+def test_get_suggestions_unexpected_exception():
+    """Any other exception from subprocess → returns []."""
+    with patch(
+        "utils.spellcheck.subprocess.run",
+        side_effect=RuntimeError("something broke"),
+    ):
+        result = get_suggestions("wrld")
+    assert result == []
+
+
+def test_check_words_non_string_input():
+    """Non-string input (int) returns [] instead of crashing."""
+    assert check_words(123) == []
+
+
+def test_check_words_none_input():
+    """None input returns [] instead of crashing."""
+    assert check_words(None) == []
+
+
+def test_get_suggestions_non_string_input():
+    """Non-string input (int) returns [] instead of crashing."""
+    assert get_suggestions(123) == []
+
+
+def test_check_words_non_zero_exit():
+    """enchant-2 returns non-zero exit code — still parses stdout."""
+    mock = _mock_result("wrld\n")
+    mock.returncode = 1
+    with patch("utils.spellcheck.subprocess.run", return_value=mock):
+        result = check_words("some text")
+    assert result == ["wrld"]
 
 
 def test_get_suggestions_empty_response():
