@@ -128,7 +128,6 @@ crabcakes/
 │       ├── __init__.py
 │       ├── activity_drawer.py  # NEW (SPEC-activity-drawer) — collapsible activity event panel
 │       ├── chat_bubble.py      # build_role_bubble() — chat bubble widget factories (Phase 1)
-│       ├── chat_control_bar.py # ChatControlBar — planned stub (update() not wired)
 │       ├── feedbar.py          # FeedBar — Response Status Bar + progress bar + ActivityHandler public API (Phase 6)
 │       ├── feed_card.py        # ~581 lines — feed_card widget factory (Phase 5)
 │       ├── diff_card.py         # Diff card widget factories — build_file_diff_card, build_diff_summary_card (Phase 7)
