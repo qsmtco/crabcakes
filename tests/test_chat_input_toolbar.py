@@ -272,7 +272,7 @@ class TestEdgeCases:
     def test_spell_toggled_without_callback(self):
         """Spell toggle without callback set must not crash."""
         toolbar = ChatInputToolbar()
-        toolbar._on_spell_toggled(toolbar._spell_btn)  # _on_spell_toggle is None
+        toolbar._on_spell_toggled(toolbar._spell_btn, toolbar._spell_btn)
         assert True  # no crash
 
     def test_set_find_count_single_match(self):
