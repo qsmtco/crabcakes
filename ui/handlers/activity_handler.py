@@ -596,11 +596,6 @@ class ActivityHandler:
             self._feedbar.set_progress_fraction(1.0)
 
         self._feedbar.set_status_text(text)
-        # Also update the ChatControlBar (sits between chat and input)
-        # Extract plain-text message from markup for the control bar
-        import re
-        plain = re.sub(r'<[^>]+>', '', text)
-        self._mc.update_control_bar(state, plain)
 
     def _streaming_label(self) -> str:
         """Build live counter label for streaming state."""

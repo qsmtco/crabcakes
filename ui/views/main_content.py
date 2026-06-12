@@ -71,9 +71,6 @@ class MainContent(Gtk.Box):
 
         self._control_bar = ChatInputToolbar()
 
-        # Control bar is updated by ActivityHandler via set_on_control_bar_update()
-        self._on_control_bar_update: callable | None = None
-
         # Top box minimum height — prevents it collapsing when notebook is empty
         top_box.set_size_request(-1, 120)
 
