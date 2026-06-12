@@ -3128,7 +3128,6 @@ crabcakes/
 │       ├── activity_drawer.py     # NEW (SPEC-activity-drawer) — collapsible activity event panel
 │       ├── agent_builder.py      # AgentBuilderDialog — modal dialog for creating/editing agents
 │       ├── chat_bubble.py        # ~1015 lines — build_role_bubble() factory (Phase 1 + 2 block-level)
-│       ├── chat_control_bar.py   # ~58 lines — ChatControlBar (stub — update() not wired)
 │       ├── chat_input_toolbar.py # ~549 lines — ChatInputToolbar — find/replace bar + spell check popover (view only)
 │       ├── diff_card.py          # ~356 lines — build_file_diff_card(), build_diff_summary_card() (Phase 7)
 │       ├── feed_card.py          # ~581 lines — feed_card widget factory (Phase 5)
