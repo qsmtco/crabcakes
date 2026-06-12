@@ -235,8 +235,19 @@ def compose_system_prompt(
         tool_list_str = "## Tools\n" + "\n".join(f"  - {t}" for t in tools)
     else:
         tool_list_str = ""  # Gateway agents — tool info controlled by gateway, not CrabCakes
+
+    # Agent type identity — derived from role so each agent knows what it is
+    if agent_role:
+        agent_type = "special agent"
+        agent_type_desc = "You run locally against LLM APIs with direct access to file/exec tools."
+    else:
+        agent_type = "gateway agent"
+        agent_type_desc = "You run through the OpenClaw gateway."
+
     variables = {
         "AGENT_NAME": agent_name or "",
+        "AGENT_TYPE": agent_type,
+        "AGENT_TYPE_DESC": agent_type_desc,
         "PROJECT_PATH": project_path or "(no project open)",
         "PROJECT_NAME": awareness.get("PROJECT_NAME", ""),
         "TEAM_ROSTER": awareness.get("TEAM_ROSTER", ""),

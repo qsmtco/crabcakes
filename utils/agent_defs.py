@@ -269,6 +269,21 @@ def save_agent_def(agent_def: dict) -> str:
         import yaml
         # Build a clean copy without internal keys
         export = {k: v for k, v in agent_def.items() if not k.startswith("_")}
+
+        # Preserve fields not controlled by the Agent Builder UI.
+        # The form doesn't send auto_open, auto_add_to_projects, or api_key_built_in,
+        # so editing an agent through the UI would strip them. Merge from existing file.
+        _PRESERVED_KEYS = {"auto_open", "auto_add_to_projects", "api_key_built_in"}
+        if os.path.exists(filepath):
+            try:
+                with open(filepath, "r", encoding="utf-8") as ef:
+                    existing = yaml.safe_load(ef) or {}
+                for key in _PRESERVED_KEYS:
+                    if key not in export and key in existing:
+                        export[key] = existing[key]
+            except Exception:
+                pass  # If we can't read existing, just write what we have
+
         with open(filepath, "w", encoding="utf-8") as f:
             yaml.dump(export, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
         return filepath
