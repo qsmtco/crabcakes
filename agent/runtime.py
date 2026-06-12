@@ -137,7 +137,7 @@ def _call_openai(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _urlopen_with_ssl_retry(req, timeout=timeout) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
@@ -177,7 +177,7 @@ def _call_minimax(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _urlopen_with_ssl_retry(req, timeout=timeout) as resp:
             result = json.loads(resp.read())
             # MiniMax returns body-level errors with HTTP 200:
             # {"base_resp":{"status_code":1004,"status_msg":"login fail..."}}
@@ -279,7 +279,7 @@ def _call_anthropic(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _urlopen_with_ssl_retry(req, timeout=timeout) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
@@ -312,6 +312,7 @@ for _pk, _caller in _PROVIDER_CALLERS.items():
 # ── SSE Streaming (Phase 1.3b) ─────────────────────────────────────────────────
 
 import re
+import ssl
 import urllib.request
 from collections import namedtuple
 
@@ -344,6 +345,41 @@ def _parse_sse_line(line: bytes) -> SSEEvent | None:
         return SSEEvent(type="raw", data=json.loads(data.decode("utf-8")))
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
+
+
+# Transient SSL/network errors that warrant a retry.
+_RETRYABLE_SSL_ERRORS = frozenset({
+    "SSLV3_ALERT_BAD_RECORD_MAC",
+    "SSLV3_ALERT_BAD_RECORD_MD5",
+    "TLSV1_ALERT_DECRYPTION_FAILED",
+    "TLSV1_ALERT_RECORD_OVERFLOW",
+    "SSL_ERROR_SYSCALL",
+})
+
+_MAX_SSL_RETRIES = 3
+_SSL_RETRY_BASE_MS = 500
+
+
+def _urlopen_with_ssl_retry(req, timeout, *, max_retries=_MAX_SSL_RETRIES):
+    """Like urllib.request.urlopen but retries on transient SSL errors."""
+    last_exc = None
+    for attempt in range(max_retries + 1):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except ssl.SSLError as e:
+            reason = str(e)
+            # Only retry on known transient errors
+            is_retryable = any(tok in reason for tok in _RETRYABLE_SSL_ERRORS)
+            if not is_retryable or attempt == max_retries:
+                raise
+            last_exc = e
+            wait_s = (_SSL_RETRY_BASE_MS / 1000) * (2 ** attempt)
+            logger.warning(
+                "[ssl-retry] attempt %d/%d for %s — %s; retrying in %.1fs",
+                attempt + 1, max_retries, req.full_url, reason, wait_s,
+            )
+            time.sleep(wait_s)
+    raise last_exc  # should not reach here
 
 
 def _stream_openai_events(
@@ -380,7 +416,7 @@ def _stream_openai_events(
         headers=headers,
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with _urlopen_with_ssl_retry(req, timeout=timeout) as resp:
         for line in _sse_lines(resp):
             ev = _parse_sse_line(line)
             if ev is None:
@@ -437,7 +473,7 @@ def _stream_minimax_events(
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with _urlopen_with_ssl_retry(req, timeout=timeout) as resp:
         # MiniMax may return a body-level error with HTTP 200 (not SSE).
         # Check the first non-empty line before entering SSE parsing.
         first_line = None
@@ -557,7 +593,7 @@ def _stream_anthropic_events(
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with _urlopen_with_ssl_retry(req, timeout=timeout) as resp:
         for line in _sse_lines(resp):
             ev = _parse_sse_line(line)
             if ev is None:
