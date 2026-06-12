@@ -451,6 +451,215 @@ class TestEdgeCases:
         assert toolbar.get_replace_text() == ""
 
 
+# ── Bug fix regression tests (PHASE-3 supervisor audit, bugs #10–#14) ──
+
+
+class TestBug10GetToplevel:
+    """BUG #10: _get_toplevel() must not call Gtk.get_major_client() (GTK3-only)."""
+
+    def test_get_toplevel_returns_none_when_not_parented(self):
+        """When the widget is not parented to a Window, return None (no crash)."""
+        toolbar = ChatInputToolbar()
+        # Without a parent, get_ancestor(Gtk.Window) returns None
+        # and the fix must not fall through to Gtk.get_major_client().
+        assert toolbar._get_toplevel() is None
+
+    def test_get_toplevel_returns_window_when_parented(self):
+        """When parented to a Gtk.Window, return that window."""
+        toolbar = ChatInputToolbar()
+        window = Gtk.Window()
+        window.set_child(toolbar)
+        result = toolbar._get_toplevel()
+        assert result is window
+
+    def test_get_toplevel_does_not_call_get_major_client(self):
+        """Source must not reference Gtk.get_major_client anywhere."""
+        import ui.views.chat_input_toolbar as mod
+        src = inspect_source(mod)
+        assert "get_major_client" not in src, (
+            "BUG #10 regression: Gtk.get_major_client is GTK3-only and "
+            "segfaults on GTK4 Save/Open file dialogs"
+        )
+
+
+class TestBug11MenuButtonReferences:
+    """BUG #11: menu buttons must be stored as attributes, not found via ancestor walk."""
+
+    def test_save_menu_btn_stored(self):
+        """The save MenuButton is stored as self._save_menu_btn after __init__."""
+        toolbar = ChatInputToolbar()
+        assert hasattr(toolbar, "_save_menu_btn")
+        assert isinstance(toolbar._save_menu_btn, Gtk.MenuButton)
+
+    def test_open_menu_btn_stored(self):
+        """The open MenuButton is stored as self._open_menu_btn after __init__."""
+        toolbar = ChatInputToolbar()
+        assert hasattr(toolbar, "_open_menu_btn")
+        assert isinstance(toolbar._open_menu_btn, Gtk.MenuButton)
+
+    def test_find_save_menu_button_returns_stored_ref(self):
+        """_find_save_menu_button returns the stored reference, not a tree walk."""
+        toolbar = ChatInputToolbar()
+        assert toolbar._find_save_menu_button() is toolbar._save_menu_btn
+
+    def test_find_open_menu_button_returns_stored_ref(self):
+        """_find_open_menu_button returns the stored reference, not a tree walk."""
+        toolbar = ChatInputToolbar()
+        assert toolbar._find_open_menu_button() is toolbar._open_menu_btn
+
+    def test_find_menu_buttons_no_ancestor_walk(self):
+        """Source must not walk ancestors in the _find_*_menu_button methods."""
+        import ui.views.chat_input_toolbar as mod
+        src = inspect_source(mod)
+        # The buggy version had `while parent:` loops inside _find_*_menu_button
+        # that walked the ancestor tree. The fix returns the stored ref directly.
+        # Grep for the two method bodies and assert they have no `while` loops.
+        import re
+        for method_name in ("_find_save_menu_button", "_find_open_menu_button"):
+            pattern = rf"def {method_name}\(.*?(?=\n    def |\nclass |\Z)"
+            match = re.search(pattern, src, re.DOTALL)
+            assert match, f"Could not find {method_name} in source"
+            body = match.group(0)
+            assert "while " not in body, (
+                f"BUG #11 regression: {method_name} still walks ancestors "
+                f"(should return stored ref directly)"
+            )
+
+
+class TestBug12PromptPopoverRef:
+    """BUG #12: _on_prompt_selected must not call get_parent().get_children()."""
+
+    def test_on_prompt_selected_calls_popdown_on_stored_ref(self):
+        """Selecting a prompt pops down the stored popover and fires the callback."""
+        toolbar = ChatInputToolbar()
+        calls = []
+        toolbar.set_on_open_prompt(lambda name: calls.append(name))
+        # Inject a fake popover so we can verify popdown is called on it
+        fake_popover = MagicMock()
+        toolbar._prompt_popover = fake_popover
+        toolbar._on_prompt_selected(None, "my_prompt")
+        fake_popover.popdown.assert_called_once()
+        assert calls == ["my_prompt"]
+
+    def test_on_prompt_selected_no_crash_without_popover(self):
+        """If popover is None (e.g. user clicked before popover built), no crash."""
+        toolbar = ChatInputToolbar()
+        calls = []
+        toolbar.set_on_open_prompt(lambda name: calls.append(name))
+        toolbar._prompt_popover = None
+        # Must not raise
+        toolbar._on_prompt_selected(None, "any_prompt")
+        assert calls == ["any_prompt"]
+
+    def test_on_prompt_selected_no_get_children_in_source(self):
+        """Source must not call get_children() — it's GTK3-only."""
+        import re
+        import ui.views.chat_input_toolbar as mod
+        src = inspect_source(mod)
+        # Strip comments and string literals to avoid false positives from
+        # explanatory comments like "GTK4 has no get_children()".
+        no_comments = re.sub(r"#.*", "", src)
+        no_strings = re.sub(r"['\"].*?['\"]", "", no_comments, flags=re.DOTALL)
+        assert "get_children()" not in no_strings, (
+            "BUG #12 regression: Gtk.Widget.get_children() does not exist in GTK4"
+        )
+
+
+class TestBug13ReplaceVsReplaceAll:
+    """BUG #13: _on_replace_all_clicked must call _on_replace_all, not _on_replace."""
+
+    def test_replace_callback_fires_on_replace_click(self):
+        """Clicking Replace (current) fires _on_replace, not _on_replace_all."""
+        toolbar = ChatInputToolbar()
+        replace_calls = []
+        replace_all_calls = []
+        toolbar.set_on_replace(lambda text: replace_calls.append(text))
+        toolbar.set_on_replace_all(lambda text: replace_all_calls.append(text))
+        toolbar._replace_entry.set_text("hello")
+        toolbar._on_replace_clicked_from_bar()
+        assert replace_calls == ["hello"]
+        assert replace_all_calls == []
+
+    def test_replace_all_callback_fires_on_replace_all_click(self):
+        """Clicking Replace All fires _on_replace_all, not _on_replace."""
+        toolbar = ChatInputToolbar()
+        replace_calls = []
+        replace_all_calls = []
+        toolbar.set_on_replace(lambda text: replace_calls.append(text))
+        toolbar.set_on_replace_all(lambda text: replace_all_calls.append(text))
+        toolbar._replace_entry.set_text("world")
+        toolbar._on_replace_all_clicked()
+        assert replace_all_calls == ["world"]
+        assert replace_calls == []
+
+    def test_replace_all_no_crash_without_callback(self):
+        """If _on_replace_all is None, clicking Replace All must not crash."""
+        toolbar = ChatInputToolbar()
+        toolbar._replace_entry.set_text("x")
+        # No set_on_replace_all called
+        toolbar._on_replace_all_clicked()  # must not raise
+
+    def test_set_on_replace_all_stores_callback(self):
+        """set_on_replace_all stores the callback on the instance."""
+        toolbar = ChatInputToolbar()
+        cb = MagicMock()
+        toolbar.set_on_replace_all(cb)
+        assert toolbar._on_replace_all is cb
+
+    def test_replace_all_initialized_to_none(self):
+        """_on_replace_all defaults to None after construction."""
+        toolbar = ChatInputToolbar()
+        assert toolbar._on_replace_all is None
+
+
+class TestBug14OpenPromptPopoverGuard:
+    """BUG #14: _open_open_prompt_popover must guard popover.popup() with get_root()."""
+
+    def test_open_prompt_popover_no_crash_without_root(self):
+        """Opening the popover when not parented (no root) must not crash."""
+        toolbar = ChatInputToolbar()
+        # Mock load_prompts to return a single prompt
+        with patch("ui.views.chat_input_toolbar.load_prompts",
+                   return_value=[("test_prompt", "content")]):
+            # Toolbar is not in a window, so get_root() is None
+            # Must not raise — the fix guards popover.popup() with get_root() check
+            toolbar._open_open_prompt_popover()
+
+    def test_open_prompt_popover_stores_self_ref(self):
+        """After opening, _prompt_popover is set to the new popover."""
+        toolbar = ChatInputToolbar()
+        with patch("ui.views.chat_input_toolbar.load_prompts",
+                   return_value=[("test_prompt", "content")]):
+            toolbar._open_open_prompt_popover()
+        assert toolbar._prompt_popover is not None
+        assert isinstance(toolbar._prompt_popover, Gtk.Popover)
+
+    def test_open_prompt_popover_no_popup_when_no_root(self):
+        """When get_root() is None, popover.popup() must not be called."""
+        toolbar = ChatInputToolbar()
+        with patch("ui.views.chat_input_toolbar.load_prompts",
+                   return_value=[("test_prompt", "content")]):
+            # Stub get_root to return None explicitly
+            toolbar.get_root = lambda: None
+            with patch.object(Gtk.Popover, "popup") as mock_popup:
+                toolbar._open_open_prompt_popover()
+                # popup must NOT have been called
+                mock_popup.assert_not_called()
+
+    def test_open_prompt_popover_popup_called_when_rooted(self):
+        """When get_root() is not None, popover.popup() IS called."""
+        toolbar = ChatInputToolbar()
+        # Put the toolbar in a window so get_root() returns the window
+        window = Gtk.Window()
+        window.set_child(toolbar)
+        with patch("ui.views.chat_input_toolbar.load_prompts",
+                   return_value=[("test_prompt", "content")]):
+            with patch.object(Gtk.Popover, "popup") as mock_popup:
+                toolbar._open_open_prompt_popover()
+                # popup must have been called once
+                mock_popup.assert_called_once()
+
+
 # ── Helpers ──────────────────────────────────────────────────────
 
 

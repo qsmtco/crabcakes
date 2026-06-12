@@ -65,6 +65,7 @@ class ChatInputToolbar(Gtk.Box):
         self._on_find_next: callable | None = None
         self._on_find_prev: callable | None = None
         self._on_replace: callable | None = None
+        self._on_replace_all: callable | None = None
         self._on_spell_toggle: callable | None = None
         self._on_buffer_changed: callable | None = None
 
@@ -81,6 +82,8 @@ class ChatInputToolbar(Gtk.Box):
         # File I/O group: Save ▾  Open ▾
         save_btn = self._build_save_menu_button()
         open_btn = self._build_open_menu_button()
+        self._save_menu_btn = save_btn
+        self._open_menu_btn = open_btn
         main_row.append(save_btn)
         main_row.append(open_btn)
 
@@ -163,6 +166,9 @@ class ChatInputToolbar(Gtk.Box):
 
     def set_on_replace(self, cb: callable) -> None:
         self._on_replace = cb
+
+    def set_on_replace_all(self, cb: callable) -> None:
+        self._on_replace_all = cb
 
     def set_on_spell_toggle(self, cb: callable) -> None:
         self._on_spell_toggle = cb
@@ -333,13 +339,7 @@ class ChatInputToolbar(Gtk.Box):
         self._open_save_prompt_dialog()
 
     def _find_save_menu_button(self) -> Gtk.Widget | None:
-        # Walk ancestors to find the parent MenuButton
-        parent = self.get_parent()
-        while parent:
-            if isinstance(parent, Gtk.MenuButton):
-                return parent
-            parent = parent.get_parent()
-        return None
+        return self._save_menu_btn
 
     def _open_save_file_dialog(self):
         """Open GTK4 FileDialog to save input as a file."""
@@ -430,12 +430,7 @@ class ChatInputToolbar(Gtk.Box):
         self._open_open_prompt_popover()
 
     def _find_open_menu_button(self) -> Gtk.Widget | None:
-        parent = self.get_parent()
-        while parent:
-            if isinstance(parent, Gtk.MenuButton):
-                return parent
-            parent = parent.get_parent()
-        return None
+        return self._open_menu_btn
 
     def _open_open_file_dialog(self):
         """Open GTK4 FileDialog to select a file to load."""
@@ -487,14 +482,14 @@ class ChatInputToolbar(Gtk.Box):
         scroll.set_propagate_natural_height(True)
 
         popover.set_child(scroll)
-        popover.popup()
+        self._prompt_popover = popover
+        if self.get_root() is not None:
+            popover.popup()
 
     def _on_prompt_selected(self, _btn, name: str):
-        # Find and dismiss the popover
-        for child in self.get_parent().get_children():
-            if isinstance(child, Gtk.Popover):
-                child.popdown()
-                break
+        # Dismiss the popover via stored reference (GTK4 has no get_children())
+        if self._prompt_popover is not None:
+            self._prompt_popover.popdown()
         if self._on_open_prompt:
             self._on_open_prompt(name)
 
@@ -628,17 +623,14 @@ class ChatInputToolbar(Gtk.Box):
 
     def _on_replace_all_clicked(self, *args):
         replacement = self._replace_entry.get_text()
-        if self._on_replace:
-            self._on_replace(replacement)  # handler distinguishes replace vs replace_all
+        if self._on_replace_all:
+            self._on_replace_all(replacement)
 
     # -------------------------------------------------------------------------
     # Internal — utilities
     # -------------------------------------------------------------------------
 
     def _get_toplevel(self) -> Gtk.Window | None:
-        toplevel = self.get_ancestor(Gtk.Window)
-        if toplevel is None:
-            root = Gtk.get_major_client()
-            if hasattr(root, "get_active_window"):
-                toplevel = root.get_active_window()
-        return toplevel
+        # GTK4: get_ancestor(Gtk.Window) is the only reliable way to find the
+        # toplevel window. Callers guard with `if root is None: return`.
+        return self.get_ancestor(Gtk.Window)
