@@ -198,6 +198,8 @@ class TestCallbacks:
         search_calls = []
         toolbar.set_on_find(lambda text: search_calls.append(text))
         toolbar._find_entry.set_text("test query")
+        # set_text triggers a changed signal that calls _on_find — clear it
+        search_calls.clear()
         toolbar._on_find_next_clicked()
         # Falls back to re-running search with current text
         assert search_calls == ["test query"]

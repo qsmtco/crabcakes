@@ -257,7 +257,10 @@ class ChatInputToolbar(Gtk.Box):
                 vbox.append(btn)
 
         popover.set_child(vbox)
-        popover.popup()
+        # Only popup if we're inside a toplevel window; otherwise just build the
+        # popover (sufficient for testing the widget structure).
+        if self.get_root() is not None:
+            popover.popup()
 
     def _on_suggestion_clicked(self, btn: Gtk.Button, suggestion: str, callback: callable, popover: Gtk.Popover):
         popover.popdown()
