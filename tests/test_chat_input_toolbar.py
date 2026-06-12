@@ -162,6 +162,58 @@ class TestCallbacks:
         toolbar.set_on_buffer_changed(cb)
         assert toolbar._on_buffer_changed is cb
 
+    def test_set_on_find_next(self):
+        """set_on_find_next stores callback."""
+        toolbar = ChatInputToolbar()
+        cb = MagicMock()
+        toolbar.set_on_find_next(cb)
+        assert toolbar._on_find_next is cb
+
+    def test_set_on_find_prev(self):
+        """set_on_find_prev stores callback."""
+        toolbar = ChatInputToolbar()
+        cb = MagicMock()
+        toolbar.set_on_find_prev(cb)
+        assert toolbar._on_find_prev is cb
+
+    def test_on_find_next_clicked_fires_navigation_callback(self):
+        """Next button / Enter key fires set_on_find_next when set."""
+        toolbar = ChatInputToolbar()
+        fired = []
+        toolbar.set_on_find_next(lambda: fired.append("next"))
+        toolbar._on_find_next_clicked()
+        assert fired == ["next"]
+
+    def test_on_find_prev_clicked_fires_callback(self):
+        """Prev button fires set_on_find_prev when set."""
+        toolbar = ChatInputToolbar()
+        fired = []
+        toolbar.set_on_find_prev(lambda: fired.append("prev"))
+        toolbar._on_find_prev_clicked()
+        assert fired == ["prev"]
+
+    def test_on_find_next_fallback_to_search_callback(self):
+        """When set_on_find_next is NOT set, Enter fires set_on_find with current text."""
+        toolbar = ChatInputToolbar()
+        search_calls = []
+        toolbar.set_on_find(lambda text: search_calls.append(text))
+        toolbar._find_entry.set_text("test query")
+        toolbar._on_find_next_clicked()
+        # Falls back to re-running search with current text
+        assert search_calls == ["test query"]
+
+    def test_on_find_prev_no_callback_no_crash(self):
+        """Prev button with no callback set does not crash."""
+        toolbar = ChatInputToolbar()
+        toolbar._on_find_prev_clicked()  # no set_on_find_prev call
+        assert True  # no crash
+
+    def test_on_find_next_no_callback_no_crash(self):
+        """Next button with no set_on_find_next or set_on_find does not crash."""
+        toolbar = ChatInputToolbar()
+        toolbar._on_find_next_clicked()  # neither callback set
+        assert True  # no crash
+
 
 # ── Class 3: Public Methods ───────────────────────────────────────
 
@@ -244,6 +296,45 @@ class TestPublicMethods:
         assert "50" in text
         assert "13" in text
 
+    def test_update_match_count_negative_current(self):
+        """update_match_count(-1, 5) → 'No matches' (guards against current < 0)."""
+        toolbar = ChatInputToolbar()
+        toolbar.update_match_count(-1, 5)
+        text = toolbar._match_label.get_text()
+        assert text == "No matches"
+
+    def test_update_match_count_zero_total(self):
+        """update_match_count(0, 0) → 'No matches'."""
+        toolbar = ChatInputToolbar()
+        toolbar.update_match_count(0, 0)
+        text = toolbar._match_label.get_text()
+        assert text == "No matches"
+
+    def test_get_search_text(self):
+        """get_search_text() returns the find bar search entry text."""
+        toolbar = ChatInputToolbar()
+        toolbar._find_entry.set_text("hello world")
+        assert toolbar.get_search_text() == "hello world"
+
+    def test_get_replace_text(self):
+        """get_replace_text() returns the find bar replace entry text."""
+        toolbar = ChatInputToolbar()
+        toolbar._replace_entry.set_text("goodbye")
+        assert toolbar.get_replace_text() == "goodbye"
+
+    def test_update_char_count(self):
+        """update_char_count() updates the char count label in the find bar."""
+        toolbar = ChatInputToolbar()
+        toolbar.update_char_count(1247)
+        text = toolbar._char_count_label.get_label()
+        assert "1,247" in text
+        assert "chars" in text
+
+    def test_get_input_buffer(self):
+        """get_input_buffer() returns None (view does not own the buffer)."""
+        toolbar = ChatInputToolbar()
+        assert toolbar.get_input_buffer() is None
+
 
 # ── Class 4: Edge Cases ──────────────────────────────────────────
 
@@ -309,6 +400,53 @@ class TestEdgeCases:
         assert "set_keynav_wrapper(" not in source, (
             "set_keynav_wrapper is GTK3-only and must not be called in GTK4 views"
         )
+
+    def test_show_suggestions_menu_with_suggestions(self):
+        """show_suggestions_menu() builds a popover with suggestion buttons."""
+        toolbar = ChatInputToolbar()
+        calls = []
+        toolbar.show_suggestions_menu(
+            ["world", "weird", "wired"],
+            lambda s: calls.append(s),
+        )
+        # Popover is created and popup is called (we can't easily inspect
+        # the popover's children in headless, but we verify no crash)
+        assert calls == []
+
+    def test_show_suggestions_menu_empty_list(self):
+        """show_suggestions_menu() with no suggestions shows 'no suggestions' label."""
+        toolbar = ChatInputToolbar()
+        # Call with empty list — should show "(no suggestions)" label without crashing
+        toolbar.show_suggestions_menu([], lambda s: None)
+        assert True  # no crash
+
+    def test_show_suggestions_menu_callback_fires(self):
+        """Clicking a suggestion button fires the callback with the suggestion text."""
+        toolbar = ChatInputToolbar()
+        calls = []
+        toolbar.show_suggestions_menu(
+            ["world"],
+            lambda s: calls.append(s),
+        )
+        # Manually simulate what the button click handler does:
+        # _on_suggestion_clicked(btn, suggestion, callback, popover)
+        # We can't easily click the actual GTK button in headless, but we can
+        # call the internal handler directly to verify it works
+        fake_btn = MagicMock()
+        fake_popover = MagicMock()
+        toolbar._on_suggestion_clicked(fake_btn, "world", lambda s: calls.append(s), fake_popover)
+        assert calls == ["world"]
+        fake_popover.popdown.assert_called_once()
+
+    def test_get_search_text_empty(self):
+        """get_search_text() returns '' when entry is empty."""
+        toolbar = ChatInputToolbar()
+        assert toolbar.get_search_text() == ""
+
+    def test_get_replace_text_empty(self):
+        """get_replace_text() returns '' when entry is empty."""
+        toolbar = ChatInputToolbar()
+        assert toolbar.get_replace_text() == ""
 
 
 # ── Helpers ──────────────────────────────────────────────────────
