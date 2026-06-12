@@ -62,6 +62,8 @@ class ChatInputToolbar(Gtk.Box):
         self._on_open_file: callable | None = None
         self._on_open_prompt: callable | None = None
         self._on_find: callable | None = None
+        self._on_find_next: callable | None = None
+        self._on_find_prev: callable | None = None
         self._on_replace: callable | None = None
         self._on_spell_toggle: callable | None = None
         self._on_buffer_changed: callable | None = None
@@ -152,6 +154,12 @@ class ChatInputToolbar(Gtk.Box):
 
     def set_on_find(self, cb: callable) -> None:
         self._on_find = cb
+
+    def set_on_find_next(self, cb: callable) -> None:
+        self._on_find_next = cb
+
+    def set_on_find_prev(self, cb: callable) -> None:
+        self._on_find_prev = cb
 
     def set_on_replace(self, cb: callable) -> None:
         self._on_replace = cb
