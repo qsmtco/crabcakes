@@ -103,21 +103,34 @@ The actual code uses `_control_bar` (chosen by Phase 4). The spec's rename was n
 
 ## What went well
 
-- **Phased breakdown of 7 phases worked:** the integration-rule (small, focused, independently verifiable phases) held across 5 files of changes.
+- **Phased breakdown of 8 phases worked:** the integration-rule (small, focused, independently verifiable phases) held across 9 files of changes.
 - **Spec-before-phase discipline held:** no out-of-spec edits snuck in.
-- **Targeted tests all pass:** 115/115 on the toolbar-related test files. The 10 pre-existing failures in the full suite are documented in `BUG-3-INVESTIGATION-REPORT.md` and unrelated.
+- **Parallel verifiers (Qaster + QTR) caught different issues:** Qaster caught the line drift on `activity_handler.py:482→603` and the Coder's mis-attribution of `chat_control_bar.py` deletion. QTR caught the dead `set_on_buffer_changed` on the toolbar view and the latent TypeError trap. Together the two verifiers found 7 distinct issues across 8 phases; either one alone would have missed 2-3.
+- **Targeted tests all pass:** 116/116 on the toolbar-related test files (115 prior + 1 new Phase 8 regression test). The 10 pre-existing failures in the full suite are documented in `BUG-3-INVESTIGATION-REPORT.md` and unrelated.
 - **No `G_DEBUG=fatal-criticals` crashes on launch** — the toolbar code is sound.
+- **The bug was fixed in 1 attempt** (Phase 8) after the Captain reported the symptom. No rework loop. This is a good outcome: ~90 lines of code + 1 regression test + 1 architectural decision (handler doesn't get view ref) closed a bug that had been latent for 5 phases.
 
 ## Audit trail
 
-| Phase | Spec | Code change | Verification | Coder claim | Auditor verdict |
-|---|---|---|---|---|---|
-| 6 | TOOLBAR-PHASE-6-INSTRUCTIONS.md | 3 files, 76 deletions | All 9 checks pass | "10 lines removed from main_content.py" (off by 3) | ACCEPTED (substance) |
-| 7 | TOOLBAR-PHASE-7-INSTRUCTIONS.md | 2 files, 47 net additions | All 6 checks pass | "4 stale doc references" + "duplicate CSS class" (false positive) | ACCEPTED (substance) |
+| Phase | Spec | Code change | Verification | Builder claim | Auditor verdict | Builder |
+|---|---|---|---|---|---|---|
+| 6 | TOOLBAR-PHASE-6-INSTRUCTIONS.md | 3 files, 76 deletions | All 9 checks pass | "10 lines removed from main_content.py" (off by 3) | ACCEPTED (substance) | Coder |
+| 7 | TOOLBAR-PHASE-7-INSTRUCTIONS.md | 2 files, 47 net additions | All 6 checks pass | "4 stale doc references" + "duplicate CSS class" (false positive) | ACCEPTED (substance) | Coder |
+| 8 | TOOLBAR-PHASE-8-INSTRUCTIONS.md | 4 files, 90 net additions | All 11 checks pass; **behavioral repro confirms bug fix** | "11 words" (correct count, not 9 — Qaster miscounted in initial assertion) | ACCEPTED (substance); QTR also caught the dead `set_on_buffer_changed` on the toolbar view | QTR |
 
-## Commits ahead of `origin/main` (11 total, post-push state will be)
+## Lessons learned (added by Phase 8)
+
+1. **Helper tests are not enough.** The Phase 8 bug existed for 5 phases because the unit tests for `get_word_count()` and `update_word_count()` passed individually. The new `TestPhase8WordCountLabel` test wires all three (buffer + handler + view) together — a true integration test. **Every new feature that involves signals/callbacks needs at least one test that exercises the actual signal emission, not just the leaf methods.**
+2. **Setter methods need a corresponding emitter.** The misnomer `set_on_buffer_changed` on the toolbar view stored a callback that nothing ever called. A `set_on_X(cb)` API should always be paired with a documented "and the cb is called when Y" — if no such Y exists, the setter is dead code with a misleading name. Future code review should flag this.
+3. **"QTR does the fix, Qaster does the audit" works.** QTR's implementation took 1 attempt, no rework. Qaster's audit caught a wrong word count in the initial assertion (corrected on re-run). QTR's related-bug scan caught a latent TypeError that Qaster had not flagged in the original plan. The two verifiers find different issues. The collaboration model is sound.
+4. **The bug-fix phase pattern (Phase 8) is a useful template.** For a small, well-scoped bug: 1 spec file, 3 source files, 1 regression test, 1 attempt, no rework. About 30 minutes end-to-end. The pattern should be reused for similar single-bug fixes.
+
+## Commits ahead of `origin/main` (post-push state will include Phase 8)
 
 ```
+aa17582 fix(toolbar): wire input buffer 'changed' signal to handler + word count (Phase 8)  ← real
+[pending] post-mortem: Chat Input Toolbar phases 1-8 (this update)  ← real
+f1366ce post-mortem: Chat Input Toolbar phases 1-7 (...updating this post-mortem in same push)  ← real
 7b1ed3b Accept: Modified .pytest_cache/v/cache/nodeids        ← noise
 f658369 Accept: Modified docs/ARCHITECTURE.md                  ← real
 6034a27 Accept: Modified docs/ARCHITECTURE.md                  ← real
@@ -131,4 +144,4 @@ df92af6 Accept: Modified ui/styles.py                          ← real
 cb4a5cb Accept: Deleted ui/handlers/__pycache__/...pyc.XXXX   ← noise
 ```
 
-Plus the post-mortem commit to be added in this push.
+For Phase 8 specifically, **no cache commits accumulated** because QTR did the work directly, not via the Coder.
