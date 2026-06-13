@@ -18,6 +18,8 @@ After auditing all 28 proposal files in `docs/proposals/`, we have:
 | SUPERSEDED | 1 | Abandoned in favor of a different approach |
 | **Total open** | **18** | PARTIAL + PENDING = 14 + 4 |
 
+*Update 2026-06-12: Tier 1.1 (the `if not final_text: return` bug claim) was investigated and found to be a false alarm. `PROPOSAL-smarter-chat-ux.md` is now `DONE`. The `Total open` count above is now 17 (was 18).*
+
 This document ranks the 18 open items by **leverage** (signal × shipability ÷ cost), not by chronology or by how long the proposal has been sitting open. The goal is to convert as many PARTIALs to DONE/REJECTED/DEFERRED as cheaply as possible, leaving only the items that genuinely need a dedicated sprint.
 
 **How to use this file:** when picking up a new piece of work, start at Tier 1.1 and work down. When you finish a tier, update the "Status" column. When a tier is exhausted, promote the next tier.
@@ -28,14 +30,12 @@ This document ranks the 18 open items by **leverage** (signal × shipability ÷ 
 
 These are the highest-leverage items. They were discovered during the audit and the design work is already done. They are all bug fixes or pure glue, with no design decisions remaining.
 
-### 1.1 — `PROPOSAL-smarter-chat-ux.md` — fix `if not final_text: return` bug
+### 1.1 — ~~`PROPOSAL-smarter-chat-ux.md` — fix `if not final_text: return` bug~~ RESOLVED (false alarm)
 
-- **Location:** `ui/handlers/chat_handler.py:568`
-- **What:** Phase 1 of SPEC-smarter-chat-ux was supposed to fix the empty-final event bug, but the early-return on `if not final_text: return` is still there. When the gateway sends a `chat` `final` event with no `message` field, the response is silently dropped.
-- **Fix:** render a fallback bubble from buffered `agent` event text (the `_assistant_text_buffer` already exists for this — see `chat_handler.py:60-68`).
-- **Estimated effort:** ~30 lines + 1 regression test
-- **Why first:** latent bug in shipped code, all infrastructure is in place, closes an audit-driven finding
-- **Status:** [ ] TODO
+- **Original claim:** `ui/handlers/chat_handler.py:568` `if not final_text: return` is a latent bug — empty `chat final` events get silently dropped.
+- **Audit result (2026-06-12):** **NOT A BUG.** The early-return is intentional and is one half of a two-part recovery flow. When `chat final` arrives empty, the lifecycle-end event that arrives next fires `_handle_lifecycle_completed` (wired in `ui/handlers/connection_sync_handler.py:168-169`), which renders a fallback bubble from `_assistant_text_buffer` (populated at `activity_handler.py:285`). A `_chat_final_rendered` guard prevents double-render. 5 tests pass (`tests/test_missing_message_fix.py`, `tests/test_chat_handler.py:380`).
+- **Lesson learned:** grep-only audits miss callback wiring across handlers. The setter `set_on_lifecycle_completed` exists in `activity_handler.py:134`, but the *wire-up* is in `connection_sync_handler.py:168-169`, not `window.py` — the place I originally looked.
+- **Status:** [x] DONE (verified 2026-06-12 — audit finding invalidated, not a coding task)
 
 ### 1.2 — `PROPOSAL-feed-card-wiring.md` — wire `review_handler.py` to feed
 
@@ -178,7 +178,7 @@ These items have real design work and need dedicated sprints. They should not be
 
 ## Summary
 
-**Tier 1 (3 items, ~1.5 days total):** fixes that close audit-driven findings and latent bugs in shipped code.
+**Tier 1 (3 items, ~1.5 days total):** fixes that close audit-driven findings and latent bugs in shipped code. (Update 2026-06-12: Tier 1.1 was investigated and confirmed to be a false alarm — the alleged bug is actually a working two-path recovery flow. Tier 1 is now 2 items, ~1 day total.)
 
 **Tier 2 (3 items, ~2 hours total):** paperwork — Go/No-Go decisions, status promotions, deferral notes. Zero code.
 
