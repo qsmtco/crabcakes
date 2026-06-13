@@ -5,6 +5,8 @@
 **Status:** Draft — awaiting Captain JAQx review before spec creation
 **Related:** SPEC-LOCAL-AGENT-NO-RESPONSE-FIX (Phases 1–4), `docs/ARCHITECTURE.md`
 
+> **Status (verified 2026-06-12):** ✅ **DONE** — Spec written (`docs/specs/SPEC-LLM-PROVIDER-SETTINGS-DIALOGUE.md`, 52K, 2026-06-07) and implementation shipped. Key files: `ui/views/settings_dialog.py` (17K), `ui/wiring.py` (3.6K — the wiring helpers for SettingsHandler ↔ Toolbar ↔ SettingsDialog), `utils/providers_store.py` (canonical provider storage). `_PROVIDERS` / `_PROVIDER_MODELS` hardcoded dicts in `agent_builder.py` were removed — providers now load from `~/.config/crabcakes/providers.yaml` (per `agent/runtime.py:1353-1359` "providers.yaml is the canonical store for API keys"). The two-layer key confusion was resolved by the spec's app-level provider config model.
+
 ---
 
 ## 0. Problem Statement

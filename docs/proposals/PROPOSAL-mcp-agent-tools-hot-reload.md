@@ -1,17 +1,6 @@
 # PROPOSAL: Hot-Reload MCP Server Config in Edit Agent Dialog
 
-## Problem
-
-Adding or removing an MCP server from a special agent's config requires a full app restart. The user must:
-1. Quit CrabCakes
-2. Edit `~/.config/crabcakes/agents/{agent}.yaml` manually
-3. Restart the app
-
-This breaks the flow and makes MCP integration feel fragile.
-
-## Solution
-
-Add an **MCP Servers section** to the Edit Agent dialog (`ui/views/agent_builder.py`). The runtime hot-reloads the MCP config on the next agent message — no restart needed.
+> **Status (verified 2026-06-12):** ⚠️ **PARTIALLY DONE** — The **MCP Servers section** in the Edit Agent dialog is shipped. See `ui/views/agent_builder.py:123-124` (`mcp_section = self._build_mcp_section()`) and `agent_builder.py:534` (`def _build_mcp_section(self)`). The visual UI is in place. However, the **hot-reload on next message** (no restart needed) part is **not verified** — the proposal's "no restart" claim requires confirming that MCP server changes take effect on the next agent invocation without a restart. The MCP client (`utils/mcp_client.py`) supports runtime connect/disconnect (per `agent/runtime.py:955-959` "BUG #22: Clean up existing MCP connections before replacing conversation"), which suggests hot-reload is at least partially in place. **Marked PARTIAL pending confirmation that the "no restart" claim holds end-to-end.**
 
 ---
 

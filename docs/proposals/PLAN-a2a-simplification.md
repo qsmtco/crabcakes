@@ -5,6 +5,8 @@
 **Status:** Pending approval
 **Context:** A2A auto-detection of @mentions causes infinite relay loops with gateway agents
 
+> **Status (verified 2026-06-12):** ✅ **DONE** — Implemented as the command-based A2A design. `ui/handlers/agent_command_handler.py` (25K) parses `` `ask @AgentName ...` `` from agent response text and routes through `CommandHandler.process_input()`. The proposed `PLAN-a2a-simplification.md` design is now the active A2A model: explicit commands instead of auto-relay on @mentions. The old "intent crabcard" + "private thread" + "convergence detector" pattern from `BUILD-PLAN-agent-to-agent-comms.md` was abandoned in favor of this simpler design.
+
 ---
 
 ## 0. Problem Statement

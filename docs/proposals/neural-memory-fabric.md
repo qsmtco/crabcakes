@@ -1,5 +1,7 @@
 # The Neural Memory Fabric: An Extreme Proposal for CrabCakes
 
+> **Status (verified 2026-06-12):** ❌ **PENDING / NOT STARTED** — This is an "extreme" speculative proposal. No code in `agent/` or `utils/` implements a knowledge graph fabric. The standard `@modelcontextprotocol/server-memory` MCP server is wired (per the graph-enhanced-self-improvement proposal) but this "neural memory fabric" with temporal resonance, ghost nodes, etc. is a research-level proposal that has no implementation. **Filed as PENDING; no engineering work scheduled.**
+
 ## What's Wrong with Regular Memory
 
 Every other MCP memory implementation stores entities and relations in a flat graph. It's a filing cabinet. Literally a database with edges. The research I found — Cognee, Zep Graphiti, Neo4j — they're all variations on this theme: **static knowledge, smart retrieval**.

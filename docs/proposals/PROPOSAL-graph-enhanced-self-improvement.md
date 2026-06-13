@@ -5,6 +5,8 @@
 **Status:** Draft — Awaiting approval
 **Repository:** github.com/qsmtco/crabcakes
 
+> **Status (verified 2026-06-12):** ⚠️ **PARTIALLY DONE** — The MCP memory server is wired (verified in `agent/runtime.py:1079-1082` — `mcp_servers` parameter and `get_tools_for_api` are used). Coder agents can create entities and relations via the MCP tool merge. However, the **structured schema and layer wiring** described in this proposal (typed/weighted/temporal nodes for bugs, rules, audits, code changes) is **not** built. There is no `agent/knowledge_graph.py` or `utils/memory_graph.py`. The knowledge graph is available as a tool but is not the active storage layer for the self-improvement system.
+
 ---
 
 ## Executive Summary

@@ -2,7 +2,9 @@
 
 **Date:** 2026-05-28  
 **Author:** Qaster  
-**Status:** Proposal — pending Captain approval  
+**Status:** Proposal — pending Captain approval
+
+> **Status (verified 2026-06-12):** ✅ **DONE** — The migration from backtick to slash is **complete**. `utils/config.py:71` sets `COMMAND_PREFIX = "/"`. `ui/handlers/command_handler.py:69` reads `self._prefix = COMMAND_PREFIX` (from config). `command_handler.py:173` says "Default: slash" in the `set_prefix()` docstring. All command prompt files use `/` syntax (e.g. `prompts/system/crabcakes-commands.md:22` shows `/ask`, `/a`, `/delegate` aliases). The proposal's estimated effort ("~2 hours") was accurate. **Marked DONE; slash is the active command prefix.**  
 **Priority:** Medium  
 **Effort:** ~2 hours (code + prompts + tests)
 

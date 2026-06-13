@@ -7,6 +7,8 @@
 **Phase:** 6.2 (builds on Phase 6.1 — A2A simplification)
 **Related:** `docs/ARCHITECTURE.md` §3.14, §3.21a, §3.21d, §4.5, §4.11, §5, §8.6
 
+> **Status (verified 2026-06-12):** ✅ **DONE** — This spec was implemented as Phase 6.2 and shipped. See `ui/handlers/agent_command_handler.py` (25K, dated 2026-06-10). The handler parses backtick commands from agent response text (`on_agent_response` callback) and routes them through `CommandHandler.process_input()`. The "asking agent never sees the answer" problem identified in this spec was solved via `pending-ask` tracking (answers are routed back to the asking agent's session via the relay mechanism at `ui/window.py:496`). See also `docs/proposals/AGENT_COMMAND_HOOK_PROPOSAL.md` (proposal-level ancestor) and `PLAN-a2a-simplification.md` (Phase 6.1 ancestor).
+
 ---
 
 ## 0. Problem Statement

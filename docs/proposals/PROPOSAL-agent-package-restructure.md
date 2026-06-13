@@ -5,6 +5,8 @@
 **Status:** Draft — awaiting review
 **Related:** `docs/ARCHITECTURE.md`, PHASE-11 post-mortem, PHASE-FOLLOWUP-2 (validate_agent_def provider mismatch)
 
+> **Status (verified 2026-06-12):** ❌ **PENDING / NOT STARTED** — The `agent/` package remains a 7-file god package (376K total). `agent/runtime.py` is **1,627 lines** (worse than the proposal's "1,575 lines" baseline). The proposed split into `llm/`, `domain/`, `policies/` packages was not done. The validation mismatch bug (PHASE-FOLLOWUP-2) was likely fixed by other means (the proposal notes it's related to Phase 11) but the structural cleanup did not happen. **Marked PENDING; would be a substantial refactor.**
+
 ---
 
 ## 0. Problem Statement
