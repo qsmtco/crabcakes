@@ -30,6 +30,11 @@ class MainContent(Gtk.Box):
         return self._user_input
 
     @property
+    def toolbar(self):
+        """Public accessor for the input toolbar view (find/replace, spell check, etc.)."""
+        return self._toolbar
+
+    @property
     def send_button(self):
         """Expose the send button for external signal wiring."""
         return self._send_button
@@ -69,13 +74,13 @@ class MainContent(Gtk.Box):
         # Unread tab tracking — session_keys with unseen messages
         self._unread_tabs: set[str] = set()
 
-        self._control_bar = ChatInputToolbar()
+        self._toolbar = ChatInputToolbar()
 
         # Top box minimum height — prevents it collapsing when notebook is empty
         top_box.set_size_request(-1, 120)
 
         top_box.append(self._chat_notebook)
-        top_box.append(self._control_bar)
+        top_box.append(self._toolbar)
 
         # ── Project Settings Bar — floating OVER the chat scroll area only ────
         # Placed as overlay on the notebook's chat area (not the tab bar).

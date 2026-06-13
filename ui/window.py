@@ -276,7 +276,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # Wire input toolbar callbacks to handler — verified against actual setter names
         # NOTE: uses 'input_toolbar' to avoid shadowing the app-level 'toolbar' variable
-        input_toolbar = self._main_content._control_bar
+        input_toolbar = self._main_content.toolbar
         input_toolbar.set_on_spell_toggle(self._input_toolbar_handler.toggle_spell_check)
         input_toolbar.set_on_open_file(self._input_toolbar_handler.load_file)
         input_toolbar.set_on_save_file(self._input_toolbar_handler.save_to_file)
@@ -295,7 +295,7 @@ class MainWindow(Gtk.ApplicationWindow):
         def _on_input_buffer_changed(_buf):
             self._input_toolbar_handler.on_buffer_changed()
             words, chars, tokens = self._input_toolbar_handler.compute_count()
-            self._main_content._control_bar.update_word_count(words, chars, tokens)
+            self._main_content.toolbar.update_word_count(words, chars, tokens)
 
         self._main_content.set_on_buffer_changed(_on_input_buffer_changed)
 
