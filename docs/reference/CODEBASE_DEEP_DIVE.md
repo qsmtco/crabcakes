@@ -1,5 +1,7 @@
 # Crabcakes Codebase Deep Dive
 
+> **Status: PARTIALLY STALE (2026-06-12)** — The `ChatControlBar` row in the file tree (`ui/views/ChatControlBar`) was replaced by `ChatInputToolbar` in Phases 1-9 (2026-06-12). All other subsystems described below are still accurate as of 2026-05-09. See `docs/post-mortems/2026-06-12-CHAT-INPUT-TOOLBAR-PHASES-1-7-POST-MORTEM.md` for the migration summary.
+
 > **Status: ACTIVE REFERENCE** — All described subsystems verified present in codebase as of 2026-05-09. Accurate companion to ARCHITECTURE.md.
 
 > **Purpose:** Comprehensive reference for understanding Crabcakes architecture, key subsystems, and what makes it genuinely novel as a "project development environment" vs the IDE+chatbot paradigm.

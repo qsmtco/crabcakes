@@ -72,6 +72,25 @@ Code without a call site is dead code. After writing any function:
 
 **Why:** LLMs write functions that are architecturally correct in isolation but never connected to anything. The feature appears "implemented" but doesn't work.
 
+### Rule 5a: Setter-Emitter Pairing (for callback setters)
+
+For any `set_on_X(cb)` / `set_X_listener(cb)` / `register_handler(name, cb)` pattern, the callback you store MUST be invoked from somewhere in the same class. Specifically:
+
+1. **Document the trigger** — in the setter's docstring, name the exact signal/event/state-change that causes `cb` to be invoked. If you can't name it, the setter is dead.
+2. **Verify the trigger exists** — `grep` for the trigger. If the trigger signal is connected to a handler that doesn't call `self._on_X()`, the wiring is broken.
+3. **Storage-only setters are dead code.** A setter that stores `self._on_X = cb` but is never invoked (either directly or via a signal handler in the same class) is a latent TypeError trap: a future caller may wire it to a callback that takes arguments the missing trigger never supplied.
+
+**Audit command (run before submitting):**
+```bash
+# Find the setter
+grep -n "def set_on_X" path/to/file.py
+# Find the storage
+grep -n "self._on_X" path/to/file.py
+# If storage appears but no invocation does, the setter is dead
+```
+
+**Why:** The `set_on_buffer_changed` setter on `ChatInputToolbar` (Phase 9 removal) was a 5-line storage-only callback: it stored `self._on_buffer_changed = cb`, the only invocation was inside `_on_find_entry_changed` calling it with the **wrong signature** (no args, but the new Phase 8 callback required a `buf` arg). If a future developer re-wired the setter, the find bar's typeahead would have crashed with `TypeError: missing 1 required positional argument: 'buf'`. The setter looked live (was connected, was invoked) but the invocation site was wired to the wrong signal. Always verify the **trigger** matches the setter's documented contract.
+
 ### Rule 6: Validate All External Input
 
 Every function that accepts data from outside — config files, user input, API responses, arguments from other modules — must validate before using.
@@ -217,6 +236,7 @@ COMPLETENESS:
 - If any item is NOT DONE, you are NOT done — do not report completion
 - For removals: include `grep -c 'pattern' file` output showing 0 matches
 - For additions: include the line number where the new code lives
+- **When you delete code, you MUST also delete its tests.** A test for a deleted method (e.g., `test_set_on_X` when `set_on_X` is removed) will fail at collection or runtime with `AttributeError`. Removing the test is part of the deletion, not a separate task. Include the test removal in the COMPLETENESS checklist with the same evidence requirement (`grep -c 'test_name' tests/...` showing 0).
 - **Format is mandatory.** A response without the literal `**COMPLETENESS:** [x]` block is a missing deliverable, even if the work is substantively complete. The supervisor uses this block as a grep-able audit signal. A skipped checklist is a red flag that other steps may also have been skipped.
 
 **Why:** The most common builder failure is completing 2 of 6 edits and reporting "done." This checklist forces explicit accountability for every item in the delegation. If you can't list it, you can't claim it's done.
@@ -233,9 +253,18 @@ After implementing the requested fix, scan the function you modified for OTHER i
 2. **Same-provider bugs in parallel adapters:** if you fixed MiniMax's body-level error handling, scan `_call_openai`, `_call_anthropic`, and their streaming variants for the same class of bug. A provider-quirk fix that touches only one provider leaves the others vulnerable to the same root cause.
 3. **Same-call-site bugs in the same file:** if you fixed `append_event` to update a known-set before the filter check, look at every other call site in the same file that updates a known-set after a filter check. The pattern is the bug, not the specific function.
 
+**Context-reading requirement (mandatory):** Grep-only scans produce false positives. Before flagging any "duplicate" or "leftover" pattern, read at least 3 lines of surrounding context (use `sed -n 'A,Bp' file` to get the surrounding block). Common false-positive patterns to verify before flagging:
+
+- **CSS base + `:hover` / `:active` / `:focus` variants** — the "duplicate" class definitions are state-specific overrides, not duplicates. Verify by checking the selector and properties.
+- **Test fixtures with similar setup blocks** — the "duplicate" setup is parameterized across test cases, not duplicated. Verify by checking if the test methods take different parameters.
+- **Dataclass field definitions + `__post_init__` validators** — the "duplicate" field is the same field at different lifecycle stages. Verify by reading the field type and validator.
+- **Setter + property + alias** — three definitions of the same name may be one logical API surface (read-only property + write-only setter + convenience alias). Verify by checking the usage pattern.
+
+If after reading 3+ lines of context the duplicate is still real, then flag it. If the context shows it's a base+variant or parameterization, do NOT flag it.
+
 **Reporting rule:** Do NOT silently fix related bugs. Add them to the COMPLETENESS checklist as `Related issue found — not fixed in this phase: [description]`. The supervisor decides whether to add a new phase for them. This keeps the audit trail clean and prevents scope creep.
 
-**Why:** This rule is the difference between a builder who fixes the bug and a builder who leaves the codebase better than they found it. Most "tech debt" accumulates because adjacent bugs are noticed but not flagged.
+**Why:** This rule is the difference between a builder who fixes the bug and a builder who leaves the codebase better than they found it. Most "tech debt" accumulates because adjacent bugs are noticed but not flagged. The context-reading sub-rule prevents a different failure mode: a builder who flags noise and burns the supervisor's attention on false positives.
 
 ### Step 6.7: Implementation-Choice Rationale
 
@@ -251,6 +280,25 @@ When the spec offers multiple valid approaches (eager vs lazy, build-once vs reb
 ```
 
 **Why:** The supervisor can verify your choice against the spec, and the rationale lives in the audit trail. If the choice turns out to be wrong, the post-mortem has the reasoning captured. Without this, a future reader sees only the diff and has to re-derive the trade-off.
+
+---
+
+### Step 6.8: Spec Drift Verification
+
+Specs that hardcode line numbers (e.g., "edit `activity_handler.py:482`") drift as the file grows. Before trusting any line number in a spec:
+
+1. **Read the surrounding context, not just the line number.** Use `sed -n 'N-3,N+3p' file` to see 3 lines before and after the cited line.
+2. **Verify the function/identifier at that line still matches the spec's intent.** If the spec says "remove the call to `update_control_bar` at line 482" and `grep -n "def update_control_bar" file.py` shows the function moved to line 603, use the function name as the anchor, not the line number.
+3. **If a line number is off by more than 10 lines, the spec is stale.** Flag this as a "Spec drift" finding in the COMPLETENESS checklist so the spec author can update it in a follow-up.
+
+**Why:** A spec that says "edit line 482" when the function is at line 603 is a landmine. The builder either blindly edits line 482 (wrong) or spends 5 minutes finding the real location (correct but undocumented). By flagging drift explicitly, the spec author learns to anchor edits to identifiers, not line numbers.
+
+**Common drift sources:**
+- File growth from prior phases adding code above the cited line
+- Refactors that moved functions but didn't update spec line numbers
+- Specs that were correct at draft time but went stale during the implementation sprint
+
+The spec's identifiers (function names, class names, attribute names) are the source of truth. Line numbers are advisory.
 
 ---
 

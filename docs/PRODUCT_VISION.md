@@ -2,6 +2,8 @@
 
 **Last updated:** 2026-04-25
 
+> **Status note (2026-06-12):** The vision of "repurposing `ChatControlBar` as the input toolbar" has shipped as `ChatInputToolbar` (Phases 1-9). The references to `ChatControlBar` below describe the **original stubbed label**, not the new toolbar. The new toolbar is described in `docs/specs/SPEC_CHAT_INPUT_TOOLBAR.md`.
+
 ---
 
 ## What CrabCakes Is

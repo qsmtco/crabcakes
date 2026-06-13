@@ -2,7 +2,9 @@
 
 **Date:** 2026-06-01
 **Author:** QTR (Kage-7)
-**Status:** Proposal — pending Captain approval
+**Status:** ~~Proposal — pending Captain approval~~ **Pending post-toolbar-migration redesign.** References to `ChatControlBar` describe the stubbed label that was replaced by `ChatInputToolbar`. The "add a toggle in `ChatControlBar`" plan needs re-targeting to the new toolbar (or a different UX surface) — see `docs/specs/SPEC_CHAT_INPUT_TOOLBAR.md` for the current toolbar layout.
+
+> **Historical note (2026-06-12):** Predates the `ChatControlBar` → `ChatInputToolbar` migration. The proposed "add toggle in ChatControlBar" step is now obsolete; the toggle would need to be added to `ChatInputToolbar` instead.
 **Priority:** High
 **Effort:** Tier 1 (6-7 days) for full impact, Tier 2 (1-2 weeks) for polish
 

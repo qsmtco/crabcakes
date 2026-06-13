@@ -3,6 +3,8 @@
 **Date:** 2026-06-11
 **Auditor:** Qaster (read-only, automated)
 **Scope:** `docs/ARCHITECTURE.md` (3,293 lines) vs full codebase
+
+> **Historical note (2026-06-12):** This audit predates the `ChatControlBar` → `ChatInputToolbar` migration (Phases 1-9). References to `ChatControlBar` / `chat_control_bar.py` refer to the stubbed label that was removed; the active module is `ui/views/chat_input_toolbar.py`. The audit's analysis of *why* the bar was dead (no callback wiring) is still accurate — that's what Phases 1-9 fixed.
 **Codebase path:** `/home/q/projects/crabcakes`
 **Spec version:** main @ 98d0cb4
 

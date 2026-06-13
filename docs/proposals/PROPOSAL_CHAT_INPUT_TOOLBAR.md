@@ -2,7 +2,9 @@
 
 **Date:** 2026-05-28
 **Author:** Qaster
-**Status:** Proposal — pending Captain approval
+**Status:** ~~Proposal — pending Captain approval~~ **APPROVED & SHIPPED** (Phases 1-9, 2026-06-12). See `docs/post-mortems/2026-06-12-CHAT-INPUT-TOOLBAR-PHASES-1-7-POST-MORTEM.md`.
+
+> **Historical note (2026-06-12):** The references to `ChatControlBar` / `chat_control_bar.py` in this proposal describe the stubbed label that was replaced by `ChatInputToolbar`. The proposal's diagnosis (dead bar, no wiring) and the planned replacement (`ChatInputToolbar`) are accurate. The actual implementation followed the proposal's spec with minor adjustments documented in `docs/specs/SPEC_CHAT_INPUT_TOOLBAR.md`.
 **Priority:** Medium
 **Effort:** ~6-8 hours
 

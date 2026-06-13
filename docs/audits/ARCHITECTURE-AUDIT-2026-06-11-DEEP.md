@@ -3,6 +3,8 @@
 **Date:** 2026-06-11
 **Auditor:** Qaster (read-only)
 **Parent audit:** `ARCHITECTURE-AUDIT-2026-06-11.md`
+
+> **Historical note (2026-06-12):** Predates the `ChatControlBar` → `ChatInputToolbar` migration (Phases 1-9). The `chat_control_bar.py` row in the file inventory refers to the stubbed `Gtk.Label` that was removed. See `ui/views/chat_input_toolbar.py` for the current module.
 **Scope:** Fill the 4 gaps flagged in the initial audit
 
 ---

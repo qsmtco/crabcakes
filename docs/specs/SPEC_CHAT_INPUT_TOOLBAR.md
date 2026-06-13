@@ -582,7 +582,8 @@ The char count badge in the find bar shows the total character count of the inpu
     def set_on_find(self, cb): self._on_find = cb
     def set_on_replace(self, cb): self._on_replace = cb
     def set_on_spell_toggle(self, cb): self._on_spell_toggle = cb
-    def set_on_buffer_changed(self, cb): self._on_buffer_changed = cb
+    # NOTE: set_on_buffer_changed was removed in Phase 9 (dead setter trap).
+    # Buffer-changed wiring now lives on MainContent (see §2.4).
 ```
 
 **View methods (called by handler or window):**
