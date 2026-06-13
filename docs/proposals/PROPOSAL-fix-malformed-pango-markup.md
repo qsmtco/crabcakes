@@ -4,7 +4,8 @@
 **Author:** Qaster
 **Status:** ✅ Fully implemented — commit `91813ab`
 
-> **Status (verified 2026-06-12):** ✅ **DONE** — Confirmed in codebase. `utils/markdown.py:53` has `format_markdown()` (converts markdown to Pango Markup); `utils/escaping.py:78` has `html.unescape()` (decodes HTML entities that would corrupt markup). The bug (adjacent bold blocks producing malformed Pango markup) is fixed. The proposal's three modified files (`utils/markdown.py`, `utils/escaping.py`, `ui/styles.py`) all show the fix. Commits `91813ab` (QTR implementation) and a follow-up by Qaster (loop regression fix + CSS removal + HTML entity decoding) are on `origin/main`.
+> **Status (verified 2026-06-12):** ✅ **DONE** — 
+> **status:** `DONE` — sortable tag for `ls | grep STATUS` Confirmed in codebase. `utils/markdown.py:53` has `format_markdown()` (converts markdown to Pango Markup); `utils/escaping.py:78` has `html.unescape()` (decodes HTML entities that would corrupt markup). The bug (adjacent bold blocks producing malformed Pango markup) is fixed. The proposal's three modified files (`utils/markdown.py`, `utils/escaping.py`, `ui/styles.py`) all show the fix. Commits `91813ab` (QTR implementation) and a follow-up by Qaster (loop regression fix + CSS removal + HTML entity decoding) are on `origin/main`.
 **Severity:** High — corrupts all chat display for the session
 **Files modified:** 3 (`utils/markdown.py`, `utils/escaping.py`, `ui/styles.py`)
 **Architecture alignment:** ✅ Full compliance with ARCHITECTURE.md — no violations

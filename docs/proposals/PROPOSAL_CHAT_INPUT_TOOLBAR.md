@@ -6,7 +6,8 @@
 
 > **Historical note (2026-06-12):** The references to `ChatControlBar` / `chat_control_bar.py` in this proposal describe the stubbed label that was replaced by `ChatInputToolbar`. The proposal's diagnosis (dead bar, no wiring) and the planned replacement (`ChatInputToolbar`) are accurate. The actual implementation followed the proposal's spec with minor adjustments documented in `docs/specs/SPEC_CHAT_INPUT_TOOLBAR.md`.
 
-> **Status (verified 2026-06-12):** ✅ **DONE** — Fully shipped. Phases 1–9 merged to `origin/main` on 2026-06-12. All features in the proposal are implemented: find/replace, spell check toggle, word count, char count, token estimate, activity indicator. `ChatInputToolbar` replaced `ChatControlBar`. `ChatControlBar` code removed (Phase 6 cleanup). Dead `set_on_buffer_changed` setter removed (Phase 9). `_control_bar` → `_toolbar` rename + public property (Phase 10). Full post-mortem at `docs/post-mortems/2026-06-12-CHAT-INPUT-TOOLBAR-PHASES-1-7-POST-MORTEM.md`.
+> **Status (verified 2026-06-12):** ✅ **DONE** — 
+> **status:** `DONE` — sortable tag for `ls | grep STATUS` Fully shipped. Phases 1–9 merged to `origin/main` on 2026-06-12. All features in the proposal are implemented: find/replace, spell check toggle, word count, char count, token estimate, activity indicator. `ChatInputToolbar` replaced `ChatControlBar`. `ChatControlBar` code removed (Phase 6 cleanup). Dead `set_on_buffer_changed` setter removed (Phase 9). `_control_bar` → `_toolbar` rename + public property (Phase 10). Full post-mortem at `docs/post-mortems/2026-06-12-CHAT-INPUT-TOOLBAR-PHASES-1-7-POST-MORTEM.md`.
 **Priority:** Medium
 **Effort:** ~6-8 hours
 

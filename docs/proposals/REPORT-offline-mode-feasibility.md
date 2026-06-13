@@ -4,7 +4,8 @@
 **Author:** Qaster  
 **Status:** ✅ Fully implemented — commit `974b121`
 
-> **Status (verified 2026-06-12):** ✅ **DONE** — Confirmed in codebase. The offline mode is implemented: special agents (Coder, Debugger, Crabcakes) are local-only and work without gateway connectivity. The `SPEC-LOCAL-AGENT-NO-RESPONSE-FIX` reference in `PROPOSAL-llm-provider-settings-dialogue.md` confirms the local agent no-response bug was fixed. The `Connect` button in the toolbar manages gateway connectivity; when disconnected, the app still functions with local agents. Commit `974b121` is on `origin/main`.  
+> **Status (verified 2026-06-12):** ✅ **DONE** — 
+> **status:** `DONE` — sortable tag for `ls | grep STATUS` Confirmed in codebase. The offline mode is implemented: special agents (Coder, Debugger, Crabcakes) are local-only and work without gateway connectivity. The `SPEC-LOCAL-AGENT-NO-RESPONSE-FIX` reference in `PROPOSAL-llm-provider-settings-dialogue.md` confirms the local agent no-response bug was fixed. The `Connect` button in the toolbar manages gateway connectivity; when disconnected, the app still functions with local agents. Commit `974b121` is on `origin/main`.  
 **Architecture alignment:** ✅ Full compliance with `ARCHITECTURE.md` — no violations
 
 ---

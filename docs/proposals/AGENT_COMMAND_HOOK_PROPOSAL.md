@@ -5,7 +5,8 @@
 **Status:** Draft
 **Tracking issue:** #ACMH-1
 
-> **Status (verified 2026-06-12):** ✅ **DONE** — Shipped as part of Phase 6.2 (agent-initiated A2A with relay). Implemented in `ui/handlers/agent_command_handler.py` (25K file, dated 2026-06-10). The proposed "agent response command hook" is now the `AgentCommandHandler.on_agent_response()` callback, which scans agent response text for backtick commands (e.g. `` `ask @QTR ...` ``) and routes them through `CommandHandler.process_input()`. The relay mechanism (asking agent never sees the answer in its own bubble) is implemented via the `pending-ask` tracking mentioned in `ui/window.py:496`. See `docs/specs/A2A_QUOTED_PAYLOAD_SPEC.md` for the quoted-payload format spec.
+> **Status (verified 2026-06-12):** ✅ **DONE** — 
+> **status:** `DONE` — sortable tag for `ls | grep STATUS` Shipped as part of Phase 6.2 (agent-initiated A2A with relay). Implemented in `ui/handlers/agent_command_handler.py` (25K file, dated 2026-06-10). The proposed "agent response command hook" is now the `AgentCommandHandler.on_agent_response()` callback, which scans agent response text for backtick commands (e.g. `` `ask @QTR ...` ``) and routes them through `CommandHandler.process_input()`. The relay mechanism (asking agent never sees the answer in its own bubble) is implemented via the `pending-ask` tracking mentioned in `ui/window.py:496`. See `docs/specs/A2A_QUOTED_PAYLOAD_SPEC.md` for the quoted-payload format spec.
 
 ---
 

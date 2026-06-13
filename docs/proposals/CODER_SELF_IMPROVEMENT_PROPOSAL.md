@@ -6,7 +6,8 @@
 **Repository:** github.com/qsmtco/crabcakes
 **Target Agent:** Coder (special:coder in CrabCakes)
 
-> **Status (verified 2026-06-12):** ⚠️ **PARTIALLY DONE** — The config layer is shipped (every agent YAML has a `self_improvement: { bug_journal, project_rules, enforcement, structured_feedback, dream_consolidation }` block, parsed by `agent/special_agents.py:42-52`). However, the **5-layer runtime system** is NOT built. There are no separate layer modules (no `bug_journal.py`, no `project_rules.py`, no `dream_consolidation.py` in `agent/` or `utils/`). The prompt files `prompts/system/coder.md` and `prompts/system/debugger.md` are role-specific system prompts, not the 5-layer runtime the proposal describes. **The proposal is largely aspirational; only the YAML config surface exists.**
+> **Status (verified 2026-06-12):** ⚠️ **PARTIALLY DONE** — 
+> **status:** `PARTIAL` — sortable tag for `ls | grep STATUS` The config layer is shipped (every agent YAML has a `self_improvement: { bug_journal, project_rules, enforcement, structured_feedback, dream_consolidation }` block, parsed by `agent/special_agents.py:42-52`). However, the **5-layer runtime system** is NOT built. There are no separate layer modules (no `bug_journal.py`, no `project_rules.py`, no `dream_consolidation.py` in `agent/` or `utils/`). The prompt files `prompts/system/coder.md` and `prompts/system/debugger.md` are role-specific system prompts, not the 5-layer runtime the proposal describes. **The proposal is largely aspirational; only the YAML config surface exists.**
 
 ---
 

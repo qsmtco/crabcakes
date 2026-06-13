@@ -5,7 +5,8 @@
 **Status:** READY FOR IMPLEMENTATION  
 **Scope:** 5 bugs found during adversarial review of Phase 6 code
 
-> **Status (verified 2026-06-12):** ⚠️ **PARTIALLY DONE** — `agent/enforcement.py` is 29K (was likely smaller at proposal time), indicating active development, and `enforcement.json` is a per-project config override per `agent/enforcement.py:199`. However, no commit in the visible log explicitly closes "Bugs 3–7" with this proposal as the fix; the proposal pre-dates several other enforcement rewrites. **Verification per-bug is needed** — the proposal listed 5 specific bugs (3, 4, 5, 6, 7) but the codebase doesn't have explicit references to those bug numbers. **Marked partial pending per-bug audit.**
+> **Status (verified 2026-06-12):** ⚠️ **PARTIALLY DONE** — 
+> **status:** `PARTIAL` — sortable tag for `ls | grep STATUS` `agent/enforcement.py` is 29K (was likely smaller at proposal time), indicating active development, and `enforcement.json` is a per-project config override per `agent/enforcement.py:199`. However, no commit in the visible log explicitly closes "Bugs 3–7" with this proposal as the fix; the proposal pre-dates several other enforcement rewrites. **Verification per-bug is needed** — the proposal listed 5 specific bugs (3, 4, 5, 6, 7) but the codebase doesn't have explicit references to those bug numbers. **Marked partial pending per-bug audit.**
 
 ---
 

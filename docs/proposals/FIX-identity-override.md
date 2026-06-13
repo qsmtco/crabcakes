@@ -6,7 +6,8 @@
 **Severity:** CRITICAL  
 **Bug doc:** `docs/bugs/BUG_REPORT-identity-override.md`
 
-> **Status (verified 2026-06-12):** ⚠️ **NEEDS PER-BUG VERIFICATION** — The bug doc reference (`docs/bugs/BUG_REPORT-identity-override.md`) was not located in this audit. The proposal's specific claim — that gateway agents receive identity-bearing system prompts as user message content — requires reading `agent/context.py` and the gateway integration to confirm. The proposal was authored 2026-05-09 and predates the Phase 6.2 A2A work; the A2A infrastructure may have incidentally fixed some of these issues, or they may still be open. **Marked NEEDS PER-BUG VERIFICATION pending a targeted audit.**
+> **Status (verified 2026-06-12):** ⚠️ **NEEDS PER-BUG VERIFICATION** — 
+> **status:** `PARTIAL` — sortable tag for `ls | grep STATUS` The bug doc reference (`docs/bugs/BUG_REPORT-identity-override.md`) was not located in this audit. The proposal's specific claim — that gateway agents receive identity-bearing system prompts as user message content — requires reading `agent/context.py` and the gateway integration to confirm. The proposal was authored 2026-05-09 and predates the Phase 6.2 A2A work; the A2A infrastructure may have incidentally fixed some of these issues, or they may still be open. **Marked NEEDS PER-BUG VERIFICATION pending a targeted audit.**
 
 ---
 
