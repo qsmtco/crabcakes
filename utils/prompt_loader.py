@@ -181,7 +181,7 @@ def compose_system_prompt(
     if project_path:
         try:
             from utils.project_awareness import is_project_onboarded
-            if not is_project_onboarded(project_path):
+            if agent_role == "coder" and not is_project_onboarded(project_path):
                 onboarding = load_prompt_template("project-onboarding")
                 if onboarding:
                     parts.append(onboarding)

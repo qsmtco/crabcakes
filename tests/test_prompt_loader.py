@@ -67,6 +67,40 @@ class TestComposeSystemPrompt:
             )
             assert "TestProj" in prompt
 
+    def test_onboarding_only_loaded_for_coder(self, tmp_path):
+        """Onboarding template loads for coder agents only, not for gateway/debugger.
+
+        Per BUG_REPORT-identity-override.md Bug #2: the onboarding interview
+        should not be injected into every agent's prompt in a fresh project.
+        """
+        # Helper: does this prompt contain the onboarding template's content?
+        def has_onboarding(prompt: str) -> bool:
+            return "ONBOARDING phase" in prompt
+
+        # Coder in an unonboarded project → onboarding IS loaded
+        coder_prompt = compose_system_prompt(
+            agent_name="Coder", agent_role="coder", project_path=str(tmp_path),
+        )
+        assert has_onboarding(coder_prompt), (
+            "Coder should get onboarding template in unonboarded project"
+        )
+
+        # Debugger in same project → onboarding is NOT loaded
+        debugger_prompt = compose_system_prompt(
+            agent_name="Debugger", agent_role="debugger", project_path=str(tmp_path),
+        )
+        assert not has_onboarding(debugger_prompt), (
+            "Debugger should NOT get onboarding template (Bug #2 fix)"
+        )
+
+        # Gateway (empty agent_role) in same project → onboarding is NOT loaded
+        gateway_prompt = compose_system_prompt(
+            agent_name="Gateway", agent_role="", project_path=str(tmp_path),
+        )
+        assert not has_onboarding(gateway_prompt), (
+            "Gateway agent should NOT get onboarding template (Bug #2 fix)"
+        )
+
     def test_coder_template_included(self):
         prompt = compose_system_prompt(agent_name="Coder", agent_role="coder")
         assert "Coder" in prompt
