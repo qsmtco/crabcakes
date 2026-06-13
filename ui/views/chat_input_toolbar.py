@@ -67,7 +67,6 @@ class ChatInputToolbar(Gtk.Box):
         self._on_replace: callable | None = None
         self._on_replace_all: callable | None = None
         self._on_spell_toggle: callable | None = None
-        self._on_buffer_changed: callable | None = None
 
         # ── Build main toolbar row ─────────────────────────────────────────
         main_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -172,9 +171,6 @@ class ChatInputToolbar(Gtk.Box):
 
     def set_on_spell_toggle(self, cb: callable) -> None:
         self._on_spell_toggle = cb
-
-    def set_on_buffer_changed(self, cb: callable) -> None:
-        self._on_buffer_changed = cb
 
     # -------------------------------------------------------------------------
     # Public update methods (called by window.py / handler)
@@ -581,8 +577,6 @@ class ChatInputToolbar(Gtk.Box):
 
     def _on_find_entry_changed(self, entry):
         text = entry.get_text()
-        if self._on_buffer_changed:
-            self._on_buffer_changed()
         if self._on_find:
             self._on_find(text)
 

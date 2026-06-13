@@ -155,13 +155,6 @@ class TestCallbacks:
         toolbar.set_on_replace(cb)
         assert toolbar._on_replace is cb
 
-    def test_set_on_buffer_changed(self):
-        """set_on_buffer_changed stores callback."""
-        toolbar = ChatInputToolbar()
-        cb = MagicMock()
-        toolbar.set_on_buffer_changed(cb)
-        assert toolbar._on_buffer_changed is cb
-
     def test_set_on_find_next(self):
         """set_on_find_next stores callback."""
         toolbar = ChatInputToolbar()
