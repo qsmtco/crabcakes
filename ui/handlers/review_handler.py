@@ -4,9 +4,11 @@
 # All GTK via GLib.idle_add(). No git calls on the main thread.
 
 import threading
+from datetime import datetime, timezone
 from typing import Callable
 
 from models.command import Command, CommandResult
+from models.feed_card import FeedCardData
 
 from models.review_state import ReviewState
 from utils import git_ops
@@ -37,6 +39,7 @@ class ReviewHandler:
         on_review_ended: Callable,
         on_display_card: Callable,
         on_display_text: Callable,
+        on_feed_card=None,  # callback(FeedCardData) — add git_commit card to project feed
     ):
         self._GLib = GLib
         self._mc = main_content
@@ -45,6 +48,7 @@ class ReviewHandler:
         self._on_review_ended = on_review_ended
         self._on_display_card = on_display_card
         self._on_display_text = on_display_text
+        self._on_feed_card = on_feed_card
 
         # Per-project review states: project_name -> ReviewState
         self._states: dict[str, ReviewState] = {}
@@ -62,6 +66,25 @@ class ReviewHandler:
     def set_gateway_client(self, gw):
         """Set GatewayClient reference for sending messages to agents."""
         self._gw = gw
+
+    def _emit_feed_card(self, card_dict: dict) -> None:
+        """Convert git_commit card dict to FeedCardData and fire feed callback.
+
+        Only fires if _on_feed_card is set. Mirrors task_handler._emit_feed_card.
+        """
+        if not self._on_feed_card:
+            return
+        feed_card = FeedCardData(
+            card_type="git_commit",
+            source="git",
+            title=card_dict.get("title", ""),
+            body=card_dict.get("body", ""),
+            author="PM",
+            timestamp=datetime.now(timezone.utc),
+            project_name=card_dict.get("project_name", ""),
+            commit_sha=card_dict.get("commit_sha"),
+        )
+        self._on_feed_card(feed_card)
 
     # ── Mode management ─────────────────────────────────────────────────
 
@@ -256,6 +279,12 @@ class ReviewHandler:
                     bar.set_loading(False)
                 self._on_review_ended(project_name)
                 self._on_display_text(sk, f"✅ Changes accepted and committed as: {message}")
+                self._emit_feed_card({
+                    "title": f"Accepted: {message}",
+                    "body": commit_result.stdout.strip() if commit_result.stdout else "",
+                    "project_name": project_name,
+                    "commit_sha": getattr(commit_result, "sha", None),
+                })
 
             self._GLib.idle_add(_update_state)
 
@@ -295,6 +324,12 @@ class ReviewHandler:
                     bar.set_loading(False)
                 self._on_review_ended(project_name)
                 self._on_display_text(sk, f"❌ Changes rejected — files reverted to checkpoint {sha[:7]}")
+                self._emit_feed_card({
+                    "title": f"Rejected: {reason}",
+                    "body": result.stdout.strip() if result.stdout else "",
+                    "project_name": project_name,
+                    "commit_sha": sha,
+                })
 
             self._GLib.idle_add(_update_state)
 

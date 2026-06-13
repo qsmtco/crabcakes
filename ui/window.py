@@ -455,6 +455,7 @@ class MainWindow(Gtk.ApplicationWindow):
             on_review_ended=self._on_review_ended,
             on_display_card=self._on_command_card,
             on_display_text=self._on_command_text,
+            on_feed_card=self._feed_handler.add_card,
         )
 
         # Command handler — owns backtick command parsing + routing (Phase 0.2)
