@@ -5,8 +5,7 @@
 > - ❌ Review handler (`review_handler.py`) NOT yet wired to feed — no feed_card references found
 > - ❌ Git operation cards from accept/reject actions not yet implemented
 
-> **Status (verified 2026-06-12):** ⚠️ **PARTIALLY DONE** — 
-> **status:** `PARTIAL` — sortable tag for `ls | grep STATUS` **Task commands** (`ui/handlers/task_handler.py:58-84`) are fully wired: `_emit_feed_card()` creates `FeedCardData` and fires `on_feed_card` callback. **Review handler** still has **zero** `feed_card` / `on_feed_card` references — the proposal's "❌ Review handler NOT yet wired to feed" flag remains accurate. **Git operation cards** from accept/reject actions: `feed_handler.py:153-154` wires `on_accept`/`on_reject` callbacks to feed cards (the accept/reject buttons exist in the feed UI), but these are feed-level accept/reject for feed cards, not git operation cards per se. The original proposal's "git op cards" (showing diff stats + accept/reject → git apply / git revert) are not separately implemented as a distinct card type. **Marked PARTIAL; review_handler wiring is the remaining open item.**
+> **Status (verified 2026-06-12):** ✅ **DONE** — Review handler wired to feed in `ui/handlers/review_handler.py:70-87` (`_emit_feed_card` helper), `ui/window.py:458` (`on_feed_card=self._feed_handler.add_card`). `accept_changes` and `reject_changes` emit `git_commit` cards on success. Test suite: 9 new tests + 72 existing passing. Commit `56a6cee`.
 
 **Date:** 2026-05-01
 **Depends on:** ARCHITECTURE.md, existing FeedHandler, TaskHandler, ReviewHandler
