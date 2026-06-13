@@ -12,7 +12,8 @@ import logging
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk, Gdk, GLib
+gi.require_version("Gio", "2.0")
+from gi.repository import Gtk, Gdk, GLib, Gio
 
 from utils.prompts import load_prompts
 
@@ -85,6 +86,10 @@ class ChatInputToolbar(Gtk.Box):
         self._open_menu_btn = open_btn
         main_row.append(save_btn)
         main_row.append(open_btn)
+
+        # Attach a SimpleActionGroup so PopoverMenu (Gio.Menu) items can fire
+        # our dialogs. Actions are namespaced as "toolbar.*" in the menu model.
+        self._setup_menu_action_group()
 
         sep1 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
         sep1.add_css_class("toolbar-separator")
@@ -293,48 +298,47 @@ class ChatInputToolbar(Gtk.Box):
     # Internal — save menu
     # -------------------------------------------------------------------------
 
+    def _setup_menu_action_group(self) -> None:
+        """Wire the Save/Open PopoverMenu actions.
+
+        PopoverMenu items reference actions by name (e.g. "toolbar.save-file").
+        We register a SimpleActionGroup on this widget and connect each action
+        to the corresponding dialog method. The popover auto-closes on action
+        activation, so no manual popdown() calls are needed.
+        """
+        group = Gio.SimpleActionGroup()
+
+        for name, method in (
+            ("save-file", self._open_save_file_dialog),
+            ("save-prompt", self._open_save_prompt_dialog),
+            ("open-file", self._open_open_file_dialog),
+            ("open-prompt", self._open_open_prompt_popover),
+        ):
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", lambda _a, _p, m=method: m())
+            group.add_action(action)
+
+        self.insert_action_group("toolbar", group)
+
     def _build_save_menu_button(self) -> Gtk.MenuButton:
         btn = Gtk.MenuButton()
         btn.set_icon_name("document-save-symbolic")
         btn.set_tooltip_text("Save")
         btn.add_css_class("flat")
 
-        popover = Gtk.PopoverMenu()
+        # GTK4 PopoverMenu must be populated via Gio.Menu — manual Box+Button
+        # children trigger GTK-CRITICAL assertions in GTK 4.14 (ScrolledWindow /
+        # Viewport / Stack type checks fail internally when the popover pops up).
+        menu = Gio.Menu()
+        menu.append("Save as File…", "toolbar.save-file")
+        menu.append("Save as Prompt…", "toolbar.save-prompt")
+        popover = Gtk.PopoverMenu.new_from_model(menu)
         popover.set_autohide(True)
-
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        vbox.set_spacing(2)
-        vbox.set_margin_start(4)
-        vbox.set_margin_end(4)
-        vbox.set_margin_top(4)
-        vbox.set_margin_bottom(4)
-
-        save_file_item = Gtk.Button(label="Save as File…")
-        save_file_item.add_css_class("flat")
-        save_file_item.connect("clicked", self._on_save_file_clicked)
-        save_prompt_item = Gtk.Button(label="Save as Prompt…")
-        save_prompt_item.add_css_class("flat")
-        save_prompt_item.connect("clicked", self._on_save_prompt_clicked)
-
-        vbox.append(save_file_item)
-        vbox.append(save_prompt_item)
-        popover.set_child(vbox)
         btn.set_popover(popover)
         return btn
 
-    def _on_save_file_clicked(self, *args):
-        btn = self._find_save_menu_button()
-        if btn:
-            btn.popdown()
-        self._open_save_file_dialog()
-
-    def _on_save_prompt_clicked(self, *args):
-        btn = self._find_save_menu_button()
-        if btn:
-            btn.popdown()
-        self._open_save_prompt_dialog()
-
     def _find_save_menu_button(self) -> Gtk.Widget | None:
+        """Return the saved Save MenuButton (used by tests; no ancestor walk)."""
         return self._save_menu_btn
 
     def _open_save_file_dialog(self):
@@ -390,42 +394,18 @@ class ChatInputToolbar(Gtk.Box):
         btn.set_tooltip_text("Open")
         btn.add_css_class("flat")
 
-        popover = Gtk.PopoverMenu()
+        # GTK4 PopoverMenu must be populated via Gio.Menu — manual Box+Button
+        # children trigger GTK-CRITICAL assertions in GTK 4.14.
+        menu = Gio.Menu()
+        menu.append("Open File…", "toolbar.open-file")
+        menu.append("Open Prompt…", "toolbar.open-prompt")
+        popover = Gtk.PopoverMenu.new_from_model(menu)
         popover.set_autohide(True)
-
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        vbox.set_spacing(2)
-        vbox.set_margin_start(4)
-        vbox.set_margin_end(4)
-        vbox.set_margin_top(4)
-        vbox.set_margin_bottom(4)
-
-        open_file_item = Gtk.Button(label="Open File…")
-        open_file_item.add_css_class("flat")
-        open_file_item.connect("clicked", self._on_open_file_clicked)
-        open_prompt_item = Gtk.Button(label="Open Prompt…")
-        open_prompt_item.add_css_class("flat")
-        open_prompt_item.connect("clicked", self._on_open_prompt_clicked)
-
-        vbox.append(open_file_item)
-        vbox.append(open_prompt_item)
-        popover.set_child(vbox)
         btn.set_popover(popover)
         return btn
 
-    def _on_open_file_clicked(self, *args):
-        btn = self._find_open_menu_button()
-        if btn:
-            btn.popdown()
-        self._open_open_file_dialog()
-
-    def _on_open_prompt_clicked(self, *args):
-        btn = self._find_open_menu_button()
-        if btn:
-            btn.popdown()
-        self._open_open_prompt_popover()
-
     def _find_open_menu_button(self) -> Gtk.Widget | None:
+        """Return the saved Open MenuButton (used by tests; no ancestor walk)."""
         return self._open_menu_btn
 
     def _open_open_file_dialog(self):
