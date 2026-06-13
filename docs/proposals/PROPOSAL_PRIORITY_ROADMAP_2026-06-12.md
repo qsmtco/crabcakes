@@ -37,14 +37,21 @@ These are the highest-leverage items. They were discovered during the audit and 
 - **Lesson learned:** grep-only audits miss callback wiring across handlers. The setter `set_on_lifecycle_completed` exists in `activity_handler.py:134`, but the *wire-up* is in `connection_sync_handler.py:168-169`, not `window.py` — the place I originally looked.
 - **Status:** [x] DONE (verified 2026-06-12 — audit finding invalidated, not a coding task)
 
-### 1.2 — `PROPOSAL-feed-card-wiring.md` — wire `review_handler.py` to feed
+### 1.2 — `PROPOSAL-feed-card-wiring.md` — wire `review_handler.py` to feed (REVISED 2026-06-12: 11-line fix, not 52-line merge)
 
 - **Location:** `ui/handlers/review_handler.py`
-- **What:** the original proposal's "❌ Review handler NOT yet wired to feed" flag is still accurate. `task_handler.py:58-84` has the pattern (`_emit_feed_card` + `on_feed_card` callback). Mirror it in review_handler.
-- **Fix:** add `_emit_feed_card()` method to `ReviewHandler` + a constructor `on_feed_card` parameter + call sites in `ui/window.py`.
-- **Estimated effort:** ~5 lines, no design work
-- **Why second:** pure glue, finishes a proposal that's been "almost done" since May
-- **Status:** [ ] TODO
+- **What:** the original proposal's "❌ Review handler NOT yet wired to feed" flag is still accurate. `task_handler.py:51-84` has the pattern (`on_feed_card` constructor param + `_emit_feed_card()` helper).
+- **Fix (option a — small):**
+  1. Add `on_feed_card` ctor param to `ReviewHandler` (1 line)
+  2. Store `self._on_feed_card = on_feed_card` (1 line)
+  3. Add `_emit_feed_card(card_dict)` helper that builds a `FeedCardData` with `card_type="git_commit"`, mirroring `task_handler._emit_feed_card` (6 lines)
+  4. Call it from `accept_changes` after successful commit (1 line)
+  5. Call it from `reject_changes` after successful checkout (1 line)
+  6. Wire `on_feed_card=self._feed_handler.add_card` in `window.py:450` (1 line)
+  7. Add 1 regression test that exercises `/accept` and confirms a card is emitted
+- **Why option (a) and not the merge:** the "merge two handlers" idea was technically correct but cost 5× the scope for a minor UX consistency gap that no user has reported. The 11-line fix achieves the user-visible consistency (a card appears in the feed for `/accept`) without touching `feed_handler.handle_accept/handle_reject`. The full unification becomes a follow-up Tier 3 item if you want it later.
+- **Estimated effort:** ~11 lines + 1 test (1 day)
+- **Status:** [ ] TODO — SPEC written, delegating to QTR
 
 ### 1.3 — `PROPOSAL-project-onboarding.md` — fix agent-role gating bug
 
