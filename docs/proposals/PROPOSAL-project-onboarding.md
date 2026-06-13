@@ -5,8 +5,7 @@
 > - `is_project_onboarded()` check in `prompt_loader.py` loads the template
 > - Note: Bug exists where onboarding template loads for ALL agents, not just coder (see BUG_REPORT-identity-override.md Bug #2)
 
-> **Status (verified 2026-06-12):** ⚠️ **PARTIALLY DONE** — 
-> **status:** `PARTIAL` — sortable tag for `ls | grep STATUS` `prompts/system/project-onboarding.md` (3.3K, Apr 27) is shipped and active. `prompt_loader.py:117` (`compose_system_prompt()`) loads it for new projects. The bug noted in the proposal (onboarding template loads for ALL agents, not just Coder) is still present in `prompt_loader.py` — the `is_project_onboarded()` check doesn't gate on agent role. Additionally, `prompts/system/project-awareness.md` (1.5K, May 28) and `prompts/system/collab.md` (5.2K, Jun 1) were created as supplementary onboarding layers. **Marked PARTIAL; template is live but the agent-role gating bug is still open.**
+> **Status (verified 2026-06-13):** ✅ **DONE** — Agent-role gating fix shipped in `utils/prompt_loader.py:184` (`agent_role == "coder" and not is_project_onboarded(project_path)`). Onboarding template now loads only for Coder agents; Debugger and Gateway agents skip it. Test added: `tests/test_prompt_loader.py::TestComposeSystemPrompt::test_onboarding_only_loaded_for_coder` (34 lines). All 35 prompt_loader tests + 31 context tests passing. Commit `7a3d8c9`.
 
 **Date:** 2026-04-26
 **Author:** Qaster
