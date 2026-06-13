@@ -168,7 +168,7 @@ class MainWindow(Gtk.ApplicationWindow):
         for agent_def in get_special_agents():
             self._agent_runtime_handler.add_special_agent(agent_def)
 
-        # Phase 4 — Auto-open Crabcakes tab on every launch.
+        # Phase 4 — Auto-open Auxilium tab on every launch.
         # Creates a tab for each agent with auto_open=True and sets a
         # synthetic project for agents with api_key_built_in=True so they
         # have a project context (file context, awareness, etc.).

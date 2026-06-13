@@ -117,9 +117,13 @@ class ChatInputToolbar(Gtk.Box):
 
         # Quality group: Spell check toggle
         spell_btn = Gtk.ToggleButton()
-        spell_btn.set_icon_name("check-round-outline-symbolic")
         spell_btn.set_tooltip_text("Spell Check")
         spell_btn.add_css_class("flat")
+        spell_img = Gtk.Image.new_from_file(
+            "/home/q/projects/crabcakes/icons/emoji/spellcheck.png"
+        )
+        spell_img.set_pixel_size(16)
+        spell_btn.set_child(spell_img)
         spell_btn.connect("toggled", self._on_spell_toggled, spell_btn)
         self._spell_btn = spell_btn
         main_row.append(spell_btn)

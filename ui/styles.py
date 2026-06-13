@@ -1000,9 +1000,14 @@ notebook > header > tabs > tab {
 
 .activity-drawer-header {
     background-color: rgba(20, 20, 25, 0.95);
-    padding: 4px 8px;
+    padding: 3px 6px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    min-height: 32px;
+    min-height: 0;
+}
+
+.activity-drawer-header button {
+    min-height: 20px;
+    padding: 1px 4px;
 }
 
 .activity-drawer-row {

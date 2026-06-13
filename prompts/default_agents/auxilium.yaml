@@ -1,9 +1,9 @@
-# Crabcakes — Always-on help assistant and project onboarding guide
-name: Crabcakes
+# Auxilium — Always-on help assistant and project onboarding guide
+name: Auxilium
 emoji: "🦀"
-role: crabcakes
+role: helper
 prompts:
-  - system/crabcakes.md
+  - system/auxilium.md
 tools:
   - read_file
   - list_files

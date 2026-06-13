@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="24 18 28 30">
+  <!-- Letter A -->
+  <path d="M 26 34 L 32 22 L 38 34 M 28 30 L 36 30" stroke="#9ca3af" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Checkmark below A -->
+  <path d="M 28 40 L 35 47 L 48 34" stroke="#9ca3af" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

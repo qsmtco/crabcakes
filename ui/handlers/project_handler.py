@@ -331,7 +331,7 @@ class ProjectHandler:
         """Extract a human-readable name from a session key when AgentManager has no mapping.
 
         Examples:
-          'special:crabcakes' → 'crabcakes'
+          'special:auxilium' → 'auxilium'
           'special:tester'    → 'tester'
           'agent:qtr:telegram:direct:123' → 'qtr'
           'agent:qaster:telegram:direct:456' → 'Qaster'

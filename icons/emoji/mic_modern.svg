@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 60 60">
+  <!-- Modern minimalist microphone icon (iOS-style) -->
+  <!-- Capsule head -->
+  <rect x="24" y="8" width="12" height="24" rx="6" ry="6" fill="#4ade80"/>
+  <!-- Cradle: just the curved bottom, no vertical arms -->
+  <path d="M 18 24 A 12 12 0 0 0 42 24" stroke="#4ade80" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <!-- Stand stem -->
+  <rect x="29" y="36" width="2" height="8" fill="#4ade80"/>
+  <!-- Base -->
+  <rect x="22" y="44" width="16" height="3" rx="1.5" ry="1.5" fill="#4ade80"/>
+</svg>

@@ -152,13 +152,13 @@ class MainContent(Gtk.Box):
 
         prompt_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         mic_img = Gtk.Image.new_from_file(
-            "/home/q/projects/crabcakes/icons/emoji/classic_mic.png"
+            "/home/q/projects/crabcakes/icons/emoji/mic_modern.png"
         )
-        mic_img.set_pixel_size(14)
+        mic_img.set_pixel_size(16)
         self._prompt_mic_img = mic_img
         self._prompt_label = Gtk.Label(label="Prompt")
-        prompt_box.append(mic_img)
         prompt_box.append(self._prompt_label)
+        prompt_box.append(mic_img)
         self._prompt_button.set_child(prompt_box)
         self._improve_button = Gtk.Button(label="Improve ✦")
         self._improve_button.add_css_class("btn-improve")

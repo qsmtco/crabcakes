@@ -169,6 +169,44 @@ def get_default_si_config(can_write: bool = False) -> dict:
     }
 
 
+def _migrate_legacy_agent_names() -> None:
+    """One-time migration: rename 'crabcakes.yaml' → 'auxilium.yaml'.
+
+    The always-on help agent was renamed from 'Crabcakes' to 'Auxilium' on
+    2026-06-13. On any existing install, the user's agents/ directory still
+    contains 'crabcakes.yaml' (the old name) and is NOT empty, so
+    _seed_defaults() will not re-seed 'auxilium.yaml'. This migration runs
+    once per launch, renames the file if present, and updates its in-memory
+    dict so the user's existing config is preserved. Safe to run repeatedly
+    (idempotent — no-op if the old name is already gone).
+    """
+    agents_dir = _get_agents_dir()
+    old_path = os.path.join(agents_dir, "crabcakes.yaml")
+    old_path_yml = os.path.join(agents_dir, "crabcakes.yml")
+    new_path = os.path.join(agents_dir, "auxilium.yaml")
+
+    for candidate in (old_path, old_path_yml):
+        if os.path.isfile(candidate) and not os.path.isfile(new_path):
+            try:
+                os.rename(candidate, new_path)
+                logger.info("Migrated legacy agent file: crabcakes.yaml → auxilium.yaml")
+                # Update the file's role/name/prompts fields to match the new identity.
+                try:
+                    with open(new_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    content = content.replace("name: Crabcakes", "name: Auxilium")
+                    content = content.replace("role: crabcakes", "role: helper")
+                    content = content.replace("system/crabcakes.md", "system/auxilium.md")
+                    with open(new_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    logger.info("Updated agent file content for Auxilium rename")
+                except OSError as e:
+                    logger.warning("Could not update migrated auxilium.yaml: %s", e)
+            except OSError as e:
+                logger.warning("Could not migrate crabcakes.yaml → auxilium.yaml: %s", e)
+            break  # only rename the first one found
+
+
 def load_agent_defs() -> list[dict]:
     """Scan ~/.config/crabcakes/agents/ for definition files. Parse and validate.
 
@@ -177,6 +215,7 @@ def load_agent_defs() -> list[dict]:
     Skips files that fail to parse.
     """
     _seed_defaults()
+    _migrate_legacy_agent_names()
 
     agents_dir = _get_agents_dir()
     if not os.path.isdir(agents_dir):

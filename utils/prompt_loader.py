@@ -203,8 +203,8 @@ def compose_system_prompt(
         dt = load_prompt_template("debugger")
         if dt:
             parts.append(dt)
-    elif agent_role == "crabcakes":
-        ct = load_prompt_template("crabcakes")
+    elif agent_role == "helper":
+        ct = load_prompt_template("auxilium")
         if ct:
             parts.append(ct)
 
