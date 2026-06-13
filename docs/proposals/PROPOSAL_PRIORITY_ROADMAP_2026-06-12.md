@@ -12,13 +12,19 @@ After auditing all 28 proposal files in `docs/proposals/`, we have:
 
 | Status | Count | Meaning |
 |---|---:|---|
-| DONE | 9 | Shipped, no further work needed |
-| PARTIAL | 14 | Core shipped, but a specific item remains open |
-| PENDING | 4 | Not started, no decision made |
+| DONE | 11 | Shipped, no further work needed |
+| PARTIAL | 12 | Core shipped, but a specific item remains open |
+| PENDING | 3 | Not started, no decision made |
 | SUPERSEDED | 1 | Abandoned in favor of a different approach |
-| **Total open** | **18** | PARTIAL + PENDING = 14 + 4 |
+| **Total open** | **15** | PARTIAL + PENDING = 12 + 3 |
 
-*Update 2026-06-12: Tier 1.1 (the `if not final_text: return` bug claim) was investigated and found to be a false alarm. `PROPOSAL-smarter-chat-ux.md` is now `DONE`. The `Total open` count above is now 17 (was 18).*
+*Update 2026-06-12 (initial): Tier 1.1 (`if not final_text: return` bug claim) was investigated and found to be a false alarm. `PROPOSAL-smarter-chat-ux.md` is now `DONE`. The `Total open` count above is now 17 (was 18).*
+
+*Update 2026-06-13: Tier 1.2 and Tier 1.3 have shipped.*
+
+- **Tier 1.2 — DONE** — `56a6cee feat(review-handler): emit git_commit feed cards on accept/reject` (the 11-line fix from the proposal, committed on 2026-06-12/13, was originally scoped as a QTR delegation but actually landed from a direct fix). Done count: 9 → 10.
+- **Tier 1.3 — DONE** — `7a3d8c9 fix(prompt-loader): gate project-onboarding template to coder agents only`. Done count: 10 → 11. Total open: 17 → 15 (both items were PARTIAL in the source banner audit; their proposals now need their own `status:` fields updated to DONE as a follow-up, see Tier 2 / Tier 3 follow-ups below).
+- **Tier 2.2 — changed from DONE to PARTIAL** (per Captain 2026-06-13) — the help-agent code shipped in `d6ed198` but the SPEC doc `docs/specs/SPEC-crabcakes-always-on-help-agent.md` is still in Draft state and has unbuilt items; needs a per-item audit before promotion. Total open unchanged (was 15, still 15 — the SPEC doc remains a PARTIAL deliverable).
 
 This document ranks the 18 open items by **leverage** (signal × shipability ÷ cost), not by chronology or by how long the proposal has been sitting open. The goal is to convert as many PARTIALs to DONE/REJECTED/DEFERRED as cheaply as possible, leaving only the items that genuinely need a dedicated sprint.
 
@@ -51,7 +57,7 @@ These are the highest-leverage items. They were discovered during the audit and 
   7. Add 1 regression test that exercises `/accept` and confirms a card is emitted
 - **Why option (a) and not the merge:** the "merge two handlers" idea was technically correct but cost 5× the scope for a minor UX consistency gap that no user has reported. The 11-line fix achieves the user-visible consistency (a card appears in the feed for `/accept`) without touching `feed_handler.handle_accept/handle_reject`. The full unification becomes a follow-up Tier 3 item if you want it later.
 - **Estimated effort:** ~11 lines + 1 test (1 day)
-- **Status:** [ ] TODO — SPEC written, delegating to QTR
+- **Status:** [x] DONE (committed `56a6cee` 2026-06-12, the 11-line fix landed from a direct implementation; the proposal's `status:` field still reads PARTIAL and needs a follow-up update)
 
 ### 1.3 — `PROPOSAL-project-onboarding.md` — fix agent-role gating bug
 
@@ -59,7 +65,7 @@ These are the highest-leverage items. They were discovered during the audit and 
 - **What:** the onboarding template loads for ALL agents, not just Coder. The fix is a one-line condition: `if agent_role != "coder": skip onboarding template` (or restrict to agents in a specific allowlist).
 - **Estimated effort:** 1 line + 1 test
 - **Why third:** correctness bug, affects every non-Coder agent's first message
-- **Status:** [ ] TODO
+- **Status:** [x] DONE (committed `7a3d8c9` 2026-06-12, `fix(prompt-loader): gate project-onboarding template to coder agents only`; the proposal's `status:` field still reads PARTIAL and needs a follow-up update)
 
 ---
 
@@ -76,14 +82,22 @@ These items don't need engineering work — they need explicit Go/No-Go decision
 - **Why now:** this is a PENDING that will never get worked on, but it's burning mental cycles. Closing it with a written reason is the deliverable.
 - **Status:** [ ] TODO
 
-### 2.2 — `PROPOSAL-crabcakes-always-on-help-agent.md` — promote SPEC to Shipped
+### 2.2 — `PROPOSAL-crabcakes-always-on-help-agent.md` — promote SPEC to Shipped (PARTIAL, per Captain 2026-06-13)
 
-- **Decision:** DONE
-- **Rationale:** `prompts/system/crabcakes.md` (3.8K, May 30) is the help agent's system prompt. `~/.config/crabcakes/agents/crabcakes.yaml` has `auto_open: true` and `auto_add_to_projects: true`. `agent/special_agents.py:44-46` has the fields. `ui/window.py:167-179` opens tabs for auto_open agents. Core features are live.
-- **Action:** promote `docs/specs/SPEC-crabcakes-always-on-help-agent.md` from "Draft — for implementation" to "✅ Shipped" with a date stamp. Audit the SPEC for any items not in code; annotate them as deferred or ship them.
-- **Estimated effort:** 1 hour
-- **Why now:** paperwork, not code. The work is done; the status is wrong.
-- **Status:** [ ] TODO
+- **Decision:** PARTIAL → SPEC promotion is paperwork, not a one-step DONE
+- **Rationale:** the *code* is shipped (`d6ed198` feat: Crabcakes help agent — Phases 1-3, includes the data model, built-in provider, and agent definition). However, `docs/specs/SPEC-crabcakes-always-on-help-agent.md` is still in Draft state and contains items that have not been audited against the current code. Per Captain 2026-06-13, this is PARTIAL, not DONE — promoting without a per-item audit would let "spec says X, code does Y" drift re-emerge.
+- **Shipped (verified by code inspection):**
+  - `prompts/system/crabcakes.md` — help agent's system prompt
+  - `~/.config/crabcakes/agents/crabcakes.yaml` has `auto_open: true` and `auto_add_to_projects: true`
+  - `agent/special_agents.py:44-46` has the `auto_open` / `auto_add_to_projects` fields
+  - `ui/window.py:167-179` opens tabs for `auto_open` agents
+- **Remaining work (the PARTIAL):**
+  1. Re-read `docs/specs/SPEC-crabcakes-always-on-help-agent.md` end-to-end
+  2. For each "Acceptance criteria" / "Out of scope" / numbered item, mark it `✅ shipped (commit X)`, `⏳ deferred`, or `❌ not built`
+  3. Promote the SPEC frontmatter from "Draft — for implementation" to "✅ Shipped (PARTIAL — see audit annotations)" with a 2026-06-13 date stamp
+  4. Update the proposal's `status:` field to DONE only when step 3 is complete
+- **Estimated effort:** 1 hour (audit + annotate + status update)
+- **Status:** [~] PARTIAL (code shipped, SPEC audit pending)
 
 ### 2.3 — `PROPOSAL-implementation-engine.md` — explicitly defer
 
@@ -185,9 +199,9 @@ These items have real design work and need dedicated sprints. They should not be
 
 ## Summary
 
-**Tier 1 (3 items, ~1.5 days total):** fixes that close audit-driven findings and latent bugs in shipped code. (Update 2026-06-12: Tier 1.1 was investigated and confirmed to be a false alarm — the alleged bug is actually a working two-path recovery flow. Tier 1 is now 2 items, ~1 day total.)
+**Tier 1 (3 items, all DONE as of 2026-06-13):** fixes that closed audit-driven findings and latent bugs in shipped code. Tier 1.1 was a false alarm; Tier 1.2 (review_handler feed wiring) shipped in `56a6cee`; Tier 1.3 (agent-role gating) shipped in `7a3d8c9`. The proposals' own `status:` fields still need a follow-up update — see the 2026-06-13 header note.
 
-**Tier 2 (3 items, ~2 hours total):** paperwork — Go/No-Go decisions, status promotions, deferral notes. Zero code.
+**Tier 2 (3 items, ~2 hours total):** paperwork — Go/No-Go decisions, status promotions, deferral notes. Zero code. Item 2.2 is now correctly classified as PARTIAL (code shipped, SPEC audit pending) per Captain 2026-06-13.
 
 **Tier 3 (4 items, ~3 days total):** verification work to convert PARTIALs to DONEs.
 
@@ -195,11 +209,11 @@ These items have real design work and need dedicated sprints. They should not be
 
 **Tier 5 (1 item):** already handled.
 
-**Total open items:** 18 → after Tier 1+2+3 work, down to **8 open** (4 from Tier 3 if they don't all pass verification, plus 4 from Tier 4).
+**Total open items:** 15 currently (down from 18 on 2026-06-12; Tier 1 fully closed = 3 items off the list). After Tier 2 + Tier 3 work, down to **8 open** (3 from Tier 2 paperwork, 4 from Tier 3 verification if none pass, plus 4 from Tier 4). Tier 1 is fully closed (0 open).
 
 **Recommended sequence:**
-1. Tier 1 in one sitting (~1.5 days)
-2. Tier 2 in one sitting (~2 hours)
+1. ~~Tier 1 in one sitting (~1.5 days)~~ ✅ **TIER 1 CLOSED** (all 3 items resolved as of 2026-06-13)
+2. Tier 2 in one sitting (~2 hours) — the next open work
 3. Tier 3 one item at a time, between other work
 4. Tier 4 as dedicated sprints
 
