@@ -1,3 +1,6 @@
+---
+status: SUPERSEDED
+---
 # SPEC: Activity Bubble UX Overhaul
 
 **Date:** 2026-06-01

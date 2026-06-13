@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: MCP Client Integration — Phase 1 (stdio transport)
 
 **Date:** 2026-05-24

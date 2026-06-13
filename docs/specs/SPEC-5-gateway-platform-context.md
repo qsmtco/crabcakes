@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC-5: Gateway Agent Platform Context
 
 **Date:** 2026-05-25

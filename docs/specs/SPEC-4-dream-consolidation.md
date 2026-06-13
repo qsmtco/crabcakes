@@ -1,3 +1,6 @@
+---
+status: PARTIAL
+---
 # SPEC-4: Dream Consolidation Layer
 
 **Implements:** Self-Improvement Layer 5

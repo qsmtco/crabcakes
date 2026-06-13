@@ -147,8 +147,19 @@ class MainContent(Gtk.Box):
         button_bar.set_valign(Gtk.Align.CENTER)
         button_bar.set_size_request(-1, 36)
 
-        self._prompt_button = Gtk.Button(label="Prompt")
-        self._prompt_button.add_css_class("flat")
+        self._prompt_button = Gtk.Button()
+        self._prompt_button.add_css_class("btn-prompt")
+
+        prompt_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        mic_img = Gtk.Image.new_from_file(
+            "/home/q/projects/crabcakes/icons/emoji/classic_mic.png"
+        )
+        mic_img.set_pixel_size(14)
+        self._prompt_mic_img = mic_img
+        self._prompt_label = Gtk.Label(label="Prompt")
+        prompt_box.append(mic_img)
+        prompt_box.append(self._prompt_label)
+        self._prompt_button.set_child(prompt_box)
         self._improve_button = Gtk.Button(label="Improve ✦")
         self._improve_button.add_css_class("btn-improve")
         self._send_button = Gtk.Button(label="Send  ↵")
@@ -787,10 +798,14 @@ class MainContent(Gtk.Box):
         """
         self._stt_state = state
         if state == "recording":
-            self._prompt_button.set_label("■ Stop")
+            self._prompt_label.set_text("■ Stop")
+            self._prompt_label.add_css_class("recording-stop")
+            self._prompt_mic_img.set_visible(False)
             self._prompt_button.add_css_class("destructive-action")
         else:
-            self._prompt_button.set_label("Prompt")
+            self._prompt_label.set_text("Prompt")
+            self._prompt_label.remove_css_class("recording-stop")
+            self._prompt_mic_img.set_visible(True)
             self._prompt_button.remove_css_class("destructive-action")
 
     def append_stt_text(self, text):

@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC-2: Auto-Test Enforcement Layer
 
 **Implements:** Self-Improvement Layer 3

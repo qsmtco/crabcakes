@@ -1,3 +1,6 @@
+---
+status: PENDING
+---
 # SPEC: Per-Agent, Per-Provider API Key Enforcement
 
 **Date:** 2026-05-28

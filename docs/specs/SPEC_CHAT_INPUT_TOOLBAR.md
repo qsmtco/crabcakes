@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: Chat Input Toolbar
 
 **Date:** 2026-05-28

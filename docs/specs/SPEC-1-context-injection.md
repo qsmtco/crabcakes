@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC-1: Context Injection Layer (Bug Journal + Project Rules)
 
 **Implements:** Self-Improvement Layers 1 + 2

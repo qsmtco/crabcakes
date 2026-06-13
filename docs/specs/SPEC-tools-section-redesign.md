@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: Tools Section Redesign — Agent Builder Dialog
 
 **Date:** 2026-05-27

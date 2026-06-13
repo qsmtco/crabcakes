@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: Extract Business Logic from window.py into Handlers
 
 **Date:** 2026-05-30

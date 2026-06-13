@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: Fix Local Special Agent Routing & Silent Failure Modes
 
 **Date:** 2026-06-07

@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: Markdown Table Rendering in Chat Bubbles
 
 **Date:** 2026-05-28

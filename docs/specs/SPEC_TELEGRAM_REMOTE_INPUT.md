@@ -1,3 +1,6 @@
+---
+status: PENDING
+---
 # SPEC: Telegram Bot as Remote Input for CrabCakes
 
 **Date:** 2026-05-28

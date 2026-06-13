@@ -71,6 +71,21 @@ button.btn-improving {
     50% { background: rgba(79, 70, 229, 0.55); }
 }
 
+button.btn-prompt {
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
+    border-radius: 6px;
+    border: none;
+    box-shadow: none;
+}
+button.btn-prompt:hover {
+    background: rgba(34, 197, 94, 0.25);
+    color: #86efac;
+}
+.recording-stop {
+    color: #ef4444;
+}
+
 button.flat {
     background: transparent;
     color: #6b6b7a;
@@ -1105,20 +1120,20 @@ button.settings-remove-btn:hover {
 .input-toolbar {
     background: rgba(17, 17, 20, 0.6);
     border-radius: 6px;
-    min-height: 28px;
-    padding: 2px 4px;
+    min-height: 0;
+    padding: 0px 4px;
 }
 
 .input-toolbar button,
 .input-toolbar .flat {
-    min-width: 28px;
-    min-height: 24px;
-    padding: 2px 6px;
+    min-width: 24px;
+    min-height: 20px;
+    padding: 1px 4px;
     font-size: 11px;
 }
 
 .input-toolbar .toolbar-separator {
-    margin: 2px 4px;
+    margin: 0px 4px;
     opacity: 0.3;
 }
 

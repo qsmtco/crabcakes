@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: Migrate Command Prefix from Backtick to Slash
 
 **Date:** 2026-05-28

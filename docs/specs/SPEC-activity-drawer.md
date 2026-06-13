@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: Activity Drawer
 
 **Date:** 2026-06-01

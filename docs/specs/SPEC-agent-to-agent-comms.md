@@ -1,3 +1,6 @@
+---
+status: PARTIAL
+---
 # Implementation Specification: Agent-to-Agent Communication
 
 **Date:** 2026-05-10

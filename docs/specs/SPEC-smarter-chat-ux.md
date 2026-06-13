@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: Smarter Chat UX — Bug Fix + Activity Bubbles
 
 **Date:** 2026-05-21

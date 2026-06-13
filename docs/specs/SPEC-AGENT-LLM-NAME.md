@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: Agent `llm_name` Field — Single Source of Truth
 
 **Date:** 2026-06-10

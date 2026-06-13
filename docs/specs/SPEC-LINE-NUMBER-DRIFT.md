@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: Line-Number Drift Prevention in Specs
 
 ## The Problem

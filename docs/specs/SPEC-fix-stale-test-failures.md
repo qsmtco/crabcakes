@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: Fix 25 Stale Test Failures
 
 **Date:** 2026-06-01

@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: Agent Builder Provider Dropdown
 
 **Date:** 2026-06-09

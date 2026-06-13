@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: Outstanding Cleanup — Items 1, 2, 3
 
 **Date:** 2026-05-31

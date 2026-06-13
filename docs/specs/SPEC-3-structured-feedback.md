@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC-3: Structured Feedback Protocol
 
 **Implements:** Self-Improvement Layer 4

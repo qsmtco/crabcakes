@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: LLM Provider Settings Dialogue
 
 **Date:** 2026-06-07

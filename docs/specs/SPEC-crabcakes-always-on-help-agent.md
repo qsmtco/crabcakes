@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: Crabcakes — Always-On Help Agent
 
 **Date:** 2026-05-30

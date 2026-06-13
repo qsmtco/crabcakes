@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: Outstanding Audit Fixes (A–G)
 
 **Date:** 2026-05-31

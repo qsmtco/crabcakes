@@ -1,3 +1,6 @@
+---
+status: DONE
+---
 # SPEC: MCP Server Hot-Reload in Edit Agent Dialog
 
 **Date:** 2026-05-27
