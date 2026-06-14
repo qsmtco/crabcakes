@@ -374,8 +374,8 @@ class AgentRuntimeHandler:
             )
             return
 
-        # Special agents require an active project
-        if self._active_project is None:
+        # Special agents require an active project — except the helper (KB-based)
+        if self._active_project is None and getattr(agent_def, 'role', '') != 'helper':
             if self._GLib is not None:
                 self._GLib.idle_add(self._do_error, session_key,
                                     "Open a project first. Special agents work within projects.")
@@ -384,7 +384,10 @@ class AgentRuntimeHandler:
                                "Open a project first. Special agents work within projects.")
             return
 
-        project_name, project_path = self._active_project
+        if self._active_project is not None:
+            project_name, project_path = self._active_project
+        else:
+            project_name, project_path = "(none)", None
         rt = self._get_runtime(agent_def.display_name)
 
         logger.debug("[handler] send_to_special_agent: sk=%s agent=%s project=%s text_len=%d",
