@@ -1,0 +1,218 @@
+[
+  {
+    "id": "knowledge/agents.md#0.0",
+    "source": "knowledge/agents.md",
+    "section": "Introduction",
+    "text": "# Agents Guide"
+  },
+  {
+    "id": "knowledge/agents.md#1.0",
+    "source": "knowledge/agents.md",
+    "section": "Built-in Agents",
+    "text": "Crabcakes ships with three built-in special agents:\n\n| Agent | Emoji | Role | Writes Files |\n|-------|-------|------|-------------|\n| Coder | 🛠️ | Full-stack code writing | Yes |\n| Debugger | 🐛 | Read-only analysis and debugging | No |\n| Crabcakes | 🦀 | Platform help and onboarding | Config only |"
+  },
+  {
+    "id": "knowledge/agents.md#2.0",
+    "source": "knowledge/agents.md",
+    "section": "Creating a Custom Agent",
+    "text": "### Via UI\n\n1. Click the **+** button in the left panel's Agents section\n2. Fill in the agent's name, emoji, role, and tools\n3. Select a provider and model\n4. Write a system prompt (or use the default)\n5. Click **Save**\n\n### Via YAML\n\nCreate a file at `~/.config/crabcakes/agents/my-agent.yaml`:\n\n```yaml\nname: My Agent\nemoji: \"🤖\"\nrole: my-agent\nprompts:\n  - system/my-agent.md\ntools:\n  - read_file\n  - write_file\n  - exec_command\nprovider: openai\nmodel: gpt-4o\n```\n\nThe system prompt file goes in `prompts/system/my-agent.md` (in the Crabcakes install directory)."
+  },
+  {
+    "id": "knowledge/agents.md#3.0",
+    "source": "knowledge/agents.md",
+    "section": "Agent Fields Reference",
+    "text": "| Field | Required | Description |\n|-------|----------|-------------|\n| `name` | Yes | Display name in the UI |\n| `emoji` | Yes | Avatar emoji |\n| `role` | Yes | Matches `prompts/system/{role}.md` |\n| `tools` | Yes | Tool names the agent can use |\n| `provider` | Yes | LLM provider (from agent.json) |\n| `model` | No | Model override (defaults to provider default) |\n| `auto_open` | No | Open tab on every launch |\n| `auto_add_to_projects` | No | Auto-add to new project teams |"
+  },
+  {
+    "id": "knowledge/agents.md#4.0",
+    "source": "knowledge/agents.md",
+    "section": "Available Tools",
+    "text": "| Tool | Description |\n|------|-------------|\n| `read_file` | Read file contents |\n| `write_file` | Write to a file |\n| `edit_file` | Targeted edits within a file |\n| `exec_command` | Run shell commands |\n| `list_files` | List directory contents |\n| `search_files` | Search for patterns in files |\n| `web_search` | Search the web |\n| `web_fetch` | Fetch a URL and extract content |"
+  },
+  {
+    "id": "knowledge/agents.md#5.0",
+    "source": "knowledge/agents.md",
+    "section": "Agent System Prompts",
+    "text": "System prompts are Markdown files in `prompts/system/`. They support `{{VARIABLE}}` template substitution for project context injection. The agent's role field in YAML determines which prompt file is loaded."
+  },
+  {
+    "id": "knowledge/commands.md#0.0",
+    "source": "knowledge/commands.md",
+    "section": "Introduction",
+    "text": "# Command Reference"
+  },
+  {
+    "id": "knowledge/commands.md#1.0",
+    "source": "knowledge/commands.md",
+    "section": "Slash Commands",
+    "text": "Commands are typed in the chat input and processed by the project or agent.\n\n### Project Commands\n\n| Command | Description |\n|---------|-------------|\n| `/status` | Show project status (members, tasks, review state) |\n| `/agents` | List project members and their state |\n| `/cost` | Spending summary for current project |\n| `/solo @Agent` | Switch to solo DM with one agent |\n| `/solo all` | Return to broadcast mode |\n| `/review` | Start code review session |\n| `/review stop` | End code review session |\n\n### Agent Commands\n\n| Command | Description |\n|---------|-------------|\n| `/ask @Agent \"question\"` | Consult an agent for their expertise |\n| `/delegate @Agent \"task\"` | Assign a task to an agent |\n| `/tell @Agent \"information\"` | Share info without expecting a response |\n| `/stop @Agent` | Remove agent from project collaboration |\n\n### Task Commands\n\n| Command | Description |\n|---------|-------------|\n| `/task create \"title\"` | Create a new task for a project member |\n| `/task list` | List all tasks for the project |\n| `/task status <id>` | Show detailed status for a task |\n| `/task update <id> <field> <value>` | Update a task field |"
+  },
+  {
+    "id": "knowledge/commands.md#2.0",
+    "source": "knowledge/commands.md",
+    "section": "Keyboard Shortcuts",
+    "text": "| Shortcut | Action |\n|----------|--------|\n| `Enter` | Send message |\n| `Shift+Enter` | New line in message input |\n| `Ctrl+Space` | Push-to-talk voice input |\n| `Ctrl+,` | Open Settings |"
+  },
+  {
+    "id": "knowledge/commands.md#3.0",
+    "source": "knowledge/commands.md",
+    "section": "Command Syntax Rules",
+    "text": "- Commands start with `/` at the beginning of a message\n- Agent mentions use `@AgentName`\n- Payloads in quotes: `/ask @Agent \"your question here\"`\n- Max 3 commands per message\n- Unrecognized commands are sent as regular messages"
+  },
+  {
+    "id": "knowledge/configuration.md#0.0",
+    "source": "knowledge/configuration.md",
+    "section": "Introduction",
+    "text": "# Configuration Guide"
+  },
+  {
+    "id": "knowledge/configuration.md#1.0",
+    "source": "knowledge/configuration.md",
+    "section": "agent.json",
+    "text": "Located at `~/.config/crabcakes/agent.json`. This file configures LLM API providers.\n\n### Structure\n\n```json\n{\n  \"providers\": {\n    \"openai\": {\n      \"base_url\": \"https://api.openai.com/v1\",\n      \"api_key\": \"sk-...\",\n      \"default_model\": \"gpt-4o\",\n      \"max_tokens\": 128000\n    }\n  },\n  \"default_provider\": \"openai\",\n  \"default_model\": \"openai/gpt-4o\"\n}\n```\n\n### Supported Providers\n\n| Provider | base_url | Notes |\n|----------|----------|-------|\n| OpenAI | `https://api.openai.com/v1` | Standard OpenAI API |\n| MiniMax | `https://api.minimax.chat/v1` | Large context (1M+ tokens) |\n| OpenRouter | `https://openrouter.ai/api/v1` | Multi-model aggregator, free models available |\n\n### Adding a Provider\n\nEdit `agent.json` and add an entry under `providers`:\n\n```json\n\"my-provider\": {\n  \"base_url\": \"https://my-api.example.com/v1\",\n  \"api_key\": \"your-key-here\",\n  \"default_model\": \"my-model\",\n  \"max_tokens\": 128000\n}\n```\n\n### Default Provider\n\nThe `default_provider` field controls which provider is used when an agent doesn't specify one. Special agents (Coder, Debugger) can override this in their YAML definition."
+  },
+  {
+    "id": "knowledge/configuration.md#2.0",
+    "source": "knowledge/configuration.md",
+    "section": "Common Settings",
+    "text": "| Field | Default | Description |\n|-------|---------|-------------|\n| `max_tool_iterations` | 50 | Max tool calls per conversation turn |\n| `tool_timeout_seconds` | 120 | Timeout for each tool call |\n| `cost_limit` | null | Per-conversation USD spending cap |\n| `step_limit` | null | Per-conversation turn limit |"
+  },
+  {
+    "id": "knowledge/configuration.md#3.0",
+    "source": "knowledge/configuration.md",
+    "section": "Security",
+    "text": "Run `chmod 600 ~/.config/crabcakes/agent.json` to restrict API key access. Crabcakes checks permissions on startup and warns if the file is group/world-readable."
+  },
+  {
+    "id": "knowledge/features.md#0.0",
+    "source": "knowledge/features.md",
+    "section": "Introduction",
+    "text": "# Features Guide"
+  },
+  {
+    "id": "knowledge/features.md#1.0",
+    "source": "knowledge/features.md",
+    "section": "Multi-Agent Collaboration",
+    "text": "Crabcakes supports multiple agents working together in a shared project chat.\n\n### Project Tabs\n\nWhen you open a project, a shared chat tab appears where all project members can see each other's responses. Messages sent in the project tab are broadcast to all members.\n\n### Team Management\n\nClick **+** / **−** on agent rows in the left panel to add or remove agents from the active project. Team membership is saved in `.crabcakes/team.json`.\n\n### Agent Commands\n\nUse slash commands to coordinate agents:\n- `/ask @Agent \"question\"` — consult an agent\n- `/delegate @Agent \"task\"` — assign work\n- `/tell @Agent \"info\"` — share info (no response expected)\n- `/stop @Agent` — remove an agent from collaboration\n\n### Solo DM\n\nUse `/solo @Agent` to switch a project tab to direct-message mode with a single agent. Use `/solo all` to return to broadcast mode."
+  },
+  {
+    "id": "knowledge/features.md#2.0",
+    "source": "knowledge/features.md",
+    "section": "Code Review",
+    "text": "Crabcakes has a built-in code review system. Enable review mode from the project settings bar. In review mode, agents that write code (like Coder) will have their changes reviewed before they're applied."
+  },
+  {
+    "id": "knowledge/features.md#3.0",
+    "source": "knowledge/features.md",
+    "section": "Self-Improvement",
+    "text": "Each agent can learn from its mistakes and adapt to your project:\n\n- **Bug Journal** — Agents log bugs they encounter and their fixes, learning to avoid repeating the same patterns\n- **Project Rules** — Agents can read per-project rules defined in `.crabcakes/{agent}-rules.md`\n- **Enforcement** — Agents with write access can enforce code quality rules (syntax checks, tests, linting)\n- **Structured Feedback** — Detailed feedback on agent decisions and reasoning\n- **Dream Consolidation** — Periodic review of bug journals to identify patterns\n\nThese are configured per-agent in the agent's YAML definition under the `self_improvement` field."
+  },
+  {
+    "id": "knowledge/features.md#4.0",
+    "source": "knowledge/features.md",
+    "section": "Project Awareness",
+    "text": "When a project is active, agents receive context from:\n- `.crabcakes/project.md` — project description and metadata\n- `.crabcakes/workflow.md` — current workflow phase and status\n- `.crabcakes/context.md` — recent activity log\n- `.crabcakes/context-snapshot.json` — structured state snapshot"
+  },
+  {
+    "id": "knowledge/features.md#5.0",
+    "source": "knowledge/features.md",
+    "section": "Improve Prompt (💡)",
+    "text": "The Improve Prompt button rewrites your message for better AI responses. It uses the MiniMax API to expand vague prompts into detailed instructions. The original and improved prompts are both visible before sending."
+  },
+  {
+    "id": "knowledge/features.md#6.0",
+    "source": "knowledge/features.md",
+    "section": "Speech-to-Text",
+    "text": "Hold Ctrl+Space to record voice input. Release to transcribe. Uses whisper.cpp for local transcription."
+  },
+  {
+    "id": "knowledge/gateway.md#0.0",
+    "source": "knowledge/gateway.md",
+    "section": "Introduction",
+    "text": "# Gateway Guide"
+  },
+  {
+    "id": "knowledge/gateway.md#1.0",
+    "source": "knowledge/gateway.md",
+    "section": "What is the Gateway?",
+    "text": "The OpenClaw gateway is the central AI orchestration server that Crabcakes connects to. It manages agent sessions, WebSocket connections, and tool execution for gateway-connected agents."
+  },
+  {
+    "id": "knowledge/gateway.md#2.0",
+    "source": "knowledge/gateway.md",
+    "section": "Connection",
+    "text": "Crabcakes connects to the gateway via WebSocket using Ed25519 device authentication:\n\n1. Click **Connect** in the toolbar\n2. Crabcakes authenticates with the configured gateway URL\n3. On success, the toolbar shows \"Connected\" and gateway agents appear in the left panel"
+  },
+  {
+    "id": "knowledge/gateway.md#3.0",
+    "source": "knowledge/gateway.md",
+    "section": "Gateway vs Special Agents",
+    "text": "Crabcakes has two types of agents:\n\n### Gateway Agents\n- Managed by the OpenClaw gateway\n- Appear in the left panel after connecting\n- Sessions can be switched from the session menu\n- Tool execution handled by the gateway\n\n### Special Agents\n- Run locally within Crabcakes\n- Configured via YAML in `~/.config/crabcakes/agents/`\n- Have direct access to local files and tools\n- Include Coder, Debugger, and Crabcakes"
+  },
+  {
+    "id": "knowledge/gateway.md#4.0",
+    "source": "knowledge/gateway.md",
+    "section": "Configuration",
+    "text": "The gateway URL is configured in `~/.config/crabcakes/settings.json`:\n\n```json\n{\n  \"gateway_url\": \"http://localhost:18797\"\n}\n```\n\nOr set the `CRABCAKES_GATEWAY_URL` environment variable."
+  },
+  {
+    "id": "knowledge/gateway.md#5.0",
+    "source": "knowledge/gateway.md",
+    "section": "Troubleshooting",
+    "text": "- **\"Offline\" status** — Check that the gateway is running. Run `openclaw gateway status` to verify.\n- **Auth errors** — Check that your device key is registered. Run `openclaw device list` to see registered devices.\n- **No agents appear** — Gateway must have active sessions for agents to appear. Create sessions via `openclaw session create`.\n- **Connection timeout** — Verify the gateway URL is correct and the port is accessible. Check firewall rules."
+  },
+  {
+    "id": "knowledge/setup.md#0.0",
+    "source": "knowledge/setup.md",
+    "section": "Introduction",
+    "text": "# Crabcakes Setup Guide"
+  },
+  {
+    "id": "knowledge/setup.md#1.0",
+    "source": "knowledge/setup.md",
+    "section": "Installation",
+    "text": "Crabcakes is a native GTK4 Linux desktop app for multi-agent AI development.\n\n### Quick Start\n\n```bash\ncd ~/projects/crabcakes\npip install -e .\n```\n\n### Requirements\n- Python 3.12+\n- GTK 4.0+\n- A running OpenClaw gateway (for gateway agents)\n\n### First Launch\n\n1. Run `crabcakes` from your terminal\n2. On first launch, `~/.config/crabcakes/agent.json` is created with example provider configurations\n3. Add your API keys to get started"
+  },
+  {
+    "id": "knowledge/setup.md#2.0",
+    "source": "knowledge/setup.md",
+    "section": "Configuration Directory",
+    "text": "All configuration lives in `~/.config/crabcakes/`:\n\n| File | Purpose |\n|------|---------|\n| `agent.json` | LLM API providers and model settings |\n| `agents/` | Agent YAML definitions (Coder, Debugger, etc.) |"
+  },
+  {
+    "id": "knowledge/setup.md#3.0",
+    "source": "knowledge/setup.md",
+    "section": "Connecting to a Gateway",
+    "text": "1. Click the **Connect** button in the toolbar\n2. The gateway URL defaults to your configured OpenClaw endpoint\n3. Once connected, gateway agents appear in the left panel under \"Agents\""
+  },
+  {
+    "id": "knowledge/setup.md#4.0",
+    "source": "knowledge/setup.md",
+    "section": "Project Setup",
+    "text": "1. Click **New Project** in the left panel's Projects tab\n2. Enter a project name\n3. The project directory is created under `$CRABCAKES_PROJECTS_DIR` (defaults to `~/crabcakes-projects/`)\n4. A `.crabcakes/` directory is initialized with project configuration files\n5. Git is auto-initialized with an initial commit"
+  },
+  {
+    "id": "knowledge/setup.md#5.0",
+    "source": "knowledge/setup.md",
+    "section": "Next Steps",
+    "text": "- Add API keys → see `knowledge/configuration.md`\n- Create custom agents → see `knowledge/agents.md`\n- Explore features → see `knowledge/features.md`"
+  },
+  {
+    "id": "knowledge/troubleshooting.md#0.0",
+    "source": "knowledge/troubleshooting.md",
+    "section": "Introduction",
+    "text": "# Troubleshooting Guide"
+  },
+  {
+    "id": "knowledge/troubleshooting.md#1.0",
+    "source": "knowledge/troubleshooting.md",
+    "section": "Common Issues",
+    "text": "### App Won't Start\n\n**Symptom:** Crabcakes crashes on launch or won't open.\n\n**Check:**\n1. Python version: `python3 --version` (needs 3.12+)\n2. GTK installation: `python3 -c \"import gi; gi.require_version('Gtk', '4.0')\"`\n3. Dependencies: `pip install -e .` from the Crabcakes directory\n\n### \"No API key configured\" Error\n\n**Symptom:** Special agents fail with \"No API key configured for provider X\".\n\n**Fix:**\n1. Edit `~/.config/crabcakes/agent.json`\n2. Add your API key for the relevant provider\n3. Restart Crabcakes\n\nThe Crabcakes 🦀 help agent requires an OpenRouter API key. Configure it through the agent editor (click the 🦀 tab → edit) by adding your OpenRouter key and provider.\n\n### Gateway Won't Connect\n\n**Symptom:** Toolbar shows \"Offline\" or \"Connecting...\" indefinitely.\n\n**Check:**\n1. Gateway is running: `openclaw gateway status`\n2. Gateway URL is correct in settings\n3. Port is accessible (not blocked by firewall)\n4. Device key is registered: `openclaw device list`\n\n### Agent Not Responding\n\n**Symptom:** Messages sent but no response from an agent.\n\n**Check:**\n1. For gateway agents: verify the agent has an active session\n2. For special agents: verify the provider has a valid API key\n3. Check the Crabcakes logs at `~/.config/crabcakes/logs/`\n\n### Project Tab Shows Wrong Content\n\n**Symptom:** Project tab shows messages from the wrong project or no messages at all.\n\n**Fix:**\n1. Close the project tab (right-click → Close)\n2. Re-open the project from the left panel\n3. If issue persists, check `.crabcakes/team.json` for corrupted entries\n\n### Config Reset\n\nTo completely reset Crabcakes configuration:\n\n```bash\n# Backup first\ncp -r ~/.config/crabcakes ~/.config/crabcakes.backup\n\n# Remove config (fresh start on next launch)\nrm -rf ~/.config/crabcakes\n```\n\n### Log Files\n\nCrabcakes logs are located at:\n\n```\n~/.config/crabcakes/logs/\n```\n\nSet `CRABCAKES_LOG_LEVEL=DEBUG` for verbose logging. Useful when reporting bugs."
+  },
+  {
+    "id": "knowledge/troubleshooting.md#2.0",
+    "source": "knowledge/troubleshooting.md",
+    "section": "Getting Help",
+    "text": "- The Crabcakes 🦀 agent can answer most questions — just ask in its tab\n- For gateway issues, check OpenClaw documentation at `https://docs.openclaw.ai`\n- For bugs, check the GitHub issues at the Crabcakes repository"
+  }
+]

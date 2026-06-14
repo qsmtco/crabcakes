@@ -7,6 +7,7 @@
 #   SpecialAgentDef, SPECIAL_AGENTS, get_special_agents, reload_registry
 #   ToolDefinition, ToolResult
 #   build_system_prompt, build_file_context
+#   kb_lookup, is_index_available — KB lookup (Auxilium Tier 1)
 #   check (enforcement)
 #
 # Files in this package:
@@ -14,6 +15,7 @@
 #   config.py         — LLM provider configuration
 #   tools.py          — tool definitions and execution
 #   context.py        — system prompt + file context builder
+#   kb_lookup.py      — KB lookup (Auxilium Tier 1)
 #   runtime.py        — AgentRuntime (Phase 1.3a)
 #   special_agents.py — Coder + Debugger definitions
 #   enforcement.py    — policy enforcement checks
@@ -27,6 +29,7 @@ from .special_agents import (
 )
 from .tools import ToolDefinition, ToolResult
 from .context import build_system_prompt, build_file_context
+from .kb_lookup import kb_lookup, is_index_available
 from .enforcement import check
 
 try:
@@ -45,6 +48,8 @@ try:
         "check",
         "get_api_key",
         "get_special_agents",
+        "is_index_available",
+        "kb_lookup",
         "load_agent_config",
         "reload_registry",
     ]
@@ -62,6 +67,8 @@ except ImportError:
         "check",
         "get_api_key",
         "get_special_agents",
+        "is_index_available",
+        "kb_lookup",
         "load_agent_config",
         "reload_registry",
     ]

@@ -88,6 +88,7 @@ crabcakes/
 │   │                          # load_agent_config, get_api_key, SpecialAgentDef, SPECIAL_AGENTS,
 │   │                          # get_special_agents, reload_registry, ToolDefinition, ToolResult,
 │   │                          # build_system_prompt, build_file_context, check
+│   ├── kb_lookup.py          # KB lookup — cosine-sim retrieval over indexed KB chunks (Auxilium Tier 1)
 │   ├── runtime.py           # AgentRuntime — tool loop, LLM API, streaming, cost tracking + enforcement hook
 │   ├── tools.py              # Tool definitions + execution (read_file, write_file, edit_file, exec_command, etc.)
 │   ├── config.py             # LLM provider config + EnforcementConfig dataclass
@@ -1332,6 +1333,42 @@ def _read_crabcakes_docs(project_path) -> str               # §4.4a — always 
 def _load_crabcakes_doc(doc_name, project_path) -> str | None  # individual doc access
 def load_custom_system_prompt(project_path) -> str | None  # .crabcakes/agent-system-prompt.md → AGENTS.md → None
 ```
+
+### 3.21q.5 `agent/kb_lookup.py` — Knowledge-Base Lookup (Auxilium Tier 1)
+
+**Responsibility:** Semantic search over the project's `knowledge/*.md` files. Embeds the user's question with a local Sentence-Transformers model, computes cosine similarity against pre-built chunk embeddings, and returns the top-K most relevant chunks. Powers the Auxilium help agent's "KB-first" answer engine.
+
+**Public API:**
+```python
+@dataclass
+class KBChunk:
+    id: str                # e.g. "setup.md#0.0"
+    source: str            # e.g. "knowledge/setup.md"
+    section: str           # e.g. "Installation"
+    text: str              # chunk text
+    score: float           # cosine similarity, 0..1
+
+def kb_lookup(question: str, top_k: int = 3, min_score: float = 0.3,
+              model_name: str = "BAAI/bge-small-en-v1.5") -> list[KBChunk]
+def is_index_available() -> bool   # True if knowledge/.index/{chunks.json, embeddings.npy} exist
+def get_index_path() -> Path       # knowledge/.index/
+def reset_cache() -> None          # clears module-level state (for tests)
+```
+
+**Architecture:**
+- Pure Python — no GTK, no network at import time.
+- Lazy-loads the Sentence-Transformers model and index on first call. Module-level singleton state cached across calls.
+- Default model: `BAAI/bge-small-en-v1.5` (130MB, MIT-licensed, 384-dim, runs on CPU).
+- Index format: `knowledge/.index/chunks.json` (list of `{id, source, section, text}`) + `knowledge/.index/embeddings.npy` (float32, shape `(N, 384)`, L2-normalized).
+- Index is built offline by `scripts/rebuild_kb_index.py` and committed to the repo.
+
+**Fail-soft behavior:** Returns `[]` on missing index, missing model, no confident match, or any internal error. Logs at DEBUG/WARNING. The agent must treat empty list as "I don't have info on that" — never as a crash.
+
+**Integration with AgentRuntime (Phase 2, not in this module):** Two options:
+- *Option A (preprocessing):* In `AgentRuntime.send_message()`, before building the API message list, check `agent_role == "helper"` and prepend `kb_lookup(question)` results to the user message.
+- *Option B (formal tool):* Register `kb_lookup` in `agent/tools.py` as a no-approval tool. LLM calls it when it needs KB context.
+
+**No `ui/` imports.** Lives in `agent/` per §2.
 
 ### 3.21q `agent/special_agents.py` — Special Agent Definitions (Phase 1.4 → User-Defined Agents)
 
@@ -3089,9 +3126,13 @@ crabcakes/
 │   ├── config.py                 # ~249 lines — LLMProviderConfig, EnforcementConfig, AgentConfig, load_agent_config(), get_api_key()
 │   ├── context.py                # ~437 lines — build_system_prompt, build_file_context, _read_crabcakes_docs + .gitignore parsing
 │   ├── enforcement.py            # ~761 lines — Post-write verification: 3-tier checks + per-project override + TestConfig + venv detection
+│   ├── kb_lookup.py              # KB lookup — cosine-sim retrieval over indexed KB chunks (Auxilium Tier 1)
 │   ├── runtime.py                # ~1420 lines — AgentRuntime: tool loop, enforcement hook, stuck detection, providers, streaming, cost
 │   ├── special_agents.py         # ~182 lines — SpecialAgentDef, get_special_agents(), reload_registry()
 │   └── tools.py                  # ~892 lines — 8 tools: read_file, write_file, edit_file, exec_command, list_files, search_files, web_search, web_fetch
+│
+├── scripts/
+│   └── rebuild_kb_index.py       # offline indexer — builds knowledge/.index/ from knowledge/*.md (Auxilium Tier 1)
 │
 ├── ui/
 │   ├── __init__.py               # 1 line

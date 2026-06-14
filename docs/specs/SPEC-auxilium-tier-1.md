@@ -369,7 +369,7 @@ Per ARCHITECTURE.md §0, this SPEC's code commit must include corresponding ARCH
 | `ui/views/auxilium_wizard.py` | §3: add `auxilium_wizard.py`; §13: add to file inventory |
 | `scripts/rebuild_kb_index.py` | §13: add to file inventory (scripts/ already documented) |
 | `knowledge/install.md`, `knowledge/providers.md` | §2: note expansion of `knowledge/` directory |
-| `knowledge/.index/` (generated) | `.gitignore` entry: `knowledge/.index/` |
+| `knowledge/.index/` (generated, but committed) | No `.gitignore` entry — index is committed to the repo as a deterministic build artifact (same KB → same embeddings) |
 
 ---
 
