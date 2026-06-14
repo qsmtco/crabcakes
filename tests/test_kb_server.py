@@ -1,0 +1,389 @@
+# tests/test_kb_server.py
+# Unit tests for agent/kb_server.py — KB HTTP server.
+#
+# Tests cover:
+#   - Health check endpoint
+#   - Chat completions (KB hit, out-of-scope, no user message)
+#   - Error handling (malformed body, wrong method, wrong path)
+#   - Server lifecycle (start, running check, stop)
+#   - kb_lookup integration (mocked to verify call-through)
+
+from __future__ import annotations
+
+import json
+import socket
+import threading
+import time
+import urllib.request
+import urllib.error
+from unittest import mock
+
+import pytest
+
+from agent import kb_server
+from agent.kb_server import (
+    KB_OUT_OF_SCOPE,
+    KB_SERVER_PORT,
+    _format_chunks,
+    _extract_last_user_message,
+    _make_response,
+    is_kb_server_running,
+    start_kb_server,
+    stop_kb_server,
+)
+from agent.kb_lookup import KBChunk
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+
+def _find_free_port() -> int:
+    """Find a free port for testing (avoids hardcoding 18790)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _wait_for_server(port: int, timeout: float = 5.0) -> None:
+    """Wait until the server responds on /health or timeout."""
+    deadline = time.perf_counter() + timeout
+    while time.perf_counter() < deadline:
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/health", timeout=0.5
+            ) as resp:
+                if resp.status == 200:
+                    return
+        except (urllib.error.URLError, ConnectionRefusedError, OSError):
+            pass
+        time.sleep(0.05)
+    pytest.fail(f"KB server on port {port} did not start within {timeout}s")
+
+
+def _post(port: int, path: str, body: dict | str) -> tuple[int, dict]:
+    """POST to the server and return (status_code, response_json)."""
+    url = f"http://127.0.0.1:{port}{path}"
+    if isinstance(body, str):
+        data = body.encode("utf-8")
+    else:
+        data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+
+
+def _get(port: int, path: str) -> tuple[int, dict | None]:
+    """GET from the server and return (status_code, response_json)."""
+    url = f"http://127.0.0.1:{port}{path}"
+    try:
+        with urllib.request.urlopen(url, timeout=5.0) as resp:
+            body = resp.read()
+            return resp.status, json.loads(body) if body else None
+    except urllib.error.HTTPError as e:
+        body = e.read()
+        return e.code, json.loads(body) if body else None
+
+
+@pytest.fixture
+def kb_server_instance():
+    """Start and stop a KB server on a free port for each test."""
+    port = _find_free_port()
+
+    # Mock is_index_available so the server starts even without a real index
+    with mock.patch.object(kb_server, "is_index_available", return_value=True):
+        thread = start_kb_server(port=port)
+        if thread is None:
+            pytest.skip("Could not start KB server")
+        _wait_for_server(port)
+        yield port
+        stop_kb_server()
+
+    # Ensure clean state after test
+    if is_kb_server_running():
+        stop_kb_server()
+
+
+# ── Unit tests for pure functions ──────────────────────────────────────────────
+
+
+class TestMakeResponse:
+    def test_structure(self):
+        resp = _make_response("hello world")
+        assert resp["object"] == "chat.completion"
+        assert resp["model"] == "local-kb"
+        assert resp["id"].startswith("chatcmpl-kb-")
+        choices = resp["choices"]
+        assert len(choices) == 1
+        assert choices[0]["message"]["role"] == "assistant"
+        assert choices[0]["message"]["content"] == "hello world"
+        assert choices[0]["finish_reason"] == "stop"
+
+    def test_usage_zero(self):
+        resp = _make_response("test")
+        assert resp["usage"]["prompt_tokens"] == 0
+        assert resp["usage"]["completion_tokens"] == 0
+
+    def test_unique_ids(self):
+        r1 = _make_response("a")
+        r2 = _make_response("b")
+        assert r1["id"] != r2["id"]
+
+
+class TestFormatChunks:
+    def test_single_chunk(self):
+        chunk = KBChunk(
+            id="c1",
+            source="knowledge/install.md",
+            section="Installing on Ubuntu",
+            text="Run apt install ...",
+            score=0.9,
+        )
+        text = _format_chunks([chunk])
+        assert "Based on the CrabCakes knowledge base" in text
+        assert "knowledge/install.md" in text
+        assert "Installing on Ubuntu" in text
+        assert "Run apt install ..." in text
+
+    def test_multiple_chunks(self):
+        chunks = [
+            KBChunk(id="c1", source="s1", section="a", text="text1", score=0.9),
+            KBChunk(id="c2", source="s2", section="b", text="text2", score=0.8),
+        ]
+        text = _format_chunks(chunks)
+        assert "text1" in text
+        assert "text2" in text
+        assert "s1" in text
+        assert "s2" in text
+
+    def test_empty_list(self):
+        text = _format_chunks([])
+        assert "Based on the CrabCakes knowledge base" in text
+
+
+class TestExtractLastUserMessage:
+    def test_single_user_message(self):
+        msgs = [{"role": "user", "content": "hello"}]
+        assert _extract_last_user_message(msgs) == "hello"
+
+    def test_last_user_after_system(self):
+        msgs = [
+            {"role": "system", "content": "you are helpful"},
+            {"role": "user", "content": "install help"},
+        ]
+        assert _extract_last_user_message(msgs) == "install help"
+
+    def test_multiple_users_returns_last(self):
+        msgs = [
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "answer"},
+            {"role": "user", "content": "second question"},
+        ]
+        assert _extract_last_user_message(msgs) == "second question"
+
+    def test_no_user_message(self):
+        msgs = [{"role": "system", "content": "you are helpful"}]
+        assert _extract_last_user_message(msgs) is None
+
+    def test_empty_messages(self):
+        assert _extract_last_user_message([]) is None
+
+    def test_none_messages(self):
+        assert _extract_last_user_message(None) is None
+
+    def test_empty_content(self):
+        msgs = [{"role": "user", "content": ""}]
+        assert _extract_last_user_message(msgs) is None
+
+    def test_whitespace_content(self):
+        msgs = [{"role": "user", "content": "   "}]
+        assert _extract_last_user_message(msgs) is None
+
+
+# ── HTTP integration tests ─────────────────────────────────────────────────────
+
+
+class TestHealthCheck:
+    def test_health_check(self, kb_server_instance):
+        port = kb_server_instance
+        status, body = _get(port, "/health")
+        assert status == 200
+        assert body == {"status": "ok"}
+
+
+class TestChatCompletions:
+    def test_chat_completions_kb_hit(self, kb_server_instance):
+        port = kb_server_instance
+        mock_chunks = [
+            KBChunk(
+                id="c1",
+                source="knowledge/install.md",
+                section="Installing on Ubuntu",
+                text="Run apt install python3-gi python3-gi-cairo",
+                score=0.92,
+            ),
+        ]
+        with mock.patch.object(kb_server, "kb_lookup", return_value=mock_chunks):
+            status, body = _post(
+                port,
+                "/v1/chat/completions",
+                {
+                    "model": "local-kb",
+                    "messages": [
+                        {"role": "user", "content": "How do I install on Ubuntu?"}
+                    ],
+                },
+            )
+        assert status == 200
+        content = body["choices"][0]["message"]["content"]
+        assert "knowledge/install.md" in content
+        assert "Installing on Ubuntu" in content
+        assert "apt install" in content
+        assert body["model"] == "local-kb"
+
+    def test_chat_completions_out_of_scope(self, kb_server_instance):
+        port = kb_server_instance
+        with mock.patch.object(kb_server, "kb_lookup", return_value=[]):
+            status, body = _post(
+                port,
+                "/v1/chat/completions",
+                {
+                    "model": "local-kb",
+                    "messages": [
+                        {"role": "user", "content": "quantum physics equations"}
+                    ],
+                },
+            )
+        assert status == 200
+        content = body["choices"][0]["message"]["content"]
+        assert content == KB_OUT_OF_SCOPE
+
+    def test_chat_completions_no_user_message(self, kb_server_instance):
+        port = kb_server_instance
+        status, body = _post(
+            port,
+            "/v1/chat/completions",
+            {
+                "model": "local-kb",
+                "messages": [
+                    {"role": "system", "content": "you are a helpful assistant"}
+                ],
+            },
+        )
+        assert status == 200
+        content = body["choices"][0]["message"]["content"]
+        assert content == KB_OUT_OF_SCOPE
+
+    def test_chat_completions_malformed_body(self, kb_server_instance):
+        port = kb_server_instance
+        status, body = _post(port, "/v1/chat/completions", "{not valid json")
+        assert status == 400
+        assert "error" in body
+
+    def test_chat_completions_wrong_method(self, kb_server_instance):
+        port = kb_server_instance
+        # GET on /v1/chat/completions → 404 (no GET handler for that path)
+        status, _ = _get(port, "/v1/chat/completions")
+        assert status == 404
+
+    def test_chat_completions_wrong_path(self, kb_server_instance):
+        port = kb_server_instance
+        status, body = _post(
+            port,
+            "/v1/wrong",
+            {"model": "local-kb", "messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert status == 404
+
+
+class TestServerLifecycle:
+    def test_server_lifecycle(self):
+        port = _find_free_port()
+        try:
+            with mock.patch.object(kb_server, "is_index_available", return_value=True):
+                thread = start_kb_server(port=port)
+                assert thread is not None
+                assert is_kb_server_running() is True
+                _wait_for_server(port)
+
+                stop_kb_server()
+                assert is_kb_server_running() is False
+        finally:
+            if is_kb_server_running():
+                stop_kb_server()
+
+    def test_start_when_port_in_use(self):
+        port = _find_free_port()
+        # Occupy the port
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        blocker.bind(("127.0.0.1", port))
+        blocker.listen(1)
+        try:
+            with mock.patch.object(kb_server, "is_index_available", return_value=True):
+                thread = start_kb_server(port=port)
+                assert thread is None  # should fail gracefully
+                assert is_kb_server_running() is False
+        finally:
+            blocker.close()
+
+    def test_start_when_index_missing(self):
+        port = _find_free_port()
+        with mock.patch.object(kb_server, "is_index_available", return_value=False):
+            thread = start_kb_server(port=port)
+            assert thread is None
+            assert is_kb_server_running() is False
+
+
+class TestKBLookupIntegration:
+    def test_kb_server_uses_kb_lookup(self, kb_server_instance):
+        port = kb_server_instance
+        mock_chunks = [
+            KBChunk(
+                id="c1",
+                source="knowledge/install.md",
+                section="Install",
+                text="Install GTK4 with apt",
+                score=0.95,
+            ),
+        ]
+        with mock.patch.object(
+            kb_server, "kb_lookup", return_value=mock_chunks
+        ) as mock_lookup:
+            _post(
+                port,
+                "/v1/chat/completions",
+                {
+                    "model": "local-kb",
+                    "messages": [
+                        {"role": "system", "content": "system prompt"},
+                        {"role": "user", "content": "How do I install?"},
+                    ],
+                },
+            )
+            mock_lookup.assert_called_once()
+            call_args = mock_lookup.call_args
+            # First positional arg should be the last user message
+            assert call_args[0][0] == "How do I install?"
+
+    def test_kb_lookup_exception_returns_out_of_scope(self, kb_server_instance):
+        port = kb_server_instance
+        with mock.patch.object(
+            kb_server, "kb_lookup", side_effect=RuntimeError("boom")
+        ):
+            status, body = _post(
+                port,
+                "/v1/chat/completions",
+                {
+                    "model": "local-kb",
+                    "messages": [
+                        {"role": "user", "content": "anything"}
+                    ],
+                },
+            )
+        assert status == 200
+        assert body["choices"][0]["message"]["content"] == KB_OUT_OF_SCOPE
