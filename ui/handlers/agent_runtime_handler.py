@@ -318,25 +318,43 @@ class AgentRuntimeHandler:
 
         return None
 
-    def _get_runtime(self, name: str) -> Any:
+    def _get_runtime(self, name: str, agent_def=None) -> Any:
         """
         Get or create the AgentRuntime for a named agent.
 
         Each named agent gets its own AgentRuntime instance to keep
         conversations isolated.
+
+        Args:
+            name: Display name of the agent.
+            agent_def: Optional SpecialAgentDef. If provided, the agent's
+                      llm_name overrides the global default_provider.
         """
         if name in self._runtimes:
             return self._runtimes[name]
 
-        from agent.config import load_agent_config
+        from agent.config import load_agent_config, LLMProviderConfig
         from agent.runtime import AgentRuntime
 
         config = load_agent_config()
-        provider = config.providers.get(config.default_provider)
+
+        # If the agent definition specifies a provider, use it as the default
+        if agent_def is not None and getattr(agent_def, 'llm_name', None):
+            llm_name = agent_def.llm_name
+            if llm_name in config.providers:
+                config.default_provider = llm_name
+                provider = config.providers[llm_name]
+            else:
+                provider = config.providers.get(config.default_provider)
+        else:
+            provider = config.providers.get(config.default_provider)
+
         if not provider:
             raise RuntimeError(f"No provider configured for {config.default_provider}")
-        if not provider.api_key:
-            raise RuntimeError(f"No API key configured for provider {config.default_provider}")
+
+        # local-kb uses a placeholder key — skip the API key check
+        if provider.name != "local-kb" and not provider.api_key:
+            raise RuntimeError(f"No API key configured for provider {provider.name}")
 
         rt = AgentRuntime(
             config=config,
@@ -388,7 +406,7 @@ class AgentRuntimeHandler:
             project_name, project_path = self._active_project
         else:
             project_name, project_path = "(none)", None
-        rt = self._get_runtime(agent_def.display_name)
+        rt = self._get_runtime(agent_def.display_name, agent_def=agent_def)
 
         logger.debug("[handler] send_to_special_agent: sk=%s agent=%s project=%s text_len=%d",
                      session_key, agent_def.display_name, project_name, len(text))
