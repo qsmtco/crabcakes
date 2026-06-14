@@ -100,12 +100,18 @@ def _split_long_section(text: str) -> list[str]:
         out: list[str] = []
         for p in parts:
             if len(p) > _MAX_CHUNK_CHARS:
-                out.extend(_split_long_section(p))
+                # Still too long after ### split — go to paragraph/hard split (no recursion)
+                out.extend(_paragraph_split(p))
             else:
                 out.append(p)
         return out
 
     # Try paragraph boundaries.
+    return _paragraph_split(text)
+
+
+def _paragraph_split(text: str) -> list[str]:
+    """Split text on paragraph boundaries, then hard-split if still too long."""
     paragraphs = text.split("\n\n")
     out = []
     buffer = ""

@@ -1,79 +1,402 @@
 # Troubleshooting Guide
 
-## Common Issues
+This guide covers common issues in CrabCakes and how to resolve them. Each issue includes the actual error message you will see, the root cause, and step-by-step fixes.
 
-### App Won't Start
+---
 
-**Symptom:** Crabcakes crashes on launch or won't open.
+## Provider Configuration Errors
 
-**Check:**
-1. Python version: `python3 --version` (needs 3.12+)
-2. GTK installation: `python3 -c "import gi; gi.require_version('Gtk', '4.0')"`
-3. Dependencies: `pip install -e .` from the Crabcakes directory
+### "No LLM provider configured for X"
 
-### "No API key configured" Error
+**Where you see it:** Raised as `ValueError` in `agent/runtime.py` when `_call_llm()` cannot find a provider for the agent's model.
 
-**Symptom:** Special agents fail with "No API key configured for provider X".
+**Root cause:** The `agent.json` or `providers.yaml` has no provider entry matching the model prefix, or no providers are configured at all.
 
 **Fix:**
-1. Edit `~/.config/crabcakes/agent.json`
-2. Add your API key for the relevant provider
-3. Restart Crabcakes
 
-The Crabcakes 🦀 help agent requires an OpenRouter API key. Configure it through the agent editor (click the 🦀 tab → edit) by adding your OpenRouter key and provider.
+1. Run the first-run wizard (Settings → Run Setup Wizard)
+2. Or manually edit `~/.config/crabcakes/providers.yaml` to add a provider:
 
-### Gateway Won't Connect
+```yaml
+- name: openrouter
+  base_url: https://openrouter.ai/api/v1
+  api_key: sk-or-v1-YOUR_KEY
+  default_model: openrouter/auto
+  caller: openrouter
+  enabled: true
+  supports_tools: true
+  supports_streaming: true
+  max_tokens: 128000
+```
 
-**Symptom:** Toolbar shows "Offline" or "Connecting..." indefinitely.
+3. Ensure the agent's `llm_name` in `agents/*.yaml` matches a configured provider name
+4. Restart CrabCakes
 
-**Check:**
-1. Gateway is running: `openclaw gateway status`
-2. Gateway URL is correct in settings
-3. Port is accessible (not blocked by firewall)
-4. Device key is registered: `openclaw device list`
+### "Provider 'X' is not configured"
 
-### Agent Not Responding
+**Where you see it:** Raised in `agent/runtime.py` when the model has a provider prefix (e.g. `openrouter/model`) but that provider is not in the config.
 
-**Symptom:** Messages sent but no response from an agent.
-
-**Check:**
-1. For gateway agents: verify the agent has an active session
-2. For special agents: verify the provider has a valid API key
-3. Check the Crabcakes logs at `~/.config/crabcakes/logs/`
-
-### Project Tab Shows Wrong Content
-
-**Symptom:** Project tab shows messages from the wrong project or no messages at all.
+**Root cause:** The agent's model field specifies a provider that doesn't exist in your config.
 
 **Fix:**
-1. Close the project tab (right-click → Close)
-2. Re-open the project from the left panel
-3. If issue persists, check `.crabcakes/team.json` for corrupted entries
 
-### Config Reset
+1. Check which provider the agent uses: open the Agent Builder (edit the agent) and look at the LLM Provider field
+2. Add that provider to `providers.yaml` (see above)
+3. Or change the agent to use a provider you already have configured
 
-To completely reset Crabcakes configuration:
+### "No API key configured for provider X"
+
+**Where you see it:** Error message when an agent tries to call an LLM API without authentication.
+
+**Root cause:** The provider entry exists but `api_key` is empty, and no per-agent API key is set.
+
+**Fix:**
+
+1. Open Settings → click the ⚙ button in the toolbar
+2. Find the provider and add your API key
+3. Or edit `~/.config/crabcakes/providers.yaml` directly and add the `api_key` field
+4. For per-agent keys, use the Agent Builder to set an API key specific to one agent
+
+The `providers.yaml` fallback scan: if neither the conversation nor the provider config has an API key, the runtime scans `providers.yaml` for a matching provider name with a non-empty key.
+
+### "No caller for provider X (caller_key=Y)"
+
+**Where you see it:** `ValueError` in `agent/runtime.py` when the non-streaming LLM call cannot find a caller function.
+
+**Root cause:** The provider's `caller` field in `providers.yaml` does not match any registered caller. Valid caller values: `openai`, `minimax`, `anthropic`, `openrouter`, `zai`.
+
+**Fix:**
+
+1. Check the `caller` field in your provider configuration
+2. Set it to the correct API format:
+   - OpenAI → `caller: openai`
+   - OpenRouter → `caller: openrouter`
+   - Anthropic → `caller: anthropic`
+   - MiniMax → `caller: minimax`
+   - Ollama → `caller: openai` (Ollama is OpenAI-compatible)
+   - Google Gemini → `caller: openai` (uses OpenAI-compatible endpoint)
+3. Save and restart
+
+### "No streaming caller for caller_key=X"
+
+**Where you see it:** `ValueError` in `agent/runtime.py` when streaming is enabled but no streaming function is registered for the caller.
+
+**Root cause:** The provider's `caller` field doesn't have a registered streaming function, or `supports_streaming` is true but the caller type is unknown.
+
+**Fix:**
+
+1. Set `supports_streaming: false` in the provider config to disable streaming
+2. Or correct the `caller` field to a supported value (see above)
+
+---
+
+## KB Server Issues
+
+### KB Server Not Starting
+
+**Symptom:** The Auxilium agent cannot answer questions, or the local-kb provider returns errors.
+
+**Diagnosis:**
+
+The KB server (`agent/kb_server.py`) only starts if the KB index is available. Check:
+
+```bash
+ls -la /home/q/projects/crabcakes/knowledge/.index/
+# Should show: chunks.json  embeddings.npy
+```
+
+If these files don't exist, the index needs to be built:
+
+```bash
+cd /home/q/projects/crabcakes
+python3 scripts/rebuild_kb_index.py
+```
+
+**Requirements for KB index:**
+- `sentence-transformers` Python package
+- `numpy` Python package
+- ~130MB model download on first run (BAAI/bge-small-en-v1.5)
+
+**Server won't bind to port 18790:**
+
+If another process is using port 18790, the KB server logs:
+```
+kb_server: failed to bind 127.0.0.1:18790: [Errno 98] Address already in use
+```
+
+Fix: kill the process using the port, or restart CrabCakes.
+
+### KB Server Returns [KB_OUT_OF_SCOPE] for Everything
+
+**Symptom:** Auxilium always falls back to the external provider, even for questions about CrabCakes.
+
+**Root cause:** The KB index may be stale or the confidence threshold (0.55) is too high for your content.
+
+**Fix:**
+
+1. Rebuild the index: `python3 scripts/rebuild_kb_index.py`
+2. Check that your knowledge `.md` files have proper `##` headings (chunks are split by level-2 headings)
+3. Verify the index loaded correctly by running with `CRABCAKES_DEBUG=1` and checking for `kb_lookup` log lines
+
+### sentence-transformers Not Installed
+
+**Symptom:** KB lookup silently returns empty results. Log shows: `sentence-transformers not available; kb_lookup returning []`
+
+**Fix:**
+```bash
+pip install sentence-transformers
+```
+
+---
+
+## Gateway Connection Issues
+
+### Toolbar Shows "Offline" or "Connecting..." Indefinitely
+
+**Check:**
+
+1. **Gateway is running:**
+   ```bash
+   openclaw gateway status
+   ```
+
+2. **Gateway URL is correct:** Check Settings → Gateway URL. Default is `ws://localhost:18789`.
+
+3. **Port is accessible:** Test connectivity:
+   ```bash
+   curl -s http://localhost:18789/health
+   ```
+
+4. **Device key is registered:**
+   ```bash
+   openclaw device list
+   ```
+
+5. **Check logs:** Run with `CRABCAKES_DEBUG=1` to see WebSocket connection details:
+   ```bash
+   CRABCAKES_DEBUG=1 crabcakes
+   ```
+
+### Gateway Disconnects Randomly
+
+**Symptom:** Connection drops intermittently, agents stop responding.
+
+**Fix:**
+
+- The `GatewayClient` (in `gateway/client.py`) has built-in reconnect logic. Check that the gateway process is stable.
+- Network instability between client and gateway can cause this — check if the gateway host is reachable.
+- Review gateway-side logs for session timeouts or rate limiting.
+
+---
+
+## Agent Not Responding
+
+### Gateway Agents (discovered via gateway)
+
+**Symptom:** Messages sent but no response from a gateway agent.
+
+**Check:**
+
+1. Verify the agent has an active session (check if the agent appears in the Agents tab)
+2. Check gateway status — is the agent process running?
+3. Look for error messages in the chat tab or activity drawer
+4. Run with `CRABCAKES_DEBUG=1` to see event routing
+
+### Special Agents (Coder, Debugger, custom)
+
+**Symptom:** Special agent shows no response or an error message.
+
+**Check:**
+
+1. **Provider configured:** Ensure the agent's LLM provider is set up with a valid API key
+2. **API key valid:** Test with a simple message — if you get a 401 error, the key is invalid
+3. **Check error messages:** Special agent errors appear in the chat as red error bubbles
+4. **Review logs:** `CRABCAKES_DEBUG=1` shows the full API request/response cycle
+
+**Common errors:**
+- `"Agent returned no content"` — The LLM provider returned an empty response. Check provider status and model name.
+- `"OpenAI API error 429"` — Rate limited. Wait and retry.
+- `"OpenAI API error 401"` — Invalid API key.
+
+---
+
+## App Won't Start
+
+### Python Version
+
+CrabCakes requires Python 3.12+. Check:
+
+```bash
+python3 --version
+```
+
+### GTK4 Installation
+
+CrabCakes requires GTK4 and PyGObject. Verify:
+
+```bash
+python3 -c "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk; print('GTK4 OK')"
+```
+
+If this fails, install GTK4:
+
+**Ubuntu/Debian:**
+```bash
+sudo apt install python3-gi gir1.2-gtk-4.0
+```
+
+**Fedora:**
+```bash
+sudo dnf install python3-gobject gtk4
+```
+
+**Arch Linux:**
+```bash
+sudo pacman -S python-gobject gtk4
+```
+
+### Dependencies
+
+Install CrabCakes dependencies:
+
+```bash
+cd /home/q/projects/crabcakes
+pip install -e .
+```
+
+### Import Errors
+
+If you see `ModuleNotFoundError` for CrabCakes modules, ensure you are running from the project root:
+
+```bash
+cd /home/q/projects/crabcakes
+python3 main.py
+```
+
+---
+
+## Log Files and Debug Mode
+
+### Log Location
+
+CrabCakes logs to stderr (terminal output). There is no log file by default — logs appear in the terminal where CrabCakes was launched.
+
+### Debug Mode
+
+Enable verbose logging with the `CRABCAKES_DEBUG` environment variable:
+
+```bash
+CRABCAKES_DEBUG=1 python3 main.py
+```
+
+This sets the log level to `DEBUG` (default is `WARNING`). You will see:
+- LLM API request/response details
+- WebSocket event routing
+- KB lookup queries and scores
+- Tool execution details
+- Gateway connection lifecycle
+
+### Gateway Debug
+
+For raw WebSocket frame dumps:
+
+```bash
+CRABCAKES_GATEWAY_DEBUG=1 python3 main.py
+```
+
+This is independent of `CRABCAKES_DEBUG` and dumps all WebSocket frames.
+
+---
+
+## Config Reset Instructions
+
+### Full Reset (Nuclear Option)
+
+**Warning:** This removes all configuration, API keys, favorites, and project data.
 
 ```bash
 # Backup first
 cp -r ~/.config/crabcakes ~/.config/crabcakes.backup
 
-# Remove config (fresh start on next launch)
+# Remove config
 rm -rf ~/.config/crabcakes
 ```
 
-### Log Files
+CrabCakes will start fresh on next launch with the first-run wizard.
 
-Crabcakes logs are located at:
+### Partial Reset
 
+**Reset only providers (keep agents, projects, favorites):**
+
+```bash
+rm ~/.config/crabcakes/providers.yaml
+rm ~/.config/crabcakes/agent.json
 ```
-~/.config/crabcakes/logs/
+
+**Reset only agent definitions (keep providers):**
+
+```bash
+rm -rf ~/.config/crabcakes/agents/
 ```
 
-Set `CRABCAKES_LOG_LEVEL=DEBUG` for verbose logging. Useful when reporting bugs.
+**Reset a single project's CrabCakes data:**
+
+```bash
+rm -rf /path/to/project/.crabcakes/
+```
+
+This removes team config, bug journals, rules, workflow state, and feed data for that project only.
+
+### File Permissions
+
+`providers.yaml` contains API keys. Ensure it is readable only by the owner:
+
+```bash
+chmod 600 ~/.config/crabcakes/providers.yaml
+```
+
+CrabCakes warns at startup if this file is group or world-readable.
+
+---
+
+## Project Tab Shows Wrong Content
+
+**Symptom:** Project tab shows messages from the wrong project or no messages at all.
+
+**Fix:**
+
+1. Close the project tab (click × on the tab)
+2. Re-open the project from the left panel's Projects tab
+3. If the issue persists, check `.crabcakes/team.json` for corrupted entries:
+
+```bash
+cat /path/to/project/.crabcakes/team.json
+```
+
+4. If corrupted, delete it and re-add agents via the +/− buttons
+
+---
+
+## MiniMax API Errors
+
+### "MiniMax API error (status_code=1004): login fail..."
+
+**Cause:** Invalid MiniMax API key.
+
+**Fix:** Update the `api_key` field for the `minimax` provider in `providers.yaml`.
+
+### "MiniMax API error (status_code=X)"
+
+MiniMax returns body-level errors with HTTP 200. The status codes:
+- `1004` — Authentication failure (invalid key)
+- `1027` — Rate limit exceeded
+- `1039` — Model not found or unavailable
+
+---
 
 ## Getting Help
 
-- The Crabcakes 🦀 agent can answer most questions — just ask in its tab
-- For gateway issues, check OpenClaw documentation at `https://docs.openclaw.ai`
-- For bugs, check the GitHub issues at the Crabcakes repository
+- **Built-in help:** Ask the CrabCakes 🦀 (Auxilium) agent — it can answer questions from the local KB without any API key
+- **Command help:** Type `/help` in any chat input
+- **Gateway docs:** See OpenClaw documentation at `https://docs.openclaw.ai`
+- **Debug mode:** Always run with `CRABCAKES_DEBUG=1` when reporting bugs — the logs are essential for diagnosis

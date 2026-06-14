@@ -1,52 +1,74 @@
-# Crabcakes Setup Guide
+# Quick Start Guide
 
-## Installation
+## How do I install CrabCakes?
 
-Crabcakes is a native GTK4 Linux desktop app for multi-agent AI development.
-
-### Quick Start
+See the detailed guide: **[Installing CrabCakes](install.md)**
 
 ```bash
-cd ~/projects/crabcakes
+git clone https://github.com/qsmtco/crabcakes.git
+cd crabcakes
+sudo apt install python3-gi python3-gi-cairo libgtk-4-dev libadwaita-1-dev
 pip install -e .
 ```
 
-### Requirements
-- Python 3.12+
-- GTK 4.0+
-- A running OpenClaw gateway (for gateway agents)
+**Requirements:** Python 3.12+, GTK 4.0+, PyGObject. Linux only.
 
-### First Launch
+## How do I configure providers?
 
-1. Run `crabcakes` from your terminal
-2. On first launch, `~/.config/crabcakes/agent.json` is created with example provider configurations
-3. Add your API keys to get started
+See **[Configuration Guide](configuration.md)** and **[Providers Guide](providers.md)**.
 
-## Configuration Directory
+Providers are configured in `~/.config/crabcakes/providers.yaml`. On first launch, the `local-kb` provider is auto-seeded — Auxilium can answer install and config questions immediately without any external API key.
 
-All configuration lives in `~/.config/crabcakes/`:
+To use Coder, Debugger, or other agents that need a real LLM, add a provider:
 
-| File | Purpose |
-|------|---------|
-| `agent.json` | LLM API providers and model settings |
-| `agents/` | Agent YAML definitions (Coder, Debugger, etc.) |
+```bash
+# Edit providers.yaml
+nano ~/.config/crabcakes/providers.yaml
+```
 
-## Connecting to a Gateway
+Add your API key and set the caller field (e.g. `openai`, `openrouter`, `minimax`).
 
-1. Click the **Connect** button in the toolbar
-2. The gateway URL defaults to your configured OpenClaw endpoint
-3. Once connected, gateway agents appear in the left panel under "Agents"
+## How do I start CrabCakes?
 
-## Project Setup
+```bash
+cd ~/projects/crabcakes
+python3 main.py
+```
 
-1. Click **New Project** in the left panel's Projects tab
-2. Enter a project name
-3. The project directory is created under `$CRABCAKES_PROJECTS_DIR` (defaults to `~/crabcakes-projects/`)
-4. A `.crabcakes/` directory is initialized with project configuration files
-5. Git is auto-initialized with an initial commit
+Or with debug logging:
 
-## Next Steps
+```bash
+CRABCAKES_DEBUG=1 python3 main.py
+```
 
-- Add API keys → see `knowledge/configuration.md`
-- Create custom agents → see `knowledge/agents.md`
-- Explore features → see `knowledge/features.md`
+## What happens on first launch?
+
+1. `~/.config/crabcakes/` is created with default config
+2. `ensure_kb_provider()` seeds the `local-kb` provider into `providers.yaml`
+3. Auxilium's `llm_name` is set to `local-kb` (if empty)
+4. KB HTTP server starts on `localhost:18790` (if KB index is available)
+5. Auxilium auto-opens — you can immediately ask install/config questions
+
+## How do I connect to the OpenClaw gateway?
+
+See **[Gateway Guide](gateway.md)**.
+
+1. Start the gateway: `openclaw gateway start`
+2. Click **Connect** in CrabCakes toolbar
+3. Gateway agents appear in the left panel
+
+## How do I create a project?
+
+1. Click **New Project** in the left panel
+2. Enter a project name and path
+3. A `.crabcakes/` directory is initialized with project config
+4. Add agents with the **+** button
+5. Start chatting in the project tab
+
+See **[Projects Guide](projects.md)** for details.
+
+## Where do I get help?
+
+- Ask **Auxilium** (🦀) — click its tab and type your question
+- See **[Troubleshooting](troubleshooting.md)** for common errors
+- Check logs at `~/.config/crabcakes/logs/`

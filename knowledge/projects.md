@@ -1,0 +1,347 @@
+# Projects in CrabCakes
+
+Projects are the primary unit of work in CrabCakes. They organize code, agents, conversations, and review sessions into self-contained workspaces. Every special agent (except Auxilium) requires an active project to operate.
+
+---
+
+## What Is a Project?
+
+A project is a directory on your filesystem that CrabCakes opens as a workspace. It contains your code files, a `.crabcakes/` configuration directory, and optionally a git repository. Projects live under `~/projects/` by default (configurable via `$CRABCAKES_PROJECTS_DIR`).
+
+When you open a project, CrabCakes:
+1. Creates a project chat tab for team communication
+2. Loads team members from `.crabcakes/team.json`
+3. Refreshes the agent list with +/− membership buttons
+4. Initializes the `.crabcakes/` directory if it doesn't exist
+5. Auto-adds onboarding agents (those with `auto_add_to_projects: true`)
+6. Sets the active project path for all special agents
+
+---
+
+## Project Lifecycle
+
+### Creating a Project
+
+You can create a new project from the file tree:
+
+1. Right-click or use the New Project button
+2. Enter a project name
+3. Optionally specify a custom path (defaults to `$CRABCAKES_PROJECTS_DIR/<name>`)
+
+CrabCakes then:
+- Creates the directory (`os.makedirs`)
+- Initializes `.crabcakes/` with awareness artifacts
+- Auto-adds onboarding agents to the team
+- Initializes `workflow.md` (via `utils/workflow_state`)
+- Initializes a git repo with an initial commit
+- Builds and saves an awareness snapshot
+- Opens the project
+
+### Opening an Existing Project
+
+Double-click a project directory in the file tree. CrabCakes opens it as a project tab, loads the team, and populates the routing table.
+
+### Closing a Project
+
+Closing a project tab clears the active project state, removes routing entries, and fires `on_project_closed` callbacks. The team and all `.crabcakes/` files persist for next time.
+
+---
+
+## The `.crabcakes/` Directory
+
+Each project has a `.crabcakes/` directory containing configuration and context files:
+
+### `project.md`
+
+The project manifest. Contains the project name, description, and any project-specific documentation. On first init, a skeleton is generated:
+
+```markdown
+# Project Name
+
+## Description
+<!-- Describe what this project does -->
+
+## Context
+<!-- Any project-specific context. -->
+```
+
+If a `crabcakes.md` file exists at the project root (legacy format), it's migrated to `.crabcakes/project.md`.
+
+### `team.json`
+
+The team roster — a JSON file listing all agent members. Each member has:
+
+```json
+{
+  "members": [
+    {
+      "session_key": "special:coder",
+      "name": "Coder",
+      "role": "onboarding guide",
+      "can_write": true
+    }
+  ]
+}
+```
+
+Agents with `auto_add_to_projects: true` (like Auxilium) are automatically added here on project creation.
+
+### `context.md`
+
+Free-form context that agents receive in their system prompt. Capped at 50KB (`MAX_CONTEXT_SIZE = 50 * 1024`). Edit this to give agents persistent background information about the project.
+
+### `awareness.json`
+
+A snapshot of project state, including git status, file tree summary, and recent activity. Built by `build_awareness_snapshot()` and refreshed periodically. Used to give agents situational awareness.
+
+### `workflow.md`
+
+Tracks the project's current workflow state and onboarding progress. Initialized with the onboarding phase as "current". Managed by `utils/workflow_state.init_workflow()`.
+
+### `agent-system-prompt.md` (optional)
+
+If present, overrides the default system prompt for agents working in this project. The context builder checks for this file first, then falls back to `AGENTS.md` at the project root, then uses the built-in prompt.
+
+---
+
+## Team Management
+
+### Adding and Removing Agents
+
+When a project is open, the agent list in the sidebar shows all available agents with **+/− buttons** next to each one:
+
+- Click **+** to add an agent to the project team
+- Click **−** to remove an agent
+
+This toggles membership in `.crabcakes/team.json` and updates the routing table.
+
+### Auto-Added Onboarding Agents
+
+Agents with `auto_add_to_projects: true` in their YAML definition are automatically added to every new project. By default, Auxilium (🦀) has this enabled. These agents serve as onboarding guides — they receive the project-onboarding prompt template when the project hasn't been fully onboarded yet.
+
+### Solo DM Mode
+
+Within a project chat, you can switch between two modes:
+
+- **Broadcast (All):** Messages go to all team members — the default
+- **Solo DM:** Messages go to a single agent only
+
+The solo target is tracked per-project in `ProjectHandler._solo_targets`. Use the session menu (right-click on an agent) to switch between broadcast and solo DM.
+
+---
+
+## Project Chat
+
+### Broadcast Mode
+
+When you type in the project chat tab, your message is fan-out delivered to all team members. Each agent processes the message independently and responds in the shared project chat.
+
+### Solo DM Mode
+
+In solo mode, only the targeted agent receives your message. Other team members don't see it. The solo target's name is marked with "(solo DM target)" in `/agents` output.
+
+### Agent-to-Agent Communication
+
+Agents can communicate with each other using slash commands (see Collaboration Commands below). Agent responses are scanned for slash-prefixed commands by `AgentCommandHandler`, which routes them through the same command pipeline as user input.
+
+---
+
+## Collaboration Commands
+
+Project chat supports slash-prefixed commands for directing work to agents. All commands support `@mentions` to target specific agents, or `@` (bare) for broadcast to all.
+
+### `/ask @agent "question"`
+
+Ask an agent a question. The question is forwarded to the target agent. If the agent responds, the response is relayed back to the asking agent via the pending-ask tracking system.
+
+```
+/ask @Coder "What does the auth module do?"
+```
+
+### `/delegate @agent "task"`
+
+Delegate a task to an agent. The task text is forwarded — the agent is expected to act on it (e.g. write code, run tests). Same routing as `/ask` but semantically indicates a work assignment.
+
+```
+/delegate @Debugger "Find out why tests are failing"
+```
+
+### `/tell @agent "information"`
+
+Share information with an agent without expecting action. The agent receives the text as context. Useful for giving agents background they should remember.
+
+```
+/tell @Coder "The API rate limit is 100 req/min"
+```
+
+### `/stop @agent`
+
+Send a stop signal to an agent. Used when an agent is running a long task and you want it to halt.
+
+### Broadcast Variants
+
+All four commands (`/ask`, `/delegate`, `/tell`, `/stop`) support broadcast by using `@` instead of `@agent_name`:
+
+```
+/delegate @ "Review the codebase for security issues"
+```
+
+This forwards the task to all team members.
+
+### Other Project Commands
+
+- `/status` — Show project status summary (members, tasks, review state, solo DM target)
+- `/agents` — List project members and their current state
+- `/cost` — Spending summary for the project
+
+---
+
+## Code Review Layer
+
+### Overview
+
+CrabCakes includes a git-based code review system. The primary review workflow uses **feed cards** — the review mode (checkpoint/diff/accept/reject) is a secondary, older mechanism.
+
+### Feed Card Review (Primary)
+
+When agents write files and the enforcement layer runs, feed cards surface these events in a feed bar. Each card shows:
+- Which agent made the change
+- What tool was used (write_file, exec_command, etc.)
+- The result (success, error, pending approval)
+- Duration and tool details
+
+For `exec_command`, the activity drawer also captures command output, exit code, and duration.
+
+### Enforcement Layer
+
+After each `write_file` or `edit_file` tool execution, the enforcement layer runs verification tiers:
+- **Syntax check** — Python syntax validation
+- **Test run** — Run relevant tests
+- **Lint check** — Code style validation
+
+Results are appended to the tool result and dispatched via `on_enforcement_status`. Failed checks appear in the feed with ❌ icons.
+
+### Checkpoint-Based Review (Secondary)
+
+The `/review` command system provides explicit checkpoint-based code review:
+
+1. **`/review`** — Start a review session: `git add -A && git commit` creates a checkpoint SHA
+2. **`/check`** — Diff against the checkpoint: shows what changed (additions, deletions, per-file diffs)
+3. **`/accept "message"`** — Accept all changes: `git add -A && git commit -m "[review] accepted: message"`
+4. **`/reject "reason"`** — Reject all changes: `git checkout <sha> -- .` reverts files to checkpoint; sends rejection messages to all team members
+5. **Per-file reject** — Individual files can be reverted without rejecting everything
+
+Review state is per-project, tracked in `ReviewState` objects. The ReviewBar widget shows current state (idle, reviewing with SHA, has changes).
+
+---
+
+## Feed Cards
+
+Feed cards are the primary UI element for surfacing agent activity, tool results, and system events in a project.
+
+### Card Types
+
+- **`agent_action`** — Agent tool calls (reading, writing, executing commands). Shows running → complete/error states.
+- **`pending_approval`** — When an agent requests `exec_command` approval. Has Approve/Deny buttons.
+- **`git_commit`** — Git commits made during review sessions (accept/reject).
+- **`crabcard`** — Structured data blocks embedded in agent responses (extracted from streaming text).
+
+### When Cards Appear
+
+Cards are added to the feed whenever:
+- An agent starts a tool call (`_on_tool_call_start`)
+- A tool call completes (`_on_tool_call_result`)
+- An agent requests exec approval (`_on_tool_call_approval_needed`)
+- A review session accepts or rejects changes
+- An agent response contains crabcard blocks
+
+### Approval Cards
+
+When an agent calls `exec_command`, a pending-approval card appears with:
+- The agent's name
+- The shell command to be executed
+- **Approve** and **Deny** buttons
+
+Clicking either resolves the approval via `AgentRuntimeHandler.approve_exec()`, which forwards the decision to the runtime.
+
+---
+
+## Activity Drawer
+
+The activity drawer provides a log of command execution events. For each `exec_command`:
+
+- **Command** — The shell command string
+- **Output** — Last 10 lines of stdout/stderr
+- **Exit code** — Integer (0 = success)
+- **Duration** — Execution time in milliseconds
+- **Agent** — Which agent ran the command
+
+Events are fired via the `on_command_output` callback wired in `connection_sync_handler.sync()`.
+
+---
+
+## Project Context Injection
+
+When an agent works within a project, it receives rich context in its system prompt:
+
+### What's Included
+
+1. **Project docs** — `.crabcakes/project.md` content is prepended to file context (§4.4a)
+2. **File tree** — `build_file_context()` respects `.gitignore`, caps at ~50K chars
+3. **Custom system prompt** — `.crabcakes/agent-system-prompt.md` if it exists, otherwise `AGENTS.md` at project root
+4. **Awareness snapshot** — Git status, file structure summary from `.crabcakes/awareness.json`
+5. **Project context** — `.crabcakes/context.md` content (up to 50KB)
+
+### How Context Updates
+
+When the active project changes, `AgentRuntimeHandler.set_active_project()`:
+1. Updates `project_path` on all existing conversations
+2. Rebuilds the system prompt with `build_system_prompt()` using the new project context
+3. Injects the new project path for all future conversations
+
+---
+
+## Audit Reports
+
+Audit reports are structured feedback blocks (`## Audit Report`) that log bugs and issues to the target agent's bug journal. They're part of the SPEC-3 structured feedback protocol, which supplements the older checkpoint-based review system.
+
+When the enforcement layer catches issues (syntax errors, test failures, lint violations):
+1. Results appear in feed cards with ❌ icons
+2. An audit report may be generated and sent to the agent's bug journal
+3. The agent's self-improvement system uses these reports to learn from mistakes
+
+---
+
+## Project Files Reference
+
+### Configuration Paths
+
+- **Config directory:** `~/.config/crabcakes/` (respects `$XDG_CONFIG_HOME`)
+- **Projects root:** `~/projects/` (configurable via `$CRABCAKES_PROJECTS_DIR`)
+- **Per-project config:** `<project_path>/.crabcakes/`
+- **Project membership (legacy):** `~/.config/crabcakes/projects/<name>/members.json`
+
+### `.crabcakes/` File Summary
+
+| File | Purpose | Managed By |
+|------|---------|------------|
+| `project.md` | Project manifest (name, description) | `project_awareness.py` |
+| `team.json` | Agent team roster | `project_awareness.py` |
+| `context.md` | Free-form context for agents (50KB cap) | `project_awareness.py` |
+| `awareness.json` | Project state snapshot | `project_awareness.py` |
+| `workflow.md` | Workflow/onboarding state | `workflow_state.py` |
+| `agent-system-prompt.md` | Custom system prompt override | User-created |
+| `context-snapshot.json` | Detailed context snapshot | `project_awareness.py` |
+
+---
+
+## Git Integration
+
+Projects optionally use git for version control:
+
+- **New projects:** Git repo initialized automatically with initial commit
+- **Team changes:** Auto-committed via `_git_commit_if_available()`
+- **Review sessions:** Checkpoint commits, diff checks, accept/reject commits
+- **Review staging:** Agent `write_file` results can be staged to a shadow directory for review
+
+Git operations use `utils/git_ops.py` (pure Python, no GTK). All git commands run in background threads to avoid blocking the UI.

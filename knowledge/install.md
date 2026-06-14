@@ -1,10 +1,10 @@
 # Installing CrabCakes
 
-This guide walks you through installing CrabCakes on Linux, verifying that all dependencies are present, and fixing common install errors.
+This guide walks you through installing CrabCakes on Linux, verifying all dependencies, and fixing common install errors.
 
-**Audience:** First-time users on a fresh system. If CrabCakes is already running, you can skip this file.
+**Audience:** First-time users on a fresh system.
 
-**Platform support:** CrabCakes is a **Linux-only** application. macOS and Windows are not supported — the GTK4 toolchain and the OpenClaw gateway client target Linux first. If you need to run on macOS or Windows, use a Linux VM or WSL2.
+**Platform support:** CrabCakes is a **Linux-only** application. The GTK4 toolchain and OpenClaw gateway client target Linux. macOS and Windows are not supported. If you need to run on those platforms, use a Linux VM or WSL2.
 
 ---
 
@@ -19,56 +19,28 @@ pip install -e .
 crabcakes
 ```
 
-That's it. The first launch creates `~/.config/crabcakes/` and walks you through provider configuration.
+That's it. The first launch creates `~/.config/crabcakes/` with default configs, seeds the three built-in agents (Coder, Debugger, Auxilium), and starts the KB provider auto-setup.
 
 ---
 
-## Requirements
+## System Requirements
 
-### Required
+### Required system packages
 
-| Dependency | Minimum version | Why |
-|---|---|---|
-| **Python** | 3.11+ | Required by `pyproject.toml`. Earlier versions lack `tomllib` and other stdlib features. |
-| **GTK 4** | 4.0+ | The UI is built on GTK4 via PyGObject. GTK3 will not work. |
-| **PyGObject** | 3.48+ | Python bindings for GObject/GTK. Installed automatically by `pip install -e .`. |
-| **WebSockets** | 12.0+ | For gateway communication. Installed automatically. |
-| **Cryptography** | 41.0+ | For Ed25519 device authentication. Installed automatically. |
-| **GitPython** | 3.1+ | For the review layer's git operations. Installed automatically. |
+CrabCakes depends on GTK4 and GObject introspection. These are **system packages** — they cannot be installed via pip alone. You must install them with your distribution's package manager before running `pip install`.
 
-### Optional (recommended)
-
-| Tool | Why |
-|---|---|
-| **xvfb** | Required to run CrabCakes in headless environments (CI, Docker). Install with `apt install xvfb` on Debian/Ubuntu. |
-| **Ollama** | Local LLM runtime. Lets you run CrabCakes without a paid API key. See `providers.md` for setup. |
-| **ripgrep** | Faster `search_files` tool. `apt install ripgrep` on Debian/Ubuntu. |
-
----
-
-## Platform-Specific Instructions
-
-### Linux (Debian / Ubuntu)
+#### Debian / Ubuntu (12 Bookworm, 22.04+)
 
 ```bash
-# System dependencies for GTK4 + PyGObject
 sudo apt update
 sudo apt install -y \
     python3 python3-pip python3-venv \
     libgirepository1.0-dev libgtk-4-1 libgtk-4-dev \
     gir1.2-gtk-4.0 gobject-introspection \
     libgirepository-2.0-0
-
-# Then install CrabCakes
-git clone https://github.com/qsmtco/crabcakes.git
-cd crabcakes
-pip install --user -e .
-~/.local/bin/crabcakes
 ```
 
-**Note:** Debian 12 (Bookworm) and Ubuntu 22.04+ ship GTK 4 in the default repos. Older releases need a backport.
-
-### Linux (Fedora)
+#### Fedora (38+)
 
 ```bash
 sudo dnf install -y \
@@ -76,74 +48,212 @@ sudo dnf install -y \
     gtk4 gtk4-devel \
     gobject-introspection-devel \
     python3-gobject
-
-git clone https://github.com/qsmtco/crabcakes.git
-cd crabcakes
-pip install --user -e .
-~/.local/bin/crabcakes
 ```
 
-### Linux (Arch)
+#### Arch Linux
 
 ```bash
 sudo pacman -S --needed \
     python python-pip \
     gtk4 gobject-introspection \
     python-gobject
-
-git clone https://github.com/qsmtco/crabcakes.git
-cd crabcakes
-pip install --user -e .
-~/.local/bin/crabcakes
 ```
+
+### Python version
+
+CrabCakes requires **Python 3.11 or later**. This is enforced in `pyproject.toml`:
+
+```toml
+requires-python = ">=3.11"
+```
+
+Check your version:
+
+```bash
+python3 --version    # must be 3.11 or higher
+```
+
+### Python dependencies (installed automatically by pip)
+
+These are listed in `pyproject.toml` and installed when you run `pip install -e .`:
+
+| Package | Minimum version | Why |
+|---------|-----------------|-----|
+| **PyGObject** | 3.48+ | Python bindings for GTK4 / GObject |
+| **websockets** | 12.0+ | WebSocket client for OpenClaw gateway communication |
+| **cryptography** | 41.0+ | Ed25519 device authentication for gateway |
+| **GitPython** | 3.1+ | Git operations for the code review layer |
+
+### Optional (recommended) packages
+
+| Tool | Install command | Why |
+|------|----------------|-----|
+| **xvfb** | `sudo apt install xvfb` | Run CrabCakes in headless environments (CI, Docker, servers) |
+| **Ollama** | See [ollama.com](https://ollama.com) | Local LLM runtime — lets you run agents without a paid API key |
+| **ripgrep** | `sudo apt install ripgrep` | Faster `search_files` tool for the Coder/Debugger agents |
+| **PyYAML** | `pip install pyyaml` | Pretty-formatting of `providers.yaml` (falls back to JSON without it) |
+| **sentence-transformers + numpy** | `pip install sentence-transformers numpy` | Required for the KB embedding index (~700MB, includes PyTorch). Needed if you're rebuilding the Auxilium knowledge base. |
+| **faster-whisper** | `pip install faster-whisper` | Push-to-talk speech-to-text (voice input) |
+| **pyenchant** | `pip install pyenchant` | Spell check in the chat input |
+| **Pygments** | `pip install pygments` | Syntax highlighting in code blocks |
 
 ---
 
-## Verifying the Install
+## Installation Steps
 
-After installation, run these checks to confirm everything works:
-
-### 1. Python and dependencies
+### 1. Clone the repository
 
 ```bash
-python3 --version          # should be 3.11 or higher
-python3 -c "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk; print('GTK OK', Gtk.MAJOR_VERSION, Gtk.MINOR_VERSION)"
+git clone https://github.com/qsmtco/crabcakes.git
+cd crabcakes
 ```
 
-Expected output: `GTK OK 4 <minor>` (e.g., `GTK OK 4 12`).
+### 2. (Recommended) Create a virtual environment
 
-### 2. CrabCakes imports
+This avoids the `externally-managed-environment` error (PEP 668) on modern Linux distributions:
 
 ```bash
-python3 -c "from ui.window import MainWindow; print('Import OK')"
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
-Expected: `Import OK` with no errors. (No GUI launches — it only imports the module.)
+### 3. Install CrabCakes
 
-### 3. Launch the app
+```bash
+pip install -e .
+```
+
+This installs the `crabcakes` entry-point script and all Python dependencies.
+
+### 4. Run CrabCakes
 
 ```bash
 crabcakes
 ```
 
-Expected: The CrabCakes window opens with the Auxilium 🦀 tab visible. If you see a "no provider configured" dialog, that's the **first-run wizard** — see `providers.md` to complete setup.
-
-### 4. Run from source (developer mode)
+Or, to run directly from source without installing the entry point:
 
 ```bash
-cd /path/to/crabcakes
 python3 main.py
 ```
 
-This bypasses the `crabcakes` entry point and runs `main.py` directly. Useful when iterating on the code.
+---
+
+## First-Launch Experience
+
+When you run `crabcakes` for the first time, several things happen automatically:
+
+### 1. Config directory creation
+
+CrabCakes creates `~/.config/crabcakes/` with permissions `0o700` (owner-only). This follows the same security model as `~/.ssh/` — the directory contains API keys and should not be readable by other users.
+
+### 2. Default agent seeding
+
+CrabCakes copies built-in agent definitions from `prompts/default_agents/` into `~/.config/crabcakes/agents/`:
+
+- `coder.yaml` — The 🛠️ Coder agent
+- `debugger.yaml` — The 🐛 Debugger agent
+- `auxilium.yaml` — The 🦀 Auxilium agent
+
+**Note:** If you already have agent YAML files in the `agents/` directory, defaults are NOT seeded — your existing configuration is preserved.
+
+### 3. Agent configuration creation
+
+An `agent.json` file is created with example provider configurations (OpenAI, MiniMax). This file gets `chmod 0o600` permissions.
+
+### 4. KB provider auto-setup
+
+This is the key step that makes Auxilium work out of the box. On startup, CrabCakes calls `ensure_kb_provider()` from `utils/providers_store.py`, which does two things:
+
+**a) Seeds the `local-kb` provider into `providers.yaml`:**
+
+If no `local-kb` provider exists yet, one is created:
+
+```yaml
+- name: local-kb
+  base_url: http://localhost:18790/v1
+  api_key: "***"
+  default_model: local-kb
+  caller: openai
+  enabled: true
+  supports_tools: false
+  supports_streaming: false
+  max_tokens: 4096
+```
+
+This is an OpenAI-compatible endpoint running on localhost.
+
+**b) Patches the Auxilium agent to use `local-kb`:**
+
+If the Auxilium agent's `llm_name` is empty, it gets set to `local-kb`. This ensures the help agent can answer questions from the local knowledge base immediately.
+
+If Auxilium already has a provider configured (e.g., you set it to OpenRouter), this step is skipped — your configuration is respected.
+
+### 5. KB server startup
+
+If the KB embedding index exists at `knowledge/.index/`, the KB HTTP server starts on `localhost:18790`. If the index doesn't exist yet, the server skips startup (and Auxilium will need an external LLM provider until the index is built).
+
+### 6. Auxilium tab opens
+
+The Auxilium 🦀 tab opens automatically (`auto_open: true`). If no verified provider is configured, a first-run wizard may appear.
+
+---
+
+## Verification Steps
+
+After installation, run these checks to confirm everything works:
+
+### Step 1: Check Python and GTK4
+
+```bash
+python3 --version
+# Expected: 3.11.x or higher
+
+python3 -c "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk; print('GTK OK', Gtk.MAJOR_VERSION, Gtk.MINOR_VERSION)"
+# Expected: GTK OK 4 <minor> (e.g., GTK OK 4 12)
+```
+
+### Step 2: Check CrabCakes imports
+
+```bash
+python3 -c "from ui.window import MainWindow; print('Import OK')"
+# Expected: Import OK (no errors, no GUI launches)
+```
+
+### Step 3: Launch the app
+
+```bash
+crabcakes
+```
+
+**Expected behavior:**
+- The CrabCakes window opens
+- The Auxilium 🦀 tab is visible
+- The left panel shows Prompts, Agents, and Projects tabs
+- No error messages in the terminal
+
+### Step 4: Test the KB server
+
+If the KB index is built, verify the local server responds:
+
+```bash
+curl http://localhost:18790/health
+# Expected: {"status": "ok"}
+```
+
+### Step 5: Ask Auxilium a question
+
+In the Auxilium 🦀 tab, type: "How do I configure a provider?"
+
+If the KB server is running, Auxilium should respond with content from this knowledge base — no external API call needed.
 
 ### Headless verification (no display)
+
+For CI, Docker, or remote servers:
 
 ```bash
 xvfb-run -a python3 -c "from ui.window import MainWindow; MainWindow(application=None); print('GUI constructs OK')"
 ```
-
-If this works, CrabCakes is installable on headless systems (servers, CI).
 
 ---
 
@@ -151,41 +261,18 @@ If this works, CrabCakes is installable on headless systems (servers, CI).
 
 ### `ModuleNotFoundError: No module named 'gi'`
 
-**Cause:** PyGObject is not installed or the system `libgirepository` is missing.
+**Cause:** PyGObject is not installed, or the system `libgirepository` is missing.
 
 **Fix (Debian/Ubuntu):**
 ```bash
 sudo apt install libgirepository1.0-dev python3-gi gobject-introspection
-pip install --user --break-system-packages pygobject
+pip install --user pygobject
 ```
 
 **Fix (Fedora):**
 ```bash
 sudo dnf install python3-gobject gobject-introspection-devel
 ```
-
-**Fix (macOS):**
-```bash
-brew install pygobject3 gobject-introspection pkg-config
-pip install --user pygobject
-```
-
-### `Gtk-CRITICAL **: cannot open display`
-
-**Cause:** No X11 or Wayland display available.
-
-**Fix:** If you're on a headless server, run with Xvfb:
-```bash
-xvfb-run -a crabcakes
-```
-
-**Fix (Wayland):** If you're on Wayland and getting this error, your session may have fallen back to XWayland. Check:
-```bash
-echo $XDG_SESSION_TYPE   # should be "wayland" or "x11"
-echo $WAYLAND_DISPLAY    # should be "wayland-0" or similar
-```
-
-If `$WAYLAND_DISPLAY` is empty, your desktop session isn't using Wayland. Log out and select a Wayland session at the login screen.
 
 ### `externally-managed-environment` (PEP 668)
 
@@ -199,18 +286,33 @@ pip install -e /path/to/crabcakes
 crabcakes
 ```
 
-**Fix (quick but not recommended):** Override the protection:
+**Fix (quick, not recommended):**
 ```bash
 pip install --user --break-system-packages -e .
 ```
 
+### `Gtk-CRITICAL **: cannot open display`
+
+**Cause:** No X11 or Wayland display available (headless server).
+
+**Fix:** Run with Xvfb:
+```bash
+xvfb-run -a crabcakes
+```
+
+**Fix (Wayland issues):** Force X11 backend:
+```bash
+GDK_BACKEND=x11 crabcakes
+```
+
 ### `ImportError: libgtk-4.so.1: cannot open shared object file`
 
-**Cause:** GTK 4 runtime libraries are not installed.
+**Cause:** GTK 4 runtime libraries not installed.
 
 **Fix (Debian/Ubuntu):**
 ```bash
 sudo apt install libgtk-4-1 libgtk-4-common
+sudo ldconfig
 ```
 
 **Fix (Fedora):**
@@ -218,14 +320,19 @@ sudo apt install libgtk-4-1 libgtk-4-common
 sudo dnf install gtk4
 ```
 
-**Fix (macOS):**
+### `crabcakes: command not found`
+
+**Cause:** The entry-point script is in `~/.local/bin` (or your venv `bin/`) but that directory is not on `$PATH`.
+
+**Fix:** Add to your shell config:
 ```bash
-brew install gtk4
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
 ```
 
-After installing, you may need to refresh the linker cache:
+Or run directly:
 ```bash
-sudo ldconfig   # Linux only
+python3 main.py
 ```
 
 ### PyGObject introspection cache errors
@@ -234,98 +341,49 @@ sudo ldconfig   # Linux only
 
 **Fix:**
 ```bash
-# Clear the cache and let it rebuild
 rm -rf ~/.cache/g-ir-*
-sudo ldconfig   # Linux only
-```
-
-If the error persists after this, file an issue with the full error output.
-
-### `crabcakes: command not found`
-
-**Cause:** The `crabcakes` script is installed to `~/.local/bin` but that directory is not on your `$PATH`.
-
-**Fix:** Add this line to your `~/.bashrc`, `~/.zshrc`, or equivalent:
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Then restart your shell or `source ~/.bashrc`.
-
-**Alternative:** Use the Python module invocation:
-```bash
-python3 -m crabcakes
-# or, from the source directory:
-python3 main.py
-```
-
-### `Cannot find GDK-Backend` or display backend errors
-
-**Cause:** No display backend available (X11 or Wayland).
-
-**Fix:** On headless systems:
-```bash
-xvfb-run -a crabcakes
-```
-
-On a desktop with broken Wayland, try forcing X11:
-```bash
-GDK_BACKEND=x11 crabcakes
+sudo ldconfig
 ```
 
 ---
 
 ## Running in a Virtual Environment (Recommended)
 
-A venv isolates CrabCakes and its dependencies from your system Python. This avoids the `externally-managed-environment` error and makes cleanup easy.
-
-### Setup
+A venv isolates CrabCakes and its dependencies from your system Python.
 
 ```bash
-# Create the venv (one-time)
+# Create (one-time)
 python3 -m venv ~/crabcakes-venv
 
-# Activate it (every shell session)
+# Activate (every session)
 source ~/crabcakes-venv/bin/activate
 
-# Install CrabCakes
+# Install
 pip install -e /path/to/crabcakes
 
 # Run
 crabcakes
 ```
 
-### Auto-activation (optional)
-
-Add to your `~/.bashrc`:
+**Auto-activation alias** (add to `~/.bashrc`):
 ```bash
 alias crabcakes='~/crabcakes-venv/bin/crabcakes'
 ```
 
-Then `crabcakes` works from any directory without activating the venv.
-
-### Cleanup
-
-To uninstall:
+**Cleanup:**
 ```bash
-# Delete the venv
-rm -rf ~/crabcakes-venv
-
-# Delete user config (optional, but resets to fresh install)
-rm -rf ~/.config/crabcakes
+rm -rf ~/crabcakes-venv           # remove the venv
+rm -rf ~/.config/crabcakes        # reset config (optional)
 ```
 
 ---
 
 ## Installing for Development
 
-If you want to contribute or modify CrabCakes:
-
 ```bash
 git clone https://github.com/qsmtco/crabcakes.git
 cd crabcakes
 
-# Create a venv
 python3 -m venv .venv
 source .venv/bin/activate
 
@@ -339,54 +397,36 @@ pytest
 python3 main.py
 ```
 
-### Dev dependencies
-
-The `[dev]` extra includes:
+Dev dependencies (`[dev]` extra):
 - `pytest>=8.0` — test runner
 - `ruff>=0.4` — linter
 
-For KB indexing work (Auxilium Tier 1+), also install:
+For KB index rebuilding (if you're editing `knowledge/` files):
 ```bash
 pip install sentence-transformers numpy
 ```
 
-This adds ~700MB (mostly the PyTorch backend). Only needed if you're modifying `knowledge/` files and need to rebuild the embedding index.
+This adds ~700MB (mostly PyTorch). Only needed when modifying KB content.
 
 ---
 
-## First Launch
+## Environment Variables
 
-When you run `crabcakes` for the first time:
-
-1. The app creates `~/.config/crabcakes/` with default configs
-2. The Auxilium 🦀 tab opens automatically
-3. The first-run wizard appears (no LLM configured yet)
-4. The wizard walks you through: install check → gateway check → provider picker
-5. After completing the wizard, Auxilium is ready to use
-
-See `providers.md` for the provider configuration step.
-
----
-
-## Verifying a Working Install
-
-After install + first launch, you should be able to:
-
-- [x] The window opens without errors
-- [x] The Auxilium 🦀 tab is visible
-- [x] The first-run wizard appears (or, if already configured, the chat input is ready)
-- [x] You can complete the wizard and configure a provider
-- [x] Auxilium responds to a test message (after provider is configured)
-
-If any of these fail, see the **Common Install Errors** section above, then `troubleshooting.md` for deeper debugging.
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `CRABCAKES_PROJECTS_DIR` | `~/projects` | Root directory for the Projects file tree |
+| `CRABCAKES_GATEWAY_URL` | `ws://localhost:18789` | OpenClaw gateway WebSocket URL |
+| `CRABCAKES_DEBUG` | (unset) | Set to `1` for verbose debug logging |
+| `STT_MODEL_SIZE` | `tiny.en` | faster-whisper model size for voice input |
+| `XDG_CONFIG_HOME` | `~/.config` | Base config directory (CrabCakes uses `$XDG_CONFIG_HOME/crabcakes/`) |
 
 ---
 
 ## When to Ask for Help
 
-If the install doesn't work after trying the relevant fixes above:
+If the install doesn't work after trying the fixes above:
 
-1. Run `crabcakes --debug` (if available) or set `CRABCAKES_DEBUG=1` to get verbose logs
-2. Check the `troubleshooting.md` file for known issues
+1. Set `CRABCAKES_DEBUG=1` for verbose logs: `CRABCAKES_DEBUG=1 crabcakes`
+2. Check `knowledge/troubleshooting.md` for known issues
 3. Search existing issues: https://github.com/qsmtco/crabcakes/issues
 4. File a new issue with: OS + version, Python version, GTK version, full error output

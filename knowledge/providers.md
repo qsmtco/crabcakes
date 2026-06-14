@@ -1,12 +1,13 @@
 # Configuring LLM Providers
 
-Auxilium and the other built-in agents (Coder, Debugger) need an LLM provider to function. This guide walks you through configuring one of the five supported providers.
+Auxilium and the other built-in agents (Coder, Debugger) need an LLM provider to function. This guide walks you through configuring one of the six supported providers — including the built-in local KB provider that needs no API key at all.
 
 **Quick decision guide:**
 
 | Provider | Best for | Cost | Setup time |
 |---|---|---|---|
-| **OpenRouter free** | Trying CrabCakes with zero friction | Free tier | 1 minute |
+| **Local KB** | Zero-config help on fresh install | Free (no API key) | 0 minutes |
+| **OpenRouter free** | Trying CrabCakes with an external LLM | Free tier | 1 minute |
 | **Ollama (local)** | Privacy, offline use, no API key | Free (uses your hardware) | 5 minutes |
 | **OpenAI** | Highest quality (GPT-4o) | Pay-per-token | 2 minutes |
 | **Anthropic** | Best long-context (Claude 3.5) | Pay-per-token | 2 minutes |
@@ -16,7 +17,7 @@ Auxilium and the other built-in agents (Coder, Debugger) need an LLM provider to
 
 ## How Provider Configuration Works
 
-CrabCakes stores provider settings in `~/.config/crabcakes/agent.json`. Each provider has:
+CrabCakes stores provider settings in `~/.config/crabcakes/providers.yaml` (with `agent.json` as a legacy fallback). Each provider has:
 
 - `name` — display name
 - `base_url` — API endpoint
@@ -416,6 +417,89 @@ Best practices:
 4. **Rotate keys** periodically. Most providers support multiple active keys.
 
 5. **For shared/team machines**, use a secrets manager (e.g., `pass`, `vault`, `1password-cli`) and source keys via `agent.json` templating. CrabCakes does not currently support env-var interpolation in `agent.json` — if you need this, file a feature request.
+
+---
+
+## The Local KB Provider (Zero-Config Help)
+
+**What it is:** A built-in knowledge base provider that serves answers from CrabCakes' own documentation — no external API, no API key, no internet required.
+
+**How it works:**
+
+1. The KB HTTP server (`agent/kb_server.py`) runs on `localhost:18790`
+2. It exposes an OpenAI-compatible `/v1/chat/completions` endpoint
+3. When Auxilium receives a question, the KB server searches indexed documentation using cosine similarity
+4. The index is built from `knowledge/*.md` files using the `BAAI/bge-small-en-v1.5` embedding model
+5. If the question matches with high confidence (score ≥ 0.55), the relevant KB chunks are returned as the response
+
+**Auto-setup on fresh install:**
+
+The `ensure_kb_provider()` function (in `utils/providers_store.py`) runs automatically when `AgentRuntimeHandler` initializes:
+1. Seeds a `local-kb` provider entry into `providers.yaml` if missing
+2. Patches the Auxilium agent to use `local-kb` as its primary provider if it has no provider set
+
+This means **Auxilium works out of the box** — you can ask it questions about CrabCakes without configuring anything.
+
+### The Fallback Chain
+
+When the KB server cannot answer a question (score below the 0.55 confidence threshold), it returns the sentinel `[KB_OUT_OF_SCOPE]`. If a fallback provider is configured, the runtime automatically:
+
+1. Detects the `[KB_OUT_OF_SCOPE]` sentinel
+2. Swaps the conversation model to the fallback provider
+3. Retries the LLM call with the external provider
+4. Restores the original `local-kb` model after the call
+
+This is guarded by a one-shot flag (`conv._fallback_attempted`) to prevent infinite loops.
+
+### Configuring Fallback
+
+In the Agent Builder UI, set the **Fallback Provider** dropdown to an external provider (e.g. `openrouter`). When Auxilium's KB can't answer, it will use the fallback provider instead.
+
+You can also configure fallback in `agent.json`:
+```json
+{
+  "fallback_provider": "openrouter",
+  "fallback_model": "openrouter/auto"
+}
+```
+
+### Rebuilding the KB Index
+
+When KB content changes (e.g. after updating documentation), rebuild the index:
+
+```bash
+cd /path/to/crabcakes
+python3 scripts/rebuild_kb_index.py
+```
+
+This re-embeds all `knowledge/*.md` files and writes:
+- `knowledge/.index/chunks.json` — chunk metadata
+- `knowledge/.index/embeddings.npy` — float32 embedding array
+
+**Requirements:**
+- `sentence-transformers` package
+- `numpy` package
+- ~130MB model download on first run
+
+### local-kb Provider Configuration
+
+The auto-seeded configuration in `providers.yaml`:
+
+```yaml
+- name: local-kb
+  base_url: http://localhost:18790/v1
+  api_key: "***"
+  default_model: local-kb
+  caller: openai
+  enabled: true
+  supports_tools: false
+  supports_streaming: false
+  max_tokens: 4096
+```
+
+Note: `caller: openai` because the KB server implements the OpenAI-compatible API format. `supports_tools: false` because the KB server never calls tools. `supports_streaming: false` because it returns blocking responses.
+
+For full details on the KB provider architecture, see [kb-provider.md](kb-provider.md).
 
 ---
 
