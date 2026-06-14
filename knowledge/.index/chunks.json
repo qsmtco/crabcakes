@@ -162,6 +162,240 @@
     "text": "- **\"Offline\" status** — Check that the gateway is running. Run `openclaw gateway status` to verify.\n- **Auth errors** — Check that your device key is registered. Run `openclaw device list` to see registered devices.\n- **No agents appear** — Gateway must have active sessions for agents to appear. Create sessions via `openclaw session create`.\n- **Connection timeout** — Verify the gateway URL is correct and the port is accessible. Check firewall rules."
   },
   {
+    "id": "knowledge/install.md#0.0",
+    "source": "knowledge/install.md",
+    "section": "Introduction",
+    "text": "# Installing CrabCakes\n\nThis guide walks you through installing CrabCakes, verifying that all dependencies are present, and fixing common install errors.\n\n**Audience:** First-time users on a fresh system. If CrabCakes is already running, you can skip this file.\n\n---"
+  },
+  {
+    "id": "knowledge/install.md#1.0",
+    "source": "knowledge/install.md",
+    "section": "Quick Start",
+    "text": "If you have a modern Linux system with Python 3.11+ and GTK4 already installed:\n\n```bash\ngit clone https://github.com/qsmtco/crabcakes.git\ncd crabcakes\npip install -e .\ncrabcakes\n```\n\nThat's it. The first launch creates `~/.config/crabcakes/` and walks you through provider configuration.\n\n---"
+  },
+  {
+    "id": "knowledge/install.md#2.0",
+    "source": "knowledge/install.md",
+    "section": "Requirements",
+    "text": "### Required\n\n| Dependency | Minimum version | Why |\n|---|---|---|\n| **Python** | 3.11+ | Required by `pyproject.toml`. Earlier versions lack `tomllib` and other stdlib features. |\n| **GTK 4** | 4.0+ | The UI is built on GTK4 via PyGObject. GTK3 will not work. |\n| **PyGObject** | 3.48+ | Python bindings for GObject/GTK. Installed automatically by `pip install -e .`. |\n| **WebSockets** | 12.0+ | For gateway communication. Installed automatically. |\n| **Cryptography** | 41.0+ | For Ed25519 device authentication. Installed automatically. |\n| **GitPython** | 3.1+ | For the review layer's git operations. Installed automatically. |\n\n### Optional (recommended)\n\n| Tool | Why |\n|---|---|\n| **xvfb** | Required to run CrabCakes in headless environments (CI, Docker). Install with `apt install xvfb` on Debian/Ubuntu. |\n| **Ollama** | Local LLM runtime. Lets you run CrabCakes without a paid API key. See `providers.md` for setup. |\n| **ripgrep** | Faster `search_files` tool. `apt install ripgrep` on Debian/Ubuntu. |\n\n---"
+  },
+  {
+    "id": "knowledge/install.md#3.0",
+    "source": "knowledge/install.md",
+    "section": "Platform-Specific Instructions",
+    "text": ""
+  },
+  {
+    "id": "knowledge/install.md#3.1",
+    "source": "knowledge/install.md",
+    "section": "Platform-Specific Instructions",
+    "text": "### Linux (Debian / Ubuntu)\n\n```bash\n# System dependencies for GTK4 + PyGObject\nsudo apt update\nsudo apt install -y \\\n    python3 python3-pip python3-venv \\\n    libgirepository1.0-dev libgtk-4-1 libgtk-4-dev \\\n    gir1.2-gtk-4.0 gobject-introspection \\\n    libgirepository-2.0-0\n\n# Then install CrabCakes\ngit clone https://github.com/qsmtco/crabcakes.git\ncd crabcakes\npip install --user -e .\n~/.local/bin/crabcakes\n```\n\n**Note:** Debian 12 (Bookworm) and Ubuntu 22.04+ ship GTK 4 in the default repos. Older releases need a backport."
+  },
+  {
+    "id": "knowledge/install.md#3.2",
+    "source": "knowledge/install.md",
+    "section": "Platform-Specific Instructions",
+    "text": "### Linux (Fedora)\n\n```bash\nsudo dnf install -y \\\n    python3 python3-pip python3-devel \\\n    gtk4 gtk4-devel \\\n    gobject-introspection-devel \\\n    python3-gobject\n\ngit clone https://github.com/qsmtco/crabcakes.git\ncd crabcakes\npip install --user -e .\n~/.local/bin/crabcakes\n```"
+  },
+  {
+    "id": "knowledge/install.md#3.3",
+    "source": "knowledge/install.md",
+    "section": "Platform-Specific Instructions",
+    "text": "### Linux (Arch)\n\n```bash\nsudo pacman -S --needed \\\n    python python-pip \\\n    gtk4 gobject-introspection \\\n    python-gobject\n\ngit clone https://github.com/qsmtco/crabcakes.git\ncd crabcakes\npip install --user -e .\n~/.local/bin/crabcakes\n```"
+  },
+  {
+    "id": "knowledge/install.md#3.4",
+    "source": "knowledge/install.md",
+    "section": "Platform-Specific Instructions",
+    "text": "### macOS (Homebrew)\n\n```bash\n# Install Homebrew if not already installed\n/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"\n\n# System dependencies\nbrew install \\\n    python@3.12 \\\n    gtk4 \\\n    pygobject3 \\\n    pkg-config \\\n    gobject-introspection\n\n# Then install CrabCakes\ngit clone https://github.com/qsmtco/crabcakes.git\ncd crabcakes\npip3 install --user -e .\n~/.local/bin/crabcakes\n```\n\n**Note:** On Apple Silicon Macs, ensure Homebrew is installed for `arm64` (the default). `brew --prefix` should return `/opt/homebrew`, not `/usr/local`."
+  },
+  {
+    "id": "knowledge/install.md#3.5",
+    "source": "knowledge/install.md",
+    "section": "Platform-Specific Instructions",
+    "text": "### Windows\n\nWindows support is **experimental**. The recommended approach is WSL2:\n\n```powershell\n# In PowerShell (admin)\nwsl --install\n# Restart, then in WSL Ubuntu:\nsudo apt update\nsudo apt install -y python3 python3-pip libgirepository1.0-dev libgtk-4-1\ngit clone https://github.com/qsmtco/crabcakes.git\ncd crabcakes\npip install -e .\ncrabcakes\n```\n\n**Native Windows install is not officially supported.** If you need it, you can try MSYS2 + the GTK4 runtime, but expect rough edges.\n\n---"
+  },
+  {
+    "id": "knowledge/install.md#4.0",
+    "source": "knowledge/install.md",
+    "section": "Verifying the Install",
+    "text": "After installation, run these checks to confirm everything works:\n\n### 1. Python and dependencies\n\n```bash\npython3 --version          # should be 3.11 or higher\npython3 -c \"import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk; print('GTK OK', Gtk.MAJOR_VERSION, Gtk.MINOR_VERSION)\"\n```\n\nExpected output: `GTK OK 4 <minor>` (e.g., `GTK OK 4 12`).\n\n### 2. CrabCakes imports\n\n```bash\npython3 -c \"from ui.window import MainWindow; print('Import OK')\"\n```\n\nExpected: `Import OK` with no errors. (No GUI launches — it only imports the module.)\n\n### 3. Launch the app\n\n```bash\ncrabcakes\n```\n\nExpected: The CrabCakes window opens with the Auxilium 🦀 tab visible. If you see a \"no provider configured\" dialog, that's the **first-run wizard** — see `providers.md` to complete setup.\n\n### 4. Run from source (developer mode)\n\n```bash\ncd /path/to/crabcakes\npython3 main.py\n```\n\nThis bypasses the `crabcakes` entry point and runs `main.py` directly. Useful when iterating on the code.\n\n### Headless verification (no display)\n\n```bash\nxvfb-run -a python3 -c \"from ui.window import MainWindow; MainWindow(application=None); print('GUI constructs OK')\"\n```\n\nIf this works, CrabCakes is installable on headless systems (servers, CI).\n\n---"
+  },
+  {
+    "id": "knowledge/install.md#5.0",
+    "source": "knowledge/install.md",
+    "section": "Common Install Errors",
+    "text": ""
+  },
+  {
+    "id": "knowledge/install.md#5.1",
+    "source": "knowledge/install.md",
+    "section": "Common Install Errors",
+    "text": "### `ModuleNotFoundError: No module named 'gi'`\n\n**Cause:** PyGObject is not installed or the system `libgirepository` is missing.\n\n**Fix (Debian/Ubuntu):**\n```bash\nsudo apt install libgirepository1.0-dev python3-gi gobject-introspection\npip install --user --break-system-packages pygobject\n```\n\n**Fix (Fedora):**\n```bash\nsudo dnf install python3-gobject gobject-introspection-devel\n```\n\n**Fix (macOS):**\n```bash\nbrew install pygobject3 gobject-introspection pkg-config\npip install --user pygobject\n```"
+  },
+  {
+    "id": "knowledge/install.md#5.2",
+    "source": "knowledge/install.md",
+    "section": "Common Install Errors",
+    "text": "### `Gtk-CRITICAL **: cannot open display`\n\n**Cause:** No X11 or Wayland display available.\n\n**Fix:** If you're on a headless server, run with Xvfb:\n```bash\nxvfb-run -a crabcakes\n```\n\n**Fix (Wayland):** If you're on Wayland and getting this error, your session may have fallen back to XWayland. Check:\n```bash\necho $XDG_SESSION_TYPE   # should be \"wayland\" or \"x11\"\necho $WAYLAND_DISPLAY    # should be \"wayland-0\" or similar\n```\n\nIf `$WAYLAND_DISPLAY` is empty, your desktop session isn't using Wayland. Log out and select a Wayland session at the login screen."
+  },
+  {
+    "id": "knowledge/install.md#5.3",
+    "source": "knowledge/install.md",
+    "section": "Common Install Errors",
+    "text": "### `externally-managed-environment` (PEP 668)\n\n**Cause:** Modern Debian/Ubuntu and Fedora mark the system Python as \"externally managed,\" preventing `pip install` from modifying it.\n\n**Fix (recommended):** Use a virtual environment:\n```bash\npython3 -m venv ~/.crabcakes-venv\nsource ~/.crabcakes-venv/bin/activate\npip install -e /path/to/crabcakes\ncrabcakes\n```\n\n**Fix (quick but not recommended):** Override the protection:\n```bash\npip install --user --break-system-packages -e .\n```"
+  },
+  {
+    "id": "knowledge/install.md#5.4",
+    "source": "knowledge/install.md",
+    "section": "Common Install Errors",
+    "text": "### `ImportError: libgtk-4.so.1: cannot open shared object file`\n\n**Cause:** GTK 4 runtime libraries are not installed.\n\n**Fix (Debian/Ubuntu):**\n```bash\nsudo apt install libgtk-4-1 libgtk-4-common\n```\n\n**Fix (Fedora):**\n```bash\nsudo dnf install gtk4\n```\n\n**Fix (macOS):**\n```bash\nbrew install gtk4\n```\n\nAfter installing, you may need to refresh the linker cache:\n```bash\nsudo ldconfig   # Linux only\n```"
+  },
+  {
+    "id": "knowledge/install.md#5.5",
+    "source": "knowledge/install.md",
+    "section": "Common Install Errors",
+    "text": "### PyGObject introspection cache errors\n\n**Cause:** Stale or missing GObject introspection typelib cache.\n\n**Fix:**\n```bash\n# Clear the cache and let it rebuild\nrm -rf ~/.cache/g-ir-*\nsudo ldconfig   # Linux only\n```\n\nIf the error persists after this, file an issue with the full error output."
+  },
+  {
+    "id": "knowledge/install.md#5.6",
+    "source": "knowledge/install.md",
+    "section": "Common Install Errors",
+    "text": "### `crabcakes: command not found`\n\n**Cause:** The `crabcakes` script is installed to `~/.local/bin` but that directory is not on your `$PATH`.\n\n**Fix:** Add this line to your `~/.bashrc`, `~/.zshrc`, or equivalent:\n```bash\nexport PATH=\"$HOME/.local/bin:$PATH\"\n```\n\nThen restart your shell or `source ~/.bashrc`.\n\n**Alternative:** Use the Python module invocation:\n```bash\npython3 -m crabcakes\n# or, from the source directory:\npython3 main.py\n```"
+  },
+  {
+    "id": "knowledge/install.md#5.7",
+    "source": "knowledge/install.md",
+    "section": "Common Install Errors",
+    "text": "### `Cannot find GDK-Backend` or display backend errors\n\n**Cause:** No display backend available (X11 or Wayland).\n\n**Fix:** On headless systems:\n```bash\nxvfb-run -a crabcakes\n```\n\nOn a desktop with broken Wayland, try forcing X11:\n```bash\nGDK_BACKEND=x11 crabcakes\n```\n\n---"
+  },
+  {
+    "id": "knowledge/install.md#6.0",
+    "source": "knowledge/install.md",
+    "section": "Running in a Virtual Environment (Recommended)",
+    "text": "A venv isolates CrabCakes and its dependencies from your system Python. This avoids the `externally-managed-environment` error and makes cleanup easy.\n\n### Setup\n\n```bash\n# Create the venv (one-time)\npython3 -m venv ~/crabcakes-venv\n\n# Activate it (every shell session)\nsource ~/crabcakes-venv/bin/activate\n\n# Install CrabCakes\npip install -e /path/to/crabcakes\n\n# Run\ncrabcakes\n```\n\n### Auto-activation (optional)\n\nAdd to your `~/.bashrc`:\n```bash\nalias crabcakes='~/crabcakes-venv/bin/crabcakes'\n```\n\nThen `crabcakes` works from any directory without activating the venv.\n\n### Cleanup\n\nTo uninstall:\n```bash\n# Delete the venv\nrm -rf ~/crabcakes-venv\n\n# Delete user config (optional, but resets to fresh install)\nrm -rf ~/.config/crabcakes\n```\n\n---"
+  },
+  {
+    "id": "knowledge/install.md#7.0",
+    "source": "knowledge/install.md",
+    "section": "Installing for Development",
+    "text": "If you want to contribute or modify CrabCakes:\n\n```bash\ngit clone https://github.com/qsmtco/crabcakes.git\ncd crabcakes\n\n# Create a venv\npython3 -m venv .venv\nsource .venv/bin/activate\n\n# Install with dev dependencies\npip install -e \".[dev]\"\n\n# Run tests\npytest\n\n# Run the app\npython3 main.py\n```\n\n### Dev dependencies\n\nThe `[dev]` extra includes:\n- `pytest>=8.0` — test runner\n- `ruff>=0.4` — linter\n\nFor KB indexing work (Auxilium Tier 1+), also install:\n```bash\npip install sentence-transformers numpy\n```\n\nThis adds ~700MB (mostly the PyTorch backend). Only needed if you're modifying `knowledge/` files and need to rebuild the embedding index.\n\n---"
+  },
+  {
+    "id": "knowledge/install.md#8.0",
+    "source": "knowledge/install.md",
+    "section": "First Launch",
+    "text": "When you run `crabcakes` for the first time:\n\n1. The app creates `~/.config/crabcakes/` with default configs\n2. The Auxilium 🦀 tab opens automatically\n3. The first-run wizard appears (no LLM configured yet)\n4. The wizard walks you through: install check → gateway check → provider picker\n5. After completing the wizard, Auxilium is ready to use\n\nSee `providers.md` for the provider configuration step.\n\n---"
+  },
+  {
+    "id": "knowledge/install.md#9.0",
+    "source": "knowledge/install.md",
+    "section": "Verifying a Working Install",
+    "text": "After install + first launch, you should be able to:\n\n- [x] The window opens without errors\n- [x] The Auxilium 🦀 tab is visible\n- [x] The first-run wizard appears (or, if already configured, the chat input is ready)\n- [x] You can complete the wizard and configure a provider\n- [x] Auxilium responds to a test message (after provider is configured)\n\nIf any of these fail, see the **Common Install Errors** section above, then `troubleshooting.md` for deeper debugging.\n\n---"
+  },
+  {
+    "id": "knowledge/install.md#10.0",
+    "source": "knowledge/install.md",
+    "section": "When to Ask for Help",
+    "text": "If the install doesn't work after trying the relevant fixes above:\n\n1. Run `crabcakes --debug` (if available) or set `CRABCAKES_DEBUG=1` to get verbose logs\n2. Check the `troubleshooting.md` file for known issues\n3. Search existing issues: https://github.com/qsmtco/crabcakes/issues\n4. File a new issue with: OS + version, Python version, GTK version, full error output"
+  },
+  {
+    "id": "knowledge/providers.md#0.0",
+    "source": "knowledge/providers.md",
+    "section": "Introduction",
+    "text": "# Configuring LLM Providers\n\nAuxilium and the other built-in agents (Coder, Debugger) need an LLM provider to function. This guide walks you through configuring one of the five supported providers.\n\n**Quick decision guide:**\n\n| Provider | Best for | Cost | Setup time |\n|---|---|---|---|\n| **OpenRouter free** | Trying CrabCakes with zero friction | Free tier | 1 minute |\n| **Ollama (local)** | Privacy, offline use, no API key | Free (uses your hardware) | 5 minutes |\n| **OpenAI** | Highest quality (GPT-4o) | Pay-per-token | 2 minutes |\n| **Anthropic** | Best long-context (Claude 3.5) | Pay-per-token | 2 minutes |\n| **Google Gemini** | Cheap high-volume | Free tier + paid | 2 minutes |\n\n---"
+  },
+  {
+    "id": "knowledge/providers.md#1.0",
+    "source": "knowledge/providers.md",
+    "section": "How Provider Configuration Works",
+    "text": "CrabCakes stores provider settings in `~/.config/crabcakes/agent.json`. Each provider has:\n\n- `name` — display name\n- `base_url` — API endpoint\n- `api_key` — your secret key\n- `default_model` — the model identifier\n- `caller` — which API format to use (`openai` / `minimax` / `anthropic` / `openrouter` / `zai`)\n- `supports_tools` / `supports_streaming` — capability flags\n- `max_tokens` — context window size\n\nThe `caller` field determines which API client handles requests. Most modern providers (OpenRouter, Anthropic, Google) use the `openai` caller since they implement OpenAI-compatible APIs.\n\n---"
+  },
+  {
+    "id": "knowledge/providers.md#2.0",
+    "source": "knowledge/providers.md",
+    "section": "Option 1: OpenRouter (Free Tier) — Recommended for Getting Started",
+    "text": "**What it is:** A unified API that gives you access to dozens of models through a single API key, including a free tier.\n\n**Why this option:** Zero cost, single signup, no credit card required, instant access.\n\n### Setup\n\n1. Go to https://openrouter.ai and create an account\n2. Navigate to **Keys** and click **Create New Key**\n3. Copy the key (starts with `sk-or-v1-...`)\n4. In CrabCakes, run the first-run wizard and select **(a) OpenRouter free**\n5. Paste the key when prompted\n\nThe wizard will write the configuration and verify the connection.\n\n### Manual configuration (if not using the wizard)\n\nEdit `~/.config/crabcakes/agent.json`:\n\n```json\n{\n  \"providers\": {\n    \"openrouter\": {\n      \"name\": \"openrouter\",\n      \"base_url\": \"https://openrouter.ai/api/v1\",\n      \"api_key\": \"sk-or-v1-YOUR_KEY_HERE\",\n      \"default_model\": \"openrouter/auto\",\n      \"caller\": \"openrouter\",\n      \"supports_tools\": true,\n      \"supports_streaming\": true,\n      \"max_tokens\": 128000,\n      \"enabled\": true\n    }\n  },\n  \"default_provider\": \"openrouter\",\n  \"default_model\": \"openrouter/auto\"\n}\n```\n\n### Free-tier models\n\n`openrouter/auto` routes to the best free model available. Specific free models include:\n- `openrouter/aurora` — free\n- `openrouter/owl-alpha` — free (when available)\n\nFree-tier rate limits: ~20 requests/minute, ~50 requests/day. Sufficient for getting started.\n\n### Troubleshooting\n\n**401 Unauthorized** — Your API key is invalid or expired. Generate a new key at https://openrouter.ai/keys.\n\n**429 Too Many Requests** — You hit the free-tier rate limit. Wait a minute, or upgrade to a paid plan.\n\n**Model not found** — The `default_model` doesn't exist. Check https://openrouter.ai/models for valid model IDs.\n\n---"
+  },
+  {
+    "id": "knowledge/providers.md#3.0",
+    "source": "knowledge/providers.md",
+    "section": "Option 2: Ollama (Local, Free) — Best for Privacy",
+    "text": "**What it is:** A local LLM runtime. Runs entirely on your machine — no API key, no internet, no data leaves your computer.\n\n**Why this option:** Privacy-first, zero cost, works offline. Quality is lower than GPT-4o but improving fast."
+  },
+  {
+    "id": "knowledge/providers.md#3.1",
+    "source": "knowledge/providers.md",
+    "section": "Option 2: Ollama (Local, Free) — Best for Privacy",
+    "text": "### Setup\n\n1. **Install Ollama:**\n   ```bash\n   # macOS\n   brew install ollama\n\n   # Linux\n   curl -fsSL https://ollama.com/install.sh | sh\n\n   # Windows\n   # Download from https://ollama.com/download\n   ```\n\n2. **Start the Ollama server** (if not already running):\n   ```bash\n   ollama serve\n   ```\n   This runs in the foreground. For a background service, follow the Ollama docs for your OS.\n\n3. **Pull a model:**\n   ```bash\n   ollama pull llama3.2:3b        # 2GB download, fast on most hardware\n   # or\n   ollama pull qwen2.5-coder:7b   # 4.4GB, better for code\n   ```\n\n4. **In CrabCakes:** Run the first-run wizard, select **(b) Ollama local**. The wizard detects `ollama` on PATH and verifies the endpoint at `http://localhost:11434`."
+  },
+  {
+    "id": "knowledge/providers.md#3.2",
+    "source": "knowledge/providers.md",
+    "section": "Option 2: Ollama (Local, Free) — Best for Privacy",
+    "text": "### Manual configuration\n\nEdit `~/.config/crabcakes/agent.json`:\n\n```json\n{\n  \"providers\": {\n    \"ollama\": {\n      \"name\": \"ollama\",\n      \"base_url\": \"http://localhost:11434/v1\",\n      \"api_key\": \"ollama\",\n      \"default_model\": \"llama3.2:3b\",\n      \"caller\": \"openai\",\n      \"supports_tools\": true,\n      \"supports_streaming\": true,\n      \"max_tokens\": 32000,\n      \"enabled\": true\n    }\n  },\n  \"default_provider\": \"ollama\",\n  \"default_model\": \"llama3.2:3b\"\n}\n```\n\n**Note:** The `caller` is `openai` because Ollama implements the OpenAI-compatible API. The `api_key` is a placeholder (`\"ollama\"`) since Ollama doesn't require authentication."
+  },
+  {
+    "id": "knowledge/providers.md#3.3",
+    "source": "knowledge/providers.md",
+    "section": "Option 2: Ollama (Local, Free) — Best for Privacy",
+    "text": "### Recommended models\n\n| Model | Size | Quality | Use case |\n|---|---|---|---|\n| `llama3.2:3b` | 2GB | OK | Light use, fast |\n| `llama3.2:7b` | 4.4GB | Good | General purpose |\n| `qwen2.5-coder:7b` | 4.4GB | Good for code | Coding agents |\n| `mistral:7b` | 4.1GB | Good | General purpose |\n| `llama3.1:70b` | 40GB | Excellent | Needs 64GB+ RAM |"
+  },
+  {
+    "id": "knowledge/providers.md#3.4",
+    "source": "knowledge/providers.md",
+    "section": "Option 2: Ollama (Local, Free) — Best for Privacy",
+    "text": "### Troubleshooting\n\n**Connection refused on `http://localhost:11434`** — Ollama isn't running. Start it with `ollama serve`.\n\n**Model not found** — Pull it first: `ollama pull llama3.2:3b`. Check installed models with `ollama list`.\n\n**Slow responses** — Your model is too large for your hardware. Try a smaller model (`llama3.2:3b` instead of `llama3.1:70b`).\n\n**Out of memory** — Your model doesn't fit in RAM. Close other apps or use a smaller model.\n\n---"
+  },
+  {
+    "id": "knowledge/providers.md#4.0",
+    "source": "knowledge/providers.md",
+    "section": "Option 3: OpenAI (GPT-4o) — Best Quality, Paid",
+    "text": "**What it is:** OpenAI's API, the gold standard for general LLM quality.\n\n**Why this option:** Highest quality responses, most reliable, best tool use. Costs money.\n\n### Setup\n\n1. Go to https://platform.openai.com and create an account\n2. Add a payment method (API access is pay-as-you-go)\n3. Navigate to **API Keys** and click **Create new secret key**\n4. Copy the key (starts with `sk-...`)\n5. In CrabCakes: first-run wizard → **(c) Bring your own key** → select **OpenAI** → paste key\n\n### Pricing\n\nGPT-4o: ~$2.50 per 1M input tokens, ~$10 per 1M output tokens.\nGPT-4o-mini: ~$0.15 per 1M input tokens, ~$0.60 per 1M output tokens.\n\nA typical Auxilium conversation uses ~5K tokens total. Cost: ~$0.01 with GPT-4o, ~$0.001 with GPT-4o-mini.\n\n### Manual configuration\n\n```json\n{\n  \"providers\": {\n    \"openai\": {\n      \"name\": \"openai\",\n      \"base_url\": \"https://api.openai.com/v1\",\n      \"api_key\": \"sk-YOUR_KEY_HERE\",\n      \"default_model\": \"gpt-4o\",\n      \"caller\": \"openai\",\n      \"supports_tools\": true,\n      \"supports_streaming\": true,\n      \"max_tokens\": 128000,\n      \"enabled\": true\n    }\n  },\n  \"default_provider\": \"openai\",\n  \"default_model\": \"gpt-4o\"\n}\n```\n\n### Available models\n\n- `gpt-4o` — flagship, best quality\n- `gpt-4o-mini` — fast, cheap, surprisingly capable\n- `gpt-4-turbo` — older, similar to 4o\n- `o1` / `o1-mini` — reasoning models, slower but better at complex tasks\n\n### Troubleshooting\n\n**401 Incorrect API key** — Key is wrong or revoked. Regenerate at https://platform.openai.com/api-keys.\n\n**429 Rate limit exceeded** — You're sending too many requests. Slow down or upgrade your tier.\n\n**insufficient_quota** — Your account is out of credits. Add funds at https://platform.openai.com/account/billing.\n\n---"
+  },
+  {
+    "id": "knowledge/providers.md#5.0",
+    "source": "knowledge/providers.md",
+    "section": "Option 4: Anthropic (Claude 3.5 Sonnet) — Best Long-Context",
+    "text": "**What it is:** Anthropic's API, known for long-context windows and careful reasoning.\n\n**Why this option:** Claude 3.5 Sonnet has 200K context, excellent at long documents, careful at tool use.\n\n### Setup\n\n1. Go to https://console.anthropic.com and create an account\n2. Add a payment method\n3. Navigate to **Settings → API Keys** and create a new key\n4. Copy the key (starts with `sk-ant-...`)\n5. In CrabCakes: first-run wizard → **(c) Bring your own key** → select **Anthropic** → paste key\n\n### Pricing\n\nClaude 3.5 Sonnet: ~$3 per 1M input tokens, ~$15 per 1M output tokens.\nClaude 3.5 Haiku: ~$0.80 per 1M input tokens, ~$4 per 1M output tokens.\n\n### Manual configuration\n\n```json\n{\n  \"providers\": {\n    \"anthropic\": {\n      \"name\": \"anthropic\",\n      \"base_url\": \"https://api.anthropic.com\",\n      \"api_key\": \"sk-ant-YOUR_KEY_HERE\",\n      \"default_model\": \"claude-3-5-sonnet-20241022\",\n      \"caller\": \"anthropic\",\n      \"supports_tools\": true,\n      \"supports_streaming\": true,\n      \"max_tokens\": 200000,\n      \"enabled\": true\n    }\n  },\n  \"default_provider\": \"anthropic\",\n  \"default_model\": \"claude-3-5-sonnet-20241022\"\n}\n```\n\n### Available models\n\n- `claude-3-5-sonnet-20241022` — flagship, 200K context\n- `claude-3-5-haiku-20241022` — fast, cheap\n- `claude-3-opus-20240229` — older, more expensive, very capable\n\n### Troubleshooting\n\n**401 Invalid API Key** — Key is wrong. Regenerate at https://console.anthropic.com/settings/keys.\n\n**404 Not Found** — Model name is wrong. Check https://docs.anthropic.com/en/docs/models-overview for current model IDs.\n\n---"
+  },
+  {
+    "id": "knowledge/providers.md#6.0",
+    "source": "knowledge/providers.md",
+    "section": "Option 5: Google Gemini — Free Tier + Cheap Paid",
+    "text": "**What it is:** Google's Gemini API, with a generous free tier.\n\n**Why this option:** Free tier is more permissive than OpenRouter's. Gemini 2.0 Flash is fast and capable.\n\n### Setup\n\n1. Go to https://aistudio.google.com and create an account (or use existing Google account)\n2. Click **Get API Key** in the left sidebar\n3. Create a new key (or use the default)\n4. Copy the key\n5. In CrabCakes: first-run wizard → **(c) Bring your own key** → select **Google** → paste key\n\n### Pricing\n\nGemini 2.0 Flash: **Free** up to 1,500 requests/day.\nGemini 1.5 Pro: Free tier available, then ~$1.25 per 1M input tokens.\n\n### Manual configuration\n\n```json\n{\n  \"providers\": {\n    \"google\": {\n      \"name\": \"google\",\n      \"base_url\": \"https://generativelanguage.googleapis.com/v1beta\",\n      \"api_key\": \"YOUR_GEMINI_KEY_HERE\",\n      \"default_model\": \"gemini-2.0-flash\",\n      \"caller\": \"openai\",\n      \"supports_tools\": true,\n      \"supports_streaming\": true,\n      \"max_tokens\": 1000000,\n      \"enabled\": true\n    }\n  },\n  \"default_provider\": \"google\",\n  \"default_model\": \"gemini-2.0-flash\"\n}\n```\n\n**Note:** Google Gemini has an OpenAI-compatible endpoint at the same `base_url` with `/openai/` appended. If you prefer the native Gemini API, use `caller: \"openai\"` with the `base_url` above — CrabCakes handles the format translation.\n\n### Available models\n\n- `gemini-2.0-flash` — fast, free tier, recommended\n- `gemini-1.5-pro` — more capable, slower\n- `gemini-1.5-flash` — older fast model\n\n### Troubleshooting\n\n**403 Forbidden** — API key is invalid or the Generative Language API is not enabled in your Google Cloud project.\n\n**429 Resource Exhausted** — Free tier rate limit hit. Wait or upgrade.\n\n---"
+  },
+  {
+    "id": "knowledge/providers.md#7.0",
+    "source": "knowledge/providers.md",
+    "section": "Switching Providers Mid-Session",
+    "text": "You can change providers without restarting CrabCakes:\n\n1. Edit `~/.config/crabcakes/agent.json`\n2. Update `default_provider` and `default_model`\n3. In CrabCakes, click **Settings → Reload Config** (if available) or restart the app\n\nOr use the first-run wizard's \"reconfigure\" option (if the wizard supports re-runs).\n\n---"
+  },
+  {
+    "id": "knowledge/providers.md#8.0",
+    "source": "knowledge/providers.md",
+    "section": "Common Errors Across All Providers",
+    "text": "### \"No provider configured\"\n\n**Cause:** `agent.json` has no `providers` block, or `default_provider` is not in `providers`.\n\n**Fix:** Run the first-run wizard, or manually add a provider block as shown in the examples above.\n\n### \"401 Unauthorized\" / \"Invalid API Key\"\n\n**Cause:** Wrong key, expired key, or key with insufficient permissions.\n\n**Fix:**\n1. Regenerate the key at the provider's dashboard\n2. Update `agent.json` with the new key\n3. Restart CrabCakes\n\n### \"429 Too Many Requests\" / \"Rate Limit Exceeded\"\n\n**Cause:** You've hit the provider's rate limit.\n\n**Fix:**\n- Free tiers: wait an hour, or upgrade\n- Paid tiers: check the provider's rate limit dashboard, consider raising it\n\n### \"Network unreachable\" / \"Connection refused\"\n\n**Cause:** No internet connection, or the provider's endpoint is down.\n\n**Fix:**\n1. Check `curl https://<provider_base_url>/` from your terminal\n2. If that fails, it's a network/provider issue, not a CrabCakes issue\n3. Try a different provider to confirm CrabCakes is working\n\n### \"Model not found\" / \"Invalid model\"\n\n**Cause:** The `default_model` in your config doesn't exist (typo, deprecated model, etc.)\n\n**Fix:** Check the provider's docs for current model names. The first-run wizard has a dropdown of valid models.\n\n---"
+  },
+  {
+    "id": "knowledge/providers.md#9.0",
+    "source": "knowledge/providers.md",
+    "section": "Storing API Keys Securely",
+    "text": "**CrabCakes does NOT encrypt `agent.json`.** The file is plaintext JSON with your API keys in it.\n\nBest practices:\n\n1. **Restrict file permissions:**\n   ```bash\n   chmod 600 ~/.config/crabcakes/agent.json\n   ```\n   CrabCakes warns at startup if the file is group/world-readable.\n\n2. **Use a separate API key per provider.** Don't reuse keys across services.\n\n3. **Set usage limits** at the provider's dashboard. Most providers let you cap monthly spend.\n\n4. **Rotate keys** periodically. Most providers support multiple active keys.\n\n5. **For shared/team machines**, use a secrets manager (e.g., `pass`, `vault`, `1password-cli`) and source keys via `agent.json` templating. CrabCakes does not currently support env-var interpolation in `agent.json` — if you need this, file a feature request.\n\n---"
+  },
+  {
+    "id": "knowledge/providers.md#10.0",
+    "source": "knowledge/providers.md",
+    "section": "Verifying Provider Configuration",
+    "text": "After configuring a provider, test it:\n\n1. Open Auxilium (or Coder) in CrabCakes\n2. Send a simple test message: \"Hello, who are you?\"\n3. If you get a response, the provider is working\n4. If you get an error, check the error message against the **Common Errors** section above\n\nFor deeper debugging, run CrabCakes with `CRABCAKES_DEBUG=1`:\n\n```bash\nCRABCAKES_DEBUG=1 crabcakes\n```\n\nThis shows API request/response logs in the terminal.\n\n---"
+  },
+  {
+    "id": "knowledge/providers.md#11.0",
+    "source": "knowledge/providers.md",
+    "section": "Next Steps",
+    "text": "- **First conversation with Auxilium:** Try asking \"How do I create a project?\" or \"What does the Coder agent do?\"\n- **Configure multiple providers:** Add a second provider to `agent.json` and switch between them\n- **Set up project-specific agents:** See `agents.md` for creating custom agents per project\n- **Explore features:** See `features.md` for the full feature list\n\nIf something doesn't work, check `troubleshooting.md` for known issues."
+  },
+  {
     "id": "knowledge/setup.md#0.0",
     "source": "knowledge/setup.md",
     "section": "Introduction",

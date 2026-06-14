@@ -29,7 +29,9 @@ from .special_agents import (
 )
 from .tools import ToolDefinition, ToolResult
 from .context import build_system_prompt, build_file_context
-from .kb_lookup import kb_lookup, is_index_available
+# Note: kb_lookup and is_index_available are NOT re-exported here because
+# the function name would shadow the submodule name. Import them directly:
+#   from agent.kb_lookup import kb_lookup, is_index_available
 from .enforcement import check
 
 try:

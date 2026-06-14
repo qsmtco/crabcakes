@@ -28,7 +28,7 @@ def synthetic_index(tmp_path, monkeypatch):
     Returns (chunks, embeddings, fake_model) for direct inspection.
     The fake model returns whatever vectors the test puts in its lookup dict.
     """
-    from agent import kb_lookup
+    import agent.kb_lookup as kb_lookup
 
     chunks = [
         {"id": "a.md#0.0", "source": "knowledge/a.md", "section": "Section A",
@@ -80,7 +80,7 @@ def synthetic_index(tmp_path, monkeypatch):
 
 def test_returns_empty_when_index_missing(tmp_path, monkeypatch):
     """If the index files don't exist, kb_lookup returns []."""
-    from agent import kb_lookup
+    import agent.kb_lookup as kb_lookup
     empty_dir = tmp_path / "empty"
     empty_dir.mkdir()
     monkeypatch.setattr(kb_lookup, "_INDEX_DIR", empty_dir)
@@ -94,7 +94,7 @@ def test_returns_empty_when_index_missing(tmp_path, monkeypatch):
 
 def test_returns_empty_for_empty_or_whitespace_question(synthetic_index):
     """Empty / whitespace questions are no-ops, return []."""
-    from agent import kb_lookup
+    import agent.kb_lookup as kb_lookup
     assert kb_lookup.kb_lookup("") == []
     assert kb_lookup.kb_lookup("   ") == []
     assert kb_lookup.kb_lookup("\n\t") == []
@@ -107,7 +107,7 @@ def test_returns_top_k_chunks_sorted_by_score_desc(synthetic_index):
     small or slightly negative cosine sims with the query. We use
     min_score=-1.0 to include all chunks regardless of their sim sign.
     """
-    from agent import kb_lookup
+    import agent.kb_lookup as kb_lookup
     from agent.kb_lookup import _DEFAULT_MODEL
     chunks, embeddings, fake = synthetic_index
 
@@ -130,7 +130,7 @@ def test_returns_top_k_chunks_sorted_by_score_desc(synthetic_index):
 
 def test_filters_chunks_below_min_score(synthetic_index):
     """Chunks below min_score are filtered out."""
-    from agent import kb_lookup
+    import agent.kb_lookup as kb_lookup
     from agent.kb_lookup import _DEFAULT_MODEL
     chunks, embeddings, fake = synthetic_index
 
@@ -150,7 +150,7 @@ def test_filters_chunks_below_min_score(synthetic_index):
 
 def test_caches_model_across_calls(synthetic_index, monkeypatch):
     """The model is not re-loaded between calls."""
-    from agent import kb_lookup
+    import agent.kb_lookup as kb_lookup
     from agent.kb_lookup import _DEFAULT_MODEL
     chunks, embeddings, fake = synthetic_index
 
@@ -177,7 +177,7 @@ def test_caches_model_across_calls(synthetic_index, monkeypatch):
 
 def test_chunk_metadata_is_correct(synthetic_index):
     """Returned KBChunk has id, source, section, text, score fields populated."""
-    from agent import kb_lookup
+    import agent.kb_lookup as kb_lookup
     from agent.kb_lookup import _DEFAULT_MODEL
     chunks, embeddings, fake = synthetic_index
 
@@ -201,7 +201,7 @@ def test_chunk_metadata_is_correct(synthetic_index):
 
 def test_unrelated_question_returns_empty(synthetic_index):
     """A question with no embedding in the fake model → empty list (fail-soft)."""
-    from agent import kb_lookup
+    import agent.kb_lookup as kb_lookup
     from agent.kb_lookup import _DEFAULT_MODEL
     chunks, embeddings, fake = synthetic_index
 
@@ -218,7 +218,7 @@ def test_unrelated_question_returns_empty(synthetic_index):
 
 def test_question_and_chunk_use_same_model(synthetic_index):
     """Sanity: query vector == chunk a's vector → score should be 1.0."""
-    from agent import kb_lookup
+    import agent.kb_lookup as kb_lookup
     from agent.kb_lookup import _DEFAULT_MODEL
     chunks, embeddings, fake = synthetic_index
 
@@ -237,7 +237,7 @@ def test_question_and_chunk_use_same_model(synthetic_index):
 
 def test_top_k_limits_results(synthetic_index):
     """top_k=1 returns only the single best match."""
-    from agent import kb_lookup
+    import agent.kb_lookup as kb_lookup
     from agent.kb_lookup import _DEFAULT_MODEL
     chunks, embeddings, fake = synthetic_index
 
@@ -268,7 +268,7 @@ REAL_INDEX_AVAILABLE = (
 )
 def test_real_index_retrieval_makes_sense():
     """Smoke test against the real index. Loads the real model (~22s first time)."""
-    from agent import kb_lookup
+    import agent.kb_lookup as kb_lookup
 
     # Reset state so the real model loads fresh (prior tests may have
     # injected a fake model into the module state).
