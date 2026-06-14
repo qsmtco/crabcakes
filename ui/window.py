@@ -223,6 +223,7 @@ class MainWindow(Gtk.ApplicationWindow):
                         on_provider_selected=lambda: None,
                     )
                     _wizard_chat_box.append(self._auxilium_wizard)
+                    self._auxilium_wizard_handler.start()
                     logger.info("Auxilium wizard shown — no provider configured")
             except Exception:
                 logger.exception("Failed to show Auxilium wizard — continuing without it")
