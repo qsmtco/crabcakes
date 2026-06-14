@@ -1410,8 +1410,12 @@ class AgentRuntime:
         # Use app_title as X-Title header for OpenRouter attribution
         x_title = conv.app_title or ""
 
-        # Use streaming when on_text_delta callback is registered (Phase 1.3b)
-        if self._on_text_delta is not None:
+        # Use streaming when on_text_delta is registered AND the provider supports it
+        use_streaming = (
+            self._on_text_delta is not None
+            and (provider_cfg.supports_streaming if provider_cfg else True)
+        )
+        if use_streaming:
             logger.debug("[call-llm] sk=%s streaming=True provider=%s model=%s msg_count=%d",
                          session_key, provider_name, model, len(messages))
             caller_key = self._resolve_caller_key(provider_cfg, model)
