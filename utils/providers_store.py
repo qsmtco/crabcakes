@@ -199,13 +199,24 @@ def ensure_kb_provider() -> None:
     """Seed the local-kb provider into providers.yaml if missing.
 
     Idempotent — safe to call on every startup. If a provider named
-    'local-kb' already exists, this is a no-op.
+    'local-kb' already exists, this is a no-op for the provider.
+
+    Also ensures the Auxilium (helper) agent is configured to use
+    local-kb as its primary provider if it has no provider set.
+    This enables a fresh-install user to get KB-backed help without
+    any manual configuration.
 
     The local-kb provider wraps the KB HTTP server (agent/kb_server.py)
     and presents an OpenAI-compatible API on localhost:18790. It enables
     the Auxilium agent to answer questions from the local knowledge base
     without requiring an external LLM.
     """
+    _ensure_kb_provider_entry()
+    _ensure_auxilium_uses_kb()
+
+
+def _ensure_kb_provider_entry() -> None:
+    """Seed the local-kb provider into providers.yaml if missing."""
     providers = load_providers()
     if any(p.name == "local-kb" for p in providers):
         return
@@ -223,3 +234,32 @@ def ensure_kb_provider() -> None:
     providers.append(kb_provider)
     save_providers(providers)
     _logger.info("ensure_kb_provider: seeded local-kb provider into providers.yaml")
+
+
+def _ensure_auxilium_uses_kb() -> None:
+    """Patch the Auxilium agent YAML to use local-kb if it has no provider.
+
+    On fresh install, the helper agent may have an empty llm_name.
+    This sets it to 'local-kb' so the KB provider answers install/config
+    questions out of the box.
+    """
+    try:
+        from utils.agent_defs import load_agent_def_by_role, save_agent_def
+
+        agent_def = load_agent_def_by_role("helper")
+        if agent_def is None:
+            return  # No helper agent defined — nothing to patch
+
+        current_llm = agent_def.get("llm_name", "") or agent_def.get("provider", "")
+        if current_llm and current_llm != "local-kb":
+            return  # Already has a provider — don't override user's choice
+
+        if current_llm == "local-kb":
+            return  # Already set correctly
+
+        # llm_name is empty — patch it to local-kb
+        agent_def["llm_name"] = "local-kb"
+        save_agent_def(agent_def)
+        _logger.info("ensure_kb_provider: patched Auxilium agent to use local-kb provider")
+    except Exception as e:
+        _logger.warning("ensure_kb_provider: failed to patch Auxilium agent: %s", e)

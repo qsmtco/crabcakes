@@ -108,3 +108,53 @@ class TestEnsureKbProvider:
         assert kb.base_url == "http://localhost:9999/v1"
         assert kb.api_key == "custom-key"
         assert kb.default_model == "custom-model"
+
+
+    def test_ensure_kb_provider_patches_auxilium_no_provider(self, temp_config_dir):
+        """Helper agent with empty llm_name → patched to use local-kb."""
+        from utils.agent_defs import save_agent_def, load_agent_def_by_role
+
+        # Create helper agent with no provider
+        save_agent_def({
+            "name": "Auxilium",
+            "emoji": "🦀",
+            "role": "helper",
+            "prompts": ["system/auxilium.md"],
+            "tools": ["read_file"],
+            "llm_name": "",
+            "self_improvement": {},
+        })
+
+        ensure_kb_provider()
+
+        patched = load_agent_def_by_role("helper")
+        assert patched is not None
+        assert patched["llm_name"] == "local-kb"
+
+    def test_ensure_kb_provider_does_not_override_existing_provider(self, temp_config_dir):
+        """Helper agent with a provider set → not overridden."""
+        from utils.agent_defs import save_agent_def, load_agent_def_by_role
+
+        save_agent_def({
+            "name": "Auxilium",
+            "emoji": "🦀",
+            "role": "helper",
+            "prompts": ["system/auxilium.md"],
+            "tools": ["read_file"],
+            "llm_name": "openrouter",
+            "self_improvement": {},
+        })
+
+        ensure_kb_provider()
+
+        patched = load_agent_def_by_role("helper")
+        assert patched is not None
+        assert patched["llm_name"] == "openrouter"  # unchanged
+
+    def test_ensure_kb_provider_no_helper_agent_is_safe(self, temp_config_dir):
+        """No helper agent defined → ensure_kb_provider() is safe, still seeds provider."""
+        ensure_kb_provider()
+
+        providers = load_providers()
+        assert len(providers) == 1
+        assert providers[0].name == "local-kb"
