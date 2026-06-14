@@ -1389,7 +1389,7 @@ def is_kb_server_running() -> bool
 - Pure Python stdlib (`http.server`) — no external dependencies.
 - Runs on daemon thread, started explicitly via `start_kb_server()` (not on import).
 - Server lifecycle managed by `AgentRuntimeHandler`: starts in `__init__` if KB index available, stops in `stop_all()`.
-- Registered as `local-kb` provider in `providers.yaml` via `ensure_kb_provider()` in `utils/providers_store.py`.
+- Registered as `local-kb` provider in `providers.yaml` via `ensure_kb_provider()` in `utils/providers_store.py`. Also patches the helper agent's `llm_name` to `local-kb` if empty (fresh-install auto-configuration). Called from `AgentRuntimeHandler.__init__` at every app start.
 - KB lookup params: `top_k=5`, `min_score=0.35` (higher than kb_lookup default to reduce noise).
 
 **Fail-soft behavior:** If `kb_lookup()` raises, returns `[KB_OUT_OF_SCOPE]` (graceful degradation). If index is unavailable, `start_kb_server()` returns `None` (server does not start).
@@ -3182,11 +3182,11 @@ As of PHASE-10, the API caller for a provider is resolved via `provider_cfg.call
 2. `provider_cfg.default_model.split("/")[0]` (derivation from configured model)
 3. `model.split("/")[0]` (legacy fallback for callers without a `ProviderConfig`)
 
-**Why explicit caller + derivation:** existing providers in `providers.yaml` (pre-PHASE-10) don't have a `caller` field. The derivation fallback (`default_model.split("/")[0]`) handles migration transparently — all 6 of the user's existing providers have slashed `default_model` values, so the runtime resolves the correct caller without requiring a re-save.
+**Why explicit caller + derivation:** existing providers in `providers.yaml` (pre-PHASE-10) don't have a `caller` field. The derivation fallback (`default_model.split("/")[0]`) handles migration transparently — all 6 of the user's existing providers have slashed `default_model` values, so the runtime resolves the correct caller without requiring a re-save. For providers without slashed `default_model` (e.g. `local-kb`), the explicit `caller` field is required — `_to_llm_provider()` copies it from `ProviderConfig` to `LLMProviderConfig` during config loading.
 
 **Why the model string is still slashed:** the API caller functions receive the model string verbatim. OpenRouter expects `vendor/model` (e.g. `openrouter/owl-alpha`); Anthropic expects a bare model name (e.g. `claude-3-5-sonnet`); OpenAI expects a bare model name. The slash in the model string is the API's contract, not a caller identifier. The runtime's `_resolve_agent_model` handler (P4) preserves the model string exactly as configured when `default_model` contains a slash.
 
-**Streamer resolution:** the streaming path (`_call_llm_streaming` callers) uses the same `_resolve_caller_key` helper to look up the streamer function in `_PROVIDER_STREAMERS`. The streamer keys mirror the caller keys (`openai`, `minimax`, `anthropic`, `openrouter`, `zai`).
+**Streamer resolution:** the streaming path (`_call_llm_streaming` callers) uses the same `_resolve_caller_key` helper to look up the streamer function in `_PROVIDER_STREAMERS`. The streamer keys mirror the caller keys (`openai`, `minimax`, `anthropic`, `openrouter`, `zai`). Providers with `supports_streaming=False` (e.g. `local-kb`) always use the blocking path, even when `on_text_delta` is registered.
 
 **Test Connection:** the Settings dialog's "Test" button calls `test_connection(base_url, api_key, model, caller=provider.caller)`. The `caller` kwarg (added in PHASE-10) overrides the legacy model-prefix derivation so the test uses the same caller the runtime would use at message-send time.
 

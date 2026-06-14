@@ -333,7 +333,7 @@ class AgentRuntimeHandler:
         if name in self._runtimes:
             return self._runtimes[name]
 
-        from agent.config import load_agent_config, LLMProviderConfig
+        from agent.config import load_agent_config
         from agent.runtime import AgentRuntime
 
         config = load_agent_config()

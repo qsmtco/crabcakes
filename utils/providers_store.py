@@ -251,11 +251,8 @@ def _ensure_auxilium_uses_kb() -> None:
             return  # No helper agent defined — nothing to patch
 
         current_llm = agent_def.get("llm_name", "") or agent_def.get("provider", "")
-        if current_llm and current_llm != "local-kb":
-            return  # Already has a provider — don't override user's choice
-
-        if current_llm == "local-kb":
-            return  # Already set correctly
+        if current_llm:
+            return  # Already has a provider (including local-kb) — don't override
 
         # llm_name is empty — patch it to local-kb
         agent_def["llm_name"] = "local-kb"
