@@ -111,6 +111,10 @@ class AgentBuilderDialog:
 
         form_box.append(provider_row)
 
+        # Fallback provider row (visible only when primary is local-kb)
+        self._fallback_row = self._build_fallback_provider_row()
+        form_box.append(self._fallback_row)
+
         # Prompts multi-select
         self._prompts_list = self._build_prompts_list()
         self._add_labeled(form_box, "System Prompts", self._prompts_list, expand=True)
@@ -172,6 +176,8 @@ class AgentBuilderDialog:
             "llm_name": llm_name,
             "mcp_servers": self._get_selected_mcp_servers(),
             "self_improvement": self._get_si_config(tools),
+            "fallback_provider": self._get_selected_fallback_provider() or None,
+            "fallback_model": self._get_selected_fallback_model() or None,
         }
 
     def show(self) -> None:
@@ -308,6 +314,10 @@ class AgentBuilderDialog:
             if p.default_model
         }
         self._rebuild_provider_dropdown()
+        # Rebuild fallback provider dropdown too (in case providers changed)
+        if hasattr(self, "_fallback_dropdown"):
+            self._populate_fallback_provider_dropdown()
+            self._update_fallback_visibility()
 
     def _rebuild_provider_dropdown(self) -> None:
         """Rebuild the provider dropdown from self._providers."""
@@ -334,8 +344,105 @@ class AgentBuilderDialog:
         return ""
 
     def _on_provider_changed(self, dropdown, _param) -> None:
-        """When provider changes, refresh save button state."""
+        """When provider changes, refresh save button state and toggle fallback row."""
         self._update_save_button()
+        self._update_fallback_visibility()
+
+    # ── Fallback provider dropdown ─────────────────────────────────────
+
+    def _build_fallback_provider_row(self) -> Gtk.Box:
+        """Build the fallback provider + model row.
+
+        Visible only when the primary provider is local-kb.
+        Includes a 'None' option (default) and a linked model dropdown.
+        """
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        row.set_hexpand(True)
+
+        # Fallback provider dropdown
+        self._fallback_dropdown = Gtk.DropDown(model=Gtk.StringList.new(["None"]))
+        self._fallback_dropdown.connect("notify::selected", self._on_fallback_provider_changed)
+        self._fallback_labeled = self._labeled_box("Fallback Provider", self._fallback_dropdown)
+        row.append(self._fallback_labeled)
+
+        # Fallback model dropdown
+        self._fallback_model_dropdown = Gtk.DropDown(model=Gtk.StringList.new(["-"]))
+        self._fallback_model_dropdown.set_sensitive(False)
+        self._fallback_model_labeled = self._labeled_box("Fallback Model", self._fallback_model_dropdown)
+        row.append(self._fallback_model_labeled)
+
+        # Initially hidden
+        row.set_visible(False)
+
+        return row
+
+    def _populate_fallback_provider_dropdown(self) -> None:
+        """Populate the fallback provider dropdown from self._providers.
+
+        Includes a 'None' option at index 0. Excludes 'local-kb' (can't fall back to KB).
+        """
+        names = ["None"]
+        self._fallback_providers: list = []  # parallel list of ProviderConfig (index 0 = None sentinel)
+        for p in self._providers:
+            if p.name == "local-kb":
+                continue  # exclude KB as a fallback target
+            names.append(p.name)
+            self._fallback_providers.append(p)
+
+        sl = Gtk.StringList.new(names)
+        self._fallback_dropdown.set_model(sl)
+        self._fallback_dropdown.set_selected(0)  # default to None
+
+    def _on_fallback_provider_changed(self, dropdown, _param) -> None:
+        """When fallback provider changes, update the model dropdown."""
+        idx = dropdown.get_selected()
+        if idx == 0:
+            # None selected — disable model dropdown
+            self._fallback_model_dropdown.set_model(Gtk.StringList.new(["-"]))
+            self._fallback_model_dropdown.set_sensitive(False)
+            return
+
+        # Map dropdown index to provider (idx 0 = None, idx 1 = first provider)
+        prov_idx = idx - 1
+        if prov_idx < len(self._fallback_providers):
+            p = self._fallback_providers[prov_idx]
+            models = self._provider_models.get(p.name, [(p.default_model, p.default_model)])
+            model_names = [m[0] for m in models]
+            self._fallback_model_dropdown.set_model(Gtk.StringList.new(model_names if model_names else ["-"]))
+            self._fallback_model_dropdown.set_sensitive(bool(model_names))
+            if model_names:
+                self._fallback_model_dropdown.set_selected(0)
+
+    def _update_fallback_visibility(self) -> None:
+        """Show fallback row only when primary provider is local-kb."""
+        primary = self._get_selected_llm_name()
+        is_kb = primary == "local-kb"
+        self._fallback_row.set_visible(is_kb)
+        if is_kb:
+            self._populate_fallback_provider_dropdown()
+
+    def _get_selected_fallback_provider(self) -> str:
+        """Return the selected fallback provider name, or '' for None."""
+        idx = self._fallback_dropdown.get_selected()
+        if idx == 0:
+            return ""
+        prov_idx = idx - 1
+        if prov_idx < len(getattr(self, "_fallback_providers", [])):
+            return self._fallback_providers[prov_idx].name
+        return ""
+
+    def _get_selected_fallback_model(self) -> str:
+        """Return the selected fallback model string, or '' for None."""
+        if not self._fallback_dropdown.get_sensitive() or self._fallback_dropdown.get_selected() == 0:
+            return ""
+        model_idx = self._fallback_model_dropdown.get_selected()
+        prov_name = self._get_selected_fallback_provider()
+        if not prov_name:
+            return ""
+        models = self._provider_models.get(prov_name, [])
+        if model_idx < len(models):
+            return models[model_idx][1]  # return the model ID, not display
+        return ""
 
     def _build_prompts_list(self) -> Gtk.ScrolledWindow:
         prompts = self._handler.get_prompt_options()
@@ -627,6 +734,23 @@ class AgentBuilderDialog:
         selected_mcp = set(agent_def.get("mcp_servers", []))
         for name, check in self._mcp_checks.items():
             check.set_active(name in selected_mcp)
+
+        # Restore fallback provider/model if present
+        fb_provider = agent_def.get("fallback_provider")
+        fb_model = agent_def.get("fallback_model")
+        if fb_provider:
+            self._update_fallback_visibility()  # populates dropdown
+            for i, p in enumerate(getattr(self, "_fallback_providers", [])):
+                if p.name == fb_provider:
+                    self._fallback_dropdown.set_selected(i + 1)  # +1 for None offset
+                    break
+            if fb_model:
+                # Select the matching model in the dropdown
+                models = self._provider_models.get(fb_provider, [])
+                for mi, (display, model_id) in enumerate(models):
+                    if model_id == fb_model or display == fb_model:
+                        self._fallback_model_dropdown.set_selected(mi)
+                        break
 
         self._update_save_button()
 

@@ -67,6 +67,8 @@ class AgentBuilderHandler:
             "tools": ["read_file", "list_files", "search_files"],
             "provider": "",
             "model": "",
+            "fallback_provider": None,
+            "fallback_model": None,
             "self_improvement": get_default_si_config(can_write=False),
         }
 
