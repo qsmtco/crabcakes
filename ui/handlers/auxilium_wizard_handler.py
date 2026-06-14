@@ -110,6 +110,7 @@ class AuxiliumWizardHandler:
         self._on_error = on_error
         self._on_step_changed = on_step_changed
         self._state = WizardState()
+        self._state_lock = threading.Lock()
 
     # ── Public API ───────────────────────────────────────────────────────
 
@@ -119,7 +120,8 @@ class AuxiliumWizardHandler:
         Used by the view to render. Returns a deep copy so callers cannot
         mutate the handler's internal state.
         """
-        return copy.deepcopy(self._state)
+        with self._state_lock:
+            return copy.deepcopy(self._state)
 
     def start(self) -> None:
         """
@@ -271,36 +273,41 @@ class AuxiliumWizardHandler:
         try:
             import websockets.sync.client as ws_sync
         except ImportError:
-            self._state.gateway_check = {
-                "ok": False,
-                "url": url,
-                "error": "websockets module not installed",
-            }
+            with self._state_lock:
+                self._state.gateway_check = {
+                    "ok": False,
+                    "url": url,
+                    "error": "websockets module not installed",
+                }
             return
 
         try:
             with ws_sync.connect(url, open_timeout=3.0, close_timeout=1.0) as _ws:
                 # Connection succeeded — gateway is reachable
                 pass
-            self._state.gateway_check = {"ok": True, "url": url, "error": ""}
+            with self._state_lock:
+                self._state.gateway_check = {"ok": True, "url": url, "error": ""}
         except TimeoutError:
-            self._state.gateway_check = {
-                "ok": False,
-                "url": url,
-                "error": f"Connection timed out after 3s",
-            }
+            with self._state_lock:
+                self._state.gateway_check = {
+                    "ok": False,
+                    "url": url,
+                    "error": f"Connection timed out after 3s",
+                }
         except OSError as e:
-            self._state.gateway_check = {
-                "ok": False,
-                "url": url,
-                "error": f"Connection refused: {e}",
-            }
+            with self._state_lock:
+                self._state.gateway_check = {
+                    "ok": False,
+                    "url": url,
+                    "error": f"Connection refused: {e}",
+                }
         except Exception as e:
-            self._state.gateway_check = {
-                "ok": False,
-                "url": url,
-                "error": f"Unexpected error: {e}",
-            }
+            with self._state_lock:
+                self._state.gateway_check = {
+                    "ok": False,
+                    "url": url,
+                    "error": f"Unexpected error: {e}",
+                }
 
     def _read_gateway_url(self) -> str:
         """

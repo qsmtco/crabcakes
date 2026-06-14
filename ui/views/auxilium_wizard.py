@@ -384,15 +384,27 @@ class AuxiliumWizard(Gtk.Box):
         return 0
 
     def _on_continue_clicked(self) -> None:
-        """Continue/Finish button clicked — dispatch based on current frame."""
+        """Continue/Finish button clicked — dispatch based on current frame.
+
+        Guards against re-advancing: if the user navigated back and the
+        handler state is already past this frame's step, we skip the
+        advance callback and just re-sync the view.
+        """
         idx = self._get_frame_index()
+        step = self._handler.get_state().step.value
 
         if idx == 0:
-            # Install check → advance to gateway
-            self._on_install_check_complete()
+            # Install check → advance to gateway (only if still on install_check)
+            if step == "install_check":
+                self._on_install_check_complete()
+            else:
+                self._sync_to_handler_state()
         elif idx == 1:
-            # Gateway check → advance to provider
-            self._on_gateway_check_complete()
+            # Gateway check → advance to provider (only if still on gateway_check)
+            if step == "gateway_check":
+                self._on_gateway_check_complete()
+            else:
+                self._sync_to_handler_state()
         elif idx == 2:
             # Provider pick → finish
             self._on_finish_clicked()
