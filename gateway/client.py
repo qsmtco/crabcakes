@@ -398,7 +398,7 @@ class GatewayClient:
                 "minProtocol": 3,
                 "maxProtocol": 4,
                 "client": {
-                    "id": "openclaw-control-ui",
+                    "id": "cli",
                     "version": "2026.5.14",
                     "platform": "linux",
                     "deviceFamily": "linux",
