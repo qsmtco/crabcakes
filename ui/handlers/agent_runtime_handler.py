@@ -91,7 +91,14 @@ class AgentRuntimeHandler:
         # exec per session is the realistic case).
         self._pending_exec_commands: dict[str, str] = {}
 
-        # Start KB HTTP server if KB index is available
+        # Ensure KB provider is registered, then start KB HTTP server if KB index is available
+        try:
+            from utils.providers_store import ensure_kb_provider
+            ensure_kb_provider()
+            logger.info("KB provider registration ensured")
+        except Exception as e:
+            logger.warning("Failed to ensure KB provider: %s", e)
+
         try:
             from agent.kb_server import start_kb_server, is_kb_server_running
             from agent.kb_lookup import is_index_available as _kb_index_available
