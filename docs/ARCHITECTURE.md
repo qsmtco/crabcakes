@@ -125,6 +125,7 @@ crabcakes/
 │   │   └── session_handler.py     # ~164 lines — SessionHandler — session switching commands (Phase 7)
 │   │   ├── connection_sync_handler.py  # post-connect wiring (Phase 3a extraction)
 │   │   ├── forward_handler.py     # 17 tests (Phase 3b extraction)
+│   │   └── auxilium_wizard_handler.py # Auxilium first-run wizard handler (Tier 1, D7)
 │   └── views/                 # View widgets
 │       ├── __init__.py
 │       ├── activity_drawer.py  # NEW (SPEC-activity-drawer) — collapsible activity event panel
@@ -141,6 +142,7 @@ crabcakes/
 │       ├── chat_input_toolbar.py # ~549 lines — ChatInputToolbar — find/replace bar + spell check popover (view only)
 │       ├── feed_tab.py          # ~167 lines — FeedTab — project feed card container (view only)
 │       └── agent_builder.py     # AgentBuilderDialog — modal dialog for creating/editing agents
+│       └── auxilium_wizard.py  # Auxilium first-run wizard view (Tier 1, D7)
 │
 ├── knowledge/                # User-facing documentation files (read by Crabcakes agent via web_fetch)
 │   ├── setup.md              # Installation and first-run guide
@@ -1369,6 +1371,85 @@ def reset_cache() -> None          # clears module-level state (for tests)
 - *Option B (formal tool):* Register `kb_lookup` in `agent/tools.py` as a no-approval tool. LLM calls it when it needs KB context.
 
 **No `ui/` imports.** Lives in `agent/` per §2.
+
+### 3.21q.6 `ui/handlers/auxilium_wizard_handler.py` — Auxilium First-Run Wizard Handler (Tier 1, D7)
+
+**Responsibility:** Business logic for the Auxilium first-run wizard. Owns the install check (Python + GTK4 + websockets detection), the gateway WebSocket probe (3-second timeout, background thread), and the provider config write (via `utils.providers_store.save_providers()`). Does NOT touch GTK; the view polls `get_state()` for state changes.
+
+**Public API:**
+```python
+class WizardStep(str, Enum):
+    INSTALL_CHECK = "install_check"
+    GATEWAY_CHECK = "gateway_check"
+    PROVIDER_PICK = "provider_pick"
+    WRITING_CONFIG = "writing_config"
+    DONE = "done"
+
+@dataclass
+class WizardState:
+    step: WizardStep
+    install_check: dict  # {ok, platform, python, gtk4, websockets, missing, warnings}
+    gateway_check: dict  # {ok, url, error}
+    provider_pick: dict  # {choice, provider, model, api_key}
+
+def is_auxilium_wizard_needed(config_dir: Path) -> bool
+    # True if providers.yaml is missing or has no providers.
+
+class AuxiliumWizardHandler:
+    def __init__(config_dir, on_complete, on_error, on_step_changed=None)
+    def get_state() -> WizardState               # deep copy — caller cannot mutate internal state
+    def start() -> None                          # synchronous install check
+    def advance_to_gateway() -> None             # spawns daemon thread to probe WebSocket
+    def advance_to_provider() -> None            # sync; no I/O
+    def set_provider_choice(choice, provider, model, api_key) -> None
+                                                # writes providers.yaml; fires on_complete or on_error
+```
+
+**State machine:** 5 states (INSTALL_CHECK → GATEWAY_CHECK → PROVIDER_PICK → WRITING_CONFIG → DONE). Linear flow; no backward transitions. The `on_step_changed` callback fires on each transition.
+
+**Architectural constraints:**
+- No `ui/` imports. No `gateway/` imports. No `subprocess`. No GTK at import time.
+- Threading only for the gateway probe; all other methods are synchronous (file I/O + dict ops).
+- The handler does not call back into the view directly — the view polls `get_state()` on a `GLib.timeout_add` loop.
+- `get_state()` returns a deep copy (`copy.deepcopy`) so view mutations cannot corrupt the handler.
+- `set_provider_choice` validates the choice (one of `"openrouter_free"`, `"ollama"`, `"bring_your_own"`), normalizes Ollama's empty key to `"ollama"`, and writes `providers.yaml` atomically via `utils.providers_store.save_providers()`.
+- On error, `set_provider_choice` fires `on_error(message)` and stays on `PROVIDER_PICK` so the user can retry.
+
+**Provider config writes:** For `"openrouter_free"`, builds a `ProviderConfig(name="openrouter", base_url="https://openrouter.ai/api/v1", default_model="openrouter/free", api_key=user-supplied)`. For `"ollama"`, `ProviderConfig(name="ollama", base_url="http://localhost:11434/v1", default_model="llama3.2:7b", api_key="ollama")`. For `"bring_your_own"`, the `provider` argument drives the `name` field and `base_url` is synthesized from a lookup table (OpenAI, Anthropic, Google, MiniMax, ZAI).
+
+### 3.21q.7 `ui/views/auxilium_wizard.py` — Auxilium First-Run Wizard View (Tier 1, D7)
+
+**Responsibility:** GTK4 view widget for the Auxilium wizard. Renders 3 step frames (install check, gateway check, provider picker) in a `Gtk.Stack`, dispatches user actions to the handler, polls the handler for gateway probe completion. Embeds in the Auxilium chat tab (replaces the welcome bubble) when the user has no provider configured.
+
+**Public API:**
+```python
+class AuxiliumWizard(Gtk.Box):
+    def __init__(
+        handler,                                # AuxiliumWizardHandler
+        on_install_check_complete,              # fires on Continue click in install frame
+        on_gateway_check_complete,              # fires on Continue click in gateway frame
+        on_provider_selected,                   # fires on Finish click in provider frame
+    )
+    @property
+    def current_step: str                       # 'install_check' | 'gateway_check' | 'provider_pick'
+
+    def cleanup() -> None                       # removes GLib poll timer; call before destroy
+```
+
+**Layout:**
+- Vertical `Gtk.Box` with 3 zones: step indicator (3 dots, top), `Gtk.Stack` with 3 named pages, button bar (Back + Continue, bottom).
+- Stack page names match `WizardStep` values: `install_check`, `gateway_check`, `provider_pick`.
+- Provider frame uses 3 `Gtk.CheckButton` radio buttons (grouped via `set_group()`) for the 3 choices, with a conditional `Gtk.Entry` for the API key (hidden for Ollama) and a `Gtk.DropDown` for the bring-your-own-key provider list.
+
+**Polling model:** When the gateway frame is shown, `GLib.timeout_add(250, self._poll_gateway)` polls `handler.get_state().gateway_check` until the probe completes. The poll function returns `False` to stop the timer once a result is set.
+
+**Architectural constraints:**
+- No business logic in the view. No `sys.platform` checks, no `importlib.util.find_spec`, no WebSocket calls — all of that is in the handler.
+- No imports of other `ui/views/*` or `ui/handlers/*` modules (except the handler received in `__init__`).
+- No direct manipulation of `agent_runtime_handler` or any global state.
+- The view must call `cleanup()` before destruction to remove the GLib timer source and avoid leaks.
+
+**CSS classes** (defined in `ui/styles.py`): `auxilium-wizard` (root), `auxilium-wizard-frame` (each frame), `auxilium-wizard-step-dot` / `-active` / `-done` (step indicator dots), `auxilium-wizard-title` (frame titles).
 
 ### 3.21q `agent/special_agents.py` — Special Agent Definitions (Phase 1.4 → User-Defined Agents)
 
