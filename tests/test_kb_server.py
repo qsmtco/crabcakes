@@ -339,6 +339,83 @@ class TestServerLifecycle:
             assert is_kb_server_running() is False
 
 
+class TestConfidenceThreshold:
+    """Tests for the top-score confidence threshold.
+
+    Even when kb_lookup returns chunks (passing _KB_MIN_SCORE=0.35),
+    if the highest-scoring chunk is below _KB_CONFIDENCE_THRESHOLD (0.55),
+    the server returns [KB_OUT_OF_SCOPE].
+    """
+
+    def test_weak_match_returns_out_of_scope(self, kb_server_instance):
+        """Chunks with top score 0.43 (below 0.55) → [KB_OUT_OF_SCOPE]."""
+        port = kb_server_instance
+        weak_chunks = [
+            KBChunk(id="c1", source="knowledge/setup.md", section="Install",
+                    text="some weakly related text", score=0.43),
+            KBChunk(id="c2", source="knowledge/features.md", section="Features",
+                    text="another weak match", score=0.41),
+        ]
+        with mock.patch.object(kb_server, "kb_lookup", return_value=weak_chunks):
+            status, body = _post(port, "/v1/chat/completions", {
+                "model": "local-kb",
+                "messages": [{"role": "user", "content": "What is the meaning of life?"}],
+            })
+        assert status == 200
+        content = body["choices"][0]["message"]["content"]
+        assert content == KB_OUT_OF_SCOPE
+
+    def test_strong_match_returns_chunks(self, kb_server_instance):
+        """Chunks with top score 0.72 (above 0.55) → formatted KB content."""
+        port = kb_server_instance
+        strong_chunks = [
+            KBChunk(id="c1", source="knowledge/setup.md", section="Install",
+                    text="Run apt install to install crabcakes", score=0.72),
+        ]
+        with mock.patch.object(kb_server, "kb_lookup", return_value=strong_chunks):
+            status, body = _post(port, "/v1/chat/completions", {
+                "model": "local-kb",
+                "messages": [{"role": "user", "content": "How do I install?"}],
+            })
+        assert status == 200
+        content = body["choices"][0]["message"]["content"]
+        assert content != KB_OUT_OF_SCOPE
+        assert "knowledge/setup.md" in content
+        assert "apt install" in content
+
+    def test_boundary_score_at_threshold_returns_chunks(self, kb_server_instance):
+        """Top score exactly at 0.55 → returns chunks (>= threshold)."""
+        port = kb_server_instance
+        boundary_chunks = [
+            KBChunk(id="c1", source="knowledge/test.md", section="Test",
+                    text="boundary test content", score=0.55),
+        ]
+        with mock.patch.object(kb_server, "kb_lookup", return_value=boundary_chunks):
+            status, body = _post(port, "/v1/chat/completions", {
+                "model": "local-kb",
+                "messages": [{"role": "user", "content": "test question"}],
+            })
+        assert status == 200
+        content = body["choices"][0]["message"]["content"]
+        assert content != KB_OUT_OF_SCOPE
+
+    def test_boundary_score_just_below_returns_out_of_scope(self, kb_server_instance):
+        """Top score 0.549 (just below 0.55) → [KB_OUT_OF_SCOPE]."""
+        port = kb_server_instance
+        just_below_chunks = [
+            KBChunk(id="c1", source="knowledge/test.md", section="Test",
+                    text="almost confident enough", score=0.549),
+        ]
+        with mock.patch.object(kb_server, "kb_lookup", return_value=just_below_chunks):
+            status, body = _post(port, "/v1/chat/completions", {
+                "model": "local-kb",
+                "messages": [{"role": "user", "content": "test question"}],
+            })
+        assert status == 200
+        content = body["choices"][0]["message"]["content"]
+        assert content == KB_OUT_OF_SCOPE
+
+
 class TestKBLookupIntegration:
     def test_kb_server_uses_kb_lookup(self, kb_server_instance):
         port = kb_server_instance

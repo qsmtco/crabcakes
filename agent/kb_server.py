@@ -39,6 +39,12 @@ KB_OUT_OF_SCOPE = "[KB_OUT_OF_SCOPE]"
 _KB_MIN_SCORE = 0.35
 _KB_TOP_K = 5
 
+# Top-score confidence threshold. Even if chunks pass _KB_MIN_SCORE, if the
+# highest-scoring chunk is below this value, the question is treated as
+# out-of-scope. This prevents weak false-positive matches (e.g. score 0.43)
+# from returning irrelevant KB content for questions the KB can't actually answer.
+_KB_CONFIDENCE_THRESHOLD = 0.55
+
 # ── Module-level server state ──────────────────────────────────────────────────
 
 _server: HTTPServer | None = None
@@ -161,6 +167,18 @@ class _KBRequestHandler(BaseHTTPRequestHandler):
             chunks = []
 
         if not chunks:
+            self._send_json(200, _make_response(KB_OUT_OF_SCOPE))
+            return
+
+        # Confidence check: if the best chunk's score is below the high-confidence
+        # threshold, treat as out-of-scope. This catches weak false-positive matches
+        # that pass _KB_MIN_SCORE but aren't actually relevant.
+        top_score = chunks[0].score if chunks else 0.0
+        if top_score < _KB_CONFIDENCE_THRESHOLD:
+            logger.debug(
+                "kb_server: top score %.3f < %.3f confidence threshold — returning out-of-scope for %r",
+                top_score, _KB_CONFIDENCE_THRESHOLD, question[:80],
+            )
             self._send_json(200, _make_response(KB_OUT_OF_SCOPE))
             return
 
