@@ -89,6 +89,7 @@ crabcakes/
 │   │                          # get_special_agents, reload_registry, ToolDefinition, ToolResult,
 │   │                          # build_system_prompt, build_file_context, check
 │   ├── kb_lookup.py          # KB lookup — cosine-sim retrieval over indexed KB chunks (Auxilium Tier 1)
+│   ├── kb_server.py          # KB HTTP server — wraps kb_lookup in OpenAI-compatible API on localhost:18790 (KB Provider Phase 1)
 │   ├── runtime.py           # AgentRuntime — tool loop, LLM API, streaming, cost tracking + enforcement hook
 │   ├── tools.py              # Tool definitions + execution (read_file, write_file, edit_file, exec_command, etc.)
 │   ├── config.py             # LLM provider config + EnforcementConfig dataclass
@@ -1319,7 +1320,7 @@ def set_approval_callback(cb) -> None              # cb(session_key, tool_name, 
 ```python
 @dataclass LLMProviderConfig: name, base_url, api_key, default_model, supports_tools, supports_streaming, max_tokens
 @dataclass EnforcementConfig: enabled, syntax_check, test_run, lint_check, syntax_timeout_seconds, test_timeout_seconds, lint_timeout_seconds, max_output_chars, skip_patterns
-@dataclass AgentConfig: providers, default_provider, default_model, max_tool_iterations, tool_timeout_seconds, auto_save_conversations, cost_limit, step_limit, enforcement
+@dataclass AgentConfig: providers, default_provider, default_model, max_tool_iterations, tool_timeout_seconds, auto_save_conversations, cost_limit, step_limit, enforcement, fallback_provider, fallback_model
 
 def load_agent_config() -> AgentConfig      # reads <config_dir>/agent.json; checks chmod >600
 def get_api_key(provider_name) -> str | None
@@ -1366,11 +1367,32 @@ def reset_cache() -> None          # clears module-level state (for tests)
 
 **Fail-soft behavior:** Returns `[]` on missing index, missing model, no confident match, or any internal error. Logs at DEBUG/WARNING. The agent must treat empty list as "I don't have info on that" — never as a crash.
 
-**Integration with AgentRuntime (Phase 2, not in this module):** Two options:
-- *Option A (preprocessing):* In `AgentRuntime.send_message()`, before building the API message list, check `agent_role == "helper"` and prepend `kb_lookup(question)` results to the user message.
-- *Option B (formal tool):* Register `kb_lookup` in `agent/tools.py` as a no-approval tool. LLM calls it when it needs KB context.
+**Integration with AgentRuntime (KB Provider — implemented Phases 1-4):** The KB lookup is wired into the runtime via the KB HTTP server (`agent/kb_server.py`) which wraps `kb_lookup()` in an OpenAI-compatible API. The server is registered as a `local-kb` provider in `providers.yaml`. When the primary provider returns `[KB_OUT_OF_SCOPE]`, the runtime fallback chain retries with the configured `fallback_provider`.
 
 **No `ui/` imports.** Lives in `agent/` per §2.
+
+### 3.21q.5a `agent/kb_server.py` — KB HTTP Server (KB Provider Phase 1)
+
+**Responsibility:** Lightweight HTTP server on `localhost:18790` that wraps `kb_lookup()` and responds to `/v1/chat/completions` requests. Returns responses in OpenAI Chat Completions format so `_call_openai()` in the runtime can parse them without modification. When no KB chunks match, returns the `[KB_OUT_OF_SCOPE]` sentinel string.
+
+**Public API:**
+```python
+KB_SERVER_PORT = 18790
+KB_OUT_OF_SCOPE = "[KB_OUT_OF_SCOPE]"
+
+def start_kb_server(port: int = KB_SERVER_PORT) -> threading.Thread | None
+def stop_kb_server() -> None
+def is_kb_server_running() -> bool
+```
+
+**Architecture:**
+- Pure Python stdlib (`http.server`) — no external dependencies.
+- Runs on daemon thread, started explicitly via `start_kb_server()` (not on import).
+- Server lifecycle managed by `AgentRuntimeHandler`: starts in `__init__` if KB index available, stops in `stop_all()`.
+- Registered as `local-kb` provider in `providers.yaml` via `ensure_kb_provider()` in `utils/providers_store.py`.
+- KB lookup params: `top_k=5`, `min_score=0.35` (higher than kb_lookup default to reduce noise).
+
+**Fail-soft behavior:** If `kb_lookup()` raises, returns `[KB_OUT_OF_SCOPE]` (graceful degradation). If index is unavailable, `start_kb_server()` returns `None` (server does not start).
 
 ### 3.21q.6 `ui/handlers/auxilium_wizard_handler.py` — Auxilium First-Run Wizard Handler (Tier 1, D7)
 
@@ -3208,6 +3230,7 @@ crabcakes/
 │   ├── context.py                # ~437 lines — build_system_prompt, build_file_context, _read_crabcakes_docs + .gitignore parsing
 │   ├── enforcement.py            # ~761 lines — Post-write verification: 3-tier checks + per-project override + TestConfig + venv detection
 │   ├── kb_lookup.py              # KB lookup — cosine-sim retrieval over indexed KB chunks (Auxilium Tier 1)
+│   ├── kb_server.py              # KB HTTP server — wraps kb_lookup in OpenAI-compatible API on localhost:18790 (KB Provider Phase 1)
 │   ├── runtime.py                # ~1420 lines — AgentRuntime: tool loop, enforcement hook, stuck detection, providers, streaming, cost
 │   ├── special_agents.py         # ~182 lines — SpecialAgentDef, get_special_agents(), reload_registry()
 │   └── tools.py                  # ~892 lines — 8 tools: read_file, write_file, edit_file, exec_command, list_files, search_files, web_search, web_fetch
