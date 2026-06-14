@@ -72,8 +72,6 @@ class AuxiliumWizard(Gtk.Box):
         self._selected_choice: str = "openrouter_free"
         self._provider_key_entry: Gtk.Entry | None = None
         self._provider_dropdown: Gtk.DropDown | None = None
-        self._provider_key_entry: Gtk.Entry | None = None
-        self._provider_dropdown: Gtk.DropDown | None = None
 
         # ── Step indicator ──────────────────────────────────────────────
         self._step_dots: list[Gtk.Widget] = []
@@ -429,7 +427,8 @@ class AuxiliumWizard(Gtk.Box):
                 return
 
         self._handler.set_provider_choice(choice, provider, model, api_key)
-        self._on_provider_selected()
+        if self._handler.get_state().step.value == "done":
+            self._on_provider_selected()
 
     # ── Cleanup ──────────────────────────────────────────────────────────
 

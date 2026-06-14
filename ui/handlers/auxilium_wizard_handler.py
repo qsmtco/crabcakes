@@ -409,4 +409,4 @@ class AuxiliumWizardHandler:
     def _fire_step_changed(self) -> None:
         """Fire on_step_changed callback if registered."""
         if self._on_step_changed is not None:
-            self._on_step_changed(self._state)
+            self._on_step_changed(copy.deepcopy(self._state))
