@@ -346,7 +346,10 @@ class GatewayClient:
                     await asyncio.sleep(retry_delay)
                     retry_delay = min(retry_delay * 2, max_delay)
                     continue
-                async with websockets.connect(self.url) as ws:
+                async with websockets.connect(
+                    self.url,
+                    additional_headers={"Origin": "http://localhost:18789"},
+                ) as ws:
                     self._ws = ws
                     self._connected.set()
                     retry_delay = 1.0
@@ -376,7 +379,7 @@ class GatewayClient:
         # 2. Build v3 auth payload
         v3_payload = (
             f"v3|{self._id['device_id']}"
-            f"|cli|ui"
+            f"|openclaw-control-ui|ui"
             f"|operator"
             f"|{ALL_SCOPES}"
             f"|{ts}"
@@ -398,7 +401,7 @@ class GatewayClient:
                 "minProtocol": 3,
                 "maxProtocol": 4,
                 "client": {
-                    "id": "cli",
+                    "id": "openclaw-control-ui",
                     "version": "2026.5.14",
                     "platform": "linux",
                     "deviceFamily": "linux",
