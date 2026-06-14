@@ -62,8 +62,15 @@ def is_auxilium_wizard_needed(config_dir: Path) -> bool:
     Return True if the user has not yet configured a provider
     and the Auxilium first-run wizard should be shown.
 
-    'Not yet configured' = providers.yaml is missing or empty.
+    'Not yet configured' = providers.yaml is missing/empty AND
+    no auxilium.yaml agent config exists (AC-T1-7: existing user
+    with auxilium.yaml already configured should NOT see the wizard).
     """
+    # AC-T1-7: existing user with auxilium.yaml configured → skip wizard
+    auxilium_yaml = config_dir / "agents" / "auxilium.yaml"
+    if auxilium_yaml.is_file():
+        return False
+
     providers_yaml = config_dir / "providers.yaml"
     if not providers_yaml.is_file():
         return True
@@ -311,17 +318,12 @@ class AuxiliumWizardHandler:
 
     def _read_gateway_url(self) -> str:
         """
-        Read gateway URL from config. Tries utils.config.get_gateway_url()
-        first (canonical source), then falls back to agent.json, then
-        defaults to ws://localhost:18789.
+        Read gateway URL from config. Checks self._config_dir / agent.json
+        FIRST (the handler's own config context), then falls back to
+        utils.config.get_gateway_url() (global default), then defaults
+        to ws://localhost:18789.
         """
-        try:
-            from utils.config import get_gateway_url
-            return get_gateway_url()
-        except Exception:
-            pass
-
-        # Fallback: read agent.json directly
+        # 1. Check handler's config_dir for agent.json
         agent_json = self._config_dir / "agent.json"
         if agent_json.is_file():
             try:
@@ -332,6 +334,13 @@ class AuxiliumWizardHandler:
                     return url
             except (OSError, json.JSONDecodeError):
                 pass
+
+        # 2. Fall back to global config
+        try:
+            from utils.config import get_gateway_url
+            return get_gateway_url()
+        except Exception:
+            pass
 
         return "ws://localhost:18789"
 
@@ -397,11 +406,22 @@ class AuxiliumWizardHandler:
             }
             base_url = base_url_map.get(provider.lower(), f"https://api.{provider}.com/v1")
 
+            # Per-provider default models for BYOK when model is empty
+            default_model_map = {
+                "openai": "gpt-4o-mini",
+                "anthropic": "claude-3-5-haiku-20241022",
+                "google": "gemini-2.0-flash",
+                "google_gemini": "gemini-2.0-flash",
+                "minimax": "MiniMax-M3",
+                "zai": "glm-4-flash",
+            }
+            resolved_model = model or default_model_map.get(provider.lower(), "")
+
             return ProviderConfig(
                 name=provider,
                 base_url=base_url,
                 api_key=api_key,
-                default_model=model,
+                default_model=resolved_model,
                 caller=caller,
                 supports_tools=True,
                 supports_streaming=True,
