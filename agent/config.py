@@ -134,6 +134,7 @@ def _to_llm_provider(p) -> LLMProviderConfig:
         base_url=p.base_url,
         api_key=p.api_key,
         default_model=p.default_model,
+        caller=p.caller,
         supports_tools=p.supports_tools,
         supports_streaming=p.supports_streaming,
         max_tokens=p.max_tokens,
