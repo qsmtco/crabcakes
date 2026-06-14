@@ -190,3 +190,36 @@ def update_provider(providers: list[ProviderConfig], p: ProviderConfig) -> None:
 def has_any_verified_provider(providers: list[ProviderConfig]) -> bool:
     """True if at least one provider has last_verified_at set. Drives the red dot."""
     return any(p.last_verified_at is not None for p in providers)
+
+
+# ── KB provider auto-registration ─────────────────────────────────────────────
+
+
+def ensure_kb_provider() -> None:
+    """Seed the local-kb provider into providers.yaml if missing.
+
+    Idempotent — safe to call on every startup. If a provider named
+    'local-kb' already exists, this is a no-op.
+
+    The local-kb provider wraps the KB HTTP server (agent/kb_server.py)
+    and presents an OpenAI-compatible API on localhost:18790. It enables
+    the Auxilium agent to answer questions from the local knowledge base
+    without requiring an external LLM.
+    """
+    providers = load_providers()
+    if any(p.name == "local-kb" for p in providers):
+        return
+
+    kb_provider = ProviderConfig(
+        name="local-kb",
+        base_url="http://localhost:18790/v1",
+        api_key="***",          # placeholder — KB server doesn't check auth
+        default_model="local-kb",
+        caller="openai",          # OpenAI-compatible API format
+        supports_tools=False,     # KB server never calls tools
+        supports_streaming=False, # blocking only
+        max_tokens=4096,
+    )
+    providers.append(kb_provider)
+    save_providers(providers)
+    _logger.info("ensure_kb_provider: seeded local-kb provider into providers.yaml")

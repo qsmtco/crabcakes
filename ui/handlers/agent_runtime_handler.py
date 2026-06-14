@@ -91,6 +91,16 @@ class AgentRuntimeHandler:
         # exec per session is the realistic case).
         self._pending_exec_commands: dict[str, str] = {}
 
+        # Start KB HTTP server if KB index is available
+        try:
+            from agent.kb_server import start_kb_server, is_kb_server_running
+            from agent.kb_lookup import is_index_available as _kb_index_available
+            if _kb_index_available() and not is_kb_server_running():
+                start_kb_server()
+                logger.info("KB HTTP server started from AgentRuntimeHandler")
+        except Exception as e:
+            logger.warning("Failed to start KB server: %s", e)
+
     def set_on_agent_start(self, cb: Callable[[str], None]) -> None:
         """Set callback fired when a local agent starts processing. Signature: cb(session_key)."""
         self._on_agent_start_cb = cb
@@ -413,7 +423,16 @@ class AgentRuntimeHandler:
         rt.send_message(session_key, text)
 
     def stop_all(self) -> None:
-        """Stop all agent runtimes. Called on window shutdown."""
+        """Stop all agent runtimes and the KB server. Called on window shutdown."""
+        # Stop the KB HTTP server
+        try:
+            from agent.kb_server import stop_kb_server, is_kb_server_running
+            if is_kb_server_running():
+                stop_kb_server()
+                logger.info("KB HTTP server stopped")
+        except Exception as e:
+            logger.warning("Failed to stop KB server: %s", e)
+
         # BUG #31: Clean up MCP connections before stopping runtimes
         try:
             from utils.mcp_client import disconnect_all as mcp_disconnect_all
