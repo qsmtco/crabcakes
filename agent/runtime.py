@@ -30,6 +30,12 @@ if TYPE_CHECKING:
 
 from agent.enforcement import check as _enforcement_check
 
+# KB provider sentinel — imported lazily to avoid requiring kb_server when KB is unused.
+try:
+    from agent.kb_server import KB_OUT_OF_SCOPE
+except ImportError:
+    KB_OUT_OF_SCOPE = "[KB_OUT_OF_SCOPE]"
+
 
 # ── Streaming call interface (PHASE-FOLLOWUP-1) ──────────────────────────────────
 
@@ -1010,6 +1016,11 @@ class AgentRuntime:
         5. If text: fire on_response_complete
         6. Check cost_limit / step_limit
         """
+        # Reset fallback flag for this new user message
+        conv = self._conversations.get(session_key)
+        if conv is not None:
+            conv._fallback_attempted = False
+
         t = threading.Thread(target=self._run_loop, args=(session_key, text), daemon=True)
         t.start()
 
@@ -1129,6 +1140,45 @@ class AgentRuntime:
                                         "or an issue with the LLM provider.")
                         self._auto_save(session_key, conv)
                         return
+
+                    # ── KB fallback chain ────────────────────────────────────
+                    # If the primary provider returned [KB_OUT_OF_SCOPE] and a
+                    # fallback_provider is configured, retry with the fallback
+                    # model. One-shot guard prevents infinite loops.
+                    if (
+                        text_content == KB_OUT_OF_SCOPE
+                        and self._config.fallback_provider
+                        and not getattr(conv, "_fallback_attempted", False)
+                    ):
+                        conv._fallback_attempted = True
+                        logger.info(
+                            "[tool-loop] sk=%s KB_OUT_OF_SCOPE — retrying with fallback provider %s",
+                            session_key, self._config.fallback_provider,
+                        )
+                        original_model = conv.model
+                        fallback_model = self._config.fallback_model or f"{self._config.fallback_provider}/{self._config.default_model}"
+                        conv.model = fallback_model
+                        try:
+                            fb_response = self._call_llm(session_key, messages, tools)
+                            fb_provider = fallback_model.split("/")[0] if "/" in fallback_model else fallback_model
+                            fb_text = _extract_text_content(fb_response, fb_provider)
+                            fb_tool_calls = _extract_tool_calls(fb_response, fb_provider)
+                            # Use fallback response as the text content
+                            text_content = fb_text
+                            tool_calls_raw = fb_tool_calls
+                            # Record fallback usage
+                            fb_prompt, fb_comp = _extract_usage(fb_response, fb_provider)
+                            fb_cost = _cost_for_model(fallback_model, fb_prompt, fb_comp)
+                            conv.record_usage(fb_prompt + fb_comp, fb_cost)
+                            self._dispatch(self._on_token_usage, session_key, fb_prompt + fb_comp, fb_cost)
+                            logger.debug("[tool-loop] sk=%s fallback response: text_len=%d tool_calls=%d",
+                                         session_key, len(fb_text or ""), len(fb_tool_calls))
+                        except Exception as e:
+                            logger.warning("[tool-loop] sk=%s fallback call failed: %s", session_key, e)
+                            # Fallback failed — show the original sentinel (or error message)
+                        finally:
+                            conv.model = original_model
+
                     # Text-only response — done
                     logger.debug("[tool-loop] sk=%s text-only response, dispatching on_response_complete len=%d",
                                  session_key, len(text_content or ""))

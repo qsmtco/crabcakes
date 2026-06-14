@@ -78,6 +78,8 @@ class AgentConfig:
     step_limit: int | None = None      # per-conversation turn limit
     review_staging_dirname: str = ".crabcakes_review_staging"  # shadow dir for review-mode writes
     enforcement: EnforcementConfig = field(default_factory=EnforcementConfig)
+    fallback_provider: str | None = None   # KB provider fallback (e.g. "openrouter")
+    fallback_model: str | None = None      # KB provider fallback model (e.g. "openrouter/owl-alpha")
 
 
 def _check_permissions(path: str) -> None:

@@ -30,6 +30,16 @@ def _get_agents_dir() -> str:
     return os.path.join(get_config_dir(), "agents")
 
 
+def _normalize_fallback_fields(data: dict) -> None:
+    """Ensure fallback_provider and fallback_model keys exist in the agent def dict.
+
+    Reads from YAML/JSON if present, defaults to None if absent.
+    Called after parsing every agent definition file.
+    """
+    data.setdefault("fallback_provider", data.get("fallback_provider"))
+    data.setdefault("fallback_model", data.get("fallback_model"))
+
+
 def _get_default_agents_src() -> str:
     """Return the source directory for built-in default agent YAML files."""
     # prompts/default_agents/ ships with CrabCakes
@@ -52,6 +62,7 @@ def _parse_agent_file(filepath: str) -> dict | None:
             with open(filepath, encoding="utf-8") as f:
                 data = yaml.safe_load(f)
             if isinstance(data, dict):
+                _normalize_fallback_fields(data)
                 return data
             logger.warning("Agent file %s did not contain a mapping — skipping", filepath)
             return None
@@ -65,6 +76,7 @@ def _parse_agent_file(filepath: str) -> dict | None:
                     logger.info(
                         "pyyaml not installed — parsed %s as JSON fallback", filepath
                     )
+                    _normalize_fallback_fields(data)
                     return data
             except (json.JSONDecodeError, OSError):
                 pass
@@ -80,6 +92,7 @@ def _parse_agent_file(filepath: str) -> dict | None:
             with open(filepath, encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict):
+                _normalize_fallback_fields(data)
                 return data
             logger.warning("Agent file %s did not contain a mapping — skipping", filepath)
             return None
