@@ -1,8 +1,10 @@
 # Installing CrabCakes
 
-This guide walks you through installing CrabCakes, verifying that all dependencies are present, and fixing common install errors.
+This guide walks you through installing CrabCakes on Linux, verifying that all dependencies are present, and fixing common install errors.
 
 **Audience:** First-time users on a fresh system. If CrabCakes is already running, you can skip this file.
+
+**Platform support:** CrabCakes is a **Linux-only** application. macOS and Windows are not supported — the GTK4 toolchain and the OpenClaw gateway client target Linux first. If you need to run on macOS or Windows, use a Linux VM or WSL2.
 
 ---
 
@@ -94,47 +96,6 @@ cd crabcakes
 pip install --user -e .
 ~/.local/bin/crabcakes
 ```
-
-### macOS (Homebrew)
-
-```bash
-# Install Homebrew if not already installed
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# System dependencies
-brew install \
-    python@3.12 \
-    gtk4 \
-    pygobject3 \
-    pkg-config \
-    gobject-introspection
-
-# Then install CrabCakes
-git clone https://github.com/qsmtco/crabcakes.git
-cd crabcakes
-pip3 install --user -e .
-~/.local/bin/crabcakes
-```
-
-**Note:** On Apple Silicon Macs, ensure Homebrew is installed for `arm64` (the default). `brew --prefix` should return `/opt/homebrew`, not `/usr/local`.
-
-### Windows
-
-Windows support is **experimental**. The recommended approach is WSL2:
-
-```powershell
-# In PowerShell (admin)
-wsl --install
-# Restart, then in WSL Ubuntu:
-sudo apt update
-sudo apt install -y python3 python3-pip libgirepository1.0-dev libgtk-4-1
-git clone https://github.com/qsmtco/crabcakes.git
-cd crabcakes
-pip install -e .
-crabcakes
-```
-
-**Native Windows install is not officially supported.** If you need it, you can try MSYS2 + the GTK4 runtime, but expect rough edges.
 
 ---
 

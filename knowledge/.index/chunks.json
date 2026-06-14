@@ -165,7 +165,7 @@
     "id": "knowledge/install.md#0.0",
     "source": "knowledge/install.md",
     "section": "Introduction",
-    "text": "# Installing CrabCakes\n\nThis guide walks you through installing CrabCakes, verifying that all dependencies are present, and fixing common install errors.\n\n**Audience:** First-time users on a fresh system. If CrabCakes is already running, you can skip this file.\n\n---"
+    "text": "# Installing CrabCakes\n\nThis guide walks you through installing CrabCakes on Linux, verifying that all dependencies are present, and fixing common install errors.\n\n**Audience:** First-time users on a fresh system. If CrabCakes is already running, you can skip this file.\n\n**Platform support:** CrabCakes is a **Linux-only** application. macOS and Windows are not supported — the GTK4 toolchain and the OpenClaw gateway client target Linux first. If you need to run on macOS or Windows, use a Linux VM or WSL2.\n\n---"
   },
   {
     "id": "knowledge/install.md#1.0",
@@ -183,37 +183,7 @@
     "id": "knowledge/install.md#3.0",
     "source": "knowledge/install.md",
     "section": "Platform-Specific Instructions",
-    "text": ""
-  },
-  {
-    "id": "knowledge/install.md#3.1",
-    "source": "knowledge/install.md",
-    "section": "Platform-Specific Instructions",
-    "text": "### Linux (Debian / Ubuntu)\n\n```bash\n# System dependencies for GTK4 + PyGObject\nsudo apt update\nsudo apt install -y \\\n    python3 python3-pip python3-venv \\\n    libgirepository1.0-dev libgtk-4-1 libgtk-4-dev \\\n    gir1.2-gtk-4.0 gobject-introspection \\\n    libgirepository-2.0-0\n\n# Then install CrabCakes\ngit clone https://github.com/qsmtco/crabcakes.git\ncd crabcakes\npip install --user -e .\n~/.local/bin/crabcakes\n```\n\n**Note:** Debian 12 (Bookworm) and Ubuntu 22.04+ ship GTK 4 in the default repos. Older releases need a backport."
-  },
-  {
-    "id": "knowledge/install.md#3.2",
-    "source": "knowledge/install.md",
-    "section": "Platform-Specific Instructions",
-    "text": "### Linux (Fedora)\n\n```bash\nsudo dnf install -y \\\n    python3 python3-pip python3-devel \\\n    gtk4 gtk4-devel \\\n    gobject-introspection-devel \\\n    python3-gobject\n\ngit clone https://github.com/qsmtco/crabcakes.git\ncd crabcakes\npip install --user -e .\n~/.local/bin/crabcakes\n```"
-  },
-  {
-    "id": "knowledge/install.md#3.3",
-    "source": "knowledge/install.md",
-    "section": "Platform-Specific Instructions",
-    "text": "### Linux (Arch)\n\n```bash\nsudo pacman -S --needed \\\n    python python-pip \\\n    gtk4 gobject-introspection \\\n    python-gobject\n\ngit clone https://github.com/qsmtco/crabcakes.git\ncd crabcakes\npip install --user -e .\n~/.local/bin/crabcakes\n```"
-  },
-  {
-    "id": "knowledge/install.md#3.4",
-    "source": "knowledge/install.md",
-    "section": "Platform-Specific Instructions",
-    "text": "### macOS (Homebrew)\n\n```bash\n# Install Homebrew if not already installed\n/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"\n\n# System dependencies\nbrew install \\\n    python@3.12 \\\n    gtk4 \\\n    pygobject3 \\\n    pkg-config \\\n    gobject-introspection\n\n# Then install CrabCakes\ngit clone https://github.com/qsmtco/crabcakes.git\ncd crabcakes\npip3 install --user -e .\n~/.local/bin/crabcakes\n```\n\n**Note:** On Apple Silicon Macs, ensure Homebrew is installed for `arm64` (the default). `brew --prefix` should return `/opt/homebrew`, not `/usr/local`."
-  },
-  {
-    "id": "knowledge/install.md#3.5",
-    "source": "knowledge/install.md",
-    "section": "Platform-Specific Instructions",
-    "text": "### Windows\n\nWindows support is **experimental**. The recommended approach is WSL2:\n\n```powershell\n# In PowerShell (admin)\nwsl --install\n# Restart, then in WSL Ubuntu:\nsudo apt update\nsudo apt install -y python3 python3-pip libgirepository1.0-dev libgtk-4-1\ngit clone https://github.com/qsmtco/crabcakes.git\ncd crabcakes\npip install -e .\ncrabcakes\n```\n\n**Native Windows install is not officially supported.** If you need it, you can try MSYS2 + the GTK4 runtime, but expect rough edges.\n\n---"
+    "text": "### Linux (Debian / Ubuntu)\n\n```bash\n# System dependencies for GTK4 + PyGObject\nsudo apt update\nsudo apt install -y \\\n    python3 python3-pip python3-venv \\\n    libgirepository1.0-dev libgtk-4-1 libgtk-4-dev \\\n    gir1.2-gtk-4.0 gobject-introspection \\\n    libgirepository-2.0-0\n\n# Then install CrabCakes\ngit clone https://github.com/qsmtco/crabcakes.git\ncd crabcakes\npip install --user -e .\n~/.local/bin/crabcakes\n```\n\n**Note:** Debian 12 (Bookworm) and Ubuntu 22.04+ ship GTK 4 in the default repos. Older releases need a backport.\n\n### Linux (Fedora)\n\n```bash\nsudo dnf install -y \\\n    python3 python3-pip python3-devel \\\n    gtk4 gtk4-devel \\\n    gobject-introspection-devel \\\n    python3-gobject\n\ngit clone https://github.com/qsmtco/crabcakes.git\ncd crabcakes\npip install --user -e .\n~/.local/bin/crabcakes\n```\n\n### Linux (Arch)\n\n```bash\nsudo pacman -S --needed \\\n    python python-pip \\\n    gtk4 gobject-introspection \\\n    python-gobject\n\ngit clone https://github.com/qsmtco/crabcakes.git\ncd crabcakes\npip install --user -e .\n~/.local/bin/crabcakes\n```\n\n---"
   },
   {
     "id": "knowledge/install.md#4.0",
