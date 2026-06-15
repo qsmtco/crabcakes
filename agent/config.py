@@ -256,8 +256,8 @@ def load_agent_config(config_path: str | None = None) -> AgentConfig:
 
     return AgentConfig(
         providers=providers,
-        default_provider=raw.get("default_provider", "openai"),
-        default_model=raw.get("default_model", "openai/gpt-4o"),
+        default_provider=raw.get("default_provider", "local-kb"),
+        default_model=raw.get("default_model", "local-kb/local-kb"),
         max_tool_iterations=raw.get("max_tool_iterations", 50),
         tool_timeout_seconds=raw.get("tool_timeout_seconds", 120),
         auto_save_conversations=raw.get("auto_save_conversations", True),
@@ -268,26 +268,17 @@ def load_agent_config(config_path: str | None = None) -> AgentConfig:
 
 
 def _create_default_config(path: str) -> None:
-    """Create agent.json with example content and a warning comment."""
+    """Create agent.json with minimal default config.
+
+    No providers are seeded here — providers.yaml is the canonical store,
+    and ensure_kb_provider() seeds local-kb at startup. The user adds
+    real providers via Settings → Providers.
+    """
     example = {
-        "_comment": "LLM provider configuration for Crabcakes agent runtime",
-        "_security": "chmod 600 agent.json — this file contains API keys",
-        "providers": {
-            "openai": {
-                "base_url": "https://api.openai.com/v1",
-                "api_key": "sk-your-key-here",
-                "default_model": "gpt-4o",
-                "max_tokens": 128_000,
-            },
-            "minimax": {
-                "base_url": "https://api.minimax.chat/v1",
-                "api_key": "your-minimax-key",
-                "default_model": "MiniMax-M2.5",
-                "max_tokens": 1_048_576,
-            },
-        },
-        "default_provider": "openai",
-        "default_model": "openai/gpt-4o",
+        "_comment": "CrabCakes agent configuration. Providers are managed in providers.yaml.",
+        "_security": "chmod 600 agent.json — this file may contain API keys",
+        "default_provider": "local-kb",
+        "default_model": "local-kb/local-kb",
         "max_tool_iterations": 50,
         "tool_timeout_seconds": 120,
         "cost_limit": 5.0,

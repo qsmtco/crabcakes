@@ -15,7 +15,7 @@ from unittest import mock
 import pytest
 
 from models.providers import ProviderConfig
-from utils.providers_store import ensure_kb_provider, load_providers
+from utils.providers_store import ensure_kb_provider, load_providers, save_providers
 
 
 @pytest.fixture
@@ -132,8 +132,18 @@ class TestEnsureKbProvider:
         assert patched["llm_name"] == "local-kb"
 
     def test_ensure_kb_provider_does_not_override_existing_provider(self, temp_config_dir):
-        """Helper agent with a provider set → not overridden."""
+        """Helper agent with a real provider set AND real providers configured → not overridden."""
         from utils.agent_defs import save_agent_def, load_agent_def_by_role
+
+        # User has a real provider configured
+        real_provider = ProviderConfig(
+            name="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            api_key="sk-test",
+            default_model="openrouter/auto",
+            caller="openrouter",
+        )
+        save_providers([real_provider])
 
         save_agent_def({
             "name": "Auxilium",

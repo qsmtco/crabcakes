@@ -247,11 +247,13 @@ def _ensure_kb_provider_entry() -> None:
 
 
 def _ensure_auxilium_uses_kb() -> None:
-    """Patch the Auxilium agent YAML to use local-kb if it has no provider.
+    """Ensure the Auxilium (helper) agent uses local-kb as its provider.
 
-    On fresh install, the helper agent may have an empty llm_name.
-    This sets it to 'local-kb' so the KB provider answers install/config
-    questions out of the box.
+    On fresh install (no real providers configured), force the helper agent
+    to use local-kb so it works out of the box.
+
+    On existing installs where the user has configured real providers, only
+    patch if the agent has no llm_name at all (respect user's explicit choice).
     """
     try:
         from utils.agent_defs import load_agent_def_by_role, save_agent_def
@@ -260,13 +262,24 @@ def _ensure_auxilium_uses_kb() -> None:
         if agent_def is None:
             return  # No helper agent defined — nothing to patch
 
-        current_llm = agent_def.get("llm_name", "") or agent_def.get("provider", "")
-        if current_llm:
-            return  # Already has a provider (including local-kb) — don't override
+        llm_name = agent_def.get("llm_name", "")
+        if llm_name == "local-kb":
+            return  # Already correct
 
-        # llm_name is empty — patch it to local-kb
+        # Check if user has real providers configured (beyond just local-kb)
+        providers = load_providers()
+        has_real_providers = any(p.name != "local-kb" for p in providers)
+
+        if has_real_providers and llm_name:
+            # User has real providers AND explicitly chose one for Auxilium — respect it
+            return
+
+        # No real providers (fresh install) or no llm_name set → use local-kb
         agent_def["llm_name"] = "local-kb"
+        # Remove stale provider/model fields that conflict
+        agent_def.pop("provider", None)
+        agent_def.pop("model", None)
         save_agent_def(agent_def)
-        _logger.info("ensure_kb_provider: patched Auxilium agent to use local-kb provider")
+        _logger.info("ensure_kb_provider: set Auxilium agent to use local-kb provider")
     except Exception as e:
         _logger.warning("ensure_kb_provider: failed to patch Auxilium agent: %s", e)

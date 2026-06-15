@@ -1,4 +1,5 @@
 # Coder — Full-stack code writing agent
+# No default provider: user must configure one in Settings → Providers
 name: Coder
 emoji: "🛠️"
 role: coder
@@ -13,8 +14,6 @@ tools:
   - search_files
   - web_search
   - web_fetch
-provider: minimax
-model: MiniMax-M2.7
 self_improvement:
   bug_journal: true
   project_rules: true

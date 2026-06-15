@@ -10,8 +10,7 @@ tools:
   - write_file
   - web_search
   - web_fetch
-provider: openrouter
-model: openrouter/free
+llm_name: local-kb
 auto_open: true
 api_key_built_in: false
 auto_add_to_projects: true
