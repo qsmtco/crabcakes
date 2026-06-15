@@ -104,6 +104,8 @@ class Conversation:
     api_key: str | None = None           # per-agent API key override (from agent def)
     si_enforcement: bool | None = None     # per-agent enforcement override (None → use global)
     app_title: str = ""                   # OpenRouter X-Title header value (e.g. "Coder:Crabcakes")
+    fallback_provider: str | None = None   # KB fallback provider (from agent def)
+    fallback_model: str | None = None      # KB fallback model (from agent def)
     created_at: datetime = field(default_factory=datetime.now)
     total_tokens: int = 0
     total_cost: float = 0.0              # cumulative USD cost

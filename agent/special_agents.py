@@ -36,6 +36,8 @@ class SpecialAgentDef:
     tools: list[str]              # tool names this agent can use
     can_write: bool               # whether write_file is in the default tool set
     llm_name: str | None = None   # per-agent provider card name (None → global default)
+    fallback_provider: str | None = None   # KB fallback provider name (e.g. "openrouter")
+    fallback_model: str | None = None      # KB fallback model (e.g. "openrouter/owl-alpha")
     api_key: str | None = None    # per-agent API key override (None → provider config)
     app_title: str | None = None   # OpenRouter X-Title header (e.g. "Coder:Crabcakes")
     self_improvement: dict = field(default_factory=dict)  # SI layer toggles
@@ -119,6 +121,8 @@ def _load_registry() -> dict[str, SpecialAgentDef]:
             tools=tools,
             can_write="write_file" in tools or "edit_file" in tools,
             llm_name=agent_def.get("llm_name"),
+            fallback_provider=agent_def.get("fallback_provider"),
+            fallback_model=agent_def.get("fallback_model"),
             # Per Phase B: keys are resolved from providers.yaml at runtime, not stored on the agent.
             api_key=None,
             app_title=agent_def.get("app_title"),

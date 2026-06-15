@@ -943,6 +943,8 @@ class AgentRuntime:
         si_enforcement: bool | None = None,      # per-agent enforcement override
         api_key: str | None = None,             # per-agent API key override
         app_title: str = "",                    # app identifier (e.g. "crabcakes")
+        fallback_provider: str | None = None,    # KB fallback provider (from agent def)
+        fallback_model: str | None = None,       # KB fallback model (from agent def)
     ) -> str:
         """
         Create a new conversation for an agent.
@@ -992,6 +994,8 @@ class AgentRuntime:
             si_enforcement=si_enforcement,
             api_key=api_key,
             app_title=app_title,
+            fallback_provider=fallback_provider,
+            fallback_model=fallback_model,
         )
 
         with self._lock:

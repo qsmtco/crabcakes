@@ -412,6 +412,8 @@ class AgentRuntimeHandler:
                 si_enforcement=si_enforcement,     # Per-agent enforcement gating
                 api_key=agent_def.api_key,        # Per-agent API key override
                 app_title=agent_def.app_title,  # OpenRouter X-Title header
+                fallback_provider=agent_def.fallback_provider,
+                fallback_model=agent_def.fallback_model,
             )
         else:
             # Bug fix: sync existing conversation with latest agent definition.
@@ -426,6 +428,9 @@ class AgentRuntimeHandler:
                     conv.model = agent_model
                 if agent_def.app_title:
                     conv.app_title = agent_def.app_title
+                # Sync fallback config (in case agent was edited)
+                conv.fallback_provider = agent_def.fallback_provider
+                conv.fallback_model = agent_def.fallback_model
 
         rt.send_message(session_key, text)
 
