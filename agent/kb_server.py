@@ -100,7 +100,14 @@ def _extract_last_user_message(messages: list[dict]) -> str | None:
         if msg.get("role") == "user":
             content = msg.get("content", "")
             if isinstance(content, str) and content.strip():
-                return content
+                # Strip relay prefixes like "[Project Chat asks]: " that are added
+                # by /ask forwarding. These prefixes skew the embedding and cause
+                # false-positive KB matches (e.g. "Project Chat asks" matches
+                # project/agent KB content even when the actual question is
+                # out-of-scope like "What is quantum physics?").
+                import re
+                content = re.sub(r"^\[.*?\s+asks\]:\s*", "", content)
+                return content.strip() if content.strip() else None
     return None
 
 
