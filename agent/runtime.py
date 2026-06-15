@@ -994,8 +994,8 @@ class AgentRuntime:
             si_enforcement=si_enforcement,
             api_key=api_key,
             app_title=app_title,
-            fallback_provider=fallback_provider,
-            fallback_model=fallback_model,
+            fallback_provider=fallback_provider or self._config.fallback_provider,
+            fallback_model=fallback_model or self._config.fallback_model,
         )
 
         with self._lock:
