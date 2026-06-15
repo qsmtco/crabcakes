@@ -1151,16 +1151,16 @@ class AgentRuntime:
                     # model. One-shot guard prevents infinite loops.
                     if (
                         text_content == KB_OUT_OF_SCOPE
-                        and self._config.fallback_provider
+                        and conv.fallback_provider
                         and not getattr(conv, "_fallback_attempted", False)
                     ):
                         conv._fallback_attempted = True
                         logger.info(
                             "[tool-loop] sk=%s KB_OUT_OF_SCOPE — retrying with fallback provider %s",
-                            session_key, self._config.fallback_provider,
+                            session_key, conv.fallback_provider,
                         )
                         original_model = conv.model
-                        fallback_model = self._config.fallback_model or f"{self._config.fallback_provider}/{self._config.default_model}"
+                        fallback_model = conv.fallback_model or conv.fallback_provider
                         conv.model = fallback_model
                         try:
                             fb_response = self._call_llm(session_key, messages, tools)

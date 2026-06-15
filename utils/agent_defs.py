@@ -36,8 +36,10 @@ def _normalize_fallback_fields(data: dict) -> None:
     Reads from YAML/JSON if present, defaults to None if absent.
     Called after parsing every agent definition file.
     """
-    data.setdefault("fallback_provider", data.get("fallback_provider"))
-    data.setdefault("fallback_model", data.get("fallback_model"))
+    if "fallback_provider" not in data:
+        data["fallback_provider"] = None
+    if "fallback_model" not in data:
+        data["fallback_model"] = None
 
 
 def _get_default_agents_src() -> str:
