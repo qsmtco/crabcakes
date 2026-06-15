@@ -240,6 +240,8 @@ def load_agent_config(config_path: str | None = None) -> AgentConfig:
         cost_limit=raw.get("cost_limit"),
         step_limit=raw.get("step_limit"),
         enforcement=enforcement,
+        fallback_provider=raw.get("fallback_provider"),
+        fallback_model=raw.get("fallback_model"),
     )
 
 
@@ -259,6 +261,8 @@ def _create_default_config(path: str) -> None:
         "tool_timeout_seconds": 120,
         "cost_limit": 5.0,
         "step_limit": 100,
+        "fallback_provider": None,
+        "fallback_model": None,
     }
 
     try:
