@@ -216,11 +216,21 @@ def ensure_kb_provider() -> None:
 
 
 def _ensure_kb_provider_entry() -> None:
-    """Seed the local-kb provider into providers.yaml if missing."""
+    """Seed or repair the local-kb provider in providers.yaml."""
     providers = load_providers()
-    if any(p.name == "local-kb" for p in providers):
+
+    # Check if local-kb already exists
+    existing = next((p for p in providers if p.name == "local-kb"), None)
+    if existing is not None:
+        # Repair: only fix the caller field if it's empty (the bug that caused runtime errors).
+        # Don't touch other fields — respect user customizations (custom port, etc).
+        if not existing.caller:
+            existing.caller = "openai"
+            save_providers(providers)
+            _logger.info("ensure_kb_provider: repaired missing caller field on local-kb provider")
         return
 
+    # Not found — create fresh
     kb_provider = ProviderConfig(
         name="local-kb",
         base_url="http://localhost:18790/v1",
