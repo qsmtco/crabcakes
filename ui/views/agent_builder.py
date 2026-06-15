@@ -712,7 +712,7 @@ class AgentBuilderDialog:
         self._role_entry.set_text(agent_def.get("role", ""))
 
         # Select provider dropdown
-        provider_id = agent_def.get("llm_name") or agent_def.get("provider", "")
+        provider_id = agent_def.get("llm_name", "")
         for i, p in enumerate(self._providers):
             if p.name == provider_id:
                 self._provider_dropdown.set_selected(i)

@@ -24,8 +24,8 @@ def fresh_registry():
 
 
 class TestSpecialAgentDef:
-    def test_create_with_old_fields(self):
-        """Backward compat — creating with original 7 fields still works."""
+    def test_create_with_minimal_fields(self):
+        """Creating with the required fields works; llm_name defaults to None."""
         agent = SpecialAgentDef(
             conv_id_prefix="special:test",
             display_name="Test",
@@ -36,10 +36,9 @@ class TestSpecialAgentDef:
             can_write=False,
         )
         assert agent.llm_name is None
-        assert agent.model is None
         assert agent.self_improvement == {}
 
-    def test_create_with_new_fields(self):
+    def test_create_with_llm_name(self):
         agent = SpecialAgentDef(
             conv_id_prefix="special:custom",
             display_name="Custom",
@@ -49,11 +48,9 @@ class TestSpecialAgentDef:
             tools=["read_file", "write_file"],
             can_write=True,
             llm_name="minimax",
-            model="MiniMax-M2.7",
             self_improvement={"bug_journal": False},
         )
         assert agent.llm_name == "minimax"
-        assert agent.model == "MiniMax-M2.7"
         assert agent.self_improvement["bug_journal"] is False
 
 
@@ -136,21 +133,19 @@ class TestRegistry:
     def test_get_nonexistent_returns_none(self):
         assert get_special_agent("special:nonexistent") is None
 
-    def test_coder_has_provider_model(self):
+    def test_coder_has_llm_name(self):
         from unittest.mock import patch
         coder_def = {
             "role": "coder",
             "name": "Coder",
             "emoji": "🛠️",
             "tools": ["read_file", "write_file"],
-            "provider": "minimax",
-            "model": "MiniMax-M2.7",
+            "llm_name": "minimax",
         }
         with patch("utils.agent_defs.load_agent_defs", return_value=[coder_def]):
             reload_registry()
             coder = get_special_agent("special:coder")
             assert coder.llm_name == "minimax"
-            assert coder.model == "MiniMax-M2.7"
 
     def test_coder_si_full_stack(self):
         from unittest.mock import patch

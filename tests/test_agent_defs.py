@@ -66,8 +66,7 @@ class TestSaveLoad:
             "role": "tester",
             "prompts": ["system/coder.md"],
             "tools": ["read_file", "list_files"],
-            "provider": "minimax",
-            "model": "MiniMax-M2.7",
+            "llm_name": "MiniMax M2.7",
         }
         path = ad.save_agent_def(agent)
         assert os.path.isfile(path)
@@ -80,7 +79,7 @@ class TestSaveLoad:
         assert loaded["tools"] == ["read_file", "list_files"]
 
     def test_save_sanitizes_filename(self, tmp_agents_dir):
-        agent = {"name": "My Cool Agent!", "tools": [], "prompts": [], "provider": "openai"}
+        agent = {"name": "My Cool Agent!", "tools": [], "prompts": [], "llm_name": "local-kb"}
         path = ad.save_agent_def(agent)
         basename = os.path.basename(path)
         assert " " not in basename
@@ -96,7 +95,7 @@ class TestSaveLoad:
             "role": "custom-role",
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
-            "provider": "openai",
+            "llm_name": "local-kb",
         }
         ad.save_agent_def(agent)
         loaded = ad.load_agent_def_by_role("custom-role")
@@ -109,7 +108,7 @@ class TestSaveLoad:
             "role": "Custom-Role",
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
-            "provider": "openai",
+            "llm_name": "local-kb",
         }
         ad.save_agent_def(agent)
         loaded = ad.load_agent_def_by_role("custom-role")
@@ -120,7 +119,7 @@ class TestSaveLoad:
             "name": "My Agent",
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
-            "provider": "openai",
+            "llm_name": "local-kb",
         }
         ad.save_agent_def(agent)
         loaded = ad.load_agent_def("My Agent")
@@ -144,7 +143,7 @@ class TestLoadAgentDefs:
             "role": "coder",
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
-            "provider": "minimax",
+            "llm_name": "MiniMax M2.7",
         }
         with open(os.path.join(default_agents_src, "coder.yaml"), "w") as f:
             import yaml
@@ -157,14 +156,14 @@ class TestLoadAgentDefs:
     def test_does_not_overwrite_existing(self, tmp_agents_dir, default_agents_src):
         # User already has a custom agent
         os.makedirs(tmp_agents_dir, exist_ok=True)
-        custom = {"name": "Custom", "tools": ["read_file"], "prompts": [], "provider": "openai"}
+        custom = {"name": "Custom", "tools": ["read_file"], "prompts": [], "llm_name": "local-kb"}
         with open(os.path.join(tmp_agents_dir, "custom.yaml"), "w") as f:
             import yaml
             yaml.dump(custom, f)
 
         # Default source has a different file
         with open(os.path.join(default_agents_src, "coder.yaml"), "w") as f:
-            yaml.dump({"name": "Coder", "tools": [], "prompts": [], "provider": "openai"}, f)
+            yaml.dump({"name": "Coder", "tools": [], "prompts": [], "llm_name": "local-kb"}, f)
 
         defs = ad.load_agent_defs()
         names = [d["name"] for d in defs]
@@ -174,7 +173,7 @@ class TestLoadAgentDefs:
 
     def test_deduplicates_by_name(self, tmp_agents_dir):
         os.makedirs(tmp_agents_dir, exist_ok=True)
-        agent = {"name": "Dup", "tools": [], "prompts": [], "provider": "openai"}
+        agent = {"name": "Dup", "tools": [], "prompts": [], "llm_name": "local-kb"}
         with open(os.path.join(tmp_agents_dir, "dup.yaml"), "w") as f:
             import yaml
             yaml.dump(agent, f)
@@ -191,7 +190,7 @@ class TestLoadAgentDefs:
 
 class TestDeleteAgentDef:
     def test_delete_existing(self, tmp_agents_dir):
-        agent = {"name": "ToDelete", "tools": [], "prompts": [], "provider": "openai"}
+        agent = {"name": "ToDelete", "tools": [], "prompts": [], "llm_name": "local-kb"}
         ad.save_agent_def(agent)
         assert ad.load_agent_def("ToDelete") is not None
 
@@ -211,9 +210,7 @@ class TestValidateAgentDef:
             "name": "ValidAgent",
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
-            "provider": "minimax",
-            "model": "MiniMax-M2.7",
-            "api_key": "sk-test-valid",
+            "llm_name": "local-kb",
         }
         errors = ad.validate_agent_def(agent)
         assert errors == []
@@ -230,7 +227,7 @@ class TestValidateAgentDef:
             "name": "BadTools",
             "prompts": ["system/coder.md"],
             "tools": ["read_file", "not_a_real_tool"],
-            "provider": "minimax",
+            "llm_name": "MiniMax M2.7",
         }
         errors = ad.validate_agent_def(agent)
         assert any("not_a_real_tool" in e for e in errors)
@@ -250,7 +247,7 @@ class TestValidateAgentDef:
             "name": "BadProvider",
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
-            "provider": "nonexistent_provider",
+            "llm_name": "nonexistent_provider",
         }
         errors = ad.validate_agent_def(agent)
         assert any("nonexistent_provider" in e for e in errors)
@@ -260,7 +257,7 @@ class TestValidateAgentDef:
             "name": "BadPrompt",
             "prompts": ["nonexistent_prompt.md"],
             "tools": ["read_file"],
-            "provider": "minimax",
+            "llm_name": "MiniMax M2.7",
         }
         errors = ad.validate_agent_def(agent)
         assert any("nonexistent_prompt.md" in e for e in errors)
@@ -270,7 +267,7 @@ class TestValidateAgentDef:
             "name": "",
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
-            "provider": "minimax",
+            "llm_name": "MiniMax M2.7",
         }
         errors = ad.validate_agent_def(agent)
         assert any("name" in e for e in errors)

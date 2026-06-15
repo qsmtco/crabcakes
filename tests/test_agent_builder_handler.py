@@ -62,9 +62,7 @@ class TestSaveValidation:
             "role": "tester",
             "prompts": ["system/coder.md"],
             "tools": ["read_file", "list_files"],
-            "provider": "minimax",
-            "model": "MiniMax-M2.7",
-            "api_key": "sk-test-123",
+            "llm_name": "local-kb",
         }
         ok, errors = h.save(agent)
         assert ok
@@ -83,8 +81,7 @@ class TestSaveValidation:
             "name": "CallbackTest",
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
-            "provider": "minimax",
-            "model": "MiniMax-M2.7",
+            "llm_name": "local-kb",
             "api_key": "sk-test-123",
         })
         assert saved == ["CallbackTest"]
@@ -97,8 +94,7 @@ class TestLoadForEdit:
             "name": "Editable",
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
-            "provider": "minimax",
-            "model": "MiniMax-M2.7",
+            "llm_name": "local-kb",
             "api_key": "sk-test-edit",
         })
         loaded = h.load_for_edit("Editable")
@@ -117,8 +113,7 @@ class TestDelete:
             "name": "Deletable",
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
-            "provider": "minimax",
-            "model": "MiniMax-M2.7",
+            "llm_name": "local-kb",
             "api_key": "sk-test-del",
         })
         assert h.delete("Deletable") is True
@@ -134,8 +129,7 @@ class TestDelete:
             "name": "ToDelete",
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
-            "provider": "minimax",
-            "model": "MiniMax-M2.7",
+            "llm_name": "local-kb",
             "api_key": "sk-test-del2",
         })
         h.delete("ToDelete")

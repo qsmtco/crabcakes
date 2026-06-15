@@ -64,12 +64,12 @@ class TestInitProjectConfig:
         assert len(team.members) == 1
         assert team.members[0].name == "Agent1"
 
-    def test_migrates_root_crabcakes_md(self, tmp_path):
-        old_content = "# My Project\nOld manifest content"
-        (tmp_path / "crabcakes.md").write_text(old_content)
+    def test_creates_skeleton_project_md(self, tmp_path):
+        """init_project_config generates a project.md skeleton."""
         init_project_config(str(tmp_path), "myproject")
         manifest = load_project_manifest(str(tmp_path))
-        assert manifest == old_content
+        assert manifest is not None
+        assert "myproject" in manifest
 
 
 class TestLoadSaveTeam:

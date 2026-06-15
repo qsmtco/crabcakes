@@ -89,8 +89,7 @@ class TestSIOverridesPreserved:
             "name": "TestAgent",
             "prompts": ["system/coder.md"],
             "tools": ["read_file", "write_file"],
-            "provider": "minimax",
-            "model": "MiniMax-M2.7",
+            "llm_name": "local-kb",
             "api_key": "sk-test-si",
             "self_improvement": {
                 "bug_journal": True,
@@ -124,8 +123,7 @@ class TestRenameCleanup:
             "name": "Original",
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
-            "provider": "minimax",
-            "model": "MiniMax-M2.7",
+            "llm_name": "local-kb",
             "api_key": "sk-test-ren",
         })
         assert ad.load_agent_def("Original") is not None
@@ -152,8 +150,7 @@ class TestRenameCleanup:
             "name": "Stable",
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
-            "provider": "minimax",
-            "model": "MiniMax-M2.7",
+            "llm_name": "local-kb",
             "api_key": "sk-test-stable",
         })
 
@@ -219,16 +216,14 @@ class TestNameCollision:
             "name": "My Agent",
             "tools": ["read_file"],
             "prompts": ["system/coder.md"],
-            "provider": "minimax",
-            "model": "MiniMax-M2.7",
+            "llm_name": "local-kb",
         })
 
         errors = ad.validate_agent_def({
             "name": "My-Agent",
             "tools": ["read_file"],
             "prompts": ["system/coder.md"],
-            "provider": "minimax",
-            "model": "MiniMax-M2.7",
+            "llm_name": "local-kb",
         })
         assert any("collision" in e.lower() for e in errors)
 
@@ -238,15 +233,13 @@ class TestNameCollision:
             "name": "My Agent",
             "tools": ["read_file"],
             "prompts": ["system/coder.md"],
-            "provider": "minimax",
-            "model": "MiniMax-M2.7",
+            "llm_name": "local-kb",
         })
 
         errors = ad.validate_agent_def({
             "name": "My Agent",
             "tools": ["read_file"],
             "prompts": ["system/coder.md"],
-            "provider": "minimax",
-            "model": "MiniMax-M2.7",
+            "llm_name": "local-kb",
         })
         assert not any("collision" in e.lower() for e in errors)

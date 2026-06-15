@@ -25,7 +25,7 @@ class SpecialAgentDef:
     """Definition of a Crabcakes Special Agent.
 
     Can be loaded from YAML/JSON config files or created programmatically.
-    Fields llm_name, model, and self_improvement are optional overrides —
+    Fields llm_name and self_improvement are optional overrides —
     when None, the global agent config defaults apply.
     """
     conv_id_prefix: str           # e.g. "special:coder" — used as session_key
@@ -36,13 +36,11 @@ class SpecialAgentDef:
     tools: list[str]              # tool names this agent can use
     can_write: bool               # whether write_file is in the default tool set
     llm_name: str | None = None   # per-agent provider card name (None → global default)
-    model: str | None = None      # per-agent model override (None → global default)
     api_key: str | None = None    # per-agent API key override (None → provider config)
     app_title: str | None = None   # OpenRouter X-Title header (e.g. "Coder:Crabcakes")
     self_improvement: dict = field(default_factory=dict)  # SI layer toggles
     mcp_servers: list[str] = field(default_factory=list)  # MCP servers for Phase B
     auto_open: bool = False           # open tab automatically on every app launch
-    api_key_built_in: bool = False    # reserved: agent ships with an embedded key (not currently used)
     auto_add_to_projects: bool = False  # auto-add to every new project's team
 
     def get_self_improvement_config(self) -> dict:
@@ -120,15 +118,13 @@ def _load_registry() -> dict[str, SpecialAgentDef]:
             color=color,
             tools=tools,
             can_write="write_file" in tools or "edit_file" in tools,
-            llm_name=agent_def.get("llm_name") or agent_def.get("provider"),
-            model=agent_def.get("model"),
+            llm_name=agent_def.get("llm_name"),
             # Per Phase B: keys are resolved from providers.yaml at runtime, not stored on the agent.
-            api_key=agent_def.get("api_key_built_in") and agent_def.get("api_key", "") or "",
+            api_key=None,
             app_title=agent_def.get("app_title"),
             self_improvement=agent_def.get("self_improvement", {}),
             mcp_servers=raw_mcp,  # Phase B: MCP server list (coerced)
             auto_open=agent_def.get("auto_open", False),
-            api_key_built_in=agent_def.get("api_key_built_in", False),
             auto_add_to_projects=agent_def.get("auto_add_to_projects", False),
         )
 

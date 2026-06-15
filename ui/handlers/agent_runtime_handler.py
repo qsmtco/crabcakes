@@ -273,50 +273,29 @@ class AgentRuntimeHandler:
     def _resolve_agent_model(self, agent_def: Any) -> str | None:
         """Resolve the model string for an agent definition.
 
-        Uses agent-specific provider/model overrides if set, otherwise
-        falls back to the global default.
+        Uses agent-specific llm_name to look up the provider in providers.yaml,
+        then resolves the model from the provider's default_model.
 
         Returns:
             Full model string like "minimax/MiniMax-M2.7", or None to use
             the runtime's default_model.
         """
-        provider = getattr(agent_def, "llm_name", None) or getattr(agent_def, "provider", None)
-        model = getattr(agent_def, "model", None)
+        llm_name = getattr(agent_def, "llm_name", None)
 
-        # No overrides → use global default
-        if not provider and not model:
+        if not llm_name:
             return None
 
-        # Model already has provider prefix → use as-is
-        if model and "/" in model:
-            return model
-
-        # Both set → combine "provider/model"
-        if provider and model:
-            return f"{provider}/{model}"
-
-        # Only provider set → use provider's default model
-        if provider:
-            try:
-                from agent.config import load_agent_config
-                config = load_agent_config()
-                prov_cfg = config.providers.get(provider)
-                if prov_cfg and prov_cfg.default_model:
-                    # If default_model already contains a slash (e.g. "openrouter/owl-alpha"),
-                    # it's a fully-qualified model string — return as-is.
-                    # Otherwise combine with provider name: "minimax/MiniMax-M2.7".
-                    if "/" in prov_cfg.default_model:
-                        return prov_cfg.default_model
-                    return f"{provider}/{prov_cfg.default_model}"
-            except Exception:
-                logger.warning("Cannot resolve provider default model for %s", provider)
-            return f"{provider}"  # fallback — runtime will try to resolve
-
-        # Only model set → use with global default provider
-        if model:
-            return model
-
-        return None
+        try:
+            from agent.config import load_agent_config
+            config = load_agent_config()
+            prov_cfg = config.providers.get(llm_name)
+            if prov_cfg and prov_cfg.default_model:
+                if "/" in prov_cfg.default_model:
+                    return prov_cfg.default_model
+                return f"{llm_name}/{prov_cfg.default_model}"
+        except Exception:
+            logger.warning("Cannot resolve provider default model for %s", llm_name)
+        return llm_name  # fallback — runtime will try to resolve
 
     def _get_runtime(self, name: str, agent_def=None) -> Any:
         """

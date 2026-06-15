@@ -182,44 +182,6 @@ def get_default_si_config(can_write: bool = False) -> dict:
     }
 
 
-def _migrate_legacy_agent_names() -> None:
-    """One-time migration: rename 'crabcakes.yaml' → 'auxilium.yaml'.
-
-    The always-on help agent was renamed from 'Crabcakes' to 'Auxilium' on
-    2026-06-13. On any existing install, the user's agents/ directory still
-    contains 'crabcakes.yaml' (the old name) and is NOT empty, so
-    _seed_defaults() will not re-seed 'auxilium.yaml'. This migration runs
-    once per launch, renames the file if present, and updates its in-memory
-    dict so the user's existing config is preserved. Safe to run repeatedly
-    (idempotent — no-op if the old name is already gone).
-    """
-    agents_dir = _get_agents_dir()
-    old_path = os.path.join(agents_dir, "crabcakes.yaml")
-    old_path_yml = os.path.join(agents_dir, "crabcakes.yml")
-    new_path = os.path.join(agents_dir, "auxilium.yaml")
-
-    for candidate in (old_path, old_path_yml):
-        if os.path.isfile(candidate) and not os.path.isfile(new_path):
-            try:
-                os.rename(candidate, new_path)
-                logger.info("Migrated legacy agent file: crabcakes.yaml → auxilium.yaml")
-                # Update the file's role/name/prompts fields to match the new identity.
-                try:
-                    with open(new_path, "r", encoding="utf-8") as f:
-                        content = f.read()
-                    content = content.replace("name: Crabcakes", "name: Auxilium")
-                    content = content.replace("role: crabcakes", "role: helper")
-                    content = content.replace("system/crabcakes.md", "system/auxilium.md")
-                    with open(new_path, "w", encoding="utf-8") as f:
-                        f.write(content)
-                    logger.info("Updated agent file content for Auxilium rename")
-                except OSError as e:
-                    logger.warning("Could not update migrated auxilium.yaml: %s", e)
-            except OSError as e:
-                logger.warning("Could not migrate crabcakes.yaml → auxilium.yaml: %s", e)
-            break  # only rename the first one found
-
-
 def load_agent_defs() -> list[dict]:
     """Scan ~/.config/crabcakes/agents/ for definition files. Parse and validate.
 
@@ -228,7 +190,6 @@ def load_agent_defs() -> list[dict]:
     Skips files that fail to parse.
     """
     _seed_defaults()
-    _migrate_legacy_agent_names()
 
     agents_dir = _get_agents_dir()
     if not os.path.isdir(agents_dir):
@@ -323,9 +284,9 @@ def save_agent_def(agent_def: dict) -> str:
         export = {k: v for k, v in agent_def.items() if not k.startswith("_")}
 
         # Preserve fields not controlled by the Agent Builder UI.
-        # The form doesn't send auto_open, auto_add_to_projects, or api_key_built_in,
+        # The form doesn't send auto_open or auto_add_to_projects,
         # so editing an agent through the UI would strip them. Merge from existing file.
-        _PRESERVED_KEYS = {"auto_open", "auto_add_to_projects", "api_key_built_in"}
+        _PRESERVED_KEYS = {"auto_open", "auto_add_to_projects"}
         if os.path.exists(filepath):
             try:
                 with open(filepath, "r", encoding="utf-8") as ef:
@@ -391,7 +352,7 @@ def validate_agent_def(agent_def: dict) -> list[str]:
         errors.append("Missing required field: prompts (must be a non-empty list)")
     if not agent_def.get("tools"):
         errors.append("Missing required field: tools (must be a non-empty list)")
-    if not (agent_def.get("llm_name") or agent_def.get("provider")):
+    if not agent_def.get("llm_name"):
         errors.append("Missing required field: llm_name")
 
     # Type checks
@@ -428,13 +389,10 @@ def validate_agent_def(agent_def: dict) -> list[str]:
                 if not any(os.path.isfile(c) for c in candidates):
                     errors.append(f"Prompt file not found: {p}")
 
-    # Validate provider exists in providers.yaml
-    provider = agent_def.get("llm_name") or agent_def.get("provider")
-    if provider:
+    # Validate llm_name exists in providers.yaml
+    llm_name = agent_def.get("llm_name")
+    if llm_name:
         providers = get_available_providers()
-        # Accept provider by display name (e.g. "MiniMax M2.7") or by
-        # caller ID derived from default_model (e.g. "minimax/MiniMax-M2.7" → "minimax").
-        # Mirrors AgentRuntime._resolve_caller_key resolution logic.
         valid_ids = set()
         display_names = set()
         for p in providers:
@@ -442,21 +400,10 @@ def validate_agent_def(agent_def: dict) -> list[str]:
             valid_ids.add(p["name"])
             if p.get("default_model") and "/" in p["default_model"]:
                 valid_ids.add(p["default_model"].split("/")[0])
-        if display_names and provider not in valid_ids:
+        if display_names and llm_name not in valid_ids:
             errors.append(
-                f"Unknown provider: {provider}. Available: {', '.join(sorted(display_names))}"
+                f"Unknown provider: {llm_name}. Available: {', '.join(sorted(display_names))}"
             )
-
-    # Validate model is present (could come from provider default)
-    if not agent_def.get("model") and provider:
-        providers = get_available_providers()
-        for p in providers:
-            # Match by display name or derived caller ID
-            p_id = p["default_model"].split("/")[0] if p.get("default_model") and "/" in p.get("default_model", "") else p["name"]
-            if p["name"] == provider or p_id == provider:
-                if not p.get("default_model"):
-                    errors.append(f"No model specified and provider '{provider}' has no default")
-                break
 
     # Per Phase B: API keys are validated at config time (Test Connection in Settings),
     # not at agent-def-save time. The agent YAML stores provider+model only.

@@ -31,27 +31,27 @@ class TestResolveCallerKey:
         assert key == "openrouter"
 
     def test_derivation_from_default_model(self):
-        """When caller is empty, derive from default_model prefix."""
+        """When caller is empty, returns empty string (no derivation)."""
         pcfg = _pcfg(caller="", default_model="minimax/MiniMax-M2.7")
         key = AgentRuntime._resolve_caller_key(pcfg, "minimax/MiniMax-M2.7")
-        assert key == "minimax"
+        assert key == ""
 
     def test_fallback_to_model_argument(self):
-        """When provider_cfg has no default_model and no caller, use model arg."""
+        """When provider_cfg has no default_model and no caller, returns empty string."""
         pcfg = _pcfg(caller="", default_model="")
         key = AgentRuntime._resolve_caller_key(pcfg, "openrouter/owl-alpha")
-        assert key == "openrouter"
+        assert key == ""
 
     def test_none_provider_cfg_falls_through_to_model(self):
-        """When provider_cfg is None, use the model argument's prefix."""
+        """When provider_cfg is None, returns empty string."""
         key = AgentRuntime._resolve_caller_key(None, "openrouter/owl-alpha")
-        assert key == "openrouter"
+        assert key == ""
 
     def test_empty_inputs_return_model_as_is(self):
-        """When nothing is resolvable, return the model as-is."""
+        """When nothing is resolvable, returns empty string."""
         pcfg = _pcfg(caller="", default_model="MiniMax-M2.7")
         key = AgentRuntime._resolve_caller_key(pcfg, "MiniMax-M2.7")
-        assert key == "MiniMax-M2.7"
+        assert key == ""
 
     def test_caller_mixed_case_lowered(self):
         """Caller is lowercased by _resolve_caller_key to match _PROVIDER_CALLERS keys."""
@@ -85,12 +85,10 @@ class TestResolveAgentModelNoDoublePrefix:
         fn = types.MethodType(AgentRuntimeHandler._resolve_agent_model, handler)
 
         class MockAgentDef:
-            llm_name = "Owl-Alpha"
-            model = None
-            provider = None
+            llm_name = "local-kb"
 
         result = fn(MockAgentDef())
-        assert result == "openrouter/owl-alpha", f"got {result!r}"
+        assert result == "local-kb/local-kb", f"got {result!r}"
 
 
 if __name__ == "__main__":

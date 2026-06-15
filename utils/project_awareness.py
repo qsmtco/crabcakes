@@ -106,7 +106,7 @@ def init_project_config(
         if os.path.isfile(team_path):
             return
         # team.json missing — might be partial init, create it
-        team = _migrate_or_empty_team(project_path, project_name, pm_name, pm_id)
+        team = ProjectTeam(pm_name=pm_name, pm_id=pm_id)
         save_team(project_path, team)
         return
 
@@ -115,10 +115,10 @@ def init_project_config(
     # Migrate or create project.md
     manifest_path = os.path.join(crab_dir, MANIFEST_FILENAME)
     if not os.path.isfile(manifest_path):
-        _migrate_or_create_manifest(project_path, project_name)
+        _create_project_manifest(project_path, project_name)
 
     # Migrate or create team.json
-    team = _migrate_or_empty_team(project_path, project_name, pm_name, pm_id)
+    team = ProjectTeam(pm_name=pm_name, pm_id=pm_id)
     save_team(project_path, team)
 
     # Create empty context.md
@@ -132,63 +132,11 @@ def init_project_config(
     save_awareness_snapshot(project_path, snapshot)
 
 
-def _migrate_or_empty_team(
-    project_path: str,
-    project_name: str,
-    pm_name: str = "",
-    pm_id: str = "",
-) -> ProjectTeam:
-    """
-    Try to migrate from legacy members.json. Fall back to empty team.
-    """
-    # Try legacy path: ~/.config/crabcakes/projects/<name>/members.json
-    if project_name:
-        legacy_dir = os.path.join(get_projects_config_dir(), project_name)
-        legacy_path = os.path.join(legacy_dir, "members.json")
-        if os.path.isfile(legacy_path):
-            try:
-                with open(legacy_path, "r", encoding="utf-8") as f:
-                    raw = json.load(f)
-                if isinstance(raw, list):
-                    members = []
-                    for sk in raw:
-                        if isinstance(sk, str) and sk:
-                            members.append(TeamMember(
-                                session_key=sk,
-                                name="",  # name unknown at migration time
-                                role="",
-                                can_write=False,
-                            ))
-                    return ProjectTeam(
-                        members=members,
-                        pm_name=pm_name,
-                        pm_id=pm_id,
-                    )
-            except (json.JSONDecodeError, OSError):
-                pass
-
-    return ProjectTeam(pm_name=pm_name, pm_id=pm_id)
-
-
-def _migrate_or_create_manifest(project_path: str, project_name: str) -> None:
-    """
-    Try to migrate crabcakes.md from project root. Generate skeleton if not found.
-    """
-    # Check for old crabcakes.md at project root
-    old_path = os.path.join(project_path, "crabcakes.md")
-    new_path = os.path.join(get_crabcakes_dir(project_path), MANIFEST_FILENAME)
-
-    if os.path.isfile(old_path):
-        try:
-            with open(old_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            with open(new_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            return
-        except OSError:
-            pass
-
-    # Generate skeleton
+def _create_project_manifest(project_path: str, project_name: str) -> None:
+    """Create .crabcakes/project.md with a basic structure if it doesn't exist."""
+    manifest_path = os.path.join(get_crabcakes_dir(project_path), MANIFEST_FILENAME)
+    if os.path.isfile(manifest_path):
+        return  # Already exists, don't overwrite
     generate_project_skeleton(project_path, project_name)
 
 

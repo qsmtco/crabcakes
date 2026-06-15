@@ -9,7 +9,7 @@ import os
 import pytest
 
 from agent.config import (
-    _load_providers_from_yaml_or_fallback,
+    _load_providers_from_yaml,
     ensure_providers_yaml_exists,
     load_agent_config,
 )
@@ -58,37 +58,21 @@ class TestProvidersYamlCanonical:
 
 
 class TestAgentJsonFallback:
-    def test_fallback_to_agent_json_when_yaml_empty(self, tmp_config_dir, caplog):
-        """If providers.yaml is empty, fall back to agent.json providers."""
-        # Empty providers.yaml
+    def test_empty_providers_yaml_returns_empty(self, tmp_config_dir):
+        """If providers.yaml is empty, return empty providers dict."""
         providers_yaml = tmp_config_dir / "providers.yaml"
         providers_yaml.write_text("providers: []\n")
-        # agent.json with a provider
         agent_json = tmp_config_dir / "agent.json"
-        agent_json.write_text(json.dumps({
-            "providers": {"legacyprov": {
-                "base_url": "https://legacy.example.com/v1",
-                "api_key": "key",
-                "default_model": "legacy-model",
-            }}
-        }))
-        with caplog.at_level("WARNING"):
-            config = load_agent_config(str(agent_json))
-        assert "legacyprov" in config.providers
-        # Deprecation warning was logged
-        assert "deprecated" in caplog.text
+        agent_json.write_text(json.dumps({}))
+        config = load_agent_config(str(agent_json))
+        assert config.providers == {}
 
-    def test_fallback_when_yaml_missing(self, tmp_config_dir, caplog):
-        """If providers.yaml doesn't exist, fall back to agent.json."""
+    def test_missing_providers_yaml_returns_empty(self, tmp_config_dir):
+        """If providers.yaml doesn't exist, return empty providers dict."""
         agent_json = tmp_config_dir / "agent.json"
-        agent_json.write_text(json.dumps({
-            "providers": {"legacyprov": {
-                "base_url": "https://x", "api_key": "k", "default_model": "m",
-            }}
-        }))
-        with caplog.at_level("WARNING"):
-            config = load_agent_config(str(agent_json))
-        assert "legacyprov" in config.providers
+        agent_json.write_text(json.dumps({}))
+        config = load_agent_config(str(agent_json))
+        assert config.providers == {}
 
     def test_empty_when_both_missing(self, tmp_config_dir):
         """If neither source has providers, return empty dict."""
@@ -118,8 +102,8 @@ class TestEnsureProvidersYamlExists:
         assert len(providers) == 1
         assert providers[0].name == "existing"
 
-    def test_does_not_create_when_agent_json_has_providers(self, tmp_config_dir):
-        """If agent.json has providers, do not create providers.yaml."""
+    def test_always_creates_when_missing(self, tmp_config_dir):
+        """providers.yaml is always created when it doesn't exist."""
         agent_json = tmp_config_dir / "agent.json"
         agent_json.write_text(json.dumps({
             "providers": {"legacy": {
@@ -127,7 +111,7 @@ class TestEnsureProvidersYamlExists:
             }}
         }))
         yaml_path = ensure_providers_yaml_exists(str(agent_json))
-        assert not os.path.isfile(yaml_path), "Should not create yaml when agent.json has providers"
+        assert os.path.isfile(yaml_path), "Should create yaml when it doesn't exist"
 
     def test_yaml_permissions(self, tmp_config_dir):
         """Created providers.yaml has 0o600 permissions."""

@@ -169,25 +169,16 @@ class MainWindow(Gtk.ApplicationWindow):
             self._agent_runtime_handler.add_special_agent(agent_def)
 
         # Phase 4 — Auto-open Auxilium tab on every launch.
-        # Creates a tab for each agent with auto_open=True and sets a
-        # synthetic project for agents with api_key_built_in=True so they
-        # have a project context (file context, awareness, etc.).
+        # Creates a tab for each agent with auto_open=True.
         auto_open_agents = get_auto_open_agents()
         if auto_open_agents:
-            from pathlib import Path
-            app_path = str(Path(__file__).resolve().parent.parent)
             for agent_def in auto_open_agents:
                 self._main_content.create_chat_tab(
                     agent_def.conv_id_prefix, agent_def.display_name
                 )
-                if agent_def.api_key_built_in:
-                    self._agent_runtime_handler.set_active_project(
-                        agent_def.display_name, app_path
-                    )
-                    break  # Only set synthetic project once
                 logger.info(
-                    "Auto-opened agent tab: %s (built_in=%s)",
-                    agent_def.display_name, agent_def.api_key_built_in,
+                    "Auto-opened agent tab: %s",
+                    agent_def.display_name,
                 )
 
         # ── Auxilium first-run wizard (D7 Phase 3) ────────────────────────────

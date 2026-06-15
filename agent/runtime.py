@@ -1339,21 +1339,13 @@ class AgentRuntime:
     def _resolve_caller_key(provider_cfg: "LLMProviderConfig | None", model: str) -> str:
         """Return the API caller key for a provider.
 
-        Resolution order:
-        1. provider_cfg.caller (explicit, persisted in providers.yaml)
-        2. default_model prefix (e.g. "openrouter/owl-alpha" → "openrouter")
-        3. First slash segment of model (legacy behavior)
-
-        Returns the empty string if none of the above yields a non-empty key —
-        the caller will then fail with a clear "no caller" error.
+        Uses provider_cfg.caller (explicit, persisted in providers.yaml).
+        If empty, returns empty string — the caller will then fail with a
+        clear "no caller" error.
         """
         if provider_cfg is not None and provider_cfg.caller:
             return provider_cfg.caller.lower()
-        # Derive from provider's default_model if present
-        if provider_cfg is not None and provider_cfg.default_model:
-            return provider_cfg.default_model.split("/")[0]
-        # Last resort: model prefix
-        return model.split("/")[0] if "/" in model else model
+        return ""
 
     def _call_llm(
         self,
