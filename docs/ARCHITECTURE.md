@@ -1230,7 +1230,7 @@ class ToolCallStatus(str, Enum): PENDING = "pending" | EXECUTING = "executing" |
 
 @dataclass ToolCall: call_id, tool_name, arguments, result, status, started_at, completed_at
 @dataclass Message: role, content, tool_calls, tool_call_id, timestamp, tokens_used
-@dataclass Conversation: agent_name, project_path, system_prompt, messages, model, created_at, total_tokens, total_cost, step_count
+@dataclass Conversation: agent_name, project_path, system_prompt, messages, model, fallback_provider, fallback_model, created_at, total_tokens, total_cost, step_count
 
     def add_user_message(content) -> Message
     def add_assistant_message(content, tool_calls) -> Message
@@ -1367,7 +1367,7 @@ def reset_cache() -> None          # clears module-level state (for tests)
 
 **Fail-soft behavior:** Returns `[]` on missing index, missing model, no confident match, or any internal error. Logs at DEBUG/WARNING. The agent must treat empty list as "I don't have info on that" — never as a crash.
 
-**Integration with AgentRuntime (KB Provider — implemented Phases 1-4):** The KB lookup is wired into the runtime via the KB HTTP server (`agent/kb_server.py`) which wraps `kb_lookup()` in an OpenAI-compatible API. The server is registered as a `local-kb` provider in `providers.yaml`. When the primary provider returns `[KB_OUT_OF_SCOPE]`, the runtime fallback chain retries with the configured `fallback_provider`.
+**Integration with AgentRuntime (KB Provider — Phases 1-5):** The KB lookup is wired into the runtime via the KB HTTP server (`agent/kb_server.py`) which wraps `kb_lookup()` in an OpenAI-compatible API. The server is registered as a `local-kb` provider in `providers.yaml`. When the primary provider returns `[KB_OUT_OF_SCOPE]`, the runtime fallback chain retries with the per-agent `conv.fallback_provider` (from `SpecialAgentDef`, wired through `create_conversation()`). Global `AgentConfig.fallback_provider` serves as a default when no per-agent value is set. If the fallback fires, `kb_lookup()` is called directly by the runtime to pre-fetch KB chunks, which are injected as context into the fallback LLM messages (Phase 2 synthesis). See `prompts/system/auxilium.md` for synthesis instructions.
 
 **No `ui/` imports.** Lives in `agent/` per §2.
 
@@ -1481,10 +1481,14 @@ class AuxiliumWizard(Gtk.Box):
 ```python
 @dataclass SpecialAgentDef:
     conv_id_prefix, display_name, role, emoji, color, tools, can_write,
-    provider: str | None, model: str | None, self_improvement: dict,
+    llm_name: str | None,                 # per-agent provider card name (None → global default)
+    fallback_provider: str | None,        # KB fallback provider (e.g. "openrouter")
+    fallback_model: str | None,           # KB fallback model (e.g. "openrouter/owl-alpha")
+    api_key: str | None,                  # per-agent API key override
+    app_title: str | None,                # per-agent app title override
+    self_improvement: dict,
     mcp_servers: list[str],
     auto_open: bool = False,              # open tab on every app launch
-    api_key_built_in: bool = False,       # reserved, not currently used
     auto_add_to_projects: bool = False,   # auto-add to every new project
     def get_self_improvement_config() -> dict
 
@@ -1503,7 +1507,7 @@ def reload_registry() -> None   # force reload after create/edit/delete
 
 **Project onboarding agents:** Agents with `auto_add_to_projects=True` are automatically added to every new project's team. See `ui/handlers/project_handler.py` Phase 5.
 
-**Per-agent model:** `provider` and `model` fields override the global default for this agent. Resolved in `AgentRuntimeHandler._resolve_agent_model()`.
+**Per-agent model:** `llm_name` field specifies the provider card name for this agent (None → global default). `fallback_provider` and `fallback_model` specify the KB fallback — when the KB returns `[KB_OUT_OF_SCOPE]`, the runtime retries with this provider. Resolved in `AgentRuntimeHandler._resolve_agent_model()` and wired through `create_conversation()` → `Conversation` → runtime fallback chain.
 
 **Default agents:**
 - **Coder:** Full tool set, `can_write=True`, all SI layers on

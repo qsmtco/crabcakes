@@ -78,13 +78,20 @@ def _make_runtime(fallback_provider=None, fallback_model=None):
 
 
 def _setup_conversation(rt, session_key="test-session"):
-    """Create a conversation in the runtime and return it."""
+    """Create a conversation in the runtime and return it.
+
+    Propagates fallback_provider/fallback_model from the runtime's AgentConfig
+    onto the Conversation, matching how create_conversation() wires them in
+    production (Phase 3: fallback_provider or self._config.fallback_provider).
+    """
     from models.conversation import Conversation
 
     conv = Conversation(
         agent_name="TestAgent",
         model="local-kb/local-kb",
         system_prompt="You are a test agent.",
+        fallback_provider=rt._config.fallback_provider,
+        fallback_model=rt._config.fallback_model,
     )
     rt._conversations[session_key] = conv
     return conv

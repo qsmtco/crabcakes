@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from agent.config import LLMProviderConfig
 
 from agent.enforcement import check as _enforcement_check
+from agent.kb_lookup import kb_lookup
 
 # KB provider sentinel — imported lazily to avoid requiring kb_server when KB is unused.
 try:
@@ -728,6 +729,23 @@ def _extract_usage(response: dict, provider: str = "openai") -> tuple[int, int]:
     )
 
 
+# ── KB synthesis helper ───────────────────────────────────────────────────────
+
+def _format_chunks_for_llm(chunks: list) -> str:
+    """Format KB chunks as context for LLM synthesis.
+
+    Takes a list of KBChunk objects and returns a formatted string
+    suitable for injection into LLM messages as context.
+    """
+    if not chunks:
+        return ""
+    parts = ["[KB Context — relevant documentation chunks:]"]
+    for chunk in chunks:
+        parts.append(f"\nSource: {chunk.source} :: {chunk.section}\n{chunk.text}\n")
+    parts.append("[End KB Context]\n")
+    return "\n".join(parts)
+
+
 # ── Conversation persistence ──────────────────────────────────────────────────
 
 def _conversations_dir() -> str:
@@ -1102,6 +1120,17 @@ class AgentRuntime:
                     except Exception as e:
                         logger.warning(f"Failed to load MCP tools for {session_key}: {e}")
 
+                # KB pre-fetch: if fallback is configured, pre-fetch KB chunks
+                # for potential synthesis when the fallback fires.
+                kb_context = None
+                if conv.fallback_provider:
+                    try:
+                        chunks = kb_lookup(text, top_k=5, min_score=0.35)
+                        if chunks:
+                            kb_context = _format_chunks_for_llm(chunks)
+                    except Exception:
+                        pass  # No KB context — fallback LLM answers without grounding
+
                 # Call LLM
                 response = self._call_llm(session_key, messages, tools)
 
@@ -1163,7 +1192,19 @@ class AgentRuntime:
                         fallback_model = conv.fallback_model or conv.fallback_provider
                         conv.model = fallback_model
                         try:
-                            fb_response = self._call_llm(session_key, messages, tools)
+                            # Inject KB context into messages for fallback LLM
+                            if kb_context:
+                                messages_with_context = list(messages)
+                                for i in range(len(messages_with_context) - 1, -1, -1):
+                                    if messages_with_context[i].get("role") == "user":
+                                        messages_with_context[i] = {
+                                            "role": "user",
+                                            "content": f"{kb_context}\n\nUser question: {messages_with_context[i]['content']}",
+                                        }
+                                        break
+                                fb_response = self._call_llm(session_key, messages_with_context, tools)
+                            else:
+                                fb_response = self._call_llm(session_key, messages, tools)
                             fb_provider = fallback_model.split("/")[0] if "/" in fallback_model else fallback_model
                             fb_text = _extract_text_content(fb_response, fb_provider)
                             fb_tool_calls = _extract_tool_calls(fb_response, fb_provider)
