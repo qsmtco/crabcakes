@@ -72,10 +72,38 @@ def stage_all(project_path: str) -> GitResult:
         return GitResult(success=False, stdout="", error=str(e), sha=None)
 
 
-def commit(project_path: str, message: str) -> GitResult:
-    """Commit staged changes. Returns SHA in result.sha."""
+def commit(project_path: str, message: str, allow_empty: bool = False) -> GitResult:
+    """Commit staged changes. Returns SHA in result.sha.
+
+    Args:
+        project_path: Path to the git repository.
+        message: Commit message.
+        allow_empty: If True, allow empty commits (no staged changes). Use only
+            for checkpoint markers where the SHA itself is the desired output.
+            Default is False — refuse to create empty commits, since they
+            pollute the git log with the captain's signature on nothing.
+
+    Returns:
+        GitResult. If allow_empty is False and the working tree is clean,
+        returns success=False with error="nothing to commit (working tree clean)".
+    """
     try:
         repo = gitpython.Repo(project_path)
+        # Empty-check: refuse to commit if there's nothing staged (unless caller
+        # explicitly allows it via allow_empty=True).
+        # On a fresh repo with no commits, HEAD doesn't resolve — treat that as
+        # "has changes" since the first commit is always valid.
+        if not allow_empty:
+            try:
+                has_staged = bool(repo.index.diff("HEAD"))
+            except Exception:
+                # HEAD doesn't resolve (no commits yet) — allow the commit
+                has_staged = True
+            if not has_staged:
+                return GitResult(
+                    success=False, stdout="", error="nothing to commit (working tree clean)",
+                    sha=None,
+                )
         commit_obj = repo.index.commit(message)
         return GitResult(success=True, stdout=str(commit_obj.hexsha), error="", sha=commit_obj.hexsha)
     except Exception as e:

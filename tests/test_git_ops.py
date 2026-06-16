@@ -93,6 +93,43 @@ class TestCommit:
         assert result.success is True
         assert result.sha is not None
 
+    def test_commit_refuses_empty_when_allow_empty_false(self, repo_with_commit):
+        """When the working tree is clean and allow_empty=False (default),
+        commit() returns success=False with 'nothing to commit' error.
+        No commit is created.
+        """
+        path, original_sha = repo_with_commit
+        result = commit(path, "test empty commit")
+        assert result.success is False
+        assert "nothing to commit" in result.error
+        # HEAD didn't change — no commit was created
+        head_after = get_head_sha(path)
+        assert head_after.sha == original_sha
+
+    def test_commit_allows_empty_when_allow_empty_true(self, repo_with_commit):
+        """When the working tree is clean and allow_empty=True, commit() creates
+        an empty commit with the given message. Use only for checkpoint markers.
+        """
+        path, original_sha = repo_with_commit
+        result = commit(path, "test checkpoint", allow_empty=True)
+        assert result.success is True
+        assert result.sha is not None
+        assert result.sha != original_sha  # new commit created
+
+    def test_commit_succeeds_when_changes_staged(self, repo_with_commit):
+        """When the working tree has staged changes, commit() creates a
+        non-empty commit with the given message. allow_empty has no effect.
+        """
+        path, _ = repo_with_commit
+        # Stage a new file
+        fpath = os.path.join(path, "new_file.txt")
+        with open(fpath, "w") as f:
+            f.write("new content\n")
+        stage_all(path)
+        result = commit(path, "real change")
+        assert result.success is True
+        assert result.sha is not None
+
 
 class TestGetHeadSha:
     def test_get_head_sha(self, repo_with_commit):
