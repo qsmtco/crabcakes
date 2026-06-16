@@ -409,14 +409,29 @@ class TestActivityHandlerWiring:
         self, handler, deps, gw
     ):
         # SPEC-activity-drawer Phase 1: when an ActivityDrawer is set,
-        # set_on_activity_bubble is wired to drawer.append_event (not the
-        # removed _render_activity_bubble).
+        # set_on_activity_bubble is wired via an adapter that converts
+        # ActivityBubble → dict (via to_drawer_row()) then calls
+        # drawer.append_event. ChatHandler no longer renders activity.
+        from models.activity import ActivityBubble
+
         mock_drawer = MagicMock()
         handler.set_activity_drawer(mock_drawer)
         handler.sync(gw)
-        deps["activity_handler"].set_on_activity_bubble.assert_called_once_with(
-            mock_drawer.append_event
+
+        # set_on_activity_bubble should have been called once with a callable
+        deps["activity_handler"].set_on_activity_bubble.assert_called_once()
+        adapter = deps["activity_handler"].set_on_activity_bubble.call_args[0][0]
+        assert callable(adapter)
+
+        # Invoking the adapter with an ActivityBubble should route to
+        # drawer.append_event with the dict from to_drawer_row()
+        bubble = ActivityBubble(
+            type="tool_end",
+            session_key="test-session",
+            tool_name="read_file",
         )
+        adapter(bubble)
+        mock_drawer.append_event.assert_called_once_with(bubble.to_drawer_row())
 
 
 class TestOrder:
