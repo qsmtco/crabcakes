@@ -434,6 +434,12 @@ class AgentRuntimeHandler:
                 # Sync role (in case agent's role was edited)
                 if agent_def.role:
                     conv.agent_role = agent_def.role
+                # Sync MCP servers (in case agent's mcp_server list was edited)
+                if agent_def.mcp_servers is not None:
+                    conv.mcp_servers = list(agent_def.mcp_servers)
+                # Sync SI enforcement (in case agent's self_improvement was edited)
+                if si_enforcement is not None:
+                    conv.si_enforcement = si_enforcement
                 # conv.fallback_model assignment removed in 2026-06-15 — runtime derives from provider card.
 
         rt.send_message(session_key, text)

@@ -345,3 +345,51 @@ class TestAgentRuntimeHandlerPassesRole:
         # The conversation's agent_role should now be "helper"
         assert existing_conv.agent_role == "helper", \
             f"agent_role not synced: {existing_conv.agent_role!r}"
+
+    def test_mcp_servers_and_si_enforcement_synced_on_agent_edit(self):
+        """When agent_def's mcp_servers or self_improvement changes, the existing
+        conversation's mcp_servers and si_enforcement are updated.
+
+        Regression test for adversarialDebugger related-bug follow-up to T2-F1:
+        same edit-sync pattern as agent_role, but for mcp_servers and si_enforcement.
+        """
+        from ui.handlers.agent_runtime_handler import AgentRuntimeHandler
+        from unittest.mock import MagicMock
+
+        handler = AgentRuntimeHandler(MagicMock(), MagicMock())
+        mock_rt = MagicMock()
+        existing_conv = MagicMock()
+        existing_conv.agent_role = "helper"
+        existing_conv.api_key = None
+        existing_conv.model = None
+        existing_conv.app_title = ""
+        existing_conv.fallback_provider = None
+        # Stale values that should be overwritten
+        existing_conv.mcp_servers = ["old-server"]
+        existing_conv.si_enforcement = False
+        mock_rt.get_conversation.return_value = existing_conv
+        handler._runtimes["X"] = mock_rt
+
+        agent_def = MagicMock()
+        agent_def.display_name = "X"
+        agent_def.role = "helper"
+        agent_def.fallback_provider = None
+        agent_def.fallback_model = None
+        agent_def.system_prompt = "sys"
+        agent_def.tools = []
+        agent_def.mcp_servers = ["new-server-1", "new-server-2"]
+        agent_def.app_title = ""
+        agent_def.api_key = None
+        agent_def.model = None
+        agent_def.get_self_improvement_config = MagicMock(return_value={"enforcement": True})
+        handler._agents["X"] = agent_def
+        handler._active_project = None
+
+        handler.send_to_special_agent("X", "hello")
+
+        # mcp_servers should be updated to the new list
+        assert existing_conv.mcp_servers == ["new-server-1", "new-server-2"], \
+            f"mcp_servers not synced: {existing_conv.mcp_servers!r}"
+        # si_enforcement should be True (from get_self_improvement_config)
+        assert existing_conv.si_enforcement is True, \
+            f"si_enforcement not synced: {existing_conv.si_enforcement!r}"
