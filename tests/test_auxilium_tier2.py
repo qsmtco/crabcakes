@@ -193,6 +193,34 @@ class TestKBContextInjection:
         assert "KB Context" not in last_user.get("content", "")
         assert "how do I configure" in last_user.get("content", "")
 
+    def test_inject_kb_context_used_by_fallback_path(self):
+        """The KB fallback chain uses the same _inject_kb_context helper as Tier 2."""
+        rt, sk = _make_runtime(agent_role="helper")
+        messages = [
+            {"role": "system", "content": "You are Auxilium."},
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "first answer"},
+            {"role": "user", "content": "second question"},
+        ]
+        kb_context = "[KB Context]\nSource: knowledge/install.md\nGTK4 install on Ubuntu..."
+        current_text = "second question"
+        out = rt._inject_kb_context(messages, kb_context, current_text)
+        # The output is a new list (defensive copy)
+        assert out is not messages
+        # The system message is the same object (no mutation)
+        assert out[0] is messages[0]
+        # The first user message is the same object (only the last is modified)
+        assert out[1] is messages[1]
+        # The assistant message is the same object
+        assert out[2] is messages[2]
+        # The last user message is a new dict with KB context prepended
+        assert out[3] is not messages[3]
+        assert "GTK4 install on Ubuntu" in out[3]["content"]
+        assert "second question" in out[3]["content"]
+        # Specifically, the format is "{kb_context}\n\nUser question: {original}"
+        assert out[3]["content"].startswith("[KB Context]")
+        assert "User question: second question" in out[3]["content"]
+
 
 # ── Test Class 4: Multi-turn synthesis ────────────────────────────────────────
 

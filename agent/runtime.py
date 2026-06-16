@@ -1250,19 +1250,11 @@ class AgentRuntime:
                             fallback_model = fallback_provider_name
                         conv.model = fallback_model
                         try:
-                            # Inject KB context into messages for fallback LLM
-                            if kb_context:
-                                messages_with_context = list(messages)
-                                for i in range(len(messages_with_context) - 1, -1, -1):
-                                    if messages_with_context[i].get("role") == "user":
-                                        messages_with_context[i] = {
-                                            "role": "user",
-                                            "content": f"{kb_context}\n\nUser question: {messages_with_context[i]['content']}",
-                                        }
-                                        break
-                                fb_response = self._call_llm(session_key, messages_with_context, tools)
-                            else:
-                                fb_response = self._call_llm(session_key, messages, tools)
+                            # Inject KB context into fallback LLM call. Uses the
+                            # same helper as the Tier 2 primary-call path so
+                            # both paths share one format string.
+                            messages_with_context = self._inject_kb_context(messages, kb_context, text)
+                            fb_response = self._call_llm(session_key, messages_with_context, tools)
                             fb_provider = fallback_model.split("/")[0] if "/" in fallback_model else fallback_model
                             fb_text = _extract_text_content(fb_response, fb_provider)
                             fb_tool_calls = _extract_tool_calls(fb_response, fb_provider)
