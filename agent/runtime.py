@@ -787,6 +787,11 @@ def _save_conversation_to_disk(conv: "Conversation", session_key: str) -> str:
         "step_count": conv.step_count,
         "allowed_tools": conv.allowed_tools,
         "api_key": conv.api_key,
+        "mcp_servers": list(conv.mcp_servers) if conv.mcp_servers else [],
+        "si_enforcement": conv.si_enforcement,
+        "agent_role": conv.agent_role,
+        "fallback_provider": conv.fallback_provider,
+        "fallback_model": conv.fallback_model,
         "app_title": conv.app_title,
         "created_at": conv.created_at.isoformat() if hasattr(conv.created_at, "isoformat") else conv.created_at,
     }
@@ -841,6 +846,11 @@ def _load_conversation_from_disk(session_key: str) -> tuple["Conversation", dict
         allowed_tools=data.get("allowed_tools"),
         api_key=data.get("api_key"),
         app_title=data.get("app_title", ""),
+        mcp_servers=data.get("mcp_servers", []),
+        si_enforcement=data.get("si_enforcement"),
+        agent_role=data.get("agent_role", ""),
+        fallback_provider=data.get("fallback_provider"),
+        fallback_model=data.get("fallback_model"),
     )
     return conv, data
 
@@ -1003,6 +1013,7 @@ class AgentRuntime:
 
         conv = Conversation(
             agent_name=agent_name,
+            agent_role=agent_role,
             project_path=project_path,
             allowed_tools=allowed_tools,
             mcp_servers=mcp_servers if mcp_servers else [],
@@ -1064,6 +1075,34 @@ class AgentRuntime:
 
     # ── Tool loop ─────────────────────────────────────────────────────────────
 
+    def _inject_kb_context(self, messages: list[dict], kb_context: str, text: str) -> list[dict]:
+        """Inject KB context into the most recent user message.
+
+        Modifies a copy of messages. The KB context is prepended to the last
+        user message's content so the LLM sees it as part of the current turn.
+
+        Args:
+            messages: The full message list from to_api_messages().
+            kb_context: Formatted KB context string from _format_chunks_for_llm().
+            text: The current user message text (used as a fallback search key).
+
+        Returns:
+            A new message list with KB context injected into the last user message.
+        """
+        # Build a shallow copy — only the modified message is a new dict
+        injected = list(messages)
+        # Find the last user message and prepend KB context to it
+        for i in range(len(injected) - 1, -1, -1):
+            if injected[i].get("role") == "user":
+                original_content = injected[i].get("content", "")
+                injected[i] = {
+                    "role": "user",
+                    "content": f"{kb_context}\n\nUser question: {original_content or text}",
+                }
+                return injected
+        # No user message found — return unchanged
+        return messages
+
     def _run_loop(self, session_key: str, text: str) -> None:
         """Background thread: run the full tool loop for one user message."""
         with self._lock:
@@ -1119,20 +1158,26 @@ class AgentRuntime:
                     except Exception as e:
                         logger.warning(f"Failed to load MCP tools for {session_key}: {e}")
 
-                # KB pre-fetch: if fallback is configured, pre-fetch KB chunks
-                # for potential synthesis when the fallback fires.
+                # KB synthesis (Tier 2): for auxilium, run kb_lookup on every
+                # user message and inject chunks into the primary LLM call.
+                # This is separate from the KB fallback chain (which fires when
+                # the primary returns KB_OUT_OF_SCOPE — see lines ~1177-1241).
                 kb_context = None
-                if conv.fallback_provider:
+                if conv.agent_role == "helper":
                     try:
                         from agent.kb_lookup import kb_lookup
                         chunks = kb_lookup(text, top_k=5, min_score=0.35)
                         if chunks:
                             kb_context = _format_chunks_for_llm(chunks)
                     except Exception:
-                        pass  # No KB context — fallback LLM answers without grounding
+                        pass  # kb_lookup is fail-soft — kb_context stays None, LLM proceeds without KB
 
-                # Call LLM
-                response = self._call_llm(session_key, messages, tools)
+                # Inject KB context into the primary LLM call for auxilium.
+                # If kb_context is None (no relevant chunks or lookup failed), this is a no-op.
+                messages_for_call = messages
+                if kb_context:
+                    messages_for_call = self._inject_kb_context(messages, kb_context, text)
+                response = self._call_llm(session_key, messages_for_call, tools)
 
                 # Extract content and tool calls
                 # Determine provider from conversation model

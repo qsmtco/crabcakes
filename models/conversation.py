@@ -95,6 +95,7 @@ class Conversation:
     This dataclass holds everything that persists across turns.
     """
     agent_name: str
+    agent_role: str = ""          # "helper" for Auxilium, "" for other agents
     project_path: str | None = None
     allowed_tools: list[str] | None = None  # filtered tool set — None means all tools
     mcp_servers: list[str] = field(default_factory=list)  # MCP servers for this conversation

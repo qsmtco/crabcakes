@@ -1367,9 +1367,41 @@ def reset_cache() -> None          # clears module-level state (for tests)
 
 **Fail-soft behavior:** Returns `[]` on missing index, missing model, no confident match, or any internal error. Logs at DEBUG/WARNING. The agent must treat empty list as "I don't have info on that" — never as a crash.
 
-**Integration with AgentRuntime (KB Provider — Phases 1-5):** The KB lookup is wired into the runtime via the KB HTTP server (`agent/kb_server.py`) which wraps `kb_lookup()` in an OpenAI-compatible API. The server is registered as a `local-kb` provider in `providers.yaml`. When the primary provider returns `[KB_OUT_OF_SCOPE]`, the runtime fallback chain retries with the per-agent `conv.fallback_provider` (from `SpecialAgentDef`, wired through `create_conversation()`). Global `AgentConfig.fallback_provider` serves as a default when no per-agent value is set. If the fallback fires, `kb_lookup()` is called directly by the runtime to pre-fetch KB chunks, which are injected as context into the fallback LLM messages (Phase 2 synthesis). See `prompts/system/auxilium.md` for synthesis instructions.
+**Integration with AgentRuntime (KB Provider — Phases 1-5):** The KB lookup is wired into the runtime via the KB HTTP server (`agent/kb_server.py`) which wraps `kb_lookup()` in an OpenAI-compatible API. The server is registered as a `local-kb` provider in `providers.yaml`. When the primary provider returns `[KB_OUT_OF_SCOPE]`, the runtime fallback chain retries with the per-agent `conv.fallback_provider` (from `SpecialAgentDef`, wired through `create_conversation()`). Global `AgentConfig.fallback_provider` serves as a default when no per-agent value is set. If the fallback fires, `kb_lookup()` is called directly by the runtime to pre-fetch KB chunks, which are injected as context into the **fallback** LLM messages. Separately, when `conv.agent_role == "helper"`, the runtime also runs `kb_lookup()` on every user message and injects the chunks into the **primary** LLM call (Auxilium Tier 2 KB synthesis). Both paths use the same LLM-side instructions in `prompts/system/auxilium.md`. See §3.21q.5b for the primary-call path.
 
 **No `ui/` imports.** Lives in `agent/` per §2.
+
+### 3.21q.5b `agent/runtime.py:_inject_kb_context` — KB Synthesis for Auxilium (Tier 2)
+
+**Responsibility:** When `conv.agent_role == "helper"`, `AgentRuntime._run_loop()` runs `kb_lookup()` on every user message and injects the resulting chunks into the primary LLM call. This is **separate from the KB fallback chain** (which fires only when the primary returns `KB_OUT_OF_SCOPE`). The LLM synthesizes a conversational answer from the chunks per `prompts/system/auxilium.md` Phase 2 instructions.
+
+**Public API:**
+```python
+class AgentRuntime:
+    def _inject_kb_context(self, messages: list[dict], kb_context: str, text: str) -> list[dict]:
+        """Prepend KB context to the most recent user message.
+
+        Returns a new list — does not mutate the input. If no user message
+        is found in the list, returns the input unchanged (defensive).
+        """
+```
+
+**Architecture:**
+- Gate: `if conv.agent_role == "helper":` in `_run_loop` (replaces the previous `if conv.fallback_provider:` gate). Non-auxilium agents (`agent_role != "helper"`) skip KB synthesis entirely.
+- Failure mode: `kb_lookup()` is fail-soft by design (`agent/kb_lookup.py`). The runtime wraps it in `try/except Exception: pass` — if the lookup raises, `kb_context` stays `None` and the primary LLM call proceeds without KB context.
+- Empty result: `kb_lookup()` returns `[]` for low-confidence or missing-index cases. The runtime leaves `kb_context = None` and the primary call proceeds without injection. The LLM answers from general knowledge (or says "I don't have specific docs on this" per `prompts/system/auxilium.md`).
+- Multi-turn: `kb_lookup()` runs **fresh on every message** with the current user message as the query. Follow-up questions ("and on Windows?") re-query the KB with the new query, not a cached result.
+- Conversation dataclass: `Conversation` has a new `agent_role: str = ""` field. The `agent_runtime_handler.py:send_to_special_agent()` path passes `agent_role=agent_def.role` to `create_conversation()`, which propagates it to the `Conversation(...)` constructor. The `agent_role` value also round-trips through `_save_conversation_to_disk` and `_load_conversation_from_disk` so KB synthesis continues after a restart.
+- KB fallback chain unchanged: lines ~1223-1250 in `agent/runtime.py` retain the existing `KB_OUT_OF_SCOPE && fallback_provider && !_fallback_attempted` gate. The two paths (primary synthesis + fallback synthesis) are independent.
+
+**No `ui/` imports.** The synthesis logic is in `agent/runtime.py` per §2.
+
+**Tests:** `tests/test_auxilium_tier2.py` (10 tests, 5 classes):
+- `TestConversationAgentRole` — field exists, defaults to `""`
+- `TestKBLookupFiresForAuxilium` — gate behavior (helper, non-helper, empty role, every-message)
+- `TestKBContextInjection` — chunks prepended to last user; absent when lookup empty; exception does not break the call
+- `TestMultiTurnSynthesis` — fresh `kb_lookup()` on follow-up
+- `TestAgentRuntimeHandlerPassesRole` — `send_to_special_agent` passes `agent_role=agent_def.role`
 
 ### 3.21q.5a `agent/kb_server.py` — KB HTTP Server (KB Provider Phase 1)
 
@@ -2922,6 +2954,8 @@ pytest              # auto-discovers tests/ via pytest.ini
 - `tests/test_agent_command_handler.py` — AgentCommandHandler: relay, command extraction, chain depth
 - `tests/test_agent_defs.py` — agent_defs: load, validate, save, default seeding
 - `tests/test_agent_runtime.py` — AgentRuntime: conversation lifecycle, tool loop, streaming
+- `tests/test_auxilium_tier1.py` — Auxilium Tier 1 first-run wizard: handler imports, state machine
+- `tests/test_auxilium_tier2.py` — Auxilium Tier 2 KB synthesis: agent_role field, kb_lookup gate, KB context injection, multi-turn, handler wiring
 - `tests/test_audit_parser.py` — audit_parser: extract AuditReport from agent messages
 - `tests/test_block_parser.py` — block_parser: extract_blocks() segment classification
 - `tests/test_bug_fixes.py` — regression tests for specific fixed bugs
@@ -3359,6 +3393,8 @@ tests/                           # 61 files (57 test + 4 support)
     ├── test_agent_defs.py
     ├── test_agent_list_handler.py
     ├── test_agent_runtime.py
+    ├── test_auxilium_tier1.py    # Auxilium Tier 1 first-run wizard
+    ├── test_auxilium_tier2.py    # Auxilium Tier 2 KB synthesis
     ├── test_agents.py
     ├── test_architecture.py
     ├── test_audit_parser.py
