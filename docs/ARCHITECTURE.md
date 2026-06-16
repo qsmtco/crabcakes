@@ -1230,7 +1230,7 @@ class ToolCallStatus(str, Enum): PENDING = "pending" | EXECUTING = "executing" |
 
 @dataclass ToolCall: call_id, tool_name, arguments, result, status, started_at, completed_at
 @dataclass Message: role, content, tool_calls, tool_call_id, timestamp, tokens_used
-@dataclass Conversation: agent_name, project_path, system_prompt, messages, model, fallback_provider, fallback_model, created_at, total_tokens, total_cost, step_count
+@dataclass Conversation: agent_name, project_path, system_prompt, messages, model, fallback_provider, created_at, total_tokens, total_cost, step_count
 
     def add_user_message(content) -> Message
     def add_assistant_message(content, tool_calls) -> Message
@@ -1320,7 +1320,7 @@ def set_approval_callback(cb) -> None              # cb(session_key, tool_name, 
 ```python
 @dataclass LLMProviderConfig: name, base_url, api_key, default_model, supports_tools, supports_streaming, max_tokens
 @dataclass EnforcementConfig: enabled, syntax_check, test_run, lint_check, syntax_timeout_seconds, test_timeout_seconds, lint_timeout_seconds, max_output_chars, skip_patterns
-@dataclass AgentConfig: providers, default_provider, default_model, max_tool_iterations, tool_timeout_seconds, auto_save_conversations, cost_limit, step_limit, enforcement, fallback_provider, fallback_model
+@dataclass AgentConfig: providers, default_provider, default_model, max_tool_iterations, tool_timeout_seconds, auto_save_conversations, cost_limit, step_limit, enforcement, fallback_provider
 
 def load_agent_config() -> AgentConfig      # reads <config_dir>/agent.json; checks chmod >600
 def get_api_key(provider_name) -> str | None
@@ -1483,7 +1483,7 @@ class AuxiliumWizard(Gtk.Box):
     conv_id_prefix, display_name, role, emoji, color, tools, can_write,
     llm_name: str | None,                 # per-agent provider card name (None → global default)
     fallback_provider: str | None,        # KB fallback provider (e.g. "openrouter")
-    fallback_model: str | None,           # KB fallback model (e.g. "openrouter/owl-alpha")
+    # fallback_model removed in 2026-06-15 — see SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md
     api_key: str | None,                  # per-agent API key override
     app_title: str | None,                # per-agent app title override
     self_improvement: dict,
@@ -1507,7 +1507,7 @@ def reload_registry() -> None   # force reload after create/edit/delete
 
 **Project onboarding agents:** Agents with `auto_add_to_projects=True` are automatically added to every new project's team. See `ui/handlers/project_handler.py` Phase 5.
 
-**Per-agent model:** `llm_name` field specifies the provider card name for this agent (None → global default). `fallback_provider` and `fallback_model` specify the KB fallback — when the KB returns `[KB_OUT_OF_SCOPE]`, the runtime retries with this provider. Resolved in `AgentRuntimeHandler._resolve_agent_model()` and wired through `create_conversation()` → `Conversation` → runtime fallback chain.
+**Per-agent model:** `llm_name` field specifies the provider card name for this agent (None → global default). `fallback_provider` specifies the KB fallback — when the KB returns `[KB_OUT_OF_SCOPE]`, the runtime retries with this provider. The model is derived from the selected provider card's `default_model` (same derivation as the primary path in `AgentRuntimeHandler._resolve_agent_model()`). Wired through `create_conversation()` → `Conversation` → runtime fallback chain. See `docs/specs/SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md`.
 
 **Default agents:**
 - **Coder:** Full tool set, `can_write=True`, all SI layers on

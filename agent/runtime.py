@@ -1189,7 +1189,20 @@ class AgentRuntime:
                             session_key, conv.fallback_provider,
                         )
                         original_model = conv.model
-                        fallback_model = conv.fallback_model or conv.fallback_provider
+                        # Resolve fallback model the same way the primary path does:
+                        #   f"{provider_name}/{provider.default_model}"
+                        # See AgentRuntimeHandler._resolve_agent_model() at ui/handlers/agent_runtime_handler.py
+                        fallback_provider_name = conv.fallback_provider
+                        fallback_provider_cfg = self._config.providers.get(fallback_provider_name) if fallback_provider_name else None
+                        if fallback_provider_cfg and fallback_provider_cfg.default_model:
+                            default_model = fallback_provider_cfg.default_model
+                            if "/" in default_model:
+                                fallback_model = default_model
+                            else:
+                                fallback_model = f"{fallback_provider_name}/{default_model}"
+                        else:
+                            # Provider not configured — fall back to provider name (runtime will error clearly)
+                            fallback_model = fallback_provider_name
                         conv.model = fallback_model
                         try:
                             # Inject KB context into messages for fallback LLM

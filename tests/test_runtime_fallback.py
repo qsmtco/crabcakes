@@ -59,8 +59,12 @@ def _make_normal_response(text="Here is your answer."):
     }
 
 
-def _make_runtime(fallback_provider=None, fallback_model=None):
-    """Create an AgentRuntime with KB + fallback config."""
+def _make_runtime(fallback_provider=None):
+    """Create an AgentRuntime with KB + fallback config.
+
+    fallback_model parameter removed in 2026-06-15 — runtime derives from
+    the provider card's default_model. See SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md.
+    """
     providers = {
         "local-kb": _make_kb_provider_cfg(),
         "openrouter": _make_provider_cfg(),
@@ -70,7 +74,6 @@ def _make_runtime(fallback_provider=None, fallback_model=None):
         default_provider="local-kb",
         default_model="local-kb/local-kb",
         fallback_provider=fallback_provider,
-        fallback_model=fallback_model,
     )
     rt = AgentRuntime(config)
     rt.start()
@@ -80,9 +83,12 @@ def _make_runtime(fallback_provider=None, fallback_model=None):
 def _setup_conversation(rt, session_key="test-session"):
     """Create a conversation in the runtime and return it.
 
-    Propagates fallback_provider/fallback_model from the runtime's AgentConfig
-    onto the Conversation, matching how create_conversation() wires them in
-    production (Phase 3: fallback_provider or self._config.fallback_provider).
+    Propagates fallback_provider from the runtime's AgentConfig onto the
+    Conversation, matching how create_conversation() wires it in production
+    (Phase 3: fallback_provider or self._config.fallback_provider).
+
+    fallback_model parameter removed in 2026-06-15 — runtime derives from
+    the provider card's default_model.
     """
     from models.conversation import Conversation
 
@@ -91,7 +97,6 @@ def _setup_conversation(rt, session_key="test-session"):
         model="local-kb/local-kb",
         system_prompt="You are a test agent.",
         fallback_provider=rt._config.fallback_provider,
-        fallback_model=rt._config.fallback_model,
     )
     rt._conversations[session_key] = conv
     return conv
@@ -104,10 +109,7 @@ class TestFallbackOnOutOfScope:
     def test_fallback_on_out_of_scope(self):
         """When primary returns KB_OUT_OF_SCOPE and fallback is configured,
         the runtime retries with the fallback provider."""
-        rt = _make_runtime(
-            fallback_provider="openrouter",
-            fallback_model="openrouter/test-model",
-        )
+        rt = _make_runtime(fallback_provider="openrouter")
         conv = _setup_conversation(rt)
 
         call_count = {"n": 0}
@@ -132,7 +134,7 @@ class TestFallbackOnOutOfScope:
 class TestNoFallbackWithoutConfig:
     def test_no_fallback_without_config(self):
         """When fallback_provider is None, KB_OUT_OF_SCOPE is returned as-is."""
-        rt = _make_runtime(fallback_provider=None, fallback_model=None)
+        rt = _make_runtime(fallback_provider=None)
         conv = _setup_conversation(rt)
 
         call_count = {"n": 0}
@@ -154,10 +156,7 @@ class TestNoFallbackWithoutConfig:
 class TestFallbackOneShot:
     def test_fallback_one_shot(self):
         """If fallback provider also returns KB_OUT_OF_SCOPE, no third call."""
-        rt = _make_runtime(
-            fallback_provider="openrouter",
-            fallback_model="openrouter/test-model",
-        )
+        rt = _make_runtime(fallback_provider="openrouter")
         conv = _setup_conversation(rt)
 
         call_count = {"n": 0}
@@ -182,10 +181,7 @@ class TestFallbackResetOnNewMessage:
     def test_fallback_reset_on_new_message(self):
         """_fallback_attempted is reset when send_message is called again,
         so the second message can also trigger fallback."""
-        rt = _make_runtime(
-            fallback_provider="openrouter",
-            fallback_model="openrouter/test-model",
-        )
+        rt = _make_runtime(fallback_provider="openrouter")
         conv = _setup_conversation(rt)
 
         # First message: set _fallback_attempted
@@ -197,3 +193,42 @@ class TestFallbackResetOnNewMessage:
             rt.send_message("test-session", "second question")
 
         assert conv._fallback_attempted is False
+
+
+# ── Derivation test ─────────────────────────────────────────────────────────────
+
+
+class TestFallbackModelDerivation:
+    """The runtime derives the fallback model from the provider card's default_model."""
+
+    def test_derives_from_provider_default_model(self):
+        """When fallback_provider is set, the runtime uses that provider's default_model.
+
+        The openrouter provider card has default_model='openrouter/test-model'
+        (see _make_provider_cfg). The runtime should set conv.model to
+        'openrouter/test-model' for the fallback call — not a hard-coded string.
+        """
+        rt = _make_runtime(fallback_provider="openrouter")
+        conv = _setup_conversation(rt)
+
+        captured_models = []
+
+        def mock_call_llm(session_key, messages, tools):
+            # Capture conv.model at the moment of the call
+            captured_models.append(conv.model)
+            if len(captured_models) == 1:
+                return _make_oob_response()
+            return _make_normal_response("Derived fallback answer.")
+
+        responses = []
+        rt._on_response_complete = lambda sk, text: responses.append(text)
+
+        with mock.patch.object(rt, "_call_llm", side_effect=mock_call_llm):
+            rt._run_loop("test-session", "What is quantum computing?")
+
+        # Primary call uses local-kb model
+        assert captured_models[0] == "local-kb/local-kb"
+        # Fallback call uses the provider card's default_model (derived, not stored)
+        assert captured_models[1] == "openrouter/test-model"
+        # Model was restored after fallback
+        assert conv.model == "local-kb/local-kb"

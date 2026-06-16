@@ -2,10 +2,10 @@
 # Tests for the fallback provider fields in the agent builder.
 #
 # Tests cover:
-#   - Handler create_new() includes fallback fields
-#   - Handler save/load round-trips fallback fields through YAML
-#   - get_values() includes fallback_provider and fallback_model
-#   - _normalize_fallback_fields ensures keys exist after parsing
+#   - Handler create_new() includes fallback_provider (and NOT fallback_model)
+#   - Handler save/load round-trips fallback_provider through YAML
+#   - _normalize_fallback_fields ensures fallback_provider key exists after parsing
+#   - Old YAMLs with fallback_model still load (backward compat)
 
 from __future__ import annotations
 
@@ -37,35 +37,39 @@ def temp_config_dir(tmp_path, monkeypatch):
 
 
 class TestHandlerCreateNew:
-    def test_create_new_includes_fallback_fields(self):
-        """create_new() returns dict with fallback_provider and fallback_model."""
+    def test_create_new_includes_fallback_provider(self):
+        """create_new() returns dict with fallback_provider (and no fallback_model)."""
         handler = AgentBuilderHandler()
         template = handler.create_new()
         assert "fallback_provider" in template
-        assert "fallback_model" in template
         assert template["fallback_provider"] is None
-        assert template["fallback_model"] is None
+        assert "fallback_model" not in template
 
 
 class TestNormalizeFallbackFields:
-    def test_adds_missing_keys(self):
-        """_normalize_fallback_fields adds keys if missing."""
+    def test_adds_missing_provider_key(self):
+        """_normalize_fallback_fields adds fallback_provider if missing."""
         d = {"name": "TestAgent"}
         _normalize_fallback_fields(d)
         assert "fallback_provider" in d
-        assert "fallback_model" in d
+        assert d["fallback_provider"] is None
 
-    def test_preserves_existing_keys(self):
-        """_normalize_fallback_fields preserves existing values."""
-        d = {"name": "TestAgent", "fallback_provider": "openrouter", "fallback_model": "openrouter/owl-alpha"}
+    def test_preserves_existing_provider(self):
+        """_normalize_fallback_fields preserves existing fallback_provider value."""
+        d = {"name": "TestAgent", "fallback_provider": "openrouter"}
         _normalize_fallback_fields(d)
         assert d["fallback_provider"] == "openrouter"
-        assert d["fallback_model"] == "openrouter/owl-alpha"
+
+    def test_does_not_add_fallback_model(self):
+        """_normalize_fallback_fields does not add fallback_model (removed in 2026-06-15)."""
+        d = {"name": "TestAgent"}
+        _normalize_fallback_fields(d)
+        assert "fallback_model" not in d
 
 
 class TestYamlRoundTrip:
     def test_save_load_fallback_fields(self, temp_config_dir):
-        """Agent YAML with fallback fields survives save → load round-trip."""
+        """Agent YAML with fallback_provider survives save → load round-trip."""
         agent_def = {
             "name": "TestAgent",
             "emoji": "🤖",
@@ -74,7 +78,6 @@ class TestYamlRoundTrip:
             "tools": ["read_file", "list_files"],
             "llm_name": "local-kb",
             "fallback_provider": "openrouter",
-            "fallback_model": "openrouter/owl-alpha",
             "self_improvement": {},
         }
 
@@ -83,7 +86,6 @@ class TestYamlRoundTrip:
         loaded = load_agent_def("TestAgent")
         assert loaded is not None
         assert loaded.get("fallback_provider") == "openrouter"
-        assert loaded.get("fallback_model") == "openrouter/owl-alpha"
 
     def test_save_load_without_fallback_fields(self, temp_config_dir):
         """Agent YAML without fallback fields loads with None defaults."""
@@ -102,10 +104,9 @@ class TestYamlRoundTrip:
         loaded = load_agent_def("SimpleAgent")
         assert loaded is not None
         assert loaded.get("fallback_provider") is None
-        assert loaded.get("fallback_model") is None
 
     def test_save_load_fallback_none(self, temp_config_dir):
-        """Explicitly None fallback fields are saved and loaded correctly."""
+        """Explicitly None fallback_provider is saved and loaded correctly."""
         agent_def = {
             "name": "KBOnly",
             "emoji": "🤖",
@@ -114,7 +115,6 @@ class TestYamlRoundTrip:
             "tools": ["read_file"],
             "llm_name": "local-kb",
             "fallback_provider": None,
-            "fallback_model": None,
             "self_improvement": {},
         }
 
@@ -123,12 +123,51 @@ class TestYamlRoundTrip:
         loaded = load_agent_def("KBOnly")
         assert loaded is not None
         assert loaded.get("fallback_provider") is None
-        assert loaded.get("fallback_model") is None
+
+    def test_save_does_not_emit_fallback_model(self, temp_config_dir):
+        """save_agent_def() never writes fallback_model to the YAML file."""
+        agent_def = {
+            "name": "NoModel",
+            "emoji": "🤖",
+            "role": "nomodel",
+            "prompts": ["system/auxilium.md"],
+            "tools": ["read_file"],
+            "llm_name": "openrouter",
+            "fallback_provider": "openrouter",
+            "self_improvement": {},
+        }
+
+        filepath = save_agent_def(agent_def)
+
+        # Read the raw file and assert fallback_model is not a key
+        with open(filepath, encoding="utf-8") as f:
+            raw = f.read()
+        assert "fallback_model" not in raw
+
+    def test_old_yaml_with_fallback_model_loads(self, temp_config_dir):
+        """Old agent YAMLs with fallback_model load without error (field is ignored)."""
+        agents_dir = temp_config_dir / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        legacy_path = agents_dir / "legacy-agent.yaml"
+        legacy_path.write_text(
+            "name: LegacyAgent\n"
+            "emoji: 🤖\n"
+            "role: legacy\n"
+            "prompts: [system/auxilium.md]\n"
+            "tools: [read_file]\n"
+            "llm_name: local-kb\n"
+            "fallback_provider: openrouter\n"
+            "fallback_model: openrouter/owl-alpha\n"
+            "self_improvement: {}\n"
+        )
+        loaded = load_agent_def("LegacyAgent")
+        assert loaded is not None
+        assert loaded.get("fallback_provider") == "openrouter"
 
 
 class TestHandlerSaveLoad:
     def test_handler_save_load_round_trip(self, temp_config_dir):
-        """Handler.save() and load_for_edit() round-trip fallback fields."""
+        """Handler.save() and load_for_edit() round-trip fallback_provider."""
         handler = AgentBuilderHandler()
 
         agent_def = {
@@ -139,7 +178,6 @@ class TestHandlerSaveLoad:
             "tools": ["read_file", "list_files", "search_files"],
             "llm_name": "local-kb",
             "fallback_provider": "openrouter",
-            "fallback_model": "openrouter/owl-alpha",
             "self_improvement": {},
         }
 
@@ -149,4 +187,3 @@ class TestHandlerSaveLoad:
         loaded = handler.load_for_edit("RoundTrip")
         assert loaded is not None
         assert loaded.get("fallback_provider") == "openrouter"
-        assert loaded.get("fallback_model") == "openrouter/owl-alpha"

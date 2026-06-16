@@ -413,7 +413,8 @@ class AgentRuntimeHandler:
                 api_key=agent_def.api_key,        # Per-agent API key override
                 app_title=agent_def.app_title,  # OpenRouter X-Title header
                 fallback_provider=agent_def.fallback_provider,
-                fallback_model=agent_def.fallback_model,
+                # fallback_model removed in 2026-06-15 — runtime derives from provider card.
+                # See SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md.
             )
         else:
             # Bug fix: sync existing conversation with latest agent definition.
@@ -430,7 +431,7 @@ class AgentRuntimeHandler:
                     conv.app_title = agent_def.app_title
                 # Sync fallback config (in case agent was edited)
                 conv.fallback_provider = agent_def.fallback_provider
-                conv.fallback_model = agent_def.fallback_model
+                # conv.fallback_model assignment removed in 2026-06-15 — runtime derives from provider card.
 
         rt.send_message(session_key, text)
 

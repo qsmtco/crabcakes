@@ -125,14 +125,18 @@ class TestSetProviderOptions:
         assert model.get_string(0) == "alpha"
         assert model.get_string(1) == "beta"
 
-    def test_set_provider_options_builds_model_map(self):
+    def test_set_provider_options_does_not_build_model_map(self):
+        # Per SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md (2026-06-15):
+        # _provider_models was removed because the fallback model dropdown
+        # that consumed it is gone. The primary provider dropdown selects
+        # a provider name; the model is resolved at runtime from the card's
+        # default_model. No internal model map is needed.
         from models.providers import ProviderConfig
         dlg = _make_dlg()
         dlg.set_provider_options([
             ProviderConfig(name="p1", base_url="x", api_key="k", default_model="model-a"),
         ])
-        assert "p1" in dlg._provider_models
-        assert dlg._provider_models["p1"] == [("model-a", "model-a")]
+        assert not hasattr(dlg, "_provider_models")
 
     def test_set_provider_options_replaces_previous(self):
         from models.providers import ProviderConfig

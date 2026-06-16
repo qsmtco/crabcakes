@@ -216,7 +216,6 @@ class TestIntegrationRuntimeFallback:
             default_provider="local-kb",
             default_model="local-kb/local-kb",
             fallback_provider="openrouter",
-            fallback_model="openrouter/owl-alpha",
         )
         rt = AgentRuntime(config)
         rt.start()
@@ -227,7 +226,6 @@ class TestIntegrationRuntimeFallback:
             model="local-kb/local-kb",
             system_prompt="You are a test agent.",
             fallback_provider="openrouter",
-            fallback_model="openrouter/owl-alpha",
         )
         rt._conversations["integration-test"] = conv
 

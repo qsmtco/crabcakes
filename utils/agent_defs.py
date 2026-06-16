@@ -31,15 +31,18 @@ def _get_agents_dir() -> str:
 
 
 def _normalize_fallback_fields(data: dict) -> None:
-    """Ensure fallback_provider and fallback_model keys exist in the agent def dict.
+    """Ensure fallback_provider key exists in the agent def dict.
 
     Reads from YAML/JSON if present, defaults to None if absent.
     Called after parsing every agent definition file.
+
+    Note: fallback_model was removed on 2026-06-15 (see
+    SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md). Old YAMLs with
+    fallback_model retain the key in the loaded dict, but it is ignored
+    by the runtime.
     """
     if "fallback_provider" not in data:
         data["fallback_provider"] = None
-    if "fallback_model" not in data:
-        data["fallback_model"] = None
 
 
 def _get_default_agents_src() -> str:
