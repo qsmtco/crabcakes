@@ -121,6 +121,73 @@ class TestKBLookupFiresForAuxilium:
                 rt._run_loop(sk, "third question")
         assert call_count[0] == 3
 
+    def test_kb_lookup_called_for_case_insensitive_helper_role(self):
+        """The Tier 2 gate matches role values case-insensitively, ignoring whitespace.
+
+        Regression test for adversarialDebugger LOW bug (2026-06-16): a user
+        who types 'Helper' or ' helper ' in agent_def.role would silently miss
+        KB synthesis due to strict string equality.
+        """
+        from agent.config import AgentConfig
+        from agent.runtime import AgentRuntime
+        from unittest.mock import patch
+
+        cfg = AgentConfig(providers={}, default_provider='openai', default_model='openai/gpt-4o')
+        rt = AgentRuntime(cfg)
+        rt.start()
+
+        for weird_role in ["Helper", "HELPER", "helper ", " helper", "  HELPER  ", "HeLpEr"]:
+            rt.create_conversation(
+                session_key=f"k-{weird_role!r}",
+                agent_name="Aux",
+                agent_role=weird_role,
+            )
+            with patch("agent.kb_lookup.kb_lookup") as mock_kb:
+                with patch.object(rt, "_call_llm") as mock_call:
+                    mock_call.return_value = {
+                        "choices": [{"message": {"content": "a"}}],
+                        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                    }
+                    rt._run_loop(f"k-{weird_role!r}", "how do I configure?")
+            assert mock_kb.called, (
+                f"role={weird_role!r} should trigger KB synthesis (case-insensitive match)"
+            )
+
+        # None must not crash — treated as empty string, KB synthesis does NOT fire
+        rt.create_conversation(
+            session_key="k-None",
+            agent_name="Aux",
+            agent_role=None,
+        )
+        with patch("agent.kb_lookup.kb_lookup") as mock_kb:
+            with patch.object(rt, "_call_llm") as mock_call:
+                mock_call.return_value = {
+                    "choices": [{"message": {"content": "a"}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                }
+                rt._run_loop("k-None", "how do I configure?")
+        assert not mock_kb.called, (
+            "role=None should NOT trigger KB synthesis and must not crash"
+        )
+
+        # Non-string types must not crash — treated as non-helper
+        for bad_role in [["helper"], {"role": "helper"}, True, 42]:
+            rt.create_conversation(
+                session_key=f"k-{bad_role!r}",
+                agent_name="Aux",
+                agent_role=bad_role,
+            )
+            with patch("agent.kb_lookup.kb_lookup") as mock_kb:
+                with patch.object(rt, "_call_llm") as mock_call:
+                    mock_call.return_value = {
+                        "choices": [{"message": {"content": "a"}}],
+                        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                    }
+                    rt._run_loop(f"k-{bad_role!r}", "how do I configure?")
+            assert not mock_kb.called, (
+                f"role={bad_role!r} should NOT trigger KB synthesis and must not crash"
+            )
+
 
 # ── Test Class 3: KB context injection ───────────────────────────────────────
 

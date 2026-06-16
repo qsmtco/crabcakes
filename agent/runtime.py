@@ -1163,7 +1163,8 @@ class AgentRuntime:
                 # This is separate from the KB fallback chain (which fires when
                 # the primary returns KB_OUT_OF_SCOPE — see lines ~1177-1241).
                 kb_context = None
-                if conv.agent_role == "helper":
+                # Case-insensitive match: "Helper", "HELPER", " helper " all work.
+                if isinstance(conv.agent_role, str) and conv.agent_role.strip().lower() == "helper":
                     try:
                         from agent.kb_lookup import kb_lookup
                         chunks = kb_lookup(text, top_k=5, min_score=0.35)
