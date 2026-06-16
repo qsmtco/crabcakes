@@ -431,6 +431,9 @@ class AgentRuntimeHandler:
                     conv.app_title = agent_def.app_title
                 # Sync fallback config (in case agent was edited)
                 conv.fallback_provider = agent_def.fallback_provider
+                # Sync role (in case agent's role was edited)
+                if agent_def.role:
+                    conv.agent_role = agent_def.role
                 # conv.fallback_model assignment removed in 2026-06-15 — runtime derives from provider card.
 
         rt.send_message(session_key, text)

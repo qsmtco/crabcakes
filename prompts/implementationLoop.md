@@ -14,7 +14,7 @@ Multi-agent implementation work is hard to supervise. The supervisor and the bui
 
 1. **ARCHITECTURE.md is the floor. The spec narrows it. The code conforms to both.** ARCHITECTURE.md is the authoritative source of truth for both structure and behavior. The spec is a feature-level document that specializes ARCHITECTURE.md for one feature — it may narrow, but never override. The code is the artifact that conforms to both. Anything in the code that contradicts ARCHITECTURE.md is a bug, period. Anything in the spec that contradicts ARCHITECTURE.md is a spec bug, not an architecture bug.
 2. **One phase at a time.** Multi-file changes fail more often than single-file changes. Sub-phase integration. Run independent verification between phases. A bug caught at phase N is a 5-minute fix; the same bug caught at phase N+3 is a half-day of cleanup.
-3. **Audit every phase.** The builder's "done" claim is not evidence. The supervisor runs an adversarial audit (via [`adversarialDebugger.md`](./adversarialDebugger.md)) on every completed phase. If bugs are found, the builder fixes them; the supervisor re-audits. The loop is "verify → bug → fix → re-verify → next phase" until clean.
+3. **Audit every code-bearing turn (mandatory adversarial).** The builder's "done" claim is not evidence. The supervisor loads [`adversarialDebugger.md`](./adversarialDebugger.md) on **every code-bearing turn** (pre-flight, between-phase, post-fix) and works through its 11 sections. This is mandatory — pattern-based audits without loading the prompt will miss non-obvious bugs. If bugs are found, the builder fixes them; the supervisor re-audits. The loop is "adversarial audit → bug → fix → re-audit → next phase" until clean. See §3.1a for the full rule.
 4. **Post-mortem is the institutional memory.** The final deliverable is not just the code — it is the post-mortem. The post-mortem is the only artifact that survives across loops and across agent pairs. Use the mandatory format in §6 below. No post-mortem, no "done."
 
 ---
@@ -65,8 +65,10 @@ Multi-agent implementation work is hard to supervise. The supervisor and the bui
    ┌──────────────────────────────────────────────────────────┐
    │  steelFramedCodeWriter.md  → builder invokes when       │
    │                              writing code               │
-   │  adversarialDebugger.md    → supervisor invokes when    │
-   │                              auditing completed code    │
+   │  adversarialDebugger.md    → supervisor MUST load on    │
+   │                              every code-bearing turn    │
+   │                              (see §3.1a — mandatory,    │
+   │                              not optional)              │
    │  implementationSupervisor.md → supervisor's standing    │
    │                              orders (tactics, not loop) │
    │  steelFramedSpecWriter.md  → writing the spec that      │
@@ -85,7 +87,7 @@ Multi-agent implementation work is hard to supervise. The supervisor and the bui
 - Phasing the work into 1-3 file chunks
 - Writing phase-instructions files to disk before the first `/ask`
 - Sending the `/ask` to the builder
-- Auditing completed code via [`adversarialDebugger.md`](./adversarialDebugger.md)
+- **Adversarial audit on every turn** — loading [`adversarialDebugger.md`](./adversarialDebugger.md) and working through its 11 sections (challenge assumptions, trace failures, find hidden assumptions, test weakest links, exploit type system, break external contract, simulate weirdest user, verify scope coverage, audit docs, verify tests) **on every code-bearing turn**, including pre-flight checks, between-phase audits, and post-fix verifications. This is mandatory, not optional. See §3.1a below.
 - Independent verification (running tests, reading diffs, greps) — **never trusting the builder's "done" claim**
 - Writing the post-mortem at the end (mandatory §6 format)
 - Committing and pushing the final work
@@ -96,6 +98,27 @@ Multi-agent implementation work is hard to supervise. The supervisor and the bui
 - Running the project manually (the loop is push-based — the builder reports, the supervisor audits, repeat)
 
 **Standing orders:** See [`implementationSupervisor.md`](./implementationSupervisor.md) for the complete tactical playbook (channel trust, `/ask` mechanics, COMPLETENESS enforcement, verification checklist, anti-patterns).
+
+### 3.1a Mandatory Adversarial Audit on Every Turn
+
+**The supervisor MUST load and apply [`adversarialDebugger.md`](./adversarialDebugger.md) on every code-bearing turn.** This is not optional and not skippable. The supervisor who audits "by pattern" without loading the prompt will miss non-obvious bugs (validated by the 2026-06-16 Auxilium Tier 2 audit, which found 2 MEDIUM bugs that pattern-based audits had missed across 5 phases).
+
+**When "every turn" applies:**
+
+| Turn type | Adversarial audit required? | Why |
+|---|---|---|
+| Pre-flight (verifying spec claims before writing phase instructions) | **Yes** | Catches spec-vs-code drift before code is written |
+| Between-phase audit (after builder delivers, before next delegation) | **Yes** | This is the primary audit point |
+| Post-fix verification (after builder fixes a flagged bug) | **Yes** | Confirms the fix actually addresses the root cause |
+| Spec-writing turn (writing or revising a spec) | No | Specs are reviewed by the captain, not adversarially audited |
+| Post-mortem turn | No | Post-mortems summarize the audit, they don't replace it |
+| Pure-delegation turn (no code in scope) | No | Nothing to audit |
+
+**How to apply:** Load `prompts/adversarialDebugger.md` fresh at the start of each audit turn. Work through its 11 sections against the code in scope. For each section, identify at least one adversarial probe. Run the probe. Report findings using the prompt's BUG format (BUG #[N] / Severity / Assumption violated / Attack vector / Reproduction / Root cause / Fix).
+
+**When bugs are found:** Either (a) send a bug-fix delegation to the builder before continuing the loop, or (b) escalate to the captain if the bug is out of scope. Do NOT silently incorporate fixes into a later phase — that violates the scope-creep rule and breaks the audit trail.
+
+**Tracking:** Count the number of adversarial audits performed per loop in the post-mortem §4 (Bugs Found During Audit). State explicitly which bugs were caught by adversarial audit vs. by pattern-based verification. This data feeds the standing-orders process for future loops.
 
 ### 3.2 {{BUILDER_AGENT}} (Code Writer)
 
@@ -136,7 +159,7 @@ The loop is implemented by composing four existing prompts. Each prompt owns one
 |---|---|---|---|
 | [`steelFramedSpecWriter.md`](./steelFramedSpecWriter.md) | Supervisor or captain | Before the loop starts | Write the spec that specializes ARCHITECTURE.md for one feature. The spec assumes ARCHITECTURE.md is in force; it must not contradict it. |
 | [`steelFramedCodeWriter.md`](./steelFramedCodeWriter.md) | Builder | Every code-writing delegation | How to write code: read-before-touch, hard-part-first, verify-every-claim, wire-it-or-delete-it, no-fabricated-APIs, defensive copies, etc. |
-| [`adversarialDebugger.md`](./adversarialDebugger.md) | Supervisor | After every completed phase | How to audit: challenge every assumption, trace failure backwards, find hidden assumptions, test weakest links, break the external contract, simulate the weirdest user, verify scope coverage. |
+| [`adversarialDebugger.md`](./adversarialDebugger.md) | Supervisor | **On every code-bearing turn (mandatory, see §3.1a)** | How to audit: challenge every assumption, trace failure backwards, find hidden assumptions, test weakest links, break the external contract, simulate the weirdest user, verify scope coverage, audit docs, verify tests match. |
 | [`implementationSupervisor.md`](./implementationSupervisor.md) | Supervisor | Continuously, as standing orders | Supervisor tactics: how to phase, how to delegate, how to verify, how to handle the `/ask` channel, how to write a post-mortem trigger. |
 
 **This prompt (`implementationLoop.md`) is the fifth piece.** It does not duplicate any of the above. It defines:
@@ -470,5 +493,6 @@ This file is the **fifth canonical prompt** in the project's prompt set. It is r
 
 1. Preserve the 11-section post-mortem format in §6 (or explicitly version-bump and migrate old post-mortems)
 2. Preserve the four-prompt composition in §4 (or explicitly deprecate a prompt and migrate its content)
-3. Be reviewed by the captain before merge (this is a meta-prompt; mistakes here propagate to every future loop)
-4. Be committed in a single commit with a `meta:` prefix in the message
+3. Preserve the mandatory adversarial-audit rule in §3.1a (or explicitly deprecate the rule with a documented rationale and migration plan)
+4. Be reviewed by the captain before merge (this is a meta-prompt; mistakes here propagate to every future loop)
+5. Be committed in a single commit with a `meta:` prefix in the message

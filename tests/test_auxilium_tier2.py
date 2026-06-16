@@ -301,3 +301,47 @@ class TestAgentRuntimeHandlerPassesRole:
         assert call_kwargs is not None, "create_conversation was not called"
         assert call_kwargs.kwargs.get("agent_role") == "helper", \
             f"agent_role not passed: {call_kwargs.kwargs}"
+
+    def test_agent_role_synced_on_agent_edit(self):
+        """When agent_def.role changes, the existing conversation's agent_role is updated.
+
+        Regression test for adversarialDebugger BUG #1 (2026-06-16): the edit-sync
+        path in send_to_special_agent did not propagate agent_role changes, so a
+        user who edited an agent from coder to helper would silently miss KB synthesis.
+        """
+        from ui.handlers.agent_runtime_handler import AgentRuntimeHandler
+
+        handler = AgentRuntimeHandler(MagicMock(), MagicMock())
+        mock_rt = MagicMock()
+        # Conversation already exists with agent_role="coder" (i.e., not helper)
+        existing_conv = MagicMock()
+        existing_conv.agent_role = "coder"
+        existing_conv.api_key = None
+        existing_conv.model = None
+        existing_conv.app_title = ""
+        existing_conv.fallback_provider = None
+        mock_rt.get_conversation.return_value = existing_conv
+        handler._runtimes["Auxilium"] = mock_rt
+
+        # Agent definition now has role="helper" (the user's edit)
+        agent_def = MagicMock()
+        agent_def.display_name = "Auxilium"
+        agent_def.role = "helper"
+        agent_def.fallback_provider = None
+        agent_def.fallback_model = None
+        agent_def.system_prompt = "You are Auxilium."
+        agent_def.tools = []
+        agent_def.mcp_servers = []
+        agent_def.app_title = ""
+        agent_def.api_key = None
+        agent_def.model = None
+        agent_def.get_self_improvement_config = MagicMock(return_value={})
+        handler._agents["X"] = agent_def
+        handler._active_project = None
+
+        # Trigger the edit-sync path
+        handler.send_to_special_agent("X", "hello")
+
+        # The conversation's agent_role should now be "helper"
+        assert existing_conv.agent_role == "helper", \
+            f"agent_role not synced: {existing_conv.agent_role!r}"
