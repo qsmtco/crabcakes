@@ -160,8 +160,10 @@ class ReviewHandler:
                 self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, f"Failed to stage files: {stage_result.error}"))
                 return
 
-            # Commit checkpoint
-            commit_result = git_ops.commit(project_path, "[review] checkpoint")
+            # Commit checkpoint. allow_empty=True because a checkpoint is a
+            # valid SHA marker even on a clean tree (user can start a review
+            # without any changes to capture the current state).
+            commit_result = git_ops.commit(project_path, "[review] checkpoint", allow_empty=True)
             if not commit_result.success:
                 self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, f"Failed to create checkpoint: {commit_result.error}"))
                 return
@@ -262,8 +264,70 @@ class ReviewHandler:
                 self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, f"Failed to stage: {stage_result.error}"))
                 return
 
+            # Generate the commit message from the ACTUAL staged files, not
+            # from the input message parameter. The input message is just
+            # user intent ("Accept: Modified X") but the real diff is in
+            # repo.index.diff("HEAD").
+            #
+            # Only catch ImportError (gitpython not installed). Other exceptions
+            # (InvalidGitRepositoryError, BadName, etc.) are reported to the
+            # user as real errors — NOT silently treated as "nothing to commit",
+            # which would mask a broken git repo or other real failure.
+            try:
+                import git as gitpython
+            except ImportError:
+                # gitpython not installed — fall through to empty case
+                staged = []
+            else:
+                try:
+                    repo = gitpython.Repo(project_path)
+                    staged = repo.index.diff("HEAD")
+                except Exception as e:
+                    # Real error reading the diff — report to user, reset state.
+                    self._GLib.idle_add(lambda sk=sk, err=e: self._on_display_text(
+                        sk, f"❌ Failed to read diff: {type(e).__name__}: {e}"
+                    ))
+                    def _reset_state(sk=sk):
+                        state.checkpoint_sha = None
+                        state.is_dirty = False
+                        state.last_check_files = []
+                        bar = self._mc.get_review_bar()
+                        if bar:
+                            bar.set_state_idle()
+                            bar.set_loading(False)
+                        self._on_review_ended(project_name)
+                    self._GLib.idle_add(_reset_state)
+                    return
+
+            if not staged:
+                # Working tree is clean — nothing to commit. Show a friendly
+                # message instead of the misleading "Failed to commit" error.
+                self._GLib.idle_add(lambda sk=sk: self._on_display_text(
+                    sk, "ℹ️ Nothing to commit — working tree clean. No changes were accepted."
+                ))
+                # Still update the state so the review bar resets.
+                def _reset_state(sk=sk):
+                    state.checkpoint_sha = None
+                    state.is_dirty = False
+                    state.last_check_files = []
+                    bar = self._mc.get_review_bar()
+                    if bar:
+                        bar.set_state_idle()
+                        bar.set_loading(False)
+                    self._on_review_ended(project_name)
+                self._GLib.idle_add(_reset_state)
+                return
+
+            # Build a descriptive message from the actual files
+            file_list = sorted({d.a_path or d.b_path for d in staged if d.a_path or d.b_path})
+            if len(file_list) == 1:
+                full_message = f"[review] accepted: Accept: Modified {file_list[0]}"
+            elif len(file_list) <= 3:
+                full_message = f"[review] accepted: Accept: Modified {len(file_list)} files ({', '.join(file_list)})"
+            else:
+                full_message = f"[review] accepted: Accept: Modified {len(file_list)} files ({', '.join(file_list[:3])}...)"
+
             # Commit
-            full_message = f"[review] accepted: {message}"
             commit_result = git_ops.commit(project_path, full_message)
             if not commit_result.success:
                 self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, f"Failed to commit: {commit_result.error}"))
@@ -278,9 +342,10 @@ class ReviewHandler:
                     bar.set_state_idle()
                     bar.set_loading(False)
                 self._on_review_ended(project_name)
-                self._on_display_text(sk, f"✅ Changes accepted and committed as: {message}")
+                # Use the actual generated message for the user-facing display
+                self._on_display_text(sk, f"✅ Changes accepted and committed: {full_message.replace('[review] accepted: ', '')}")
                 self._emit_feed_card({
-                    "title": f"Accepted: {message}",
+                    "title": f"Accepted: {full_message.replace('[review] accepted: ', '')}",
                     "body": commit_result.stdout.strip() if commit_result.stdout else "",
                     "project_name": project_name,
                     "commit_sha": getattr(commit_result, "sha", None),

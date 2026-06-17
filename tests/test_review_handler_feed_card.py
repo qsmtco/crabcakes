@@ -79,15 +79,26 @@ class TestAcceptChangesFeedCard:
             success=True, stdout="[main abc123d] accepted", sha="abc123def456"
         )
 
-        handler.accept_changes("testproject", "approved")
-        # Thread runs synchronously because MockGLib runs idle_add immediately
+        # Mock git.Repo so repo.index.diff("HEAD") returns staged files.
+        # The handler lazily does `import git as gitpython`, so we use
+        # sys.modules patching to intercept the import.
+        import sys
+        mock_git_module = MagicMock()
+        mock_diff = MagicMock()
+        mock_diff.a_path = "src/main.py"
+        mock_diff.b_path = None
+        mock_repo = MagicMock()
+        mock_repo.index.diff.return_value = [mock_diff]
+        mock_git_module.Repo.return_value = mock_repo
+        with patch.dict(sys.modules, {"git": mock_git_module}):
+            handler.accept_changes("testproject", "approved")
 
         assert len(captured) == 1
         card = captured[0]
         assert card.card_type == "git_commit"
         assert card.source == "git"
         assert "Accepted" in card.title
-        assert "approved" in card.title
+        assert "Modified src/main.py" in card.title
         assert card.project_name == "testproject"
         assert card.commit_sha == "abc123def456"
         assert card.author == "PM"
@@ -116,6 +127,35 @@ class TestAcceptChangesFeedCard:
         handler.accept_changes("testproject", "approved")
 
         assert len(captured) == 0
+
+    @patch("ui.handlers.review_handler.git_ops")
+    def test_accept_no_card_when_diff_read_fails(self, mock_git_ops):
+        """When repo.index.diff() raises (e.g., corrupt git repo, missing git
+        binary), the accept flow should report the real error to the user
+        and NOT silently treat it as 'nothing to commit'. Regression test for
+        adversarialDebugger BUG #1 in T2-RL2 (2026-06-16).
+        """
+        handler = _make_handler()
+        _setup_active_session(handler)
+
+        mock_git_ops.stage_all.return_value = MockGitResult(success=True)
+        mock_git_ops.commit.return_value = MockGitResult(success=True)  # shouldn't be called
+
+        # Mock git.Repo to raise when index.diff() is called
+        import sys
+        mock_git_module = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.index.diff.side_effect = Exception("corrupt index")
+        mock_git_module.Repo.return_value = mock_repo
+        with patch.dict(sys.modules, {"git": mock_git_module}):
+            handler.accept_changes("testproject", "approved")
+
+        # The diff read error should be reported to the user
+        text_calls = [str(c) for c in handler._on_display_text.call_args_list]
+        any_error = any("Failed to read diff" in c or "corrupt index" in c for c in text_calls)
+        assert any_error, f"Expected diff-read error in display_text, got: {text_calls}"
+        # commit() should NOT have been called
+        mock_git_ops.commit.assert_not_called()
 
 
 class TestRejectChangesFeedCard:
