@@ -207,20 +207,20 @@ class TestLastExchangeSummary:
     """Tests for Conversation._last_exchange_summary()."""
 
     def test_empty_conversation_returns_empty(self):
-        c = Conversation(agent_name="Coder")
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         assert c._last_exchange_summary() == ""
 
     def test_short_conversation_returns_empty(self):
         """Fewer than 5 messages → nothing to summarize."""
-        c = Conversation(agent_name="Coder")
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         c.add_user_message("task 1")
         c.add_assistant_message("done", [])
         assert c._last_exchange_summary() == ""
 
     def test_generates_summary_from_user_messages(self):
         """Summary lists user messages from the trimmed portion."""
-        c = Conversation(agent_name="Coder")
-        for i in range(6):
+        c = Conversation(agent_name="Coder", model="gpt-4o")
+        for i in range(10):
             c.add_user_message(f"Task {i+1}: do something")
             c.add_assistant_message(f"Done {i+1}", [])
         # 12 messages total — tail_preserve=4, so 8 in the "old" portion
@@ -231,7 +231,7 @@ class TestLastExchangeSummary:
 
     def test_summary_caps_at_5_items(self):
         """More than 5 user turns → shows first 5 + 'and N more'."""
-        c = Conversation(agent_name="Coder")
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         for i in range(10):
             c.add_user_message(f"Task {i+1}")
             c.add_assistant_message("ok", [])
@@ -241,7 +241,7 @@ class TestLastExchangeSummary:
 
     def test_summary_truncates_long_content(self):
         """Long user messages get truncated to 100 chars with ellipsis."""
-        c = Conversation(agent_name="Coder")
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         long_msg = "A" * 200
         c.add_user_message(long_msg)
         c.add_assistant_message("ok", [])
@@ -255,7 +255,7 @@ class TestLastExchangeSummary:
 
     def test_summary_excludes_tail_messages(self):
         """The last 4 messages (tail) should not appear in the summary."""
-        c = Conversation(agent_name="Coder")
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         c.add_user_message("old task")
         c.add_assistant_message("old done", [])
         c.add_user_message("tail task")
@@ -269,7 +269,7 @@ class TestLastExchangeSummary:
 
     def test_no_user_messages_returns_empty(self):
         """If all messages in the old portion are assistant messages, return empty."""
-        c = Conversation(agent_name="Coder")
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         for i in range(5):
             c.add_assistant_message(f"response {i}", [])
         summary = c._last_exchange_summary()
@@ -284,27 +284,27 @@ class TestTrimSummaryInjection:
     """Tests for summary injection during trim_to_token_limit()."""
 
     def test_summary_injected_on_long_conversation(self):
-        """When 8+ messages remain after trim, a summary is injected."""
-        c = Conversation(agent_name="Coder")
+        """When messages are removed during trim, a summary is injected."""
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         for i in range(10):
-            c.add_user_message(f"Task {i+1}: implement feature {i+1}")
-            c.add_assistant_message(f"Done with feature {i+1}.", [])
+            c.add_user_message("u" * 50)
+            c.add_assistant_message("r" * 50, [])
 
-        # Force a tight trim to remove old messages
-        c.trim_to_token_limit(200)
+        # Trim to ~150 tokens keeps 8 messages, leaving 4 non-tail
+        c.trim_to_token_limit(150)
 
         # Check a summary message was injected
         summaries = [m for m in c.messages if m.is_summary]
-        assert len(summaries) >= 1
+        assert len(summaries) >= 1, f"Expected summary, got {len(summaries)} summaries"
 
     def test_summary_message_has_assistant_role(self):
         """Summary messages are ASSISTANT role with is_summary=True."""
-        c = Conversation(agent_name="Coder")
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         for i in range(10):
             c.add_user_message(f"Task {i+1}")
             c.add_assistant_message(f"Done {i+1}", [])
 
-        c.trim_to_token_limit(200)
+        c.trim_to_token_limit(150)
 
         summaries = [m for m in c.messages if m.is_summary]
         for s in summaries:
@@ -313,13 +313,13 @@ class TestTrimSummaryInjection:
 
     def test_no_summary_on_short_conversation(self):
         """Short conversation (under 8 messages) should not get a summary."""
-        c = Conversation(agent_name="Coder")
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         c.add_user_message("task")
         c.add_assistant_message("done", [])
         c.add_user_message("task 2")
         c.add_assistant_message("done 2", [])
 
-        c.trim_to_token_limit(50)
+        c.trim_to_token_limit(150)
 
         summaries = [m for m in c.messages if m.is_summary]
         assert len(summaries) == 0
@@ -331,7 +331,7 @@ class TestTrimSummaryInjection:
         can't find more USER messages to remove, even if ASSISTANT messages
         remain. This test verifies the *summary* doesn't make things worse.
         """
-        c = Conversation(agent_name="Coder")
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         for i in range(10):
             c.add_user_message(f"Task {i+1}: " + "x" * 50)
             c.add_assistant_message(f"Done " + "y" * 50, [])
@@ -347,14 +347,14 @@ class TestTrimSummaryInjection:
 
     def test_repeated_trims_converge(self):
         """Bug 2 fix: repeated trim calls must not oscillate."""
-        c = Conversation(agent_name="Coder")
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         for i in range(10):
             c.add_user_message(f"Task {i+1}: " + "x" * 30)
             c.add_assistant_message(f"Done " + "y" * 30, [])
 
         counts = []
         for _ in range(5):
-            c.trim_to_token_limit(200)
+            c.trim_to_token_limit(150)
             counts.append(len(c.messages))
 
         # Must converge — last 3 counts identical
@@ -362,7 +362,7 @@ class TestTrimSummaryInjection:
 
     def test_summary_content_references_old_tasks(self):
         """The summary should mention tasks from the trimmed portion."""
-        c = Conversation(agent_name="Coder")
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         for i in range(10):
             c.add_user_message(f"Implement auth module {i+1}")
             c.add_assistant_message(f"Auth done {i+1}", [])
@@ -376,7 +376,7 @@ class TestTrimSummaryInjection:
     def test_trim_converges_across_budgets(self):
         """Invariant: repeated trims at various budgets must converge (not grow)."""
         for budget in [200, 300, 500]:
-            c = Conversation(agent_name="Coder")
+            c = Conversation(agent_name="Coder", model="gpt-4o")
             for i in range(15):
                 c.add_user_message(f"Task {i+1}: " + "x" * 40)
                 c.add_assistant_message("Done " + "y" * 40, [])
@@ -397,7 +397,7 @@ class TestTokenBreakdown:
 
     def test_empty_conversation_breakdown(self):
         """Empty conversation: system=0, conv=0, all remaining."""
-        c = Conversation(agent_name="Coder")
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         bd = c.get_token_breakdown(128000)
         assert bd["system_prompt_tokens"] == 0
         assert bd["conversation_tokens"] == 0
@@ -414,7 +414,7 @@ class TestTokenBreakdown:
         assert bd["system_prompt_tokens"] == expected
 
     def test_messages_counted_as_conversation(self):
-        c = Conversation(agent_name="Coder")
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         c.add_user_message("hello world")  # 11 chars → 2 tokens
         bd = c.get_token_breakdown(128000)
         import tiktoken
@@ -446,7 +446,7 @@ class TestTokenBreakdown:
         assert bd["remaining_tokens"] == 0
 
     def test_tool_call_args_counted_in_conversation(self):
-        c = Conversation(agent_name="Coder")
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         tc = ToolCall(call_id="c1", tool_name="read_file", arguments={"path": "a.py", "content": "xyzt"})
         c.add_assistant_message("", [tc])
         bd = c.get_token_breakdown(128000)

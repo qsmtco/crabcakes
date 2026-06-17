@@ -303,12 +303,27 @@ SYSTEM_PROMPT_BUDGET_FRACTION = 0.15
 FILE_CONTEXT_HEADER = "\n\n## File context\n\n"
 
 
+# Phase CB-5: filenames that are always preserved during smart truncation.
+# Must match CORE_FILES in agent/context.py.
+_CORE_FILENAMES = frozenset({"README.md", "AGENTS.md", "CONVENTIONS.md", "ARCHITECTURE.md"})
+
+
 def _apply_system_prompt_budget(
     template_result: str,
     file_context_section: str,
     model_max_tokens: int | None,
 ) -> tuple[str, str]:
-    """Apply the system prompt budget. Truncates file context if needed.
+    """Apply the file-context budget within the system prompt.
+
+    Truncates the file context section to fit alongside the template result
+    within the budget (15% of model_max_tokens, or a 16K hard cap fallback).
+
+    Note (Phase CB-5): the budget caps the FILE CONTEXT portion only, not
+    the total system prompt. If the template result alone exceeds the budget,
+    the file context is dropped entirely but the templates are preserved
+    unchanged. This is by design — templates are required for the agent to
+    function, and truncating them is out of scope (see SPEC-CONTEXT-BLOAT-
+    PHASE-2.md §1.3, Design Decision 5).
 
     Returns (final_prompt, unused_file_context). The final_prompt is the
     template result + the (possibly truncated) file context section.
@@ -347,11 +362,16 @@ def _truncate_file_context_smart(
     file_context_section: str,
     max_chars: int,
 ) -> tuple[str, str]:
-    """Truncate a file context section, preserving the END (core files).
+    """Truncate a file context section, preserving core files and the END.
+
+    Phase CB-5: core file sections (README.md, AGENTS.md, CONVENTIONS.md,
+    ARCHITECTURE.md) are always kept if any section is kept. Non-core
+    sections are truncated from the beginning (oldest first) to fit.
 
     The file context section has "## " section headers. We split on these
-    headers, then keep the LAST N sections that fit within max_chars.
-    The removed portion is returned for observability.
+    headers, separate core from non-core, then:
+    1. Always keep all core sections (up to max_chars).
+    2. Fill remaining budget with non-core sections from the END.
     """
     if file_context_section.startswith(FILE_CONTEXT_HEADER):
         inner = file_context_section[len(FILE_CONTEXT_HEADER):]
@@ -361,20 +381,43 @@ def _truncate_file_context_smart(
     import re
     parts = re.split(r'(?=^## )', inner, flags=re.MULTILINE)
 
-    # Iterate from the END, accumulating sections, until we exceed max_chars.
-    kept: list[str] = []
-    used_chars = 0
-    for section in reversed(parts):
+    core_sections: list[str] = []
+    non_core_sections: list[str] = []
+    for section in parts:
+        # Extract the filename from the section header (e.g. "## README.md\n...")
+        header_match = re.match(r'^## (.+?)$', section, re.MULTILINE)
+        if header_match:
+            filename = header_match.group(1).strip()
+            if filename in _CORE_FILENAMES:
+                core_sections.append(section)
+                continue
+        non_core_sections.append(section)
+
+    # Phase CB-5: always keep core sections (they're the invariant).
+    # If even one core file exceeds max_chars, we still keep it —
+    # truncating a core file mid-content is worse than exceeding budget.
+    kept: list[str] = list(core_sections)
+    used_chars = sum(len(s) for s in kept)
+
+    # Fill remaining budget with non-core sections from the END.
+    for section in reversed(non_core_sections):
         section_chars = len(section)
         if used_chars + section_chars > max_chars and kept:
             break
         kept.append(section)
         used_chars += section_chars
 
-    kept.reverse()
-    truncated_inner = "".join(kept)
+    # Sort kept sections by their original order for readability.
+    kept_set = set(kept)
+    ordered_kept = [s for s in parts if s in kept_set]
+
+    truncated_inner = "".join(ordered_kept)
     if not truncated_inner:
         return "", file_context_section
+
+    # Build the removed string for observability.
+    removed_parts = [s for s in parts if s not in kept_set]
+    removed = "".join(removed_parts)
+
     truncated = FILE_CONTEXT_HEADER + truncated_inner
-    removed = inner[len(truncated_inner):]
     return truncated, removed

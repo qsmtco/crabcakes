@@ -28,33 +28,39 @@ def _tiktoken_encoding_for(model) -> object | None:
     Return the tiktoken encoding for the given model name, or None on failure.
 
     Resolution order:
-      1. tiktoken.encoding_for_model(model_name)  (OpenAI models: gpt-4o, gpt-4, gpt-3.5-turbo, ...)
+      1. tiktoken.encoding_for_model(model_name)  (OpenAI models)
       2. tiktoken.get_encoding("cl100k_base")    (default for non-OpenAI models)
 
-    Returns None if tiktoken is not installed or raises any exception.
+    Returns None if tiktoken is not installed, the model is not a string,
+    or any other exception occurs.
     The caller must fall back to the chars // 4 heuristic when None is returned.
 
-    Strips provider prefix from model names like "openai/gpt-4o" → "gpt-4o"
-    because tiktoken.encoding_for_model only recognizes bare OpenAI model names.
+    Strips provider prefix from model names like "openai/gpt-4o" → "gpt-4o".
     """
+    if not isinstance(model, str) or not model:
+        # Non-string or empty — skip encoding_for_model and fall through to cl100k_base default.
+        bare_name = ""
+    else:
+        bare_name = model.split("/", 1)[-1] if "/" in model else model
+
     try:
         import tiktoken
     except ImportError:
         return None
 
-    # Strip provider prefix (e.g., "openai/" or "anthropic/" or "openrouter/")
-    bare_name = model.split("/", 1)[-1] if "/" in model else model
-
     try:
-        return tiktoken.encoding_for_model(bare_name)
+        if bare_name:
+            return tiktoken.encoding_for_model(bare_name)
+        # Empty/None model — skip encoding_for_model (it requires a non-empty
+        # string) and fall through to the cl100k_base default.
+        raise KeyError("empty model name")
+
     except KeyError:
-        # Unknown model name. Fall back to the default encoding.
         try:
             return tiktoken.get_encoding(_DEFAULT_ENCODING_NAME)
         except Exception:
             return None
     except Exception:
-        # Any other error (e.g., download failure for the encoding data).
         return None
 
 
@@ -153,12 +159,19 @@ class Conversation:
     total_cost: float = 0.0              # cumulative USD cost
     step_count: int = 0                  # number of complete agent turns
 
+    # Phase CB-5: token-estimate cache (BUG #1 fix from end-to-end audit).
+    # Invalidated by any message add/remove/trim operation. Keyed on
+    # (len(messages), hash(system_prompt)). See get_token_estimate().
+    _token_estimate_cache: tuple | None = field(default=None, repr=False, compare=False)
+
     # ── Message helpers ───────────────────────────────────────────────────────
 
     def add_user_message(self, content: str) -> Message:
         """Add a user (PM) message and return it."""
         msg = Message(role=MessageRole.USER, content=content)
         self.messages.append(msg)
+        # Phase CB-5: invalidate token cache on any message addition
+        self._token_estimate_cache = None
         return msg
 
     def add_assistant_message(
@@ -174,6 +187,7 @@ class Conversation:
         )
         self.messages.append(msg)
         self.step_count += 1
+        self._token_estimate_cache = None
         return msg
 
     def add_tool_result(self, call_id: str, result: str) -> Message:
@@ -184,6 +198,7 @@ class Conversation:
             tool_call_id=call_id,
         )
         self.messages.append(msg)
+        self._token_estimate_cache = None
         return msg
 
     # ── Serialization ─────────────────────────────────────────────────────────
@@ -260,14 +275,28 @@ class Conversation:
         uses tiktoken.encoding_for_model() for accurate counts. Falls back to the
         chars // 4 heuristic for unknown models or when tiktoken is unavailable.
 
+        Phase CB-5: caches the tiktoken result to avoid re-encoding on every call
+        (the trim loop calls this once per iteration; without caching, a 100K-char
+        system prompt makes each call take ~6s).
+
         Used for context-window management (see trim_to_token_limit).
         """
         encoding = _tiktoken_encoding_for(self.model)
-        if encoding is not None:
-            return self._count_tokens_accurate(encoding)
-        # Fallback: chars // 4 heuristic (preserves CB-1/CB-2/CB-3 behavior)
-        system_chars, conv_chars = self._count_char_tokens()
-        return (system_chars + conv_chars) // 4
+        if encoding is None:
+            # Fallback path — fast (string length), no caching needed.
+            system_chars, conv_chars = self._count_char_tokens()
+            return (system_chars + conv_chars) // 4
+
+        # Tiktoken path — check cache.
+        cache_key = (len(self.messages), hash(self.system_prompt))
+        if self._token_estimate_cache is not None:
+            cached_key, cached_value = self._token_estimate_cache
+            if cached_key == cache_key:
+                return cached_value
+
+        result = self._count_tokens_accurate(encoding)
+        self._token_estimate_cache = (cache_key, result)
+        return result
 
     def _count_tokens_accurate(self, encoding) -> int:
         """
@@ -344,12 +373,16 @@ class Conversation:
         Tool call/result pairs are removed together as a unit. Only removes when
         at least one full user→assistant exchange can be preserved.
 
-        §4.10 (Summary on trim): After trimming, if the conversation is long
-        enough (8+ messages remaining), a compact summary of the trimmed user
+        §4.10 (Summary on trim): After trimming, if any messages were removed
+        and at least 4 messages remain, a compact summary of the trimmed user
         messages is injected as an assistant message before the preserved tail.
         This prevents the model from losing context of what was accomplished in
         the removed exchanges.
         """
+        # Phase CB-5: capture message count before trim and invalidate cache.
+        messages_count_before = len(self.messages)
+        self._token_estimate_cache = None
+
         while self.get_token_estimate() > max_tokens and len(self.messages) > 4:
             removed = False
             # Iterate backwards to avoid index shift issues when popping
@@ -405,9 +438,9 @@ class Conversation:
 
         # §4.10: Inject summary when old messages are removed so the model
         # doesn't lose context of what was accomplished in the trimmed turns.
-        # Only fires when the conversation is long enough that meaningful work
-        # was trimmed (8+ messages, enough room for both a summary and a tail).
-        if len(self.messages) >= 8:
+        # Phase CB-5: fire on any removal (not just 8+ remaining).
+        messages_removed = messages_count_before - len(self.messages)
+        if messages_removed > 0 and len(self.messages) >= 4:
             summary = self._last_exchange_summary()
             if summary:
                 # Bug 1 fix: skip injection if it would push us back over the budget.

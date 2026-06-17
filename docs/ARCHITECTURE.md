@@ -1254,6 +1254,12 @@ the final fallback when `tiktoken` is unavailable.
 
 Requires `tiktoken>=0.7` (MIT-licensed, ~2MB).
 
+**Token estimate caching (Phase CB-5).** `get_token_estimate()` caches its
+tiktoken result, keyed on `(len(messages), hash(system_prompt))`. The cache
+is invalidated on any message add/remove/trim operation. This prevents the
+trim loop from re-encoding the full conversation on every iteration (which
+took ~6s per call for a 100K-char system prompt before the cache).
+
 **Rules:** No imports from `ui/`, `agent/`, `gateway/`, `subprocess`.
 
 ### 3.21m `agent/runtime.py` — Agent Runtime (Phase 1.3a)
