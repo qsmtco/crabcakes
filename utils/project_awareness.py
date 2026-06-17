@@ -52,6 +52,11 @@ CONTEXT_FILENAME = "context.md"
 
 MAX_CONTEXT_SIZE = 50 * 1024  # 50 KB cap for context.md
 
+# Phase CB-3: size caps for awareness variables (BUG #6 fix).
+# See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.4.
+TEAM_ROSTER_MAX_CHARS = 500
+CURRENT_STATE_MAX_CHARS = 1000
+
 
 # ── Path helpers ─────────────────────────────────────────────────────────────
 
@@ -552,7 +557,11 @@ def build_awareness_dict(project_path: str) -> dict[str, str]:
             role_str = f" — {m.role}" if m.role else ""
             write_str = " [write]" if m.can_write else ""
             lines.append(f"- {m.name} ({m.session_key}){role_str}{write_str}")
-        parts["TEAM_ROSTER"] = "\n".join(lines)
+        roster = "\n".join(lines)
+        # Phase CB-3: cap TEAM_ROSTER at TEAM_ROSTER_MAX_CHARS (BUG #6 fix).
+        if len(roster) > TEAM_ROSTER_MAX_CHARS:
+            roster = roster[:TEAM_ROSTER_MAX_CHARS] + "\n[... team roster truncated ...]"
+        parts["TEAM_ROSTER"] = roster
     else:
         parts["TEAM_ROSTER"] = "No team members yet."
 
@@ -566,7 +575,11 @@ def build_awareness_dict(project_path: str) -> dict[str, str]:
     else:
         state_lines.append("Git: not available")
     state_lines.append(f"Review mode: {snapshot.get('review_mode', 'off')}")
-    parts["CURRENT_STATE"] = "\n".join(state_lines)
+    state = "\n".join(state_lines)
+    # Phase CB-3: cap CURRENT_STATE at CURRENT_STATE_MAX_CHARS (BUG #6 fix).
+    if len(state) > CURRENT_STATE_MAX_CHARS:
+        state = state[:CURRENT_STATE_MAX_CHARS] + "\n[... current state truncated ...]"
+    parts["CURRENT_STATE"] = state
 
     # Project memory
     context = load_project_context(project_path)

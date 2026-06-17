@@ -1042,6 +1042,113 @@ class TestStreamingSignature:
         )
 
 
+# ═══════════════════════════════════════════════════════════════════
+#  Phase CB-3: Streaming usage capture (BUG #3 fix)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestStreamingUsageCapture:
+    """Phase CB-3 (BUG #3 fix): streaming responses now capture SSE usage chunks."""
+
+    def test_streaming_captures_openai_usage_chunk(self):
+        """An OpenAI-compatible stream that emits a usage chunk in the final frame
+        must surface the usage in the response dict (not {})."""
+        from agent import runtime as rt_module
+        from agent.runtime import SSEEvent
+
+        def mock_stream_with_usage():
+            yield SSEEvent(type="text_delta", data={"content": "Hello"})
+            yield SSEEvent(type="text_delta", data={"content": " world"})
+            yield SSEEvent(type="usage", data={
+                "usage": {"prompt_tokens": 100, "completion_tokens": 50}
+            })
+            yield SSEEvent(type="done", data={})
+
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, delta: None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        usage_calls = []
+        rt._on_token_usage = lambda sk, tokens, cost: usage_calls.append((tokens, cost))
+
+        orig = rt_module._PROVIDER_STREAMERS["openai"]
+        rt_module._PROVIDER_STREAMERS["openai"] = lambda *a, **kw: mock_stream_with_usage()
+        try:
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+                rt._run_loop(sk, "say hello")
+        finally:
+            rt_module._PROVIDER_STREAMERS["openai"] = orig
+        rt.stop()
+
+        # on_token_usage should have fired with non-zero tokens
+        assert len(usage_calls) >= 1, f"Expected at least 1 usage call, got: {usage_calls}"
+        total_tokens = usage_calls[0][0]
+        assert total_tokens > 0, f"Expected non-zero tokens, got: {total_tokens}. Usage calls: {usage_calls}"
+
+    def test_streaming_without_usage_chunk_returns_empty_usage(self):
+        """Streams that don't emit a usage chunk still return a valid response with usage={}."""
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, delta: None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        from agent import runtime as rt_module
+        orig = rt_module._PROVIDER_STREAMERS["openai"]
+        # The existing _mock_stream_openai_3_chunks has no usage chunk
+        rt_module._PROVIDER_STREAMERS["openai"] = lambda *a, **kw: _mock_stream_openai_3_chunks()
+        try:
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+                rt._run_loop(sk, "say hello")
+        finally:
+            rt_module._PROVIDER_STREAMERS["openai"] = orig
+        rt.stop()
+
+        # The conversation should complete successfully (no crash)
+        conv = rt.get_conversation(sk)
+        assistant_msgs = [m for m in conv.messages if m.role.value == "assistant"]
+        assert len(assistant_msgs) >= 1
+        assert assistant_msgs[-1].content == "Hello world!"
+
+    def test_streaming_captures_anthropic_usage_in_message_delta(self):
+        """Anthropic streams emit usage in message_delta events; the fix must capture these too."""
+        from agent import runtime as rt_module
+        from agent.runtime import SSEEvent
+
+        def mock_anthropic_stream_with_usage():
+            yield SSEEvent(type="text_delta", data={"content": "Hello from Anthropic"})
+            yield SSEEvent(type="usage", data={
+                "usage": {"input_tokens": 200, "output_tokens": 80}
+            })
+            yield SSEEvent(type="done", data={})
+
+        # Use _call_llm_streaming directly to test the usage capture in isolation
+        rt = AgentRuntime(_make_cfg())
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        orig = rt_module._PROVIDER_STREAMERS.get("anthropic")
+        rt_module._PROVIDER_STREAMERS["anthropic"] = lambda *a, **kw: mock_anthropic_stream_with_usage()
+        try:
+            response = rt._call_llm_streaming(
+                session_key=sk,
+                base_url="https://api.anthropic.com/v1",
+                api_key="test",
+                model="anthropic/claude-3-5-sonnet",
+                caller_key="anthropic",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=None,
+                timeout=30.0,
+            )
+        finally:
+            if orig is not None:
+                rt_module._PROVIDER_STREAMERS["anthropic"] = orig
+        rt.stop()
+
+        assert response["usage"] == {"input_tokens": 200, "output_tokens": 80}, \
+            f"Expected Anthropic usage dict, got: {response['usage']}"
+
+
 class TestSSEParsing:
     """Unit tests for SSE parsing utilities (Phase 1.3b)."""
 
@@ -1222,6 +1329,108 @@ class TestStuckDetection:
         assert len(history) == 20, f"Expected 20, got {len(history)}"
         # Last entry should be the 25th (index 24)
         assert history[-1]["iteration"] == 24
+
+        rt._cleanup_tool_history(sk)
+        rt.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Phase CB-3: Stuck message transient prefix (BUG #4 fix)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestStuckMessageTransient:
+    """Phase CB-3 (BUG #4 fix): stuck messages are transient prefixes, not stored."""
+
+    def test_stuck_message_not_stored_in_conv_messages(self):
+        """Stuck-detection text is NOT stored in conv.messages when stuck fires.
+
+        Drives _run_loop 3 times with the same tool call to trigger stuck
+        detection. Verifies that conv.messages has no 'stuck-detection' text
+        in any message (tool result, assistant, or otherwise).
+        """
+        rt = AgentRuntime(_make_cfg())
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        from agent.tools import ToolResult
+
+        # Mock LLM: first call → tool call, subsequent calls → text response
+        responses = [_resp(tool_calls=[
+            {"id": "c1", "function": {"name": "read_file", "arguments": '{"path": "test.py"}'}}
+        ]), _resp("Done.")]
+        call_idx = [0]
+        def mock_call_llm(sk, msgs, tools):
+            r = responses[min(call_idx[0], len(responses) - 1)]
+            call_idx[0] += 1
+            return r
+
+        # Run the loop 3 times with the same tool call to trigger stuck detection
+        for _ in range(3):
+            call_idx[0] = 0
+            with unittest.mock.patch.object(rt, "_call_llm", mock_call_llm):
+                with unittest.mock.patch("agent.tools.execute_tool") as mock_exec:
+                    mock_exec.return_value = ToolResult(success=True, output="file content", error="")
+                    rt._run_loop(sk, "read the file")
+
+        conv = rt.get_conversation(sk)
+        # Check that no message in conv.messages contains stuck-detection text
+        for m in conv.messages:
+            assert m.content is None or "stuck-detection" not in (m.content or ""), \
+                f"Stuck-detection text should NOT be in conv.messages, found in role={m.role.value}: {(m.content or '')[:100]}"
+
+        rt._cleanup_tool_history(sk)
+        rt.stop()
+
+    def test_stuck_message_prepended_to_next_llm_request(self):
+        """When a stuck message is pending, _call_llm prepends it to the messages
+        list before making the API call. Verified by mocking the underlying provider
+        caller (not _call_llm itself, which contains the injection logic)."""
+        from agent import runtime as rt_module
+
+        rt = AgentRuntime(_make_cfg())
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        # Manually populate pending stuck messages
+        rt._pending_stuck_messages[sk] = ["Test stuck intervention message"]
+
+        # Mock the underlying provider caller to capture the messages it receives
+        captured_messages = []
+        def mock_streamer(base_url, api_key, model, messages, tools, timeout, x_title=""):
+            captured_messages.append(list(messages))
+            yield from []
+
+        orig_streamer = rt_module._PROVIDER_STREAMERS.get("openai")
+        rt_module._PROVIDER_STREAMERS["openai"] = mock_streamer
+        try:
+            rt._call_llm_streaming(
+                session_key=sk,
+                base_url="https://api.openai.com/v1",
+                api_key="test",
+                model="openai/gpt-4o",
+                caller_key="openai",
+                messages=[{"role": "user", "content": "hello"}],
+                tools=None,
+                timeout=30.0,
+            )
+        finally:
+            if orig_streamer is not None:
+                rt_module._PROVIDER_STREAMERS["openai"] = orig_streamer
+
+        # The first message passed to the streamer should be the stuck prefix
+        assert len(captured_messages) == 1, f"Expected 1 captured call, got: {len(captured_messages)}"
+        first_msg = captured_messages[0][0]
+        assert first_msg["role"] == "user", f"Expected first message role=user, got: {first_msg['role']}"
+        assert "Stuck-detection intervention" in first_msg["content"], \
+            f"Expected stuck prefix in first message, got: {first_msg['content'][:100]}"
+        assert "Test stuck intervention message" in first_msg["content"], \
+            f"Expected stuck text in first message, got: {first_msg['content'][:100]}"
+
+        # The pending list should be cleared after consumption
+        assert sk not in rt._pending_stuck_messages, \
+            f"Pending should be cleared after _call_llm, got: {rt._pending_stuck_messages.get(sk)}"
 
         rt._cleanup_tool_history(sk)
         rt.stop()

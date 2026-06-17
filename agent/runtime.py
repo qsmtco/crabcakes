@@ -448,6 +448,12 @@ def _stream_openai_events(
                     yield SSEEvent(type="tool_call_delta", data={
                         "index": idx, "name": fname, "arguments": fargs
                     })
+            # OpenAI-compatible providers emit a usage chunk at the end of the stream,
+            # typically in a frame with empty choices. Capture and forward it.
+            # See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.1.1 (BUG #3 fix).
+            usage = d.get("usage")
+            if usage:
+                yield SSEEvent(type="usage", data={"usage": usage})
 
 
 def _stream_minimax_events(
@@ -524,6 +530,10 @@ def _stream_minimax_events(
                             })
                     finish_reason = d.get("choices", [{}])[0].get("finish_reason")
                     if finish_reason in ("stop", "tool_calls", "length"):
+                        # Phase CB-3: capture usage before signaling done.
+                        usage = d.get("usage")
+                        if usage:
+                            yield SSEEvent(type="usage", data={"usage": usage})
                         yield SSEEvent(type="done", data={})
                         return
 
@@ -553,6 +563,10 @@ def _stream_minimax_events(
             # MiniMax signals stream end via finish_reason, not [DONE]
             finish_reason = d.get("choices", [{}])[0].get("finish_reason")
             if finish_reason in ("stop", "tool_calls", "length"):
+                # Phase CB-3: capture usage before signaling done.
+                usage = d.get("usage")
+                if usage:
+                    yield SSEEvent(type="usage", data={"usage": usage})
                 yield SSEEvent(type="done", data={})
                 return
 
@@ -623,6 +637,13 @@ def _stream_anthropic_events(
                     yield SSEEvent(type="tool_call_delta", data={
                         "index": idx, "name": fname, "arguments": fargs
                     })
+            elif etype == "message_delta":
+                # Anthropic emits usage in message_delta events at the end of the stream.
+                # The data shape is: {"type": "message_delta", "usage": {"input_tokens": N, "output_tokens": M}, ...}
+                # See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.1.3 (BUG #3 fix).
+                usage = d.get("usage")
+                if usage:
+                    yield SSEEvent(type="usage", data={"usage": usage})
             elif etype == "message_stop":
                 yield SSEEvent(type="done", data={})
                 return
@@ -910,6 +931,11 @@ class AgentRuntime:
         self._last_trim_removed = 0  # set per iteration in _run_loop; read by the breakdown callback
         self._on_error = on_error
         self._on_enforcement_status = on_enforcement_status
+
+        # Phase CB-3: per-session list of pending stuck messages to send as
+        # transient prefixes on the next LLM call.
+        # See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.3 (BUG #4 fix).
+        self._pending_stuck_messages: dict[str, list[str]] = {}
 
         # conversation_key → Conversation
         self._conversations: dict[str, Any] = {}
@@ -1428,14 +1454,14 @@ class AgentRuntime:
                     stuck_msg = self._check_stuck(session_key, tool_name, args, iteration)
                     if stuck_msg:
                         logger.warning("[stuck-detection] sk=%s: %s", session_key, stuck_msg)
+                        # Phase CB-3: store as transient signal, NOT in conv.messages.
+                        # The next LLM call will prepend it to the request's messages list.
+                        # See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.3 (BUG #4 fix).
+                        self._pending_stuck_messages.setdefault(session_key, []).append(stuck_msg)
 
                     # Record tool result — ToolResult dataclass stays clean
                     tc.mark_completed(result.output if result.success else result.error or "")
                     tool_result_text = tc.result or ""
-
-                    # Inject stuck message AFTER tool result recording, with separator
-                    if stuck_msg:
-                        tool_result_text = tool_result_text + "\n\n---\n⚠️ " + stuck_msg
 
                     conv.add_tool_result(call_id, tool_result_text)
                     self._dispatch(self._on_tool_call_result, session_key, tool_name, tool_result_text)
@@ -1517,6 +1543,20 @@ class AgentRuntime:
         Make a single LLM API call. Uses SSE streaming when on_text_delta is set
         (Phase 1.3b), otherwise falls back to blocking.
         """
+        # Phase CB-3: prepend pending stuck messages as transient prefixes.
+        # See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.3 (BUG #4 fix).
+        pending = self._pending_stuck_messages.pop(session_key, [])
+        if pending:
+            stuck_prefix = {
+                "role": "user",
+                "content": (
+                    "[Stuck-detection intervention — please consider a different approach]\n\n"
+                    + "\n\n---\n\n".join(pending)
+                ),
+            }
+            messages = [stuck_prefix] + messages
+            logger.debug("[stuck-injection] sk=%s: prepended %d stuck message(s)", session_key, len(pending))
+
         # Use self._config (already loaded once at startup) — Bug #12 fix
         config = self._config
 
@@ -1626,6 +1666,21 @@ class AgentRuntime:
         Returns:
             Assembled response dict compatible with _extract_tool_calls / _extract_text_content.
         """
+        # Phase CB-3: prepend pending stuck messages as transient prefixes.
+        # (Same fix as _call_llm; streaming path needs it too.)
+        # See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.3 (BUG #4 fix).
+        pending = self._pending_stuck_messages.pop(session_key, [])
+        if pending:
+            stuck_prefix = {
+                "role": "user",
+                "content": (
+                    "[Stuck-detection intervention — please consider a different approach]\n\n"
+                    + "\n\n---\n\n".join(pending)
+                ),
+            }
+            messages = [stuck_prefix] + messages
+            logger.debug("[stuck-injection] sk=%s (streaming): prepended %d stuck message(s)", session_key, len(pending))
+
         # PHASE-11: caller_key is resolved by _call_llm before calling this method
         # (explicit caller > default_model prefix > model prefix). Symmetric with
         # the non-streaming path.
@@ -1639,6 +1694,8 @@ class AgentRuntime:
         full_content = ""
         # tool_call_index → {name, arguments, done}
         tool_calls_partial: dict[int, dict] = {}
+        # Phase CB-3: usage captured from SSE "usage" event (BUG #3 fix).
+        captured_usage: dict = {}
 
         for ev in streamer(base_url, api_key, model, messages, tools, timeout, x_title=x_title):
             if ev.type == "text_delta":
@@ -1659,6 +1716,14 @@ class AgentRuntime:
                 if ev.data["arguments"]:
                     tc["arguments"] += ev.data["arguments"]
 
+            elif ev.type == "usage":
+                # Provider sent a usage chunk (e.g., OpenAI's "final" frame).
+                # Capture the most recent one; the final response uses it.
+                # See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.2 (BUG #3 fix).
+                usage_data = ev.data.get("usage", {})
+                if isinstance(usage_data, dict) and usage_data:
+                    captured_usage = usage_data
+
             elif ev.type == "done":
                 # Build final tool_calls list from accumulated partials
                 tool_calls = []
@@ -1672,11 +1737,12 @@ class AgentRuntime:
                                 "arguments": tc["arguments"]
                             }
                         })
-                logger.debug("[stream] sk=%s done: text_len=%d tool_calls=%d",
-                             session_key, len(full_content), len(tool_calls))
+                logger.debug("[stream] sk=%s done: text_len=%d tool_calls=%d usage_captured=%s",
+                             session_key, len(full_content), len(tool_calls),
+                             bool(captured_usage))
                 return {
                     "choices": [{"message": {"content": full_content, "tool_calls": tool_calls}}],
-                    "usage": {},  # streaming responses omit usage; caller should use blocking call for accurate counts
+                    "usage": captured_usage,
                 }
 
         # Fallback — stream ended without explicit done event (e.g. provider doesn't send [DONE])
@@ -1693,7 +1759,7 @@ class AgentRuntime:
                 })
         logger.debug("[stream-fallback] sk=%s text_len=%d tool_calls=%d (no done event)",
                      session_key, len(full_content), len(tool_calls))
-        return {"choices": [{"message": {"content": full_content, "tool_calls": tool_calls}}], "usage": {}}
+        return {"choices": [{"message": {"content": full_content, "tool_calls": tool_calls}}], "usage": captured_usage}
 
     def _check_stuck(self, session_key: str, tool_name: str, args: dict, iteration: int) -> str | None:
         """
@@ -1742,9 +1808,11 @@ class AgentRuntime:
             return None
 
     def _cleanup_tool_history(self, session_key: str) -> None:
-        """Remove tool history for a session when conversation ends."""
+        """Remove tool history and pending stuck messages for a session when conversation ends."""
         with self._tool_history_lock:
             self._tool_history.pop(session_key, None)
+        # Phase CB-3: also clean up pending stuck messages
+        self._pending_stuck_messages.pop(session_key, None)
 
     def _check_and_stop_on_limit(self, session_key: str, conv: Any) -> bool:
         """

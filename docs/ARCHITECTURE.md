@@ -90,7 +90,7 @@ crabcakes/
 │   │                          # build_system_prompt, build_file_context, check
 │   ├── kb_lookup.py          # KB lookup — cosine-sim retrieval over indexed KB chunks (Auxilium Tier 1)
 │   ├── kb_server.py          # KB HTTP server — wraps kb_lookup in OpenAI-compatible API on localhost:18790 (KB Provider Phase 1)
-│   ├── runtime.py           # AgentRuntime — tool loop, LLM API, streaming, cost tracking + enforcement hook
+│   ├── runtime.py           # AgentRuntime — tool loop, LLM API, streaming (with SSE usage capture), cost tracking + enforcement hook, stuck-detection transient prefix (CB-3)
 │   ├── tools.py              # Tool definitions + execution (read_file, write_file, edit_file, exec_command, etc.)
 │   ├── config.py             # LLM provider config + EnforcementConfig dataclass
 │   ├── context.py            # System prompt builder (via prompts/system/ templates) + file context builder + .gitignore parsing
@@ -1260,7 +1260,7 @@ class AgentRuntime:
                  on_enforcement_status=None)
     def start() / def stop()
     def create_conversation(agent_name, session_key, project_path, model, allowed_tools=None, agent_role="") -> str
-    def send_message(session_key, text)         # tool loop: user msg → [trim to model_max] → LLM → tool calls → results → LLM → response
+    def send_message(session_key, text)         # tool loop: user msg → [trim to model_max] → LLM → [stuck-detection as transient prefix] → tool calls → results → LLM → response
     def cancel(session_key)
     def get_conversation(session_key) -> Conversation | None
     def save_conversation(session_key) -> str    # → <config_dir>/conversations/<session_key>.json
@@ -2294,6 +2294,11 @@ def load_custom_identity(project_path: str) -> dict | None
 - Lives in `utils/` — may import `models/` only (TeamMember, ProjectTeam, TaskStore)
 - Imports `utils/config.py`, `utils/git_ops.py`, `utils/workflow_state.py`
 - No imports from `ui/` or `gateway/`
+
+**Phase CB-3 — Awareness variable caps (BUG #6 fix).** `build_awareness_dict()` caps
+`TEAM_ROSTER` at 500 chars and `CURRENT_STATE` at 1,000 chars, matching the existing
+`PROJECT_MEMORY` truncation pattern. See `TEAM_ROSTER_MAX_CHARS` and
+`CURRENT_STATE_MAX_CHARS` constants. See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.4.
 
 ---
 

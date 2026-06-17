@@ -197,3 +197,54 @@ class TestDetectTechStack:
         (tmp_path / "requirements.txt").write_text("")
         stack = detect_tech_stack(str(tmp_path))
         assert stack.count("python") == 1
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Phase CB-3: Awareness variable size caps (BUG #6 fix)
+# ═══════════════════════════════════════════════════════════════════
+
+from utils.project_awareness import build_awareness_dict
+
+
+class TestAwarenessCaps:
+    """Phase CB-3 (BUG #6 fix): TEAM_ROSTER ≤ 500 chars, CURRENT_STATE ≤ 1,000 chars."""
+
+    def test_team_roster_capped_at_500_chars(self, tmp_path):
+        """A team with 30+ members produces a TEAM_ROSTER with truncation marker."""
+        from utils.project_awareness import TEAM_ROSTER_MAX_CHARS
+        init_project_config(str(tmp_path), "testproj")
+        # 30 members × ~50 chars/entry = ~1,500 chars before cap
+        members = [
+            TeamMember(f"sk{i}", f"Member{i:02d}", role="agent", can_write=False)
+            for i in range(30)
+        ]
+        save_team(str(tmp_path), ProjectTeam(members=members, pm_name="PM"))
+        d = build_awareness_dict(str(tmp_path))
+        marker = "[... team roster truncated ...]"
+        assert marker in d["TEAM_ROSTER"], f"Expected truncation marker, got: {d['TEAM_ROSTER'][-80:]}"
+        # Total length should be at most cap + marker length
+        assert len(d["TEAM_ROSTER"]) <= TEAM_ROSTER_MAX_CHARS + len("\n") + len(marker), \
+            f"TEAM_ROSTER length {len(d['TEAM_ROSTER'])} exceeds cap+marker"
+
+    def test_current_state_capped_at_1000_chars(self, tmp_path):
+        """CURRENT_STATE with a long project name triggers truncation."""
+        from utils.project_awareness import CURRENT_STATE_MAX_CHARS
+        init_project_config(str(tmp_path), "testproj")
+        # Mock build_awareness_snapshot to return a very long project name
+        # so that CURRENT_STATE exceeds 1000 chars
+        import utils.project_awareness as pa
+        orig_snapshot = pa.build_awareness_snapshot
+        def long_snapshot(project_path, task_store=None):
+            snap = orig_snapshot(project_path, task_store)
+            snap["project_name"] = "X" * 1200
+            return snap
+        pa.build_awareness_snapshot = long_snapshot
+        try:
+            d = build_awareness_dict(str(tmp_path))
+        finally:
+            pa.build_awareness_snapshot = orig_snapshot
+        state = d["CURRENT_STATE"]
+        marker = "[... current state truncated ...]"
+        assert marker in state, f"Expected truncation marker. State length was {len(state)}"
+        assert len(state) <= CURRENT_STATE_MAX_CHARS + len("\n") + len(marker), \
+            f"CURRENT_STATE length {len(state)} exceeds cap+marker"
