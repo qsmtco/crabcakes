@@ -1239,6 +1239,7 @@ class ToolCallStatus(str, Enum): PENDING = "pending" | EXECUTING = "executing" |
     def get_token_estimate() -> int
     def _count_char_tokens() -> tuple[int, int]  # shared char counter for estimate + breakdown
     def get_token_breakdown(model_max_tokens) -> dict  # §4.15: per-turn system/conv/remaining breakdown
+        # Phase CB-1 additions: trimmed_this_turn (bool), messages_remaining (int), messages_removed_this_turn (int)
     def trim_to_token_limit(max_tokens)  # §4.10: injects summary of trimmed messages when 8+ msgs remain
     def _last_exchange_summary() -> str  # compact summary of prior user turns
 ```
@@ -1259,7 +1260,7 @@ class AgentRuntime:
                  on_enforcement_status=None)
     def start() / def stop()
     def create_conversation(agent_name, session_key, project_path, model, allowed_tools=None, agent_role="") -> str
-    def send_message(session_key, text)         # tool loop: user msg → LLM → tool calls → results → LLM → response
+    def send_message(session_key, text)         # tool loop: user msg → [trim to model_max] → LLM → tool calls → results → LLM → response
     def cancel(session_key)
     def get_conversation(session_key) -> Conversation | None
     def save_conversation(session_key) -> str    # → <config_dir>/conversations/<session_key>.json
@@ -1332,10 +1333,39 @@ def get_api_key(provider_name) -> str | None
 ```python
 def build_system_prompt(agent_name, project_path, tools, review_mode, agent_role="") -> str
 def build_file_context(project_path, query=None) -> str    # respects .gitignore, capped ~50K chars; §4.4a prepends .crabcakes/ docs
+def build_file_context_with_core_files(project_path, query=None) -> str  # Phase CB-2: appends CORE_FILES at end for budget preservation
 def _read_crabcakes_docs(project_path) -> str               # §4.4a — always include project docs in context
 def _load_crabcakes_doc(doc_name, project_path) -> str | None  # individual doc access
 def load_custom_system_prompt(project_path) -> str | None  # .crabcakes/agent-system-prompt.md → AGENTS.md → None
 ```
+
+**Core files (Phase CB-2).** `build_file_context_with_core_files()` places the
+following files at the END of the file context, so they are the last to be
+truncated when the system prompt is over budget:
+- `README.md`
+- `AGENTS.md`
+- `CONVENTIONS.md`
+- `ARCHITECTURE.md`
+
+### §4.4b System Prompt Budget (Phase CB-2)
+
+The system prompt is budgeted to 15% of the model's context window, with a
+16K-token (64K-char) hard cap fallback. This caps the file-context section
+of the system prompt at `int(model_max_tokens * 0.15) * 4` chars (or the
+hard cap when `model_max_tokens` is unknown/zero).
+
+When the file context exceeds the budget, it is truncated from the end.
+Core files (README, AGENTS, CONVENTIONS, ARCHITECTURE) are at the end of
+the file context, so they are the last to be dropped.
+
+The budget is enforced by `utils/prompt_loader.py:_apply_system_prompt_budget()`,
+called from `compose_system_prompt()` when `model_max_tokens` is provided.
+The runtime at `agent/runtime.py:create_conversation` (CB-2 wiring) passes
+the default provider's `max_tokens` to `build_system_prompt()`.
+
+**Backward compatibility:** `compose_system_prompt()` and `build_system_prompt()`
+get a new optional keyword `model_max_tokens: int | None = None`. When `None`,
+no budget is enforced. All existing call sites continue to work unchanged.
 
 ### 3.21q.5 `agent/kb_lookup.py` — Knowledge-Base Lookup (Auxilium Tier 1)
 

@@ -288,11 +288,34 @@ class Conversation:
                         removed = True
                         break
             if not removed:
-                # Fallback: remove oldest user message + its following assistant
-                for i in range(1, len(self.messages) - 1):
-                    if self.messages[i].role == MessageRole.USER:
-                        self.messages.pop(i)
-                        break
+                # Fallback: remove the oldest message in the trimmable region.
+                #
+                # The trimmable region is indices [0, len - tail_preserve),
+                # i.e., everything except the preserved tail (last 4 messages).
+                #
+                # The previous code scanned `range(1, len-1)` looking for USER
+                # messages. This had two failure modes:
+                #   1. It excluded index 0 (the oldest message), so the oldest
+                #      message was never considered as a removal candidate.
+                #   2. It required the candidate to be a USER message, so when
+                #      the trimmable region became all ASSISTANT (e.g., after
+                #      a long tool-call sequence or a 20-exchange user/assistant
+                #      history), the trim stalled at 21+ messages instead of
+                #      reaching the 4-5 message target.
+                #
+                # The fix: pop the oldest message in the trimmable region
+                # regardless of role. This is always safe because:
+                #   - The preserved tail (last 4 messages) is never touched
+                #     (we only pop index 0, and we only enter the fallback
+                #     when len > 4).
+                #   - The outer loop guard `len > 4` prevents infinite loops.
+                #   - The backwards loop above has already tried to remove
+                #     TOOL_RESULT + ASSISTANT-with-tool-calls pairs.
+                #
+                # See QTR's Phase CB-1 audit (2026-06-17) for the empirical trace.
+                tail_preserve = 4
+                if len(self.messages) > tail_preserve:
+                    self.messages.pop(0)
                 else:
                     break
 

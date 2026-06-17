@@ -297,3 +297,58 @@ class TestConversationCostTracking:
         c.add_assistant_message("hello", [])
         c.record_usage(tokens=200, cost=0.004)
         assert c.messages[-1].tokens_used == 200
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Phase CB-2: trim fallback includes oldest message (BUG #2 fix)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestTrimFallbackIncludesOldest:
+    """Phase CB-2 fix: trim fallback pops index 0 (oldest message) unconditionally.
+
+    The previous code used range(1, len-1) looking for USER messages to
+    remove. When the middle of the conversation was full of consecutive
+    ASSISTANT messages (e.g., after a 20-exchange USER/ASSISTANT history),
+    the trim stalled at ~21 messages instead of reaching the 4-5 message
+    target. The new fallback pops the oldest message in the trimmable
+    region (index 0) regardless of role, so the trim always makes
+    progress. See QTR's Phase CB-1 audit (2026-06-17) for the empirical
+    trace; see SPEC-CONTEXT-BLOAT-PHASE-2.md §2.1 for the fix rationale.
+    """
+
+    def test_fallback_removes_oldest_when_middle_is_all_assistant(self):
+        """40 alternating USER/ASSISTANT messages trim down to <8 messages, not 21."""
+        c = Conversation(agent_name="Coder")
+        for i in range(20):
+            c.add_user_message(f"turn {i}: " + "x" * 400)
+            c.add_assistant_message("y" * 400, [])
+        assert len(c.messages) == 40
+        c.trim_to_token_limit(500)
+        assert len(c.messages) < 8, (
+            f"trim stalled at {len(c.messages)} messages; expected <8"
+        )
+
+    def test_fallback_still_protects_preserved_tail(self):
+        """The last 4 messages are never removed."""
+        c = Conversation(agent_name="Coder")
+        c.add_assistant_message("oldest assistant " + "x" * 400, [])
+        for i in range(15):
+            c.add_user_message(f"middle user {i} " + "x" * 400)
+            c.add_assistant_message(f"middle assistant {i} " + "y" * 400)
+        tail_before = [m.content[:30] for m in c.messages[-4:]]
+        c.trim_to_token_limit(500)
+        tail_after = [m.content[:30] for m in c.messages[-4:]]
+        assert tail_before == tail_after, (
+            f"preserved tail was modified:\n  before: {tail_before}\n  after:  {tail_after}"
+        )
+
+    def test_fallback_does_not_remove_most_recent(self):
+        """The most recent message (index -1) is never removed by the fallback."""
+        c = Conversation(agent_name="Coder")
+        c.add_user_message("OLD USER 1 " + "x" * 400)
+        c.add_assistant_message("OLD ASSISTANT " + "y" * 400, [])
+        c.add_user_message("MOST RECENT USER " + "z" * 400)
+        c.add_assistant_message("MOST RECENT ASSISTANT " + "w" * 400, [])
+        c.trim_to_token_limit(500)
+        most_recent_user = c.messages[-2]
+        assert "MOST RECENT USER" in most_recent_user.content

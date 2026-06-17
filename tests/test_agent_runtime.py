@@ -380,6 +380,203 @@ class TestToolLoop:
 
 
 # ═══════════════════════════════════════════════════════════════════
+#  _compute_model_max — provider max_tokens resolution (BUG #1 Phase CB-1)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestComputeModelMax:
+    """Helper that resolves the model's context window from the provider config."""
+
+    def test_returns_provider_max_tokens(self):
+        from agent.config import AgentConfig, LLMProviderConfig
+        cfg = AgentConfig(
+            providers={
+                "openrouter": LLMProviderConfig(
+                    name="openrouter",
+                    base_url="https://openrouter.ai/api/v1",
+                    api_key="test",
+                    default_model="some-model",
+                    max_tokens=200_000,
+                )
+            },
+            default_provider="openrouter",
+            default_model="openrouter/some-model",
+            max_tool_iterations=5,
+            tool_timeout_seconds=30,
+            auto_save_conversations=False,
+        )
+        rt = AgentRuntime(cfg)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        conv = rt.get_conversation(sk)
+        conv.model = "openrouter/some-model"
+        assert rt._compute_model_max(conv) == 200_000
+        rt.stop()
+
+    def test_falls_back_to_128k_when_provider_unknown(self):
+        from agent.config import AgentConfig, LLMProviderConfig
+        cfg = AgentConfig(
+            providers={
+                "openai": LLMProviderConfig(
+                    name="openai", base_url="https://api.openai.com/v1",
+                    api_key="test", default_model="gpt-4o",
+                )
+            },
+            default_provider="openai",
+            default_model="openai/gpt-4o",
+            max_tool_iterations=5,
+            tool_timeout_seconds=30,
+            auto_save_conversations=False,
+        )
+        rt = AgentRuntime(cfg)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        conv = rt.get_conversation(sk)
+        conv.model = "unknown/model"  # provider not in config
+        assert rt._compute_model_max(conv) == 128_000
+        rt.stop()
+
+    def test_falls_back_to_128k_when_max_tokens_is_zero(self):
+        from agent.config import AgentConfig, LLMProviderConfig
+        cfg = AgentConfig(
+            providers={
+                "openrouter": LLMProviderConfig(
+                    name="openrouter",
+                    base_url="https://openrouter.ai/api/v1",
+                    api_key="test",
+                    default_model="some-model",
+                    max_tokens=0,
+                )
+            },
+            default_provider="openrouter",
+            default_model="openrouter/some-model",
+            max_tool_iterations=5,
+            tool_timeout_seconds=30,
+            auto_save_conversations=False,
+        )
+        rt = AgentRuntime(cfg)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        conv = rt.get_conversation(sk)
+        conv.model = "openrouter/some-model"
+        assert rt._compute_model_max(conv) == 128_000
+        rt.stop()
+
+    def test_falls_back_to_128k_when_max_tokens_is_none(self):
+        from agent.config import AgentConfig, LLMProviderConfig
+        cfg = AgentConfig(
+            providers={
+                "openrouter": LLMProviderConfig(
+                    name="openrouter",
+                    base_url="https://openrouter.ai/api/v1",
+                    api_key="test",
+                    default_model="some-model",
+                    max_tokens=None,
+                )
+            },
+            default_provider="openrouter",
+            default_model="openrouter/some-model",
+            max_tool_iterations=5,
+            tool_timeout_seconds=30,
+            auto_save_conversations=False,
+        )
+        rt = AgentRuntime(cfg)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        conv = rt.get_conversation(sk)
+        conv.model = "openrouter/some-model"
+        assert rt._compute_model_max(conv) == 128_000
+        rt.stop()
+
+    def test_extracts_provider_name_from_slash_model(self):
+        from agent.config import AgentConfig, LLMProviderConfig
+        cfg = AgentConfig(
+            providers={
+                "openrouter": LLMProviderConfig(
+                    name="openrouter",
+                    base_url="https://openrouter.ai/api/v1",
+                    api_key="test",
+                    default_model="claude-3-opus",
+                    max_tokens=200_000,
+                )
+            },
+            default_provider="openai",  # different default
+            default_model="openai/gpt-4o",
+            max_tool_iterations=5,
+            tool_timeout_seconds=30,
+            auto_save_conversations=False,
+        )
+        rt = AgentRuntime(cfg)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        conv = rt.get_conversation(sk)
+        conv.model = "openrouter/claude-3-opus"  # extracts "openrouter", not default_provider
+        assert rt._compute_model_max(conv) == 200_000
+        rt.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Context-bloat fix — _run_loop trims conversation (BUG #1 Phase CB-1)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestRunLoopTrimsContext:
+    """§4.15 + BUG #1 fix: _run_loop trims the conversation to model_max per iteration."""
+
+    def test_long_conversation_is_trimmed(self):
+        """A 20-exchange conversation that exceeds model_max gets trimmed before the LLM call."""
+        from agent.config import AgentConfig, LLMProviderConfig
+        cfg = AgentConfig(
+            providers={
+                "openai": LLMProviderConfig(
+                    name="openai",
+                    base_url="https://api.openai.com/v1",
+                    api_key="test-key",
+                    default_model="gpt-4o",
+                    max_tokens=500,  # tiny — forces the trim
+                )
+            },
+            default_provider="openai",
+            default_model="openai/gpt-4o",
+            max_tool_iterations=5,
+            tool_timeout_seconds=30,
+            auto_save_conversations=False,
+        )
+        rt = AgentRuntime(cfg)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        conv = rt.get_conversation(sk)
+
+        # Stuff the conversation with 20 long exchanges (~100 tokens each)
+        for i in range(20):
+            conv.add_user_message(f"turn {i}: " + "x" * 400)
+            conv.add_assistant_message("y" * 400, [])
+
+        # Capture the breakdown callback output
+        captured: list[dict] = []
+        rt._on_token_breakdown = lambda session_key, bd: captured.append(bd)
+
+        # Mock _call_llm to return a text-only response (no tool calls → loop exits)
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: _resp("Done.")):
+            rt._run_loop(sk, "trigger the loop")
+
+        # Post-conditions
+        assert len(conv.messages) < 42, f"expected trim, got {len(conv.messages)} messages"
+        assert captured, "on_token_breakdown never fired"
+        last = captured[-1]
+        assert last["trimmed_this_turn"] is True
+        # messages_remaining is the count at trim time; conv grows after trim
+        assert last["messages_removed_this_turn"] > 0
+        assert isinstance(last["messages_remaining"], int)
+        assert last["messages_remaining"] >= 1
+        rt.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════
 #  Cost + step limits
 # ═══════════════════════════════════════════════════════════════════
 

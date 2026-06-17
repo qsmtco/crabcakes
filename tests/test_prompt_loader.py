@@ -3,6 +3,7 @@
 
 import os
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -377,3 +378,65 @@ class TestProjectContextInjection:
         empty = tmp_path / "empty_project"
         empty.mkdir()
         assert _load_project_context_file(str(empty), "coder-bugs.md") is None
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Phase CB-2: System Prompt Budget
+# ═══════════════════════════════════════════════════════════════════
+
+class TestSystemPromptBudget:
+    """Phase CB-2: system prompt is budgeted to 15% of model_max_tokens."""
+
+    def test_no_budget_when_model_max_is_none(self):
+        """When model_max_tokens is None, the full file context is appended (backward-compatible)."""
+        with tempfile.TemporaryDirectory() as proj:
+            (Path(proj) / "huge.txt").write_text("x" * 60_000)
+            prompt = compose_system_prompt(
+                agent_name="Coder", agent_role="coder",
+                project_path=proj, model_max_tokens=None,
+            )
+            assert "huge.txt" in prompt or len(prompt) > 50_000
+            # Regression check: the "## File context" header must be present so
+            # the LLM can recognize the file context block. (Phase CB-2 audit
+            # found this header was missing in the no-truncation path.)
+            assert "## File context" in prompt, (
+                "Missing '## File context' section header in no-truncation path"
+            )
+
+    def test_budget_truncates_file_context_to_15_percent(self):
+        """With model_max_tokens=1000, budget is 150 tokens = ~600 chars."""
+        with tempfile.TemporaryDirectory() as proj:
+            (Path(proj) / "huge.txt").write_text("x" * 5_000)
+            (Path(proj) / "medium.txt").write_text("y" * 2_000)
+            (Path(proj) / "small.txt").write_text("z" * 500)
+            prompt = compose_system_prompt(
+                agent_name="Coder", agent_role="coder",
+                project_path=proj, model_max_tokens=1_000,
+            )
+            # Budget = 1000 * 0.15 = 150 tokens = 600 chars
+            # Templates are ~3-5K chars, so no room for file context.
+            assert "huge.txt" not in prompt
+
+    def test_hard_cap_when_model_max_is_zero(self):
+        """When model_max_tokens is 0 or negative, the 16K hard cap is used."""
+        with tempfile.TemporaryDirectory() as proj:
+            (Path(proj) / "file.txt").write_text("x" * 20_000)
+            prompt = compose_system_prompt(
+                agent_name="Coder", agent_role="coder",
+                project_path=proj, model_max_tokens=0,
+            )
+            # 16K hard cap = 64K chars. File context is 20K, fits.
+            assert "file.txt" in prompt
+
+    def test_core_files_preserved_at_end(self):
+        """README, AGENTS are preserved even when the file context is truncated."""
+        with tempfile.TemporaryDirectory() as proj:
+            (Path(proj) / "huge.txt").write_text("x" * 50_000)
+            (Path(proj) / "README.md").write_text("# Project Readme")
+            (Path(proj) / "AGENTS.md").write_text("# Agent Specs")
+            prompt = compose_system_prompt(
+                agent_name="Coder", agent_role="coder",
+                project_path=proj, model_max_tokens=50_000,
+            )
+            assert "Project Readme" in prompt
+            assert "Agent Specs" in prompt

@@ -875,6 +875,11 @@ class AgentRuntime:
         on_response_complete: (session_key, full_text) — final response ready.
         on_token_usage: (session_key, tokens, cost) — usage info.
         on_token_breakdown: (session_key, breakdown_dict) — §4.15 per-turn token budget breakdown.
+            The breakdown dict includes three additional keys when the context-bloat
+            fix (BUG #1, Phase CB-1) has shipped:
+              - trimmed_this_turn (bool): True if messages were removed this iteration
+              - messages_remaining (int): post-trim message count
+              - messages_removed_this_turn (int): number of messages removed (0 if none)
         on_error: (session_key, error_message) — error occurred.
     """
 
@@ -902,6 +907,7 @@ class AgentRuntime:
         self._on_response_complete = on_response_complete
         self._on_token_usage = on_token_usage
         self._on_token_breakdown = on_token_breakdown
+        self._last_trim_removed = 0  # set per iteration in _run_loop; read by the breakdown callback
         self._on_error = on_error
         self._on_enforcement_status = on_enforcement_status
 
@@ -1009,7 +1015,20 @@ class AgentRuntime:
         else:
             tools = get_all_tools()
             tool_names = [t.name for t in tools]
-        system_prompt = build_system_prompt(agent_name, project_path, tool_names, agent_role=agent_role)
+        # Phase CB-2: pass the model's context window so the system prompt budget
+        # can cap file context. Resolve from the default provider's config.
+        default_provider_name = self._config.default_provider
+        default_provider_cfg = self._config.providers.get(default_provider_name) if default_provider_name else None
+        if default_provider_cfg and getattr(default_provider_cfg, "max_tokens", None):
+            model_max_for_budget = int(default_provider_cfg.max_tokens)
+        else:
+            model_max_for_budget = 128_000  # fallback per CB-1
+
+        system_prompt = build_system_prompt(
+            agent_name, project_path, tool_names,
+            agent_role=agent_role,
+            model_max_tokens=model_max_for_budget,
+        )
 
         conv = Conversation(
             agent_name=agent_name,
@@ -1103,6 +1122,38 @@ class AgentRuntime:
         # No user message found — return unchanged
         return messages
 
+    def _compute_model_max(self, conv: "Conversation") -> int:
+        """Return the model's context window for the current conversation's provider.
+
+        Resolution order:
+          1. conv.model's provider's max_tokens in self._config.providers (when > 0)
+          2. 128_000 fallback (matches the §4.15 default; same constant used
+             by the old inline calculation at the former lines 1198-1201)
+
+        Returns 128_000 when:
+          - conv.model is None and self._config.default_provider is not configured
+          - the resolved provider config has max_tokens <= 0 or None
+          - any exception during provider lookup
+        """
+        FALLBACK = 128_000
+        try:
+            provider_name = (
+                conv.model.split("/")[0]
+                if conv.model and "/" in conv.model
+                else self._config.default_provider
+            )
+            if not provider_name:
+                return FALLBACK
+            provider_cfg = self._config.providers.get(provider_name)
+            if provider_cfg is None:
+                return FALLBACK
+            if not getattr(provider_cfg, "max_tokens", None):
+                return FALLBACK
+            return int(provider_cfg.max_tokens)
+        except Exception:
+            logger.exception("[model-max] failed to resolve provider max_tokens; using fallback")
+            return FALLBACK
+
     def _run_loop(self, session_key: str, text: str) -> None:
         """Background thread: run the full tool loop for one user message."""
         with self._lock:
@@ -1141,6 +1192,18 @@ class AgentRuntime:
                 # Build API messages
                 from models.conversation import MessageRole
                 messages = conv.to_api_messages()
+
+                # Context-bloat fix (BUG #1) — cap history before each LLM call.
+                # Conversation.trim_to_token_limit() is unit-tested at
+                # tests/test_conversation.py:249 (TestConversationTrim) and
+                # tests/test_phase4.py:280 (summary-on-trim). It preserves the
+                # system prompt and the last 4 messages, and (per §4.10) injects
+                # a budget-aware summary when >= 8 messages remain.
+                model_max = self._compute_model_max(conv)
+                messages_count_before = len(conv.messages)
+                conv.trim_to_token_limit(model_max)
+                messages_count_after = len(conv.messages)
+                self._last_trim_removed = messages_count_before - messages_count_after
 
                 # Get tools for this agent (filtered by allowed_tools if set)
                 from agent.tools import get_tool_definitions_for_api
@@ -1193,14 +1256,15 @@ class AgentRuntime:
                 conv.record_usage(prompt_tok + comp_tok, cost)
                 self._dispatch(self._on_token_usage, session_key, prompt_tok + comp_tok, cost)
 
-                # §4.15 — Token budget breakdown for observability
+                # §4.15 — Token budget breakdown for observability.
+                # Reuses the model_max that the trim call above already computed.
                 if self._on_token_breakdown is not None:
-                    model_max = 128_000  # default; use provider config if available
-                    provider_cfg = self._config.providers.get(conv.model.split("/")[0] if "/" in conv.model else self._config.default_provider)
-                    if provider_cfg is not None:
-                        model_max = provider_cfg.max_tokens
                     breakdown = conv.get_token_breakdown(model_max)
+                    breakdown["trimmed_this_turn"] = self._last_trim_removed > 0
+                    breakdown["messages_remaining"] = len(conv.messages)
+                    breakdown["messages_removed_this_turn"] = self._last_trim_removed
                     self._dispatch(self._on_token_breakdown, session_key, breakdown)
+                    self._last_trim_removed = 0
 
                 logger.debug("[tool-loop] sk=%s llm response: text_len=%d tool_calls=%d tokens=%d cost=%.4f",
                              session_key, len(text_content or ""), len(tool_calls_raw),

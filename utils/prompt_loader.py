@@ -121,6 +121,7 @@ def compose_system_prompt(
     project_awareness: dict | None = None,
     tools: list[str] | None = None,
     review_mode: str = "off",
+    model_max_tokens: int | None = None,
 ) -> str:
     """Compose the full system prompt by loading and merging templates.
 
@@ -143,6 +144,10 @@ def compose_system_prompt(
         project_awareness: Dict of template variables from build_awareness_dict().
         tools: List of tool names (for agent runtime).
         review_mode: "off" | "review".
+        model_max_tokens: Optional. When provided, the total system prompt
+            is budgeted to 15% of this value (with a 16K hard cap fallback
+            for unknown model sizes). File context is truncated to fit.
+            When None, no budget is enforced (backward-compatible).
 
     Returns:
         Composed and filled system prompt string.
@@ -260,12 +265,17 @@ def compose_system_prompt(
 
     result = fill_template(composed, variables)
 
-    # Append file context if project active (outside templates — large dynamic content)
+    # §4.4a — Append file context if project active (outside templates — large dynamic content).
+    # Phase CB-2: when model_max_tokens is provided, the total system prompt is
+    # budgeted to 15% of the context window (with a 16K hard cap fallback).
+    # File context is truncated to fit, but core files are always preserved.
     if project_path:
-        from agent.context import build_file_context
-        file_context = build_file_context(project_path)
-        if file_context:
-            result += f"\n\n## File context\n\n{file_context}"
+        from agent.context import build_file_context_with_core_files
+        file_context_with_core = build_file_context_with_core_files(project_path)
+        if file_context_with_core:
+            result, _unused_file_context = _apply_system_prompt_budget(
+                result, file_context_with_core, model_max_tokens
+            )
 
     # Debug dump — set CRABCAKES_PROMPT_DEBUG=1 to inspect the full composed prompt
     if os.environ.get("CRABCAKES_PROMPT_DEBUG"):
@@ -278,3 +288,93 @@ def compose_system_prompt(
         print(f"\n{'='*60}\n", file=sys.stderr)
 
     return result
+
+
+# Maximum hard cap for the system prompt budget (chars) — used when
+# model_max_tokens is not provided or is unknown. 16K tokens = ~64K chars.
+DEFAULT_SYSTEM_PROMPT_BUDGET_CHARS = 16_000 * 4
+
+# Fraction of the model context window allocated to the system prompt.
+SYSTEM_PROMPT_BUDGET_FRACTION = 0.15
+
+# Section header for the file context block. Prepended to the file context
+# in both the no-truncation path and the truncation path so the LLM can
+# recognize the block. Matches the pre-CB-2 behavior in compose_system_prompt.
+FILE_CONTEXT_HEADER = "\n\n## File context\n\n"
+
+
+def _apply_system_prompt_budget(
+    template_result: str,
+    file_context_section: str,
+    model_max_tokens: int | None,
+) -> tuple[str, str]:
+    """Apply the system prompt budget. Truncates file context if needed.
+
+    Returns (final_prompt, unused_file_context). The final_prompt is the
+    template result + the (possibly truncated) file context section.
+    The unused_file_context is empty if the file context fit, or the
+    truncated-off portion (for observability).
+    """
+    if not file_context_section:
+        return template_result, ""
+
+    # Compute the budget
+    if model_max_tokens is not None and model_max_tokens > 0:
+        budget_tokens = int(model_max_tokens * SYSTEM_PROMPT_BUDGET_FRACTION)
+        budget_chars = budget_tokens * 4
+    else:
+        budget_chars = DEFAULT_SYSTEM_PROMPT_BUDGET_CHARS
+
+    # The total budget includes both the template result and the file context
+    available_for_file_context = budget_chars - len(template_result)
+    if available_for_file_context <= 0:
+        # Template result alone exceeds the budget. No room for file context.
+        return template_result, file_context_section
+
+    full_file_context_len = len(file_context_section)
+    if full_file_context_len <= available_for_file_context:
+        # Fits within budget. No truncation.
+        return template_result + FILE_CONTEXT_HEADER + file_context_section, ""
+
+    # Truncate file context. Preserve the END (core files and most recent context).
+    truncated, removed = _truncate_file_context_smart(
+        file_context_section, available_for_file_context
+    )
+    return template_result + truncated, removed
+
+
+def _truncate_file_context_smart(
+    file_context_section: str,
+    max_chars: int,
+) -> tuple[str, str]:
+    """Truncate a file context section, preserving the END (core files).
+
+    The file context section has "## " section headers. We split on these
+    headers, then keep the LAST N sections that fit within max_chars.
+    The removed portion is returned for observability.
+    """
+    if file_context_section.startswith(FILE_CONTEXT_HEADER):
+        inner = file_context_section[len(FILE_CONTEXT_HEADER):]
+    else:
+        inner = file_context_section
+
+    import re
+    parts = re.split(r'(?=^## )', inner, flags=re.MULTILINE)
+
+    # Iterate from the END, accumulating sections, until we exceed max_chars.
+    kept: list[str] = []
+    used_chars = 0
+    for section in reversed(parts):
+        section_chars = len(section)
+        if used_chars + section_chars > max_chars and kept:
+            break
+        kept.append(section)
+        used_chars += section_chars
+
+    kept.reverse()
+    truncated_inner = "".join(kept)
+    if not truncated_inner:
+        return "", file_context_section
+    truncated = FILE_CONTEXT_HEADER + truncated_inner
+    removed = inner[len(truncated_inner):]
+    return truncated, removed

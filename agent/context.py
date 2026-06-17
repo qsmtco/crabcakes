@@ -298,6 +298,62 @@ def build_file_context(
     return full[:max_chars] + f"\n\n[... file context truncated to {max_chars} chars ...]"
 
 
+# Core files that are never truncated from the file context.
+# Per the Phase CB-2 spec, these are hard-coded for v1.
+# The order here is the order they appear in the file context.
+CORE_FILES = [
+    "README.md",
+    "AGENTS.md",
+    "CONVENTIONS.md",
+    "ARCHITECTURE.md",
+]
+
+
+def build_file_context_with_core_files(
+    project_path: str,
+    query: str | None = None,
+    max_chars: int = 50_000,
+) -> str:
+    """
+    Build a file context block with core files preserved at the end.
+
+    Phase CB-2: the system prompt budget in compose_system_prompt() may
+    truncate this context. Core files are placed at the END so they are
+    the last to be truncated (the smart-truncate keeps the most recent
+    sections).
+
+    Args:
+        project_path: Absolute path to the project root.
+        query: Optional search query — if provided, only matching files are included.
+        max_chars: Maximum total context length (default 50K).
+
+    Returns:
+        Formatted text block with core files at the end, ready for
+        truncation by _apply_system_prompt_budget.
+    """
+    if not project_path or not os.path.isdir(project_path):
+        return ""
+
+    # Build the standard file context (capped at max_chars).
+    base_context = build_file_context(project_path, query=query, max_chars=max_chars)
+    if not base_context:
+        return ""
+
+    # Read each core file and append it. If a core file is missing, skip it.
+    core_sections = []
+    for core_file in CORE_FILES:
+        core_path = os.path.join(project_path, core_file)
+        content = _read_file_safe(core_path)
+        if content:
+            core_sections.append(f"## {core_file}\n\n{content}\n")
+
+    if not core_sections:
+        return base_context
+
+    core_block = "\n".join(core_sections)
+    return base_context + "\n\n" + core_block
+
+
 def _load_crabcakes_doc(doc_name: str, project_path: str, max_size: int = 50 * 1024) -> str | None:
     """
     Read a single .crabcakes/ doc. Returns content or None if missing/large.
@@ -386,6 +442,7 @@ def build_system_prompt(
     tools: list[str],
     review_mode: str = "off",
     agent_role: str = "",
+    model_max_tokens: int | None = None,
 ) -> str:
     """
     Build the system prompt for an agent.
@@ -426,6 +483,7 @@ def build_system_prompt(
             project_awareness=awareness_dict,
             tools=tools,
             review_mode=review_mode,
+            model_max_tokens=model_max_tokens,
         )
         if prompt:
             return prompt

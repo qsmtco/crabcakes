@@ -299,3 +299,33 @@ class TestBuildFileContextTree:
                 f.write("source")
             ctx = build_file_context(proj)
             assert "main.py" in ctx
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Phase CB-2: build_system_prompt model_max_tokens plumbing
+# ═══════════════════════════════════════════════════════════════════
+
+from pathlib import Path
+from agent.context import build_system_prompt
+
+
+class TestBuildSystemPromptBudget:
+    """Phase CB-2: build_system_prompt passes model_max_tokens through to compose_system_prompt."""
+
+    def test_model_max_is_plumbed_through(self):
+        with tempfile.TemporaryDirectory() as proj:
+            (Path(proj) / "huge.txt").write_text("x" * 30_000)
+            (Path(proj) / "small.txt").write_text("y" * 100)
+            prompt_small = build_system_prompt(
+                "Coder", proj, [], agent_role="coder", model_max_tokens=500,
+            )
+            prompt_large = build_system_prompt(
+                "Coder", proj, [], agent_role="coder", model_max_tokens=200_000,
+            )
+            assert len(prompt_small) < len(prompt_large)
+
+    def test_no_model_max_means_no_truncation(self):
+        with tempfile.TemporaryDirectory() as proj:
+            (Path(proj) / "file.txt").write_text("z" * 5_000)
+            prompt = build_system_prompt("Coder", proj, [], agent_role="coder")
+            assert "file.txt" in prompt
