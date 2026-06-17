@@ -83,7 +83,7 @@ After ~19 user-removals, the middle of the conversation is all ASSISTANT. The fa
 
 ### 2.1 `models/conversation.py` — fix trim fallback
 
-**What changes:** One line. The fallback's scan range.
+**What changes:** Replace the "scan for USER messages" fallback with a simple "pop index 0 (the oldest message in the trimmable region)" — see §2.1 for the exact replacement and the rationale.
 
 **Find** (at `models/conversation.py:295-302`):
 
@@ -826,7 +826,7 @@ agent.runtime.AgentRuntime._run_loop(...)
   └─ ... (LLM call, tool execution, etc. — unchanged)
 ```
 
-The trim fix is a single-line change to the fallback loop's scan range. The outer loop, the backwards loop, the summary injection, and the post-trim state are all unchanged.
+The trim fix replaces the fallback loop's "scan for USER" behavior with a direct `self.messages.pop(0)`. The outer loop, the backwards loop, the summary injection, and the post-trim state are all unchanged.
 
 ---
 
@@ -834,7 +834,7 @@ The trim fix is a single-line change to the fallback loop's scan range. The oute
 
 | File | Change type | Lines (est.) | Risk |
 |---|---|---|---|
-| `models/conversation.py` | Fix trim fallback scan range | +10, -1 | LOW (single-line algorithm fix) |
+| `models/conversation.py` | Fix trim fallback: pop index 0 (oldest message) instead of scanning for USER | +10, -1 | LOW (algorithm change, all existing trim tests pass) |
 | `utils/prompt_loader.py` | Add `model_max_tokens` kwarg, 2 new helper functions | +90, -3 | MEDIUM (new code path) |
 | `agent/context.py` | Add `build_file_context_with_core_files`, plumb `model_max_tokens` | +60, -2 | LOW |
 | `agent/runtime.py` | Pass `model_max` to `build_system_prompt` | +12, -1 | LOW |
@@ -851,9 +851,10 @@ The trim fix is a single-line change to the fallback loop's scan range. The oute
 
 Numbered steps. The implementer must complete each step and verify before moving to the next. No batching.
 
-1. **Fix the trim fallback in `models/conversation.py`** (single line, plus a comment block).
+1. **Fix the trim fallback in `models/conversation.py`** (single algorithmic change: pop index 0 instead of scanning for USER messages; see §2.1 for the exact replacement).
    - **Verify:** `grep -n "range(1, len(self.messages) - 1)" models/conversation.py` → no matches.
-   - **Verify:** `grep -n "range(0, upper)" models/conversation.py` → one match.
+   - **Verify:** `grep -n "self.messages.pop(0)" models/conversation.py` → at least one match (the new fallback).
+   - **Verify:** `pytest tests/test_conversation.py -k "trim" -v` → all existing 4 trim tests still pass (backward-compat check).
 
 2. **Write `TestTrimFallbackIncludesOldest` tests** (3 tests, see §2.6).
    - **Verify:** `pytest tests/test_conversation.py::TestTrimFallbackIncludesOldest -v` → all 3 pass.
