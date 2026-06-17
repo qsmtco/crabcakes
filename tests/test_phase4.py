@@ -408,13 +408,19 @@ class TestTokenBreakdown:
     def test_system_prompt_counted(self):
         c = Conversation(agent_name="Coder", system_prompt="x" * 40)  # 10 tokens
         bd = c.get_token_breakdown(128000)
-        assert bd["system_prompt_tokens"] == 10
+        import tiktoken
+        enc = tiktoken.get_encoding("cl100k_base")
+        expected = len(enc.encode("x" * 40))
+        assert bd["system_prompt_tokens"] == expected
 
     def test_messages_counted_as_conversation(self):
         c = Conversation(agent_name="Coder")
         c.add_user_message("hello world")  # 11 chars → 2 tokens
         bd = c.get_token_breakdown(128000)
-        assert bd["conversation_tokens"] == 11 // 4
+        import tiktoken
+        enc = tiktoken.get_encoding("cl100k_base")
+        expected = len(enc.encode("hello world"))
+        assert bd["conversation_tokens"] == expected
 
     def test_total_equals_system_plus_conversation(self):
         c = Conversation(agent_name="Coder", system_prompt="s" * 20)
@@ -428,9 +434,9 @@ class TestTokenBreakdown:
         assert bd["remaining_tokens"] == 100 - bd["total_used_tokens"]
 
     def test_usage_percent_correct(self):
-        c = Conversation(agent_name="Coder", system_prompt="x" * 400)  # 100 tokens
+        c = Conversation(agent_name="Coder", system_prompt="x" * 400)  # cl100k_base tokenizes to 50 tokens
         bd = c.get_token_breakdown(1000)
-        assert bd["usage_percent"] == 10.0  # 100/1000 = 10%
+        assert bd["usage_percent"] == 5.0  # 50/1000 = 5%
 
     def test_zero_max_tokens_no_division_error(self):
         """model_max_tokens=0 should not crash."""

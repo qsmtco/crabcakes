@@ -8,6 +8,7 @@ dependencies = [
     "websockets>=12.0",
     "cryptography>=41.0",
     "GitPython>=3.1",
+    "tiktoken>=0.7",  # Phase CB-4: accurate token estimation for trim decisions (BUG #5 fix)
 ]
 
 [project.optional-dependencies]

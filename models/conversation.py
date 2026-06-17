@@ -17,6 +17,47 @@ from enum import Enum
 from typing import Callable
 
 
+# Phase CB-4: tiktoken-based accurate token estimation (BUG #5 fix).
+# See SPEC-CONTEXT-BLOAT-PHASE-4.md §2.2.
+
+_DEFAULT_ENCODING_NAME = "cl100k_base"  # GPT-4 / GPT-3.5-turbo encoding; reasonable proxy for non-OpenAI models
+
+
+def _tiktoken_encoding_for(model) -> object | None:
+    """
+    Return the tiktoken encoding for the given model name, or None on failure.
+
+    Resolution order:
+      1. tiktoken.encoding_for_model(model_name)  (OpenAI models: gpt-4o, gpt-4, gpt-3.5-turbo, ...)
+      2. tiktoken.get_encoding("cl100k_base")    (default for non-OpenAI models)
+
+    Returns None if tiktoken is not installed or raises any exception.
+    The caller must fall back to the chars // 4 heuristic when None is returned.
+
+    Strips provider prefix from model names like "openai/gpt-4o" → "gpt-4o"
+    because tiktoken.encoding_for_model only recognizes bare OpenAI model names.
+    """
+    try:
+        import tiktoken
+    except ImportError:
+        return None
+
+    # Strip provider prefix (e.g., "openai/" or "anthropic/" or "openrouter/")
+    bare_name = model.split("/", 1)[-1] if "/" in model else model
+
+    try:
+        return tiktoken.encoding_for_model(bare_name)
+    except KeyError:
+        # Unknown model name. Fall back to the default encoding.
+        try:
+            return tiktoken.get_encoding(_DEFAULT_ENCODING_NAME)
+        except Exception:
+            return None
+    except Exception:
+        # Any other error (e.g., download failure for the encoding data).
+        return None
+
+
 # ── Enums ─────────────────────────────────────────────────────────────────────
 
 
@@ -213,31 +254,74 @@ class Conversation:
 
     def get_token_estimate(self) -> int:
         """
-        Rough token count estimate (~4 chars per token).
+        Token count estimate for the conversation.
 
-        Used for context-window management. Not accurate — overestimates
-        for non-English text and underestimates for code-heavy content.
+        Phase CB-4: when tiktoken is installed and the model has a known encoding,
+        uses tiktoken.encoding_for_model() for accurate counts. Falls back to the
+        chars // 4 heuristic for unknown models or when tiktoken is unavailable.
+
+        Used for context-window management (see trim_to_token_limit).
         """
+        encoding = _tiktoken_encoding_for(self.model)
+        if encoding is not None:
+            return self._count_tokens_accurate(encoding)
+        # Fallback: chars // 4 heuristic (preserves CB-1/CB-2/CB-3 behavior)
         system_chars, conv_chars = self._count_char_tokens()
         return (system_chars + conv_chars) // 4
+
+    def _count_tokens_accurate(self, encoding) -> int:
+        """
+        Count tokens accurately using the provided tiktoken encoding.
+
+        Counts tokens in:
+        - system_prompt
+        - each message's content
+        - each tool_call's arguments (serialized) and result
+
+        Does NOT count tool_call.name (it doesn't appear in the API request body
+        sent to the LLM, only the id and arguments do).
+        """
+        total = len(encoding.encode(self.system_prompt))
+        for msg in self.messages:
+            total += len(encoding.encode(msg.content or ""))
+            for tc in msg.tool_calls:
+                total += len(encoding.encode(str(tc.arguments)))
+                if tc.result:
+                    total += len(encoding.encode(tc.result))
+        return total
 
     def get_token_breakdown(self, model_max_tokens: int) -> dict:
         """
         §4.15 — Per-turn token budget breakdown.
 
         Returns a dict with token allocation info for observability:
-        - system_prompt_tokens: chars in system_prompt // 4
-        - conversation_tokens: chars in all messages // 4
+        - system_prompt_tokens: accurate count when tiktoken is available, else chars // 4
+        - conversation_tokens: accurate count when tiktoken is available, else chars // 4
         - total_used_tokens: system + conversation
         - model_max_tokens: total available context window
         - remaining_tokens: model_max - total_used
         - usage_percent: (total_used / model_max_tokens) * 100
 
+        Phase CB-4: uses tiktoken when available, falls back to chars // 4 otherwise.
+        Same fallback semantics as get_token_estimate.
+
         This helps identify context bloat before hitting the limit.
         """
-        system_chars, conv_chars = self._count_char_tokens()
-        system_tokens = system_chars // 4
-        conversation_tokens = conv_chars // 4
+        encoding = _tiktoken_encoding_for(self.model)
+        if encoding is not None:
+            system_tokens = len(encoding.encode(self.system_prompt))
+            conversation_tokens = 0
+            for msg in self.messages:
+                conversation_tokens += len(encoding.encode(msg.content or ""))
+                for tc in msg.tool_calls:
+                    conversation_tokens += len(encoding.encode(str(tc.arguments)))
+                    if tc.result:
+                        conversation_tokens += len(encoding.encode(tc.result))
+        else:
+            # Fallback: chars // 4 heuristic
+            system_chars, conv_chars = self._count_char_tokens()
+            system_tokens = system_chars // 4
+            conversation_tokens = conv_chars // 4
         total_used = system_tokens + conversation_tokens
         return {
             "system_prompt_tokens": system_tokens,

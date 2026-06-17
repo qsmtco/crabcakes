@@ -223,26 +223,107 @@ class TestConversationToApiMessages:
 
 
 class TestConversationTokenEstimate:
+    """Phase CB-4: tests use tolerance-based assertions because tiktoken counts differ from chars // 4.
+
+    The conv.model defaults to "" (empty string), which is not a known model name.
+    So _tiktoken_encoding_for("") falls back to the cl100k_base default encoding.
+    """
+
     def test_empty_conversation_is_zero(self):
         c = Conversation(agent_name="Coder")
+        # system_prompt is empty, no messages → 0 tokens
         assert c.get_token_estimate() == 0
 
     def test_system_prompt_counted(self):
-        c = Conversation(agent_name="Coder", system_prompt="x" * 40)  # 10 tokens at 4 chars/token
-        assert c.get_token_estimate() == 10
+        # Use realistic text (not "x" * 40, which tokenizes to 1 token with tiktoken
+        # but 10 tokens with chars // 4). The system_prompt is the agent's
+        # general instructions, which contains normal English words.
+        prompt = "You are a helpful assistant that writes Python code."  # 11 words
+        c = Conversation(agent_name="Coder", system_prompt=prompt, model="gpt-4o")
+        # With tiktoken (cl100k_base for gpt-4o), this prompt is ~10-11 tokens.
+        # With chars // 4 fallback, it would be ~14 tokens.
+        # We assert a tolerance: actual is within ±30% of the tiktoken ground truth.
+        import tiktoken
+        enc = tiktoken.encoding_for_model("gpt-4o")
+        expected = len(enc.encode(prompt))
+        actual = c.get_token_estimate()
+        assert abs(actual - expected) <= 1, f"expected ~{expected} tokens, got {actual}"
 
     def test_messages_counted(self):
-        c = Conversation(agent_name="Coder")
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         c.add_user_message("hello world")  # 11 chars
-        assert c.get_token_estimate() == 11 // 4  # ~2 tokens
+        # tiktoken says: "hello world" = 2 tokens (cl100k_base).
+        # chars // 4 says: 11 // 4 = 2.
+        # Both agree on this case.
+        import tiktoken
+        enc = tiktoken.encoding_for_model("gpt-4o")
+        expected_msg = len(enc.encode("hello world"))
+        actual = c.get_token_estimate()
+        assert actual == expected_msg, f"expected {expected_msg} tokens, got {actual}"
 
     def test_tool_call_args_and_result_counted(self):
-        c = Conversation(agent_name="Coder")
+        c = Conversation(agent_name="Coder", model="gpt-4o")
         tc = ToolCall(call_id="c1", tool_name="read_file", arguments={"path": "a.py", "content": "xyzt"})
         c.add_tool_result("c1", "result here")
         # tokens counted from tool_calls arguments + result
         estimate = c.get_token_estimate()
         assert estimate > 0
+        # Sanity: at least the "result here" + serialized arguments
+        import tiktoken
+        enc = tiktoken.encoding_for_model("gpt-4o")
+        min_expected = len(enc.encode("result here"))
+        assert estimate >= min_expected, f"expected >= {min_expected} tokens, got {estimate}"
+
+
+class TestTiktokenAccurate:
+    """Phase CB-4 (BUG #5 fix): tiktoken-based accurate token estimation."""
+
+    def test_known_openai_model_uses_tiktoken(self):
+        """conv.model='gpt-4o' should use tiktoken.encoding_for_model('gpt-4o')."""
+        c = Conversation(agent_name="Coder", system_prompt="hello", model="gpt-4o")
+        import tiktoken
+        enc = tiktoken.encoding_for_model("gpt-4o")
+        expected = len(enc.encode("hello"))
+        assert c.get_token_estimate() == expected
+
+    def test_provider_prefix_is_stripped(self):
+        """conv.model='openai/gpt-4o' should strip 'openai/' prefix and use 'gpt-4o'."""
+        c = Conversation(agent_name="Coder", system_prompt="hello", model="openai/gpt-4o")
+        import tiktoken
+        enc = tiktoken.encoding_for_model("gpt-4o")
+        expected = len(enc.encode("hello"))
+        assert c.get_token_estimate() == expected
+
+    def test_unknown_model_falls_back_to_default_encoding(self):
+        """conv.model='unknown-xyz' should fall back to cl100k_base (not chars // 4)."""
+        c = Conversation(agent_name="Coder", system_prompt="hello world", model="unknown-xyz")
+        import tiktoken
+        enc = tiktoken.get_encoding("cl100k_base")
+        expected = len(enc.encode("hello world"))
+        actual = c.get_token_estimate()
+        assert actual == expected, f"expected {expected} tokens, got {actual} (chars//4 would be {len('hello world') // 4})"
+
+    def test_tiktoken_import_error_falls_back_to_chars(self, monkeypatch):
+        """If tiktoken is not importable, fall back to chars // 4 (no crash)."""
+        import sys
+        monkeypatch.setitem(sys.modules, "tiktoken", None)
+        from models import conversation as conv_module
+        monkeypatch.setattr(conv_module, "_tiktoken_encoding_for", lambda m: None)
+        c = Conversation(agent_name="Coder", system_prompt="x" * 40)
+        assert c.get_token_estimate() == 10  # 40 // 4 = 10
+
+    def test_breakdown_uses_tiktoken(self):
+        """get_token_breakdown should return tiktoken-accurate counts for known models."""
+        c = Conversation(agent_name="Coder", system_prompt="x" * 40, model="gpt-4o")
+        c.add_user_message("hello")
+        breakdown = c.get_token_breakdown(model_max_tokens=1000)
+        import tiktoken
+        enc = tiktoken.encoding_for_model("gpt-4o")
+        expected_system = len(enc.encode("x" * 40))
+        expected_conv = len(enc.encode("hello"))
+        assert breakdown["system_prompt_tokens"] == expected_system
+        assert breakdown["conversation_tokens"] == expected_conv
+        assert breakdown["total_used_tokens"] == expected_system + expected_conv
 
 
 class TestConversationTrim:

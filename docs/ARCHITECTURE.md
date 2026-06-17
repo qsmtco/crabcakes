@@ -1238,11 +1238,21 @@ class ToolCallStatus(str, Enum): PENDING = "pending" | EXECUTING = "executing" |
     def to_api_messages() -> list[dict]
     def get_token_estimate() -> int
     def _count_char_tokens() -> tuple[int, int]  # shared char counter for estimate + breakdown
-    def get_token_breakdown(model_max_tokens) -> dict  # §4.15: per-turn system/conv/remaining breakdown
+    def get_token_breakdown(model_max_tokens) -> dict  # Phase CB-4: tiktoken when available (BUG #5 fix)
         # Phase CB-1 additions: trimmed_this_turn (bool), messages_remaining (int), messages_removed_this_turn (int)
     def trim_to_token_limit(max_tokens)  # §4.10: injects summary of trimmed messages when 8+ msgs remain
     def _last_exchange_summary() -> str  # compact summary of prior user turns
 ```
+
+
+**Token estimation (Phase CB-4).** `get_token_estimate()` and
+`get_token_breakdown()` use `tiktoken.encoding_for_model()` for accurate
+token counts (BUG #5 fix). Provider prefixes are stripped from model
+names (e.g., `"openai/gpt-4o"` → `"gpt-4o"`). Unknown model names
+fall back to the `cl100k_base` encoding. The `chars // 4` heuristic is
+the final fallback when `tiktoken` is unavailable.
+
+Requires `tiktoken>=0.7` (MIT-licensed, ~2MB).
 
 **Rules:** No imports from `ui/`, `agent/`, `gateway/`, `subprocess`.
 
