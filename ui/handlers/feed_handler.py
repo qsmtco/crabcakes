@@ -569,7 +569,52 @@ class FeedHandler:
                 if not result_stage.success:
                     _logger.warning("handle_accept: git stage failed for %s", project_path)
                     return
-                commit_msg = f"Accept: {card.title}"
+
+                # Generate the commit message from the ACTUAL staged files,
+                # not from card.title. card.title is user-facing text (not a
+                # file path) and may not match the real diff. Same fix as
+                # T2-RL2 in review_handler.
+                #
+                # Only catch ImportError (gitpython not installed). Other
+                # exceptions are logged as warnings — the user clicked Accept
+                # on a card and the card remains visible, so we don't need
+                # to surface a chat message like T2-RL2 does.
+                try:
+                    import git as gitpython
+                except ImportError:
+                    staged = []
+                else:
+                    try:
+                        repo = gitpython.Repo(project_path)
+                        staged = repo.index.diff("HEAD")
+                    except Exception as e:
+                        _logger.warning(
+                            "handle_accept: failed to read diff for %s: %s: %s",
+                            project_path, type(e).__name__, e,
+                        )
+                        return
+
+                if not staged:
+                    # Working tree is clean — nothing to commit. Silent no-op:
+                    # the user clicked Accept on a card but the underlying
+                    # changes have already been accepted (or never existed).
+                    # Log a warning for observability, but don't create an
+                    # empty commit and don't mark the card as accepted.
+                    _logger.info(
+                        "handle_accept: nothing to commit for card %s (working tree clean)",
+                        card_id,
+                    )
+                    return
+
+                # Build a descriptive message from the actual files
+                file_list = sorted({d.a_path or d.b_path for d in staged if d.a_path or d.b_path})
+                if len(file_list) == 1:
+                    commit_msg = f"Accept: {file_list[0]}"
+                elif len(file_list) <= 3:
+                    commit_msg = f"Accept: {len(file_list)} files ({', '.join(file_list)})"
+                else:
+                    commit_msg = f"Accept: {len(file_list)} files ({', '.join(file_list[:3])}...)"
+
                 result_commit = git_ops.commit(project_path, commit_msg)
                 if result_commit.success:
                     card.accepted = True

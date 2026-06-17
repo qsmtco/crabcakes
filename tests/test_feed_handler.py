@@ -46,6 +46,16 @@ class MockFeedTab:
         pass  # no-op in tests
 
 
+# ── Mock GitResult ───────────────────────────────────────────────────────────
+
+class MockGitResult:
+    def __init__(self, success=True, stdout="", sha="abc123def456", error=""):
+        self.success = success
+        self.stdout = stdout
+        self.sha = sha
+        self.error = error
+
+
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 @pytest.fixture
@@ -203,6 +213,147 @@ class TestOnProjectClosed:
         feed_handler.on_project_closed("closing")
         assert len(feed_handler.get_cards_for_project("closing")) == 0
         assert mock_feed_tab.empty_shown
+
+
+# ── Tests: handle_accept ───────────────────────────────────────────────────
+
+class TestHandleAccept:
+    """handle_accept should commit the actual staged files, not the card title."""
+
+    @patch("ui.handlers.feed_handler.git_ops")
+    @patch("ui.handlers.feed_handler.feed_store")
+    def test_handle_accept_uses_staged_files_for_commit_message(
+        self, mock_feed_store, mock_git_ops, feed_handler
+    ):
+        """When accepting a feed card, the commit message should be derived
+        from the actual staged files, not from card.title.
+
+        Regression test for review-layer fix T2-RL3.
+        """
+        # Set up a feed card
+        ts = datetime.now(timezone.utc)
+        card = FeedCardData(
+            card_type="file_modified", source="agent",
+            title="Modified src/main.py", body="",
+            author="x", timestamp=ts, project_name="testproject",
+            file_path="src/main.py", metadata={},
+        )
+        card_id = feed_handler.add_card(card)
+
+        # Mock git_ops: stage succeeds, commit succeeds
+        mock_git_ops.stage_all.return_value = MockGitResult(success=True)
+        mock_git_ops.commit.return_value = MockGitResult(
+            success=True, stdout="[main abc123d] Accept: src/main.py", sha="abc123def456"
+        )
+
+        # Mock gitpython import to return a staged list with a different file
+        import sys
+        mock_git_module = MagicMock()
+        mock_diff = MagicMock()
+        mock_diff.a_path = "src/other.py"  # different from card.title
+        mock_diff.b_path = None
+        mock_repo = MagicMock()
+        mock_repo.index.diff.return_value = [mock_diff]
+        mock_git_module.Repo.return_value = mock_repo
+
+        project_path = "/tmp/testproject"
+        feed_handler._project_paths["testproject"] = project_path
+
+        with patch.dict(sys.modules, {"git": mock_git_module}):
+            feed_handler.handle_accept(card_id)
+
+        # Verify commit was called with the ACTUAL file, not card.title
+        commit_call = mock_git_ops.commit.call_args
+        assert commit_call is not None
+        commit_msg = commit_call[0][1]  # second positional arg
+        assert "src/other.py" in commit_msg
+        assert "Modified" not in commit_msg  # the user-facing title is NOT in the message
+
+    @patch("ui.handlers.feed_handler.git_ops")
+    @patch("ui.handlers.feed_handler.feed_store")
+    def test_handle_accept_empty_tree_silently_noops(
+        self, mock_feed_store, mock_git_ops, feed_handler
+    ):
+        """When the working tree is clean (no staged files), handle_accept
+        should be a silent no-op. The card is not marked accepted and no
+        empty commit is created.
+        """
+        ts = datetime.now(timezone.utc)
+        card = FeedCardData(
+            card_type="file_modified", source="agent",
+            title="Modified src/main.py", body="",
+            author="x", timestamp=ts, project_name="testproject",
+            file_path="src/main.py", metadata={},
+        )
+        card_id = feed_handler.add_card(card)
+
+        mock_git_ops.stage_all.return_value = MockGitResult(success=True)
+        mock_git_ops.commit.return_value = MockGitResult(success=True)
+
+        # Mock gitpython to return empty staged list (clean working tree)
+        import sys
+        mock_git_module = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.index.diff.return_value = []  # empty
+        mock_git_module.Repo.return_value = mock_repo
+        project_path = "/tmp/testproject"
+        feed_handler._project_paths["testproject"] = project_path
+
+        with patch.dict(sys.modules, {"git": mock_git_module}):
+            feed_handler.handle_accept(card_id)
+
+        # commit() should NOT have been called (no staged changes)
+        mock_git_ops.commit.assert_not_called()
+        # The card should NOT be marked accepted
+        assert card.accepted is not True
+
+    @patch("ui.handlers.feed_handler.git_ops")
+    @patch("ui.handlers.feed_handler.feed_store")
+    def test_handle_accept_multi_file_message(
+        self, mock_feed_store, mock_git_ops, feed_handler
+    ):
+        """When multiple files are staged, the commit message should list
+        all of them (up to 3 inline, then '...' for more).
+        """
+        ts = datetime.now(timezone.utc)
+        card = FeedCardData(
+            card_type="file_modified", source="agent",
+            title="Modified src/main.py", body="",
+            author="x", timestamp=ts, project_name="testproject",
+            file_path="src/main.py", metadata={},
+        )
+        card_id = feed_handler.add_card(card)
+
+        mock_git_ops.stage_all.return_value = MockGitResult(success=True)
+        mock_git_ops.commit.return_value = MockGitResult(
+            success=True, stdout="[main abc123d] multi", sha="abc123"
+        )
+
+        # Mock gitpython to return multiple staged files
+        import sys
+        mock_git_module = MagicMock()
+        mock_diffs = []
+        for fname in ["src/main.py", "src/utils.py", "tests/test_main.py"]:
+            mock_diff = MagicMock()
+            mock_diff.a_path = fname
+            mock_diff.b_path = None
+            mock_diffs.append(mock_diff)
+        mock_repo = MagicMock()
+        mock_repo.index.diff.return_value = mock_diffs
+        mock_git_module.Repo.return_value = mock_repo
+        project_path = "/tmp/testproject"
+        feed_handler._project_paths["testproject"] = project_path
+
+        with patch.dict(sys.modules, {"git": mock_git_module}):
+            feed_handler.handle_accept(card_id)
+
+        # Verify commit was called with a message that lists multiple files
+        commit_call = mock_git_ops.commit.call_args
+        commit_msg = commit_call[0][1]
+        assert "3 files" in commit_msg
+        assert "src/main.py" in commit_msg
+        assert "src/utils.py" in commit_msg
+        assert "tests/test_main.py" in commit_msg
 
 
 # ── Tests: handle_copy ───────────────────────────────────────────────────────
