@@ -67,6 +67,8 @@ class FeedHandler:
         self._project_cards: dict[str, list[str]] = {}
         # Project name → project path lookup (for persistence)
         self._project_paths: dict[str, str] = {}
+        # Per-project sequence counter for display numbers (Phase 3)
+        self._project_seq: dict[str, int] = {}
         # True when loading persisted cards (skips redundant feed.json writes)
         self._active_project_name: str | None = None
         self._loading = False
@@ -94,6 +96,11 @@ class FeedHandler:
         Once set, FeedHandler can add/remove cards from the FeedTab.
         """
         self._feed_tab = feed_tab
+        # Phase 5: wire batch accept callback
+        if self._feed_tab is not None:
+            self._feed_tab.set_batch_accept_callback(
+                lambda: self._on_batch_accept_clicked()
+            )
 
     # ─────────────────────────────────────────────────────────────────
     # Card lifecycle
@@ -115,6 +122,13 @@ class FeedHandler:
         """
         card_id = str(uuid.uuid4())
         card_data.card_id = card_id
+
+        # Assign sequence number (Phase 3)
+        proj = card_data.project_name
+        if proj not in self._project_seq:
+            self._project_seq[proj] = 0
+        self._project_seq[proj] += 1
+        card_data.seq_num = self._project_seq[proj]
 
         # ── Create conversation snapshot (deferred) ───────────────────────
         # Must run AFTER the bubble is appended to the chat box, because
@@ -166,9 +180,12 @@ class FeedHandler:
         def _append():
             if self._feed_tab is not None:
                 self._feed_tab.append_card(widget, card_id)
-                self._feed_tab.scroll_to_bottom()
+                self._feed_tab.smart_scroll_to_bottom()  # Phase 4
                 if self._on_card_added:
                     self._on_card_added(card_id)
+
+        # Refresh batch accept bar (Phase 5)
+        self._update_batch_bar_for_active_project(card_data.project_name)
 
         def _persist():
             if project_path and hasattr(card_data, 'to_dict') and not self._loading:
@@ -300,6 +317,7 @@ class FeedHandler:
                 self._card_widgets.pop(cid, None)
                 self._cards.pop(cid, None)
             self._project_cards.pop(project_name, None)
+            self._project_seq.pop(project_name, None)
         for cid in card_ids:
             if self._feed_tab:
                 self._feed_tab.remove_card(cid)
@@ -347,6 +365,22 @@ class FeedHandler:
                 if not card.metadata:
                     card.metadata = {}
                 card.metadata["project_path"] = project_path
+
+            # Migrate old cards: assign seq_nums to cards with seq_num=None,
+            # in order of creation timestamp. This ensures every project gets
+            # a clean sequence from #1 on first load after the seq_num field
+            # is added. Without this migration, old projects would show a mix
+            # of cards with seq badges and cards without, which is confusing.
+            cards_sorted_by_timestamp = sorted(cards, key=lambda c: c.timestamp)
+            next_seq = 1
+            for card in cards_sorted_by_timestamp:
+                if card.seq_num is None:
+                    card.seq_num = next_seq
+                next_seq = max(next_seq, card.seq_num + 1)
+
+            # Rebuild sequence counter from loaded cards (now all have seq_num)
+            max_seq = max((card.seq_num for card in cards if card.seq_num), default=0)
+            self._project_seq[project_name] = max_seq
 
             # Split into recent (render now) and backlog (lazy load)
             # cards is chronological: oldest first, newest last
@@ -540,6 +574,7 @@ class FeedHandler:
             project_name=original_card.project_name,
             commit_sha=result.sha if hasattr(result, 'sha') and result.sha else None,
             file_path=original_card.file_path,
+            accepted=accepted,  # NEW — propagate decision so badge renders (Phase 2)
         )
         self.add_card(git_card)
 
@@ -638,6 +673,8 @@ class FeedHandler:
         else:
             card.accepted = True
             self._update_card_visual(card_id, accepted=True)
+            # Refresh batch accept bar (Phase 5)
+            self._update_batch_bar_for_active_project()
 
     def handle_reject(self, card_id: str) -> None:
         """
@@ -687,6 +724,72 @@ class FeedHandler:
         else:
             card.accepted = False
             self._update_card_visual(card_id, accepted=False)
+            # Refresh batch accept bar (Phase 5)
+            self._update_batch_bar_for_active_project()
+
+    def handle_batch_accept(self, card_ids: list[str]) -> None:
+        """
+        Accept a batch of consecutive file-change cards in one click.
+        Iterates in order (top-to-bottom in the feed); each accept creates a
+        git_commit card via _add_git_card() with the same flow as the singular
+        handle_accept(). (Phase 5)
+
+        Used by the batch accept bar when ≥2 file-change cards are pending.
+        """
+        for card_id in card_ids:
+            self.handle_accept(card_id)
+
+    def _on_batch_accept_clicked(self) -> None:
+        """
+        Called when user clicks the batch accept bar's "Accept All" button.
+        Computes the list of consecutive pending file-change cards at the
+        bottom of the feed and accepts them all. (Phase 5)
+        """
+        if self._feed_tab is None:
+            return
+        project_name = self._active_project_name
+        if project_name is None:
+            return
+        all_cards = self.get_cards_for_project(project_name)
+        if not all_cards:
+            return
+        actionable_types = ("diff", "file_created", "file_modified", "file_deleted")
+        batch_ids: list[str] = []
+        for card in all_cards:  # newest first
+            if (card.card_type in actionable_types
+                    and card.accepted is None
+                    and card.card_id is not None):
+                batch_ids.append(card.card_id)
+            else:
+                break
+        # batch_ids is newest-first; reverse to top-to-bottom for handle_accept order
+        batch_ids.reverse()
+        self.handle_batch_accept(batch_ids)
+        # Refresh the batch bar (count may now be 0 or 1)
+        self._update_batch_bar_for_active_project()
+
+    def _update_batch_bar_for_active_project(self, project_name: str | None = None) -> None:
+        """
+        Recompute the pending count for the active project and update the bar.
+        (Phase 5)
+
+        Args:
+            project_name: Project to count pending cards for. If None, uses
+                _active_project_name (for on_project_opened context). For
+                add_card() calls, pass card_data.project_name directly.
+        """
+        target = project_name or self._active_project_name
+        if self._feed_tab is None or target is None:
+            return
+        all_cards = self.get_cards_for_project(target)
+        actionable_types = ("diff", "file_created", "file_modified", "file_deleted")
+        count = 0
+        for card in all_cards:  # newest first
+            if card.card_type in actionable_types and card.accepted is None:
+                count += 1
+            else:
+                break
+        self._feed_tab.update_batch_bar(count)
 
     def handle_copy(self, text: str) -> None:
         """Copy card body text to clipboard."""

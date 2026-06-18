@@ -68,6 +68,7 @@ class FeedCardData:
     card_id: str | None = None
     reviewed: bool = False
     accepted: bool | None = None  # True=accepted, False=rejected, None=pending
+    seq_num: int | None = None  # Sequential display number (per project)
 
     @staticmethod
     def css_class_for_type(card_type: CardType) -> str:
@@ -86,6 +87,40 @@ class FeedCardData:
             "audit_report": "feed-card-audit",
         }
         return mapping.get(card_type, "feed-card-system")
+
+    @staticmethod
+    def is_actionable(card_type: CardType, metadata: dict | None = None) -> bool:
+        """True if this card type requires user action (Accept/Reject/Approve/Deny)."""
+        # Approval-request cards (exec_command needing approval)
+        if metadata and metadata.get("needs_approval"):
+            return True
+        # File-change cards that have git backing (can be accepted/rejected)
+        if card_type in ("diff", "file_created", "file_modified", "file_deleted"):
+            return True
+        return False
+
+    @staticmethod
+    def is_informational(card_type: CardType, metadata: dict | None = None) -> bool:
+        """True if this card is purely informational — no buttons needed."""
+        # Approval cards are actionable, not informational
+        if metadata and metadata.get("needs_approval"):
+            return False
+        # git_commit: result of accept/reject — informational
+        if card_type == "git_commit":
+            return True
+        # agent_action with status=running/complete/error: tool execution log.
+        # Also include status=None: a crabcard-parsed or manually-created
+        # agent_action card with no status field is still informational (a
+        # tool execution log), not actionable. Without this, the card would
+        # show Accept/Reject buttons that do nothing.
+        if card_type == "agent_action":
+            status = metadata.get("status") if metadata else None
+            if status in (None, "running", "complete", "error"):
+                return True
+        # system events, audit reports, tasks: informational
+        if card_type in ("system", "audit_report", "task", "dir_created", "dir_deleted"):
+            return True
+        return False
 
     # ── Serialization (for feed.json persistence) ───────────────────────
 
@@ -121,6 +156,7 @@ class FeedCardData:
             "card_id": self.card_id,
             "reviewed": self.reviewed,
             "accepted": self.accepted,
+            "seq_num": self.seq_num,
         }
 
     @classmethod
@@ -158,5 +194,6 @@ class FeedCardData:
             card_id=data.get("card_id"),
             reviewed=data.get("reviewed", False),
             accepted=data.get("accepted"),
+            seq_num=data.get("seq_num"),
             conversation_snapshot=snapshot,
         )

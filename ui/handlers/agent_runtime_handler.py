@@ -266,6 +266,7 @@ class AgentRuntimeHandler:
             card = self._fh.get_card(approval_id)
             if card is not None:
                 card.metadata["status"] = "approved" if approved else "denied"
+                card.accepted = approved  # NEW: propagate decision so badge renders (Phase 2)
                 self._fh.update_card(approval_id, card)
 
     # ── AgentRuntime lifecycle ────────────────────────────────────────────────

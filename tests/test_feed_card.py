@@ -204,3 +204,191 @@ class TestAllCardSources:
             project_name="test-project",
         )
         assert card.source == source
+
+# ═══════════════════════════════════════════════════════════════════
+#  is_actionable() — Phase 1
+# ═══════════════════════════════════════════════════════════════════
+
+class TestIsActionable:
+    """Phase 1: is_actionable() returns True for cards that need user action."""
+
+    def test_diff_card_is_actionable(self):
+        assert FeedCardData.is_actionable("diff", {}) is True
+
+    def test_file_created_is_actionable(self):
+        assert FeedCardData.is_actionable("file_created", {}) is True
+
+    def test_file_modified_is_actionable(self):
+        assert FeedCardData.is_actionable("file_modified", {}) is True
+
+    def test_file_deleted_is_actionable(self):
+        assert FeedCardData.is_actionable("file_deleted", {}) is True
+
+    def test_needs_approval_makes_actionable(self):
+        """Any card type with metadata.needs_approval=True is actionable."""
+        assert FeedCardData.is_actionable("agent_action", {"needs_approval": True}) is True
+        assert FeedCardData.is_actionable("system", {"needs_approval": True}) is True
+
+    def test_git_commit_not_actionable(self):
+        assert FeedCardData.is_actionable("git_commit", {}) is False
+
+    def test_system_not_actionable(self):
+        assert FeedCardData.is_actionable("system", {}) is False
+
+    def test_none_metadata(self):
+        """is_actionable must handle metadata=None gracefully."""
+        assert FeedCardData.is_actionable("diff", None) is True
+        assert FeedCardData.is_actionable("git_commit", None) is False
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  is_informational() — Phase 1
+# ═══════════════════════════════════════════════════════════════════
+
+class TestIsInformational:
+    """Phase 1: is_informational() returns True for read-only cards."""
+
+    def test_git_commit_is_informational(self):
+        assert FeedCardData.is_informational("git_commit", {}) is True
+
+    def test_agent_action_running_is_informational(self):
+        assert FeedCardData.is_informational("agent_action", {"status": "running"}) is True
+
+    def test_agent_action_complete_is_informational(self):
+        assert FeedCardData.is_informational("agent_action", {"status": "complete"}) is True
+
+    def test_agent_action_error_is_informational(self):
+        assert FeedCardData.is_informational("agent_action", {"status": "error"}) is True
+
+    def test_agent_action_no_status_is_informational(self):
+        """Issue 5 fix: status=None → still informational."""
+        assert FeedCardData.is_informational("agent_action", {}) is True
+        assert FeedCardData.is_informational("agent_action", None) is True
+
+    def test_system_is_informational(self):
+        assert FeedCardData.is_informational("system", {}) is True
+
+    def test_audit_report_is_informational(self):
+        assert FeedCardData.is_informational("audit_report", {}) is True
+
+    def test_task_is_informational(self):
+        assert FeedCardData.is_informational("task", {}) is True
+
+    def test_dir_created_is_informational(self):
+        assert FeedCardData.is_informational("dir_created", {}) is True
+
+    def test_dir_deleted_is_informational(self):
+        assert FeedCardData.is_informational("dir_deleted", {}) is True
+
+    def test_needs_approval_not_informational(self):
+        """Approval cards are actionable, not informational."""
+        assert FeedCardData.is_informational("agent_action", {"needs_approval": True}) is False
+        assert FeedCardData.is_informational("diff", {"needs_approval": True}) is False
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  is_actionable and is_informational are mutually exclusive
+# ═══════════════════════════════════════════════════════════════════
+
+class TestActionableInformationalMutuallyExclusive:
+    """For any card type + metadata combination, exactly one of
+    is_actionable and is_informational returns True (never both)."""
+
+    @pytest.mark.parametrize("card_type", [
+        "git_commit", "diff", "file_created", "file_modified", "file_deleted",
+        "dir_created", "dir_deleted", "agent_action", "task", "system",
+        "audit_report",
+    ])
+    def test_not_both_true(self, card_type):
+        result_actionable = FeedCardData.is_actionable(card_type, {})
+        result_informational = FeedCardData.is_informational(card_type, {})
+        assert not (result_actionable and result_informational), f"Both True for {card_type}"
+
+    def test_needs_approval_actionable_not_info(self):
+        result_actionable = FeedCardData.is_actionable("agent_action", {"needs_approval": True})
+        result_informational = FeedCardData.is_informational("agent_action", {"needs_approval": True})
+        assert result_actionable is True
+        assert result_informational is False
+
+    def test_needs_approval_on_diff_actionable_not_info(self):
+        result_actionable = FeedCardData.is_actionable("diff", {"needs_approval": True})
+        result_informational = FeedCardData.is_informational("diff", {"needs_approval": True})
+        assert result_actionable is True
+        assert result_informational is False
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  TestSeqNum — Phase 3
+#  Verifies seq_num serialization round-trips through to_dict/from_dict.
+# ═══════════════════════════════════════════════════════════════════
+
+class TestSeqNumSerialization:
+    """Phase 3: seq_num persists through serialization."""
+
+    def test_seq_num_field_defaults_to_none(self):
+        """seq_num field defaults to None when not provided."""
+        ts = datetime.now(timezone.utc)
+        card = FeedCardData(
+            card_type="diff", source="agent", title="x", body="y",
+            author="z", timestamp=ts, project_name="p",
+        )
+        assert card.seq_num is None
+
+    def test_seq_num_can_be_set(self):
+        """seq_num can be set at construction time."""
+        ts = datetime.now(timezone.utc)
+        card = FeedCardData(
+            card_type="diff", source="agent", title="x", body="y",
+            author="z", timestamp=ts, project_name="p", seq_num=42,
+        )
+        assert card.seq_num == 42
+
+    def test_seq_num_round_trips_through_to_dict(self):
+        """seq_num is included in to_dict()."""
+        ts = datetime.now(timezone.utc)
+        card = FeedCardData(
+            card_type="diff", source="agent", title="x", body="y",
+            author="z", timestamp=ts, project_name="p", seq_num=7,
+        )
+        d = card.to_dict()
+        assert d.get("seq_num") == 7
+
+    def test_seq_num_round_trips_through_from_dict(self):
+        """seq_num survives from_dict() deserialization."""
+        ts = datetime.now(timezone.utc)
+        original = FeedCardData(
+            card_type="diff", source="agent", title="x", body="y",
+            author="z", timestamp=ts, project_name="p", seq_num=99,
+        )
+        d = original.to_dict()
+        restored = FeedCardData.from_dict(d)
+        assert restored.seq_num == 99
+
+    def test_seq_num_none_not_in_dict(self):
+        """seq_num=None does not break from_dict."""
+        ts = datetime.now(timezone.utc)
+        card = FeedCardData(
+            card_type="diff", source="agent", title="x", body="y",
+            author="z", timestamp=ts, project_name="p",
+        )
+        d = card.to_dict()
+        # seq_num should be present in dict as None
+        assert "seq_num" in d
+        assert d["seq_num"] is None
+
+    def test_seq_num_old_format_still_loads(self):
+        """from_dict handles cards without seq_num key (old feed.json format)."""
+        import json
+        ts = datetime.now(timezone.utc)
+        old_dict = {
+            "card_type": "diff",
+            "source": "agent",
+            "title": "Old card",
+            "body": "",
+            "author": "x",
+            "timestamp": ts.isoformat(),
+            "project_name": "old-project",
+            # no seq_num key
+        }
+        card = FeedCardData.from_dict(old_dict)
+        assert card.seq_num is None

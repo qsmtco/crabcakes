@@ -13,6 +13,7 @@
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
+from typing import Callable
 
 
 class FeedTab(Gtk.Box):
@@ -37,6 +38,8 @@ class FeedTab(Gtk.Box):
         self._feed_scroll: Gtk.ScrolledWindow | None = None
         self._cards_by_id: dict[str, Gtk.Widget] = {}  # card_id → widget
         self._empty_widget: Gtk.Widget | None = None
+        # Batch accept bar (Phase 5): shown when ≥2 consecutive file-change cards are pending
+        self._batch_bar: Gtk.Box | None = None
 
         # ── Build scrolled card list ────────────────────────────────────
         scroll = Gtk.ScrolledWindow()
@@ -157,7 +160,7 @@ class FeedTab(Gtk.Box):
     def scroll_to_bottom(self) -> None:
         """
         Scroll the feed so the newest card (bottom of list) is visible.
-        Called after loading persisted cards on project open.
+        Called after loading persisted cards on project open (unconditional).
         """
         if self._feed_scroll is None:
             return
@@ -165,3 +168,73 @@ class FeedTab(Gtk.Box):
         if vadj is None:
             return
         vadj.set_value(vadj.get_upper())
+
+    def smart_scroll_to_bottom(self) -> None:
+        """
+        Only scroll to bottom if the user is already near the bottom (within 80px).
+        If the user has scrolled up to read old cards, do NOT auto-scroll —
+        preserve their reading position. (Phase 4)
+
+        Distinguishes from scroll_to_bottom() (unconditional) which is used
+        on project open where we always want to jump to the newest.
+        """
+        if self._feed_scroll is None:
+            return
+        vadj = self._feed_scroll.get_vadjustment()
+        if vadj is None:
+            return
+        current = vadj.get_value()
+        upper = vadj.get_upper()
+        page_size = vadj.get_page_size()
+        distance_from_bottom = upper - page_size - current
+        if distance_from_bottom < 80:
+            vadj.set_value(upper)
+
+    def update_batch_bar(self, pending_count: int) -> None:
+        """
+        Show or hide the batch accept bar based on pending consecutive file-change cards.
+        pending_count is the number of consecutive pending file-change cards stacked
+        at the bottom of the feed. Bar is hidden if count < 2. (Phase 5)
+        """
+        if pending_count < 2:
+            if self._batch_bar is not None:
+                self._batch_bar.set_visible(False)
+            return
+        if self._batch_bar is None:
+            # Lazy-create on first show
+            self._batch_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            self._batch_bar.add_css_class("feed-batch-bar")
+            info_label = Gtk.Label()
+            info_label.add_css_class("feed-batch-bar-info")
+            self._batch_bar.append(info_label)
+            self._batch_bar._info_label = info_label  # type: ignore[attr-defined]
+
+            accept_btn = Gtk.Button(label="Accept All")
+            accept_btn.add_css_class("feed-btn-batch-accept")
+            accept_btn.connect("clicked", lambda _: self._on_batch_accept_clicked())
+            self._batch_bar.append(accept_btn)
+            self._batch_bar._accept_btn = accept_btn  # type: ignore[attr-defined]
+
+            # Insert before feed_scroll in the parent (pinned to top, outside scrolled window)
+            parent = self._feed_scroll.get_parent()
+            if parent is not None:
+                parent.insert_child_before(self._batch_bar, self._feed_scroll)
+
+        # Update the count text
+        self._batch_bar._info_label.set_text(  # type: ignore[attr-defined]
+            f"{pending_count} file changes pending"
+        )
+        self._batch_bar.set_visible(True)
+
+    def _on_batch_accept_clicked(self) -> None:
+        """
+        Placeholder — overridden by FeedHandler when it wires the batch accept flow.
+        The handler calls set_batch_accept_callback() to install the real handler. (Phase 5)
+        """
+        pass
+
+    def set_batch_accept_callback(self, callback: Callable[[], None]) -> None:
+        """
+        Install the real batch accept callback. Called by FeedHandler after construction. (Phase 5)
+        """
+        self._on_batch_accept_clicked = callback

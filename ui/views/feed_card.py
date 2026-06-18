@@ -63,6 +63,12 @@ def _make_feed_card_header(
     body_for_copy = card_data.body or title
     copy_btn.connect("clicked", lambda _, t=body_for_copy: on_copy(t))
 
+    # Sequence number badge (if assigned) (Phase 3)
+    if card_data.seq_num is not None:
+        seq_label = Gtk.Label(label=f"#{card_data.seq_num}")
+        seq_label.add_css_class("feed-card-seq")
+        header.append(seq_label)
+
     header.append(title_label)
     header.append(copy_btn)
     return header, copy_btn
@@ -407,14 +413,16 @@ def build_feed_card(
     card.append(footer)
 
     # ── Action buttons (conditional visibility) ────────────────────
-    #
-    # git_commit: informational — no buttons needed
-    # accepted/rejected: hide Accept/Reject (decision made), keep Review (context)
-    # pending (None): show all buttons
     is_resolved = card_data.accepted is not None
-    is_commit = card_data.card_type == "git_commit"
+    is_actionable = FeedCardData.is_actionable(
+        card_data.card_type, card_data.metadata
+    )
+    is_informational = FeedCardData.is_informational(
+        card_data.card_type, card_data.metadata
+    )
 
-    if not is_commit:
+    if is_actionable and not is_resolved:
+        # Show full action row (Review + Accept/Reject or Approve/Deny)
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         actions.add_css_class("feed-card-actions")
         actions.set_spacing(6)
@@ -424,18 +432,45 @@ def build_feed_card(
         btn_review.connect("clicked", lambda _, cid=card_id, w=card: on_review(cid, w))
         actions.append(btn_review)
 
-        if not is_resolved:
-            btn_accept = Gtk.Button(label="Accept")
-            btn_accept.add_css_class("feed-btn-accept")
-            btn_accept.connect("clicked", lambda _, cid=card_id: on_accept(cid))
-            actions.append(btn_accept)
+        # For approval cards: "Approve" / "Deny" labels
+        # For file-change cards: "Accept" / "Reject" labels
+        btn_accept = Gtk.Button(label="Approve" if card_data.metadata.get("needs_approval") else "Accept")
+        btn_accept.add_css_class("feed-btn-accept")
+        btn_accept.connect("clicked", lambda _, cid=card_id: on_accept(cid))
+        actions.append(btn_accept)
 
-            btn_reject = Gtk.Button(label="Reject")
-            btn_reject.add_css_class("feed-btn-reject")
-            btn_reject.connect("clicked", lambda _, cid=card_id: on_reject(cid))
-            actions.append(btn_reject)
+        btn_reject = Gtk.Button(label="Deny" if card_data.metadata.get("needs_approval") else "Reject")
+        btn_reject.add_css_class("feed-btn-reject")
+        btn_reject.connect("clicked", lambda _, cid=card_id: on_reject(cid))
+        actions.append(btn_reject)
 
         card.append(actions)
+
+    elif is_actionable and is_resolved:
+        # Resolved actionable card: show Review button only
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        actions.add_css_class("feed-card-actions")
+        actions.set_spacing(6)
+
+        btn_review = Gtk.Button(label="Review")
+        btn_review.add_css_class("feed-btn-review")
+        btn_review.connect("clicked", lambda _, cid=card_id, w=card: on_review(cid, w))
+        actions.append(btn_review)
+
+        card.append(actions)
+
+    # Informational cards: NO action buttons at all
+
+    # ── Sub-state CSS classes for agent_action cards ────────────────────
+    if card_data.card_type == "agent_action":
+        if card_data.metadata.get("needs_approval"):
+            card.add_css_class("feed-card-approval")
+        elif card_data.metadata.get("status") == "running":
+            card.add_css_class("feed-card-running")
+        elif card_data.metadata.get("status") == "complete":
+            card.add_css_class("feed-card-complete")
+        elif card_data.metadata.get("status") == "error":
+            card.add_css_class("feed-card-error")
 
     # ── Context panel (expandable, hidden by default) ────────────────────
     if card_data.conversation_snapshot is not None:

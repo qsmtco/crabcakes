@@ -827,6 +827,67 @@ notebook > header > tabs > tab {
 .feed-card-system .feed-card-body { background: #2a2a2a; }
 .feed-card-audit .feed-card-header { background: #2d5a5a; color: #a8e6e6; }
 .feed-card-audit .feed-card-body { background: #1a3d3d; }
+/* Agent action sub-states */
+.feed-card-agent.feed-card-approval .feed-card-header {
+    background: #5a3d2d; color: #ffb085;
+}
+.feed-card-agent.feed-card-approval .feed-card-body {
+    background: #3d2a1a;
+}
+.feed-card-agent.feed-card-running .feed-card-header {
+    background: #2d3a5a; color: #a8c1e6;
+}
+.feed-card-agent.feed-card-running .feed-card-body {
+    background: #1a273d;
+}
+.feed-card-agent.feed-card-complete .feed-card-header {
+    background: #2d4a3d; color: #a8e6c1;
+}
+.feed-card-agent.feed-card-complete .feed-card-body {
+    background: #1a3d2a;
+}
+.feed-card-agent.feed-card-error .feed-card-header {
+    background: #5a2d2d; color: #e6a8a8;
+}
+.feed-card-agent.feed-card-error .feed-card-body {
+    background: #3d1a1a;
+}
+
+/* Sequence number badge */
+.feed-card-seq {
+    background: rgba(99, 102, 241, 0.3);
+    color: #c7d2fe;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: bold;
+    min-width: 20px;
+    text-align: center;
+}
+
+/* Batch accept bar */
+.feed-batch-bar {
+    background: rgba(30, 30, 40, 0.9);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 6px;
+    padding: 6px 12px;
+    margin-bottom: 8px;
+}
+.feed-batch-bar-info {
+    color: #a5b4fc;
+    font-size: 12px;
+}
+.feed-btn-batch-accept {
+    background: rgba(16, 185, 129, 0.3);
+    color: #6ee7b7;
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-size: 12px;
+    border: none;
+}
+.feed-btn-batch-accept:hover {
+    background: rgba(16, 185, 129, 0.5);
+}
 
 /* Load More card */
 .feed-card-load-more .feed-card-body {
