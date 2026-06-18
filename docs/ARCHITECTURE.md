@@ -1476,10 +1476,11 @@ def is_kb_server_running() -> bool
 
 **Synthesis-layer public API additions:**
 ```python
-_SYNTHESIS_ENDPOINT_URL: str  # overridable via CRABCAKES_KB_SYNTHESIS_URL
+_SYNTHESIS_ENDPOINT_DEFAULT: str  # constant, overridden via CRABCAKES_KB_SYNTHESIS_URL
 _SYNTHESIS_TIMEOUT_SECONDS: float  # 1.5
+def _get_synthesis_url() -> str  # reads env var at call time
 def _synthesis_enabled() -> bool  # reads CRABCAKES_KB_SYNTHESIS env var
-def _try_synthesize(question: str, chunks: list) -> str | None
+def _try_synthesize(question: str, chunks: list, formatted_chunks: str | None = None) -> str | None
 ```
 
 ### 3.21q.6 `ui/handlers/auxilium_wizard_handler.py` — Auxilium First-Run Wizard Handler (Tier 1, D7)

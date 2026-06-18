@@ -52,10 +52,14 @@ _KB_CONFIDENCE_THRESHOLD = 0.55
 
 # Free, no-auth Llama endpoint verified 2026-06-17. If the endpoint changes,
 # update this constant — the rest of the synthesis code is endpoint-agnostic.
-_SYNTHESIS_ENDPOINT_URL = os.environ.get(
-    "CRABCAKES_KB_SYNTHESIS_URL",
-    "https://devtoolbox-api.devtoolbox-api.workers.dev/ai/generate",
-)
+# Read at call time (not import time) so env var changes take effect without
+# process restart — adversarial audit BUG #2.
+_SYNTHESIS_ENDPOINT_DEFAULT = "https://devtoolbox-api.devtoolbox-api.workers.dev/ai/generate"
+
+
+def _get_synthesis_url() -> str:
+    """Return the synthesis endpoint URL, overridable via CRABCAKES_KB_SYNTHESIS_URL."""
+    return os.environ.get("CRABCAKES_KB_SYNTHESIS_URL", _SYNTHESIS_ENDPOINT_DEFAULT)
 
 # Hard timeout on the synthesis call. 1.5s = 3× the measured ~500ms latency
 # of the free endpoint. Tuned to keep Auxilium feeling responsive even when
@@ -111,7 +115,7 @@ def _format_chunks(chunks: list) -> str:
     return "".join(parts)
 
 
-def _try_synthesize(question: str, chunks: list) -> str | None:
+def _try_synthesize(question: str, chunks: list, formatted_chunks: str | None = None) -> str | None:
     """Synthesize a friendly answer from KB chunks using the free Llama endpoint.
 
     Returns the synthesized string on success, or None on ANY failure
@@ -123,6 +127,8 @@ def _try_synthesize(question: str, chunks: list) -> str | None:
         question: The user's question (last user message from the request).
         chunks: The KBChunk list returned by kb_lookup (already passed
             the confidence threshold).
+        formatted_chunks: Pre-formatted chunks string (avoids double-call —
+            adversarial audit BUG #3). If None, _format_chunks is called internally.
 
     Returns:
         Synthesized answer string, or None on any failure.
@@ -135,10 +141,18 @@ def _try_synthesize(question: str, chunks: list) -> str | None:
     if not _synthesis_enabled():
         return None
 
+    # Guard against bad input (adversarial audit BUG #6 — docstring says
+    # "returns None on ANY failure" but None/invalid chunks would raise).
+    if not isinstance(question, str) or not question:
+        return None
+    if not isinstance(chunks, list) or not chunks:
+        return None
+
     # Build the synthesis prompt. Mirrors the system prompt's intent at
     # prompts/system/auxilium.md:73-85 (Phase 2 — LLM Synthesis Mode):
     # ground the answer in the chunks, be concise, no "Based on the KB" preface.
-    formatted_chunks = _format_chunks(chunks)
+    if formatted_chunks is None:
+        formatted_chunks = _format_chunks(chunks)
     prompt = (
         "You are a helpful assistant for a software project. "
         "Use the following knowledge base context to answer the user's question. "
@@ -149,7 +163,7 @@ def _try_synthesize(question: str, chunks: list) -> str | None:
 
     payload = json.dumps({"prompt": prompt}).encode("utf-8")
     req = urllib.request.Request(
-        _SYNTHESIS_ENDPOINT_URL,
+        _get_synthesis_url(),
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -159,8 +173,9 @@ def _try_synthesize(question: str, chunks: list) -> str | None:
         with urllib.request.urlopen(req, timeout=_SYNTHESIS_TIMEOUT_SECONDS) as resp:
             body = resp.read()
             parsed = json.loads(body)
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
-        # Network error, timeout, DNS failure, connection refused, HTTP error
+    except (urllib.error.URLError, OSError) as e:
+        # Network error, timeout (TimeoutError ⊂ OSError), DNS failure,
+        # connection refused, HTTP error (HTTPError ⊂ URLError)
         logger.debug("kb_server: synthesis call failed: %s; falling back to raw chunks", e)
         return None
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -290,9 +305,12 @@ class _KBRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, _make_response(KB_OUT_OF_SCOPE))
             return
 
-        # Attempt synthesis first; fall back to raw chunks on any failure.
-        synthesized = _try_synthesize(question, chunks)
-        content = synthesized if synthesized is not None else _format_chunks(chunks)
+        # Format chunks once — reused by both synthesis prompt and fallback
+        # (adversarial audit BUG #3: was calling _format_chunks twice on failure path).
+        formatted = _format_chunks(chunks)
+        # Attempt synthesis first; fall back to formatted chunks on any failure.
+        synthesized = _try_synthesize(question, chunks, formatted_chunks=formatted)
+        content = synthesized if synthesized is not None else formatted
         self._send_json(200, _make_response(content))
 
     # ── PUT / DELETE / etc → 405 ──────────────────────────────────────────────

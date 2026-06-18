@@ -94,8 +94,11 @@ def kb_server_instance():
     """Start and stop a KB server on a free port for each test."""
     port = _find_free_port()
 
-    # Mock is_index_available so the server starts even without a real index
-    with mock.patch.object(kb_server, "is_index_available", return_value=True):
+    # Mock is_index_available so the server starts even without a real index.
+    # Disable synthesis to prevent existing tests from making real network calls
+    # (adversarial audit BUG #1 — existing tests don't mock _try_synthesize).
+    with mock.patch.object(kb_server, "is_index_available", return_value=True), \
+         mock.patch.object(kb_server, "_try_synthesize", return_value=None):
         thread = start_kb_server(port=port)
         if thread is None:
             pytest.skip("Could not start KB server")
@@ -431,7 +434,7 @@ class TestSynthesis:
         """_try_synthesize returns a string → response content is that string."""
         port = kb_server_instance
         monkeypatch.setattr(kb_server, "_try_synthesize",
-                            lambda q, c: "Synthesized: do `apt install`.")
+                            lambda q, c, **kw: "Synthesized: do `apt install`.")
         mock_chunks = [
             KBChunk(id="c1", source="knowledge/install.md", section="Ubuntu",
                     text="Run apt install", score=0.92),
@@ -449,7 +452,7 @@ class TestSynthesis:
     def test_synthesis_failure_returns_raw_chunks(self, kb_server_instance, monkeypatch):
         """_try_synthesize returns None → response content is _format_chunks output."""
         port = kb_server_instance
-        monkeypatch.setattr(kb_server, "_try_synthesize", lambda q, c: None)
+        monkeypatch.setattr(kb_server, "_try_synthesize", lambda q, c, **kw: None)
         mock_chunks = [
             KBChunk(id="c1", source="knowledge/install.md", section="Ubuntu",
                     text="Run apt install", score=0.92),
@@ -571,7 +574,7 @@ class TestSynthesis:
         """_try_synthesize is called with (question, chunks) from the request."""
         port = kb_server_instance
         captured = {}
-        def fake_synthesize(q, c):
+        def fake_synthesize(q, c, **kw):
             captured["question"] = q
             captured["chunks"] = c
             return "synthesized"
