@@ -1,6 +1,8 @@
 # ui/views/left_panel.py
 # Left sidebar panel — contains the Prompts/Agents/Projects notebook (PAP)
 
+from __future__ import annotations
+
 import gi
 # Require GTK 4.0 — must be called before importing Gtk
 gi.require_version('Gtk', '4.0')
@@ -10,8 +12,6 @@ from utils.projects import load_members
 from utils.icons import render_agent_icon
 from ui.views.file_tree import FileTree
 from ui.views.session_menu import show_session_menu
-from ui.handlers.prompts_handler import PromptsHandler
-
 
 class LeftPanel(Gtk.Box):
     """

@@ -55,6 +55,7 @@ __all__ = [
     # task
     "Task",
     "TaskStore",
+    "task_store",
     "TASK_STATUS_LABELS",
     "PRIORITY_LABELS",
     # colors

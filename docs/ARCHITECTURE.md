@@ -3509,7 +3509,7 @@ tests/                           # 61 files (57 test + 4 support)
     ├── test_tasks.py
     └── test_tools.py             # ~334 lines
 
-**Test count:** 61 test files (snapshot as of 2026-05-31: 1680 tests collected; 1632 passed, 1 failed, 0 errors). 22 TestUpdateAgentSession errors resolved in Phase 5; 1 pre-existing failure in test_agents.py::TestLoadAgentDefs::test_does_not_overwrite_existing. Run `pytest --co -q` for current count.
+**Test count:** 84 test files (snapshot as of 2026-05-31 was 61; grew by 23 files in June 2026 with the KB, providers, settings, and wizard features). For the current collected-test count and pass/fail status, run `pytest --co -q` and `pytest -q`. The explicit test-file enumeration in §13 is illustrative, not exhaustive — new tests are added with the features they cover and may not be retroactively enumerated.
 
 ---
 

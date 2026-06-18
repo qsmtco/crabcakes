@@ -6,7 +6,7 @@ import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
 
-from ui.handlers.chat_handler import STREAMING_ENABLED
+import ui.constants
 
 class Toolbar(Gtk.Box):
     """
@@ -29,7 +29,7 @@ class Toolbar(Gtk.Box):
         # Stream toggle — left side of toolbar
         self._stream_btn = Gtk.ToggleButton(label="Stream: OFF")
         self._stream_btn.set_size_request(100, -1)
-        self._stream_btn.set_active(STREAMING_ENABLED)
+        self._stream_btn.set_active(ui.constants.STREAMING_ENABLED)
         self._update_stream_label()
         self._stream_btn.connect("toggled", self._on_stream_toggled)
 
@@ -92,15 +92,13 @@ class Toolbar(Gtk.Box):
 
     def _on_stream_toggled(self, button):
         """Toggle streaming on/off and update the button label."""
-        import ui.handlers.chat_handler as chat_handler
-        chat_handler.STREAMING_ENABLED = button.get_active()
+        ui.constants.STREAMING_ENABLED = button.get_active()
         self._update_stream_label()
 
     def _update_stream_label(self):
         """Update stream button label to reflect current state."""
-        import ui.handlers.chat_handler as chat_handler
         self._stream_btn.set_label(
-            "Stream: ON" if chat_handler.STREAMING_ENABLED else "Stream: OFF"
+            "Stream: ON" if ui.constants.STREAMING_ENABLED else "Stream: OFF"
         )
 
     def _on_settings_click(self, *args):

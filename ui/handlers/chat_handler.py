@@ -16,12 +16,9 @@ from typing import Callable
 
 import logging
 
+import ui.constants
+
 _logger = logging.getLogger(__name__)
-
-
-# ── Feature flags ──────────────────────────────────────────────────────────────
-STREAMING_ENABLED = False  # True = show live updates as agent types; False = final only
-# ──────────────────────────────────────────────────────────────────────────────
 
 
 class ChatHandler:
@@ -580,7 +577,7 @@ class ChatHandler:
         Controlled by STREAMING_ENABLED. When disabled, delta events are ignored
         and the message appears only when the final event arrives.
         """
-        if not STREAMING_ENABLED:
+        if not ui.constants.STREAMING_ENABLED:
             return  # streaming disabled — wait for final event
         if self._chat_render_handler is None:
             return

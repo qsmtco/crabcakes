@@ -19,8 +19,6 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
 
 from models.providers import ProviderConfig
-from ui.handlers.settings_handler import SettingsHandler
-
 if TYPE_CHECKING:
     from utils.provider_test import TestResult
 
