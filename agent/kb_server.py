@@ -61,11 +61,11 @@ def _get_synthesis_url() -> str:
     """Return the synthesis endpoint URL, overridable via CRABCAKES_KB_SYNTHESIS_URL."""
     return os.environ.get("CRABCAKES_KB_SYNTHESIS_URL", _SYNTHESIS_ENDPOINT_DEFAULT)
 
-# Hard timeout on the synthesis call. 1.5s = 3× the measured ~500ms latency
+# Hard timeout on the synthesis call. 3.0s = 6× the measured ~500ms latency
 # of the free endpoint. Tuned to keep Auxilium feeling responsive even when
 # the endpoint is slow. If the call takes longer, we time out and fall back
 # to the raw formatted chunks.
-_SYNTHESIS_TIMEOUT_SECONDS = 1.5
+_SYNTHESIS_TIMEOUT_SECONDS = 3.0
 
 # Toggle: "0" disables synthesis (returns raw chunks as today). Anything else
 # (including unset, "1", "true", "yes", typo'd values) enables it. Default ON.
