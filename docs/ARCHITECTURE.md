@@ -1998,10 +1998,11 @@ update_card_badge(card_widget: Gtk.Widget, accepted: bool | None) -> None
 ```python
 @dataclass FeedCardData:
     card_type: str       # "file_created" | "file_modified" | "file_deleted" |
-                         # "dir_created" | "dir_deleted" | "commit" |
+                         # "diff" | "dir_created" | "dir_deleted" | "git_commit" |
+                         # "agent_action" | "audit_report" | "task" |
                          # "agent_joined" | "agent_left" |
                          # "member_joined" | "member_left" | "system"
-    source: str          # "gateway" | "crabwatch" | "system"
+    source: str          # "gateway" | "crabwatch" | "system" | "git" | "approval"
     title: str           # Short title text
     body: str            # Body subtitle text
     author: str          # Display name of actor
@@ -2009,6 +2010,26 @@ update_card_badge(card_widget: Gtk.Widget, accepted: bool | None) -> None
     project_name: str | None   # Set for project-scoped cards
     file_path: str | None      # Set for file/dir change cards (crabwatch)
     commit_sha: str | None     # Set for commit cards
+    metadata: dict       # Free-form per-card metadata (status, needs_approval, etc.)
+    accepted: bool | None = None    # True=accepted, False=rejected, None=pending
+    seq_num: int | None = None      # Sequential display number (per project)
+
+    # Class methods (Phase 1)
+    @staticmethod
+    def is_actionable(card_type, metadata=None) -> bool:
+        """True if this card requires user action (Accept/Reject/Approve/Deny).
+        File-change cards and cards with needs_approval=True are actionable."""
+
+    @staticmethod
+    def is_informational(card_type, metadata=None) -> bool:
+        """True if this card is read-only (no action buttons needed).
+        git_commit, system, task, audit_report, dir_created, dir_deleted are informational.
+        agent_action with status in (None, running, complete, error) is informational."""
+
+    # Serialization
+    def to_dict() -> dict
+    @classmethod
+    def from_dict(cls, data: dict) -> FeedCardData
 
 def css_class_for_type(card_type: str) -> str:
     """Map card_type to CSS class name for feed card styling."""
@@ -2053,6 +2074,8 @@ class FeedHandler:
     def handle_accept(self, card_id: str) -> None
     def handle_reject(self, card_id: str) -> None
     def handle_copy(self, text: str) -> None
+    def handle_batch_accept(self, card_ids: list[str]) -> None
+        # Phase 5: accepts a list of file-change cards in one go
 ```
 
 **Thread safety:** All GTK operations via `GLib.idle_add()`. Git ops in background threads. `_lock` protects dict mutations.
@@ -2461,6 +2484,13 @@ class FeedTab(Gtk.Box):
     def append_card(card_widget: Gtk.Widget, card_id: str | None) -> None
     def remove_card(card_id: str) -> None
     def scroll_to_bottom() -> None
+        # Unconditional — used on project open to jump to newest
+    def smart_scroll_to_bottom() -> None
+        # Phase 4: only scrolls when user is within 80px of bottom
+    def update_batch_bar(pending_count: int) -> None
+        # Phase 5: shows/hides batch accept bar based on pending file-change cards
+    def set_batch_accept_callback(callback: Callable[[], None]) -> None
+        # Phase 5: wires FeedHandler's batch-accept handler into the bar's button
 ```
 
 ---
