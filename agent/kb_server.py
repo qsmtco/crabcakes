@@ -161,11 +161,17 @@ def _try_synthesize(question: str, chunks: list, formatted_chunks: str | None = 
         f"User question: {question}"
     )
 
-    payload = json.dumps({"prompt": prompt}).encode("utf-8")
+    payload = json.dumps({"prompt": prompt, "max_tokens": 500}).encode("utf-8")
     req = urllib.request.Request(
         _get_synthesis_url(),
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            # Cloudflare blocks requests with no User-Agent (returns 403).
+            # urllib.request sends "Python-urllib/3.x" by default, but
+            # being explicit avoids future surprises.
+            "User-Agent": "CrabCakes-KB-Synthesis/1.0",
+        },
         method="POST",
     )
 
