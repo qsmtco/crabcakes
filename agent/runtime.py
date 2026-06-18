@@ -1180,6 +1180,64 @@ class AgentRuntime:
             logger.exception("[model-max] failed to resolve provider max_tokens; using fallback")
             return FALLBACK
 
+    def _prepare_kb_synthesis(
+        self,
+        conv: "Conversation",
+        text: str,
+        messages: list[dict],
+        kb_cache: str | None,
+    ) -> tuple[list[dict], str | None, str | None]:
+        """Prepare KB-synthesis messages for the primary LLM call (Tier 2).
+
+        If conv.agent_role == "helper", runs kb_lookup on the current user
+        message (or reuses the cached result) and injects the chunks into
+        the messages list. Returns (messages_for_call, kb_context, new_cache).
+        For non-auxilium agents or empty KB results, returns
+        (messages, None, None) — no injection, no change to the messages.
+
+        The per-turn cache is the caller's responsibility. Pass the current
+        cache value in kb_cache; assign the returned new_cache back to the
+        caller's variable. This keeps the cache in _run_loop's scope so
+        it survives across tool-loop iterations.
+
+        Called once per tool-loop iteration. kb_lookup is invoked at most
+        once per _run_loop invocation: the per-turn cache (passed in via
+        kb_cache, returned via the new_cache element of the tuple) is set
+        to a non-None value on the first call — the formatted string for
+        matches, or the empty string for no-results or exceptions. The
+        empty-string sentinel is what makes the cache an actual invariant
+        (rather than "cached only on success"); it prevents re-querying a
+        failing backend on every iteration and prevents re-querying for
+        off-topic user messages that have no KB coverage.
+        """
+        # Gate: only fire for auxilium (type-safe, case-insensitive)
+        is_helper = (
+            isinstance(conv.agent_role, str)
+            and conv.agent_role.strip().lower() == "helper"
+        )
+        if not is_helper:
+            return messages, None, None
+
+        # Per-turn cache: only fetch on first call within a turn.
+        # After the first call, new_cache is ALWAYS set (to the formatted
+        # string for matches, or to "" for no-results / exception). The
+        # empty-string sentinel is what makes this an actual cache invariant
+        # rather than "sometimes a cache when KB has something to say."
+        new_cache = kb_cache
+        if new_cache is None:
+            try:
+                from agent.kb_lookup import kb_lookup
+                chunks = kb_lookup(text, top_k=5, min_score=0.35)
+                new_cache = _format_chunks_for_llm(chunks)
+            except Exception:
+                new_cache = ""  # queried, but failed; do not retry
+
+        kb_context = new_cache
+        messages_for_call = messages
+        if kb_context:
+            messages_for_call = self._inject_kb_context(messages, kb_context, text)
+        return messages_for_call, kb_context, new_cache
+
     def _run_loop(self, session_key: str, text: str) -> None:
         """Background thread: run the full tool loop for one user message."""
         with self._lock:
@@ -1199,6 +1257,11 @@ class AgentRuntime:
             # Step 2: loop until no tool calls or limit hit
             iteration = 0
             max_iter = self._config.max_tool_iterations
+
+            # Per-turn cache: KB chunks fetched once and reused for the entire
+            # multi-iteration loop. The user question is the same throughout;
+            # re-running kb_lookup on every iteration is wasted work and tokens.
+            _kb_cache_for_turn: str | None = None
 
             while iteration < max_iter:
                 # Check immediate cancel signal first
@@ -1247,26 +1310,13 @@ class AgentRuntime:
                     except Exception as e:
                         logger.warning(f"Failed to load MCP tools for {session_key}: {e}")
 
-                # KB synthesis (Tier 2): for auxilium, run kb_lookup on every
-                # user message and inject chunks into the primary LLM call.
-                # This is separate from the KB fallback chain (which fires when
-                # the primary returns KB_OUT_OF_SCOPE — see lines ~1177-1241).
-                kb_context = None
-                # Case-insensitive match: "Helper", "HELPER", " helper " all work.
-                if isinstance(conv.agent_role, str) and conv.agent_role.strip().lower() == "helper":
-                    try:
-                        from agent.kb_lookup import kb_lookup
-                        chunks = kb_lookup(text, top_k=5, min_score=0.35)
-                        if chunks:
-                            kb_context = _format_chunks_for_llm(chunks)
-                    except Exception:
-                        pass  # kb_lookup is fail-soft — kb_context stays None, LLM proceeds without KB
-
-                # Inject KB context into the primary LLM call for auxilium.
-                # If kb_context is None (no relevant chunks or lookup failed), this is a no-op.
-                messages_for_call = messages
-                if kb_context:
-                    messages_for_call = self._inject_kb_context(messages, kb_context, text)
+                # KB synthesis (Tier 2): prepare messages with KB context if applicable.
+                # The helper is called once per tool-loop iteration, but kb_lookup itself
+                # only runs once per _run_loop invocation (gated by the per-turn cache
+                # passed in via kb_cache). The cache survives across iterations.
+                messages_for_call, kb_context, _kb_cache_for_turn = self._prepare_kb_synthesis(
+                    conv, text, messages, _kb_cache_for_turn
+                )
                 response = self._call_llm(session_key, messages_for_call, tools)
 
                 # Extract content and tool calls

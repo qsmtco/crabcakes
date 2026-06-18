@@ -121,6 +121,146 @@ class TestKBLookupFiresForAuxilium:
                 rt._run_loop(sk, "third question")
         assert call_count[0] == 3
 
+    def test_kb_lookup_called_once_per_run_loop_invocation(self):
+        """kb_lookup should run once per _run_loop call, NOT once per
+        tool-loop iteration. The helper is called inside the while loop,
+        but the per-turn cache prevents repeated kb_lookup calls.
+        """
+        rt, sk = _make_runtime(agent_role="helper")
+
+        call_count = [0]
+        llm_call_count = [0]
+
+        def counting_lookup(question, *, top_k, min_score):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return [KBChunk(id="c1", source="test.md", section="S", text="hello", score=0.9)]
+            return []
+
+        def fake_call(sk, messages, tools):
+            llm_call_count[0] += 1
+            if llm_call_count[0] == 1:
+                # First call: trigger the tool loop with a tool_calls response
+                return {
+                    "choices": [{"message": {
+                        "content": "",
+                        "tool_calls": [{"id": "t1", "type": "function",
+                                        "function": {"name": "read_file", "arguments": "{}"}}],
+                    }}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                }
+            # Second call: normal answer
+            return {
+                "choices": [{"message": {"content": "answer"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }
+
+        with patch("agent.kb_lookup.kb_lookup", side_effect=counting_lookup):
+            with patch.object(rt, "_call_llm", side_effect=fake_call):
+                rt._run_loop(sk, "how do I configure?")
+
+        # _call_llm was called twice (tool loop fired), but kb_lookup was called only once
+        assert llm_call_count[0] >= 2, f"expected >= 2 LLM calls, got {llm_call_count[0]}"
+        assert call_count[0] == 1, f"expected 1 kb_lookup call, got {call_count[0]}"
+
+    def test_kb_lookup_cached_when_returns_empty_chunks(self):
+        """Regression: HIGH bug from 2026-06-18 adversarial audit.
+
+        The per-turn cache must engage even when kb_lookup returns [].
+        Previously, new_cache stayed None when chunks was empty, causing
+        kb_lookup to be re-invoked on every tool-loop iteration — the
+        exact problem the cache was meant to solve.
+
+        This test verifies that an off-topic user message (KB has no
+        coverage) does NOT trigger repeated kb_lookup calls during a
+        tool-loop.
+        """
+        rt, sk = _make_runtime(agent_role="helper")
+
+        call_count = [0]
+        llm_call_count = [0]
+
+        def empty_lookup(question, *, top_k, min_score):
+            """Always returns [] — simulates a KB index with no matches."""
+            call_count[0] += 1
+            return []
+
+        def fake_call(sk, messages, tools):
+            llm_call_count[0] += 1
+            if llm_call_count[0] == 1:
+                # First call: trigger the tool loop with a tool_calls response
+                return {
+                    "choices": [{"message": {
+                        "content": "",
+                        "tool_calls": [{"id": "t1", "type": "function",
+                                        "function": {"name": "read_file", "arguments": "{}"}}],
+                    }}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                }
+            # Second call: normal answer
+            return {
+                "choices": [{"message": {"content": "answer"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }
+
+        with patch("agent.kb_lookup.kb_lookup", side_effect=empty_lookup):
+            with patch.object(rt, "_call_llm", side_effect=fake_call):
+                rt._run_loop(sk, "an obscure question with no KB matches")
+
+        # Tool loop fired (2 LLM calls), but kb_lookup was called only once
+        # (gated by the cache; the empty result sets new_cache="" and
+        # prevents re-querying on iter 2).
+        assert llm_call_count[0] >= 2, f"expected >= 2 LLM calls, got {llm_call_count[0]}"
+        assert call_count[0] == 1, (
+            f"expected 1 kb_lookup call (cache should engage even on empty result), "
+            f"got {call_count[0]}"
+        )
+
+    def test_kb_lookup_cached_when_raises(self):
+        """Regression: HIGH bug from 2026-06-18 adversarial audit.
+
+        The per-turn cache must engage even when kb_lookup raises an
+        exception. Previously, the except clause left new_cache as None,
+        causing kb_lookup to be re-invoked on every tool-loop iteration —
+        hammering a failing backend N times for one user message.
+        """
+        rt, sk = _make_runtime(agent_role="helper")
+
+        call_count = [0]
+        llm_call_count = [0]
+
+        def raising_lookup(question, *, top_k, min_score):
+            call_count[0] += 1
+            raise RuntimeError("simulated KB backend down")
+
+        def fake_call(sk, messages, tools):
+            llm_call_count[0] += 1
+            if llm_call_count[0] == 1:
+                return {
+                    "choices": [{"message": {
+                        "content": "",
+                        "tool_calls": [{"id": "t1", "type": "function",
+                                        "function": {"name": "read_file", "arguments": "{}"}}],
+                    }}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                }
+            return {
+                "choices": [{"message": {"content": "answer"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }
+
+        with patch("agent.kb_lookup.kb_lookup", side_effect=raising_lookup):
+            with patch.object(rt, "_call_llm", side_effect=fake_call):
+                rt._run_loop(sk, "any question")
+
+        # kb_lookup was called only once even though it raised. A failing
+        # backend must not be retried on every iteration.
+        assert llm_call_count[0] >= 2, f"expected >= 2 LLM calls, got {llm_call_count[0]}"
+        assert call_count[0] == 1, (
+            f"expected 1 kb_lookup call (exception should not bypass cache), "
+            f"got {call_count[0]}"
+        )
+
     def test_kb_lookup_called_for_case_insensitive_helper_role(self):
         """The Tier 2 gate matches role values case-insensitively, ignoring whitespace.
 
