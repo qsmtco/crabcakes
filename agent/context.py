@@ -109,7 +109,7 @@ def _build_directory_tree(project_path: str, max_lines: int = 200) -> str:
     """
     patterns = _load_gitignore_patterns(project_path)
     lines: list[str] = []
-    prefix_skip = {"__pycache__", ".git", "node_modules", ".pytest_cache", ".mypy_cache", ".tox"}
+    prefix_skip = {"__pycache__", ".git", "node_modules", ".pytest_cache", ".mypy_cache", ".tox", "docs", ".docs", "documentation"}
 
     def add_dir(rel_dir: str, indent: str) -> None:
         """Add entries for one directory level and recurse into subdirs."""
@@ -191,6 +191,16 @@ def _read_crabcakes_docs(project_path: str, max_size: int = 50 * 1024) -> str:
     return "\n".join(sections)
 
 
+
+# Directories excluded from file context by default.
+# Set CRABCAKES_INCLUDE_DOCS=1 to override.
+EXCLUDED_DIRS = frozenset({"docs", ".docs", "documentation"})
+
+
+def _include_docs() -> bool:
+    """Whether to include the docs/ directory in file context. Defaults False."""
+    return os.environ.get("CRABCAKES_INCLUDE_DOCS", "0") == "1"
+
 def _read_key_files(project_path: str) -> str:
     """
     Read key project files for context: README, ARCHITECTURE, package.json, etc.
@@ -212,10 +222,14 @@ def _read_key_files(project_path: str) -> str:
     except OSError:
         return ""
 
+    include_docs = _include_docs()
     for name in entries:
         if name not in key_names:
             continue
         rel_path = name
+        # Skip docs/ unless explicitly enabled
+        if not include_docs and name in EXCLUDED_DIRS:
+            continue
         if _is_ignored(rel_path, project_path, patterns):
             continue
         file_path = os.path.join(project_path, name)
@@ -234,6 +248,22 @@ def _read_key_files(project_path: str) -> str:
         sections.append(f"## {name}\n\n{content}\n")
 
     return "\n".join(sections)
+
+
+_FILE_CONTEXT_CACHE: dict[str, tuple[float, str]] = {}
+
+
+def _project_root_mtime(project_path: str) -> float:
+    """Max mtime of files affecting file context cache."""
+    try:
+        m = os.stat(project_path).st_mtime
+        for name in (".crabcakes", "README.md", "ARCHITECTURE.md", "AGENTS.md"):
+            full = os.path.join(project_path, name)
+            if os.path.exists(full):
+                m = max(m, os.stat(full).st_mtime)
+        return m
+    except OSError:
+        return 0.0
 
 
 def build_file_context(
@@ -260,6 +290,14 @@ def build_file_context(
     """
     if not project_path or not os.path.isdir(project_path):
         return ""
+
+    # Cache check (only for non-query calls)
+    if not query:
+        cache_key = f"{project_path}::{max_chars}"
+        mtime = _project_root_mtime(project_path)
+        cached = _FILE_CONTEXT_CACHE.get(cache_key)
+        if cached and cached[0] >= mtime:
+            return cached[1]
 
     patterns = _load_gitignore_patterns(project_path)
     parts: list[str] = []
@@ -292,10 +330,17 @@ def build_file_context(
 
     # Truncate if needed — preserve header if possible
     if len(full) <= max_chars:
+        if not query:
+            cache_key = f"{project_path}::{max_chars}"
+            _FILE_CONTEXT_CACHE[cache_key] = (_project_root_mtime(project_path), full)
         return full
 
     # Truncate, keeping as much as possible from the end (most recent context)
-    return full[:max_chars] + f"\n\n[... file context truncated to {max_chars} chars ...]"
+    truncated = full[:max_chars] + f"\n\n[... file context truncated to {max_chars} chars ...]"
+    if not query:
+        cache_key = f"{project_path}::{max_chars}"
+        _FILE_CONTEXT_CACHE[cache_key] = (_project_root_mtime(project_path), truncated)
+    return truncated
 
 
 # Core files that are never truncated from the file context.
@@ -396,7 +441,8 @@ def _find_matching_files(
             continue
 
         dirs[:] = [d for d in dirs if not d.startswith(".") and d not in {
-            "__pycache__", "node_modules", ".pytest_cache", ".mypy_cache", ".tox"
+            "__pycache__", "node_modules", ".pytest_cache", ".mypy_cache", ".tox",
+            "docs", ".docs", "documentation"
         }]
 
         for name in files:

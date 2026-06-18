@@ -52,6 +52,26 @@ CONTEXT_FILENAME = "context.md"
 
 MAX_CONTEXT_SIZE = 50 * 1024  # 50 KB cap for context.md
 
+# ── Awareness mtime cache ─────────────────────────────────────────────────────
+_AWARENESS_CACHE: dict[str, tuple[float, dict]] = {}
+_AWARENESS_MAX_ENTRIES = 32
+
+
+def _awareness_dir_mtime(project_path: str) -> float:
+    """Max mtime of files in .crabcakes/ that affect awareness dict."""
+    crab_dir = os.path.join(project_path, CRABCAKES_DIR_NAME)
+    if not os.path.isdir(crab_dir):
+        return 0.0
+    try:
+        m = os.stat(crab_dir).st_mtime
+        for name in os.listdir(crab_dir):
+            full = os.path.join(crab_dir, name)
+            if os.path.isfile(full):
+                m = max(m, os.stat(full).st_mtime)
+        return m
+    except OSError:
+        return 0.0
+
 # Phase CB-3: size caps for awareness variables (BUG #6 fix).
 # See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.4.
 TEAM_ROSTER_MAX_CHARS = 500
@@ -540,6 +560,13 @@ def build_awareness_dict(project_path: str) -> dict[str, str]:
     Parallel to build_awareness_block() but returns structured data
     instead of formatted text.
     """
+    # Mtime cache — skip if .crabcakes/ hasn't changed
+    if project_path and os.path.isdir(project_path):
+        mtime = _awareness_dir_mtime(project_path)
+        cached = _AWARENESS_CACHE.get(project_path)
+        if cached and cached[0] >= mtime:
+            return cached[1]
+
     parts: dict[str, str] = {}
 
     # Project name
@@ -599,4 +626,10 @@ def build_awareness_dict(project_path: str) -> dict[str, str]:
     except Exception:
         parts["WORKFLOW_STATUS"] = "(workflow state unavailable)"
 
+    # Cache write
+    if project_path and os.path.isdir(project_path):
+        if len(_AWARENESS_CACHE) >= _AWARENESS_MAX_ENTRIES:
+            oldest = min(_AWARENESS_CACHE, key=lambda k: _AWARENESS_CACHE[k][0])
+            _AWARENESS_CACHE.pop(oldest, None)
+        _AWARENESS_CACHE[project_path] = (mtime, parts)
     return parts

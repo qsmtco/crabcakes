@@ -26,18 +26,29 @@ SYSTEM_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts",
 _VAR_RE = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")
 
 
+# Module-level cache — templates are read once and reused for the process lifetime.
+_TEMPLATE_CACHE: dict[str, str] = {}
+
+
 def load_prompt_template(name: str) -> str | None:
     """Load a prompt template from prompts/system/<name>.md.
 
     Returns raw template string with {{VARIABLES}} intact, or None if not found.
+    Cached after first read.
     """
+    cached = _TEMPLATE_CACHE.get(name)
+    if cached is not None:
+        return cached
     path = os.path.join(SYSTEM_DIR, f"{name}.md")
     if not os.path.isfile(path):
         return None
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             content = f.read().strip()
-        return content if content else None
+        result = content if content else None
+        if result is not None:
+            _TEMPLATE_CACHE[name] = result
+        return result
     except OSError as e:
         _logger.warning("Failed to load prompt template %s: %s", name, e)
         return None
