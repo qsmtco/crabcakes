@@ -416,6 +416,180 @@ class TestConfidenceThreshold:
         assert content == KB_OUT_OF_SCOPE
 
 
+# ── Synthesis tests ───────────────────────────────────────────────────────────
+
+
+class TestSynthesis:
+    """Tests for the synthesis layer in the local-kb provider.
+
+    The synthesis layer is opt-in via the CRABCAKES_KB_SYNTHESIS env var
+    (default ON). Each test mocks _try_synthesize to verify both the
+    happy path and the fallback paths.
+    """
+
+    def test_synthesis_success_returns_synthesized(self, kb_server_instance, monkeypatch):
+        """_try_synthesize returns a string → response content is that string."""
+        port = kb_server_instance
+        monkeypatch.setattr(kb_server, "_try_synthesize",
+                            lambda q, c: "Synthesized: do `apt install`.")
+        mock_chunks = [
+            KBChunk(id="c1", source="knowledge/install.md", section="Ubuntu",
+                    text="Run apt install", score=0.92),
+        ]
+        with mock.patch.object(kb_server, "kb_lookup", return_value=mock_chunks):
+            status, body = _post(port, "/v1/chat/completions", {
+                "model": "local-kb",
+                "messages": [{"role": "user", "content": "How to install?"}],
+            })
+        assert status == 200
+        content = body["choices"][0]["message"]["content"]
+        assert content == "Synthesized: do `apt install`."
+        assert "**Source:**" not in content  # NOT the raw formatted chunks
+
+    def test_synthesis_failure_returns_raw_chunks(self, kb_server_instance, monkeypatch):
+        """_try_synthesize returns None → response content is _format_chunks output."""
+        port = kb_server_instance
+        monkeypatch.setattr(kb_server, "_try_synthesize", lambda q, c: None)
+        mock_chunks = [
+            KBChunk(id="c1", source="knowledge/install.md", section="Ubuntu",
+                    text="Run apt install", score=0.92),
+        ]
+        with mock.patch.object(kb_server, "kb_lookup", return_value=mock_chunks):
+            status, body = _post(port, "/v1/chat/completions", {
+                "model": "local-kb",
+                "messages": [{"role": "user", "content": "How to install?"}],
+            })
+        assert status == 200
+        content = body["choices"][0]["message"]["content"]
+        assert "Based on the CrabCakes knowledge base" in content
+        assert "knowledge/install.md" in content
+
+    def test_synthesis_disabled_by_env_var(self, monkeypatch):
+        """CRABCAKES_KB_SYNTHESIS=0 → _try_synthesize returns None immediately."""
+        monkeypatch.setenv("CRABCAKES_KB_SYNTHESIS", "0")
+        result = kb_server._try_synthesize("test", [
+            KBChunk(id="c1", source="s", section="s", text="t", score=0.9)
+        ])
+        assert result is None
+
+    def test_synthesis_enabled_by_default(self, monkeypatch):
+        """No env var set → _synthesis_enabled() returns True."""
+        monkeypatch.delenv("CRABCAKES_KB_SYNTHESIS", raising=False)
+        assert kb_server._synthesis_enabled() is True
+
+    def test_synthesis_env_var_one_enables(self, monkeypatch):
+        """CRABCAKES_KB_SYNTHESIS=1 → enabled."""
+        monkeypatch.setenv("CRABCAKES_KB_SYNTHESIS", "1")
+        assert kb_server._synthesis_enabled() is True
+
+    def test_synthesis_env_var_zero_disables(self, monkeypatch):
+        """CRABCAKES_KB_SYNTHESIS=0 → disabled."""
+        monkeypatch.setenv("CRABCAKES_KB_SYNTHESIS", "0")
+        assert kb_server._synthesis_enabled() is False
+
+    def test_synthesis_handles_timeout(self, monkeypatch):
+        """_try_synthesize catches TimeoutError → returns None."""
+        def fake_urlopen(req, timeout):
+            raise TimeoutError("synthesis timed out")
+        monkeypatch.setattr(kb_server.urllib.request, "urlopen", fake_urlopen)
+        result = kb_server._try_synthesize("test", [
+            KBChunk(id="c1", source="s", section="s", text="t", score=0.9)
+        ])
+        assert result is None
+
+    def test_synthesis_handles_http_error(self, monkeypatch):
+        """_try_synthesize catches HTTPError → returns None."""
+        req = urllib.request.Request("http://127.0.0.1:1/")
+        def fake_urlopen(urlopen_req, timeout):
+            raise urllib.error.HTTPError(urlopen_req.full_url, 503, "Service Unavailable",
+                                         {}, None)
+        monkeypatch.setattr(kb_server.urllib.request, "urlopen", fake_urlopen)
+        result = kb_server._try_synthesize("test", [
+            KBChunk(id="c1", source="s", section="s", text="t", score=0.9)
+        ])
+        assert result is None
+
+    def test_synthesis_handles_url_error(self, monkeypatch):
+        """_try_synthesize catches URLError (DNS/network) → returns None."""
+        def fake_urlopen(req, timeout):
+            raise urllib.error.URLError("Name or service not known")
+        monkeypatch.setattr(kb_server.urllib.request, "urlopen", fake_urlopen)
+        result = kb_server._try_synthesize("test", [
+            KBChunk(id="c1", source="s", section="s", text="t", score=0.9)
+        ])
+        assert result is None
+
+    def test_synthesis_handles_body_level_error(self, monkeypatch):
+        """Endpoint returns {"error": "..."} → returns None."""
+        class FakeResp:
+            def read(self):
+                return b'{"error": "rate limited"}'
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+        monkeypatch.setattr(kb_server.urllib.request, "urlopen",
+                            lambda req, timeout: FakeResp())
+        result = kb_server._try_synthesize("test", [
+            KBChunk(id="c1", source="s", section="s", text="t", score=0.9)
+        ])
+        assert result is None
+
+    def test_synthesis_handles_empty_response(self, monkeypatch):
+        """Endpoint returns {"response": ""} → returns None."""
+        class FakeResp:
+            def read(self):
+                return b'{"response": ""}'
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+        monkeypatch.setattr(kb_server.urllib.request, "urlopen",
+                            lambda req, timeout: FakeResp())
+        result = kb_server._try_synthesize("test", [
+            KBChunk(id="c1", source="s", section="s", text="t", score=0.9)
+        ])
+        assert result is None
+
+    def test_synthesis_handles_error_prefixed_string(self, monkeypatch):
+        """Endpoint returns {"response": "Error: ..."} → returns None."""
+        class FakeResp:
+            def read(self):
+                return b'{"response": "Error: something went wrong"}'
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+        monkeypatch.setattr(kb_server.urllib.request, "urlopen",
+                            lambda req, timeout: FakeResp())
+        result = kb_server._try_synthesize("test", [
+            KBChunk(id="c1", source="s", section="s", text="t", score=0.9)
+        ])
+        assert result is None
+
+    def test_synthesis_passes_question_and_chunks(self, kb_server_instance, monkeypatch):
+        """_try_synthesize is called with (question, chunks) from the request."""
+        port = kb_server_instance
+        captured = {}
+        def fake_synthesize(q, c):
+            captured["question"] = q
+            captured["chunks"] = c
+            return "synthesized"
+        monkeypatch.setattr(kb_server, "_try_synthesize", fake_synthesize)
+        mock_chunks = [
+            KBChunk(id="c1", source="knowledge/install.md", section="Ubuntu",
+                    text="Run apt install", score=0.92),
+        ]
+        with mock.patch.object(kb_server, "kb_lookup", return_value=mock_chunks):
+            _post(port, "/v1/chat/completions", {
+                "model": "local-kb",
+                "messages": [{"role": "user", "content": "How to install?"}],
+            })
+        assert captured["question"] == "How to install?"
+        assert len(captured["chunks"]) == 1
+        assert captured["chunks"][0].source == "knowledge/install.md"
+
+
 class TestKBLookupIntegration:
     def test_kb_server_uses_kb_lookup(self, kb_server_instance):
         port = kb_server_instance

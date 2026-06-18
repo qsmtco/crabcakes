@@ -21,7 +21,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
+import urllib.request
+import urllib.error
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
@@ -44,6 +47,27 @@ _KB_TOP_K = 5
 # out-of-scope. This prevents weak false-positive matches (e.g. score 0.43)
 # from returning irrelevant KB content for questions the KB can't actually answer.
 _KB_CONFIDENCE_THRESHOLD = 0.55
+
+# ── Synthesis layer (KB Enhancement) ──────────────────────────────────────────
+
+# Free, no-auth Llama endpoint verified 2026-06-17. If the endpoint changes,
+# update this constant — the rest of the synthesis code is endpoint-agnostic.
+_SYNTHESIS_ENDPOINT_URL = os.environ.get(
+    "CRABCAKES_KB_SYNTHESIS_URL",
+    "https://devtoolbox-api.devtoolbox-api.workers.dev/ai/generate",
+)
+
+# Hard timeout on the synthesis call. 1.5s = 3× the measured ~500ms latency
+# of the free endpoint. Tuned to keep Auxilium feeling responsive even when
+# the endpoint is slow. If the call takes longer, we time out and fall back
+# to the raw formatted chunks.
+_SYNTHESIS_TIMEOUT_SECONDS = 1.5
+
+# Toggle: "0" disables synthesis (returns raw chunks as today). Anything else
+# (including unset, "1", "true", "yes", typo'd values) enables it. Default ON.
+def _synthesis_enabled() -> bool:
+    """Return True unless CRABCAKES_KB_SYNTHESIS=0 is set in the environment."""
+    return os.environ.get("CRABCAKES_KB_SYNTHESIS", "1") != "0"
 
 # ── Module-level server state ──────────────────────────────────────────────────
 
@@ -85,6 +109,90 @@ def _format_chunks(chunks: list) -> str:
             f"\n---\n**Source:** {chunk.source} :: {chunk.section}\n\n{chunk.text}\n"
         )
     return "".join(parts)
+
+
+def _try_synthesize(question: str, chunks: list) -> str | None:
+    """Synthesize a friendly answer from KB chunks using the free Llama endpoint.
+
+    Returns the synthesized string on success, or None on ANY failure
+    (timeout, network error, HTTP 4xx/5xx, body-level error, empty response,
+    response starting with "Error:"). The caller falls back to the raw
+    formatted chunks when this returns None.
+
+    Args:
+        question: The user's question (last user message from the request).
+        chunks: The KBChunk list returned by kb_lookup (already passed
+            the confidence threshold).
+
+    Returns:
+        Synthesized answer string, or None on any failure.
+
+    Note:
+        The endpoint takes a single concatenated prompt string, not an
+        OpenAI-shaped messages array. We build the prompt as:
+          [instruction prefix] + [_format_chunks(chunks)] + [user question]
+    """
+    if not _synthesis_enabled():
+        return None
+
+    # Build the synthesis prompt. Mirrors the system prompt's intent at
+    # prompts/system/auxilium.md:73-85 (Phase 2 — LLM Synthesis Mode):
+    # ground the answer in the chunks, be concise, no "Based on the KB" preface.
+    formatted_chunks = _format_chunks(chunks)
+    prompt = (
+        "You are a helpful assistant for a software project. "
+        "Use the following knowledge base context to answer the user's question. "
+        "Be concise and friendly. If the context does not contain the answer, say so.\n\n"
+        f"{formatted_chunks}\n\n"
+        f"User question: {question}"
+    )
+
+    payload = json.dumps({"prompt": prompt}).encode("utf-8")
+    req = urllib.request.Request(
+        _SYNTHESIS_ENDPOINT_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=_SYNTHESIS_TIMEOUT_SECONDS) as resp:
+            body = resp.read()
+            parsed = json.loads(body)
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
+        # Network error, timeout, DNS failure, connection refused, HTTP error
+        logger.debug("kb_server: synthesis call failed: %s; falling back to raw chunks", e)
+        return None
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        # Endpoint returned non-JSON or unreadable bytes
+        logger.debug("kb_server: synthesis response unparseable: %s; falling back", e)
+        return None
+
+    # Body-level error: {"error": "..."} or {"error": {"message": "..."}}
+    if isinstance(parsed, dict) and "error" in parsed:
+        logger.debug("kb_server: synthesis body-level error: %s; falling back", parsed["error"])
+        return None
+
+    # Extract the response field. Defensive against missing field or non-string.
+    response_text = parsed.get("response", "") if isinstance(parsed, dict) else ""
+    if not isinstance(response_text, str):
+        logger.debug("kb_server: synthesis response not a string (type=%s); falling back",
+                     type(response_text).__name__)
+        return None
+
+    response_text = response_text.strip()
+    if not response_text:
+        logger.debug("kb_server: synthesis returned empty string; falling back")
+        return None
+
+    # Defensive: if the model returned an error-shaped string, fall back.
+    # Catches cases like "Error: ..." or "I cannot answer that..." (false-positive risk
+    # is low because the prompt is a synthesis instruction, not an open-ended one).
+    if response_text.lower().startswith("error:"):
+        logger.debug("kb_server: synthesis returned error-shaped string; falling back")
+        return None
+
+    return response_text
 
 
 def _extract_last_user_message(messages: list[dict]) -> str | None:
@@ -182,7 +290,9 @@ class _KBRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, _make_response(KB_OUT_OF_SCOPE))
             return
 
-        content = _format_chunks(chunks)
+        # Attempt synthesis first; fall back to raw chunks on any failure.
+        synthesized = _try_synthesize(question, chunks)
+        content = synthesized if synthesized is not None else _format_chunks(chunks)
         self._send_json(200, _make_response(content))
 
     # ── PUT / DELETE / etc → 405 ──────────────────────────────────────────────

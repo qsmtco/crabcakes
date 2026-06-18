@@ -1472,6 +1472,16 @@ def is_kb_server_running() -> bool
 
 **Fail-soft behavior:** If `kb_lookup()` raises, returns `[KB_OUT_OF_SCOPE]` (graceful degradation). If index is unavailable, `start_kb_server()` returns `None` (server does not start).
 
+**Synthesis layer (KB Enhancement):** Before returning formatted KB chunks, `do_POST` calls `_try_synthesize(question, chunks)` which POSTs to a free, no-auth Llama-3.2-3B endpoint (`_SYNTHESIS_ENDPOINT_URL`, default `https://devtoolbox-api.devtoolbox-api.workers.dev/ai/generate`) with a 1.5s timeout. If the synthesis returns a non-empty string, the response content is the synthesized answer. If synthesis fails for any reason (timeout, network error, HTTP error, body-level error, empty response, error-shaped response), the server falls back to the raw formatted chunks. The toggle `CRABCAKES_KB_SYNTHESIS=0` (env var) disables synthesis entirely, restoring the pre-enhancement behavior. Synthesis is opt-in by default; the response shape is unchanged from the OpenAI Chat Completions contract — only the `content` field differs in style.
+
+**Synthesis-layer public API additions:**
+```python
+_SYNTHESIS_ENDPOINT_URL: str  # overridable via CRABCAKES_KB_SYNTHESIS_URL
+_SYNTHESIS_TIMEOUT_SECONDS: float  # 1.5
+def _synthesis_enabled() -> bool  # reads CRABCAKES_KB_SYNTHESIS env var
+def _try_synthesize(question: str, chunks: list) -> str | None
+```
+
 ### 3.21q.6 `ui/handlers/auxilium_wizard_handler.py` — Auxilium First-Run Wizard Handler (Tier 1, D7)
 
 **Responsibility:** Business logic for the Auxilium first-run wizard. Owns the install check (Python + GTK4 + websockets detection), the gateway WebSocket probe (3-second timeout, background thread), and the provider config write (via `utils.providers_store.save_providers()`). Does NOT touch GTK; the view polls `get_state()` for state changes.
