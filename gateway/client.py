@@ -93,6 +93,16 @@ def _load_identity():
             f"  Missing: {auth_path}\n"
             f"  Run 'openclaw login' or 'openclaw device register' to set up identity."
         )
+
+    try:
+        with open(auth_path) as f:
+            auth = json.load(f)
+    except FileNotFoundError:
+        raise RuntimeError(
+            f"OpenClaw identity not found.\n"
+            f"  Missing: {auth_path}\n"
+            f"  Run 'openclaw login' or 'openclaw device register' to set up identity."
+        )
     except json.JSONDecodeError as e:
         raise RuntimeError(
             f"OpenClaw identity file is corrupted (invalid JSON): {auth_path}\n"
