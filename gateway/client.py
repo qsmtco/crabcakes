@@ -181,8 +181,8 @@ def _reload_identity():
     return _load_identity()
 
 
-# Preload identity on module import (catches errors immediately)
-_load_identity()
+# A-1: identity is loaded lazily on first start().
+# Importing the module is now safe even if ~/.openclaw/identity/device-auth.json is absent.
 
 # Auth scopes
 ALL_SCOPES = "operator.admin,operator.approvals,operator.pairing"
@@ -225,7 +225,10 @@ class GatewayClient:
         self._pending: dict[str, dict[str, Any]] = {}
         self._pending_lock: threading.Lock = threading.Lock()
         self._hello_snapshot: Optional[dict[str, Any]] = None
-        self._id: dict[str, Any] = _IDENTITY_CACHE if _IDENTITY_CACHE is not None else _load_identity()
+        # A-1: identity is loaded lazily on first start(), not here.
+        # Constructing GatewayClient is now safe even if ~/.openclaw/identity/ is absent.
+        self._identity_loaded: bool = False
+        self._id: dict[str, Any] = {}
         self._RPC_TIMEOUT_SEC: float = 30.0
         self._on_res: Callable[[str, dict[str, Any]], None] | None = None  # res correlation callback
 
@@ -236,7 +239,15 @@ class GatewayClient:
     # ── Public API ───────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        """Start the background thread (reconnecting). Safe to call multiple times."""
+        """Start the background thread (reconnecting). Safe to call multiple times.
+
+        A-1: identity is loaded lazily on first start(), not on construction.
+        Constructing GatewayClient is now safe even if ~/.openclaw/identity/ is absent.
+        """
+        # A-1: lazy load identity on first start()
+        if not self._identity_loaded:
+            self._id = _load_identity()
+            self._identity_loaded = True
         if self._thread is not None and self._thread.is_alive():
             return
         self._stopping = False

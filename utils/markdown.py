@@ -35,12 +35,39 @@ _ANCHOR_PLACEHOLDER_RE = re.compile(r'\x00ANCHOR(\d+)\x00')
 # Regex for auto-linking bare URLs
 _AUTO_LINK_RE = re.compile(
     r'(?<![a-zA-Z0-9/:])'  # not preceded by alphanum or ://
-    r'(https?://[^\s<>"`\'\[\]()]+)'  # URL chars, stop at whitespace
+    r'([a-zA-Z][a-zA-Z0-9+.-]*://[^\s<>"`\'\[\]()]+)'
+    r'|'
+    r'(?<!["\'])'
+    r'((?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:/[^\s<>"`\'\[\]()]+))'
     , re.IGNORECASE
 )
 
 # Trailing punctuation chars to strip from auto-detected URLs
 _TRAILING_PUNCT = frozenset('.,;:!?')
+
+# HIGH-6: Schemes that are safe to render as clickable links without warning.
+# All other schemes (file://, smb://, ftp://, ssh://, javascript:, data:,
+# custom URI schemes) render with a red warning prefix but stay clickable.
+# Per CptJAQx 2026-06-18 — preserves user agency.
+_ALLOWED_LINK_SCHEMES: frozenset[str] = frozenset({"http", "https", "mailto"})
+
+# HIGH-6: Warning prefix shown in front of non-allowlisted links.
+# U+26A0 = WARNING SIGN, rendered in red bold.
+_WARNING_PREFIX: str = '<span foreground="red" weight="bold">\u26a0</span> '
+
+
+def _validate_link_url(url: str) -> bool:
+    """Return True if `url`'s scheme is in _ALLOWED_LINK_SCHEMES (or is relative).
+
+    HIGH-6: relative URLs (no scheme) are allowed without warning.
+    """
+    if not url:
+        return False
+    # Allow relative URLs (no scheme)
+    if not re.match(r'^[a-zA-Z][a-zA-Z0-9+.-]*:', url):
+        return True
+    scheme = url.split(":", 1)[0].lower()
+    return scheme in _ALLOWED_LINK_SCHEMES
 
 
 def _strip_trailing_punct(url: str) -> str:
@@ -194,17 +221,24 @@ def format_markdown(text: str) -> str:
         safe_url = urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=-_.~")
         # Produce <a> tag, then immediately protect it with a placeholder
         anchor_html = f'<a href="{safe_url}"><u>{label}</u></a>'
+        # HIGH-6: prepend red warning prefix for non-allowlisted schemes
+        if not _validate_link_url(url):
+            anchor_html = _WARNING_PREFIX + anchor_html
         anchor_spans.append(anchor_html)
         return f'\x00ANCHOR{len(anchor_spans) - 1}\x00'
 
-    protected = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', _link_replace_and_protect, protected)
+    protected = re.sub(r'\[([^\]]+)\]\(((?:[^()]|\([^()]*\))+)\)', _link_replace_and_protect, protected)
 
     # ── Step 4: Auto-link bare URLs ──────────────────────────────────────────
     def _auto_link(m):
         url = m.group(1)
         url = _strip_trailing_punct(url)
         safe_url = urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=-_.~")
-        return f'<a href="{safe_url}"><u>{url}</u></a>'
+        anchor_html = f'<a href="{safe_url}"><u>{url}</u></a>'
+        # HIGH-6: prepend red warning prefix for non-allowlisted schemes
+        if not _validate_link_url(url):
+            anchor_html = _WARNING_PREFIX + anchor_html
+        return anchor_html
 
     protected = _AUTO_LINK_RE.sub(_auto_link, protected)
 

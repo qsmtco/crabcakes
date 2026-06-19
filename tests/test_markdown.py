@@ -166,3 +166,146 @@ class TestEdgeCases:
         result = format_markdown(text)
         assert '```' in result        # fence preserved
         assert '<tt>inline</tt>' in result  # inline code processed
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  HIGH-6: warn-but-render for non-allowlisted link schemes
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from utils.markdown import format_markdown, _validate_link_url, _ALLOWED_LINK_SCHEMES
+
+
+class TestValidateLinkUrl:
+    """HIGH-6: _validate_link_url must allow http/https/mailto, block all others."""
+
+    def test_http_allowed(self):
+        assert _validate_link_url("http://example.com") is True
+
+    def test_https_allowed(self):
+        assert _validate_link_url("https://example.com") is True
+
+    def test_mailto_allowed(self):
+        assert _validate_link_url("mailto:x@y.com") is True
+
+    def test_file_not_allowed(self):
+        assert _validate_link_url("file:///etc/passwd") is False
+
+    def test_smb_not_allowed(self):
+        assert _validate_link_url("smb://server/share") is False
+
+    def test_ftp_not_allowed(self):
+        assert _validate_link_url("ftp://files.example.com") is False
+
+    def test_javascript_not_allowed(self):
+        assert _validate_link_url("javascript:alert(1)") is False
+
+    def test_data_uri_not_allowed(self):
+        assert _validate_link_url("data:text/html,<script>alert(1)</script>") is False
+
+    def test_ssh_not_allowed(self):
+        assert _validate_link_url("ssh://user@host") is False
+
+    def test_custom_scheme_not_allowed(self):
+        assert _validate_link_url("myapp://action") is False
+
+    def test_empty_url_not_allowed(self):
+        assert _validate_link_url("") is False
+
+    def test_relative_url_allowed(self):
+        assert _validate_link_url("relative/path") is True
+
+    def test_absolute_path_allowed(self):
+        assert _validate_link_url("/absolute/path") is True
+
+    def test_anchor_allowed(self):
+        assert _validate_link_url("#section") is True
+
+    def test_case_insensitive_scheme(self):
+        """Scheme matching must be case-insensitive."""
+        assert _validate_link_url("HTTP://EXAMPLE.COM") is True
+        assert _validate_link_url("HTTPS://EXAMPLE.COM") is True
+        assert _validate_link_url("File:///etc/passwd") is False
+
+
+class TestMarkdownWarnButRender:
+    """HIGH-6: non-allowlisted links render WITH warning; allowlisted ones WITHOUT."""
+
+    def test_http_link_no_warning(self):
+        result = format_markdown("[example](http://example.com)")
+        assert "\u26a0" not in result
+        assert '<a href="http://example.com">' in result
+
+    def test_https_link_no_warning(self):
+        result = format_markdown("[example](https://example.com)")
+        assert "\u26a0" not in result
+        assert '<a href="https://example.com">' in result
+
+    def test_mailto_no_warning(self):
+        result = format_markdown("[email me](mailto:x@y.com)")
+        assert "\u26a0" not in result
+        assert '<a href="mailto:x@y.com">' in result
+
+    def test_file_link_with_warning(self):
+        """file:// links must be rendered WITH red warning prefix."""
+        result = format_markdown("[passwd](file:///etc/passwd)")
+        assert "\u26a0" in result, (
+            "HIGH-6 VIOLATION: file:// link must have warning prefix. "
+            f"Got: {result!r}"
+        )
+        # Link must still be rendered (warn-but-render, not block)
+        assert '<a href="file:///etc/passwd">' in result
+
+    def test_smb_link_with_warning(self):
+        result = format_markdown("[share](smb://server/share)")
+        assert "\u26a0" in result
+        assert '<a href="smb://server/share">' in result
+
+    def test_javascript_link_with_warning(self):
+        result = format_markdown("[click](javascript:alert(1))")
+        assert "\u26a0" in result, "javascript: links must have warning prefix"
+        assert '<a href="javascript:alert(1)">' in result
+
+    def test_data_uri_with_warning(self):
+        result = format_markdown("[data](data:text/html,<script>alert(1)</script>)")
+        assert "\u26a0" in result
+        assert '<a href="data:text/html,%3Cscript%3Ealert(1)%3C/script%3E">' in result
+
+    def test_ssh_link_with_warning(self):
+        result = format_markdown("[ssh](ssh://user@host)")
+        assert "\u26a0" in result
+        assert '<a href="ssh://user@host">' in result
+
+    def test_custom_scheme_with_warning(self):
+        result = format_markdown("[app](myapp://action)")
+        assert "\u26a0" in result
+        assert '<a href="myapp://action">' in result
+
+    def test_auto_link_http_no_warning(self):
+        """Bare http:// URLs must not have warning prefix."""
+        result = format_markdown("Visit http://example.com now")
+        assert "\u26a0" not in result
+
+    def test_auto_link_file_with_warning(self):
+        """Bare file:// URLs must have warning prefix."""
+        result = format_markdown("See file:///etc/passwd")
+        assert "\u26a0" in result, (
+            "HIGH-6 VIOLATION: auto-linked file:// URL must have warning prefix"
+        )
+
+    def test_warning_uses_pango_red_bold_triangle(self):
+        """Warning prefix must be Pango-red-bold ⚠."""
+        result = format_markdown("[x](file:///etc/passwd)")
+        # Pango markup for red bold WARNING SIGN
+        assert '<span foreground="red" weight="bold">\u26a0</span>' in result
+        # Link must still be clickable
+        assert '<a href="file:///etc/passwd">' in result
+
+    def test_multiple_links_mixed_schemes(self):
+        """Mixed allowlisted and non-allowlisted links in one text."""
+        result = format_markdown(
+            "[safe](https://example.com) and [danger](file:///etc/passwd)"
+        )
+        # https has no warning
+        assert result.count("\u26a0") == 1, "Only file:// should have warning"
+        assert '<a href="https://example.com">' in result
+        assert '<a href="file:///etc/passwd">' in result

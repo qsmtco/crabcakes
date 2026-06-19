@@ -433,3 +433,220 @@ class TestTrimFallbackIncludesOldest:
         c.trim_to_token_limit(500)
         most_recent_user = c.messages[-2]
         assert "MOST RECENT USER" in most_recent_user.content
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  HIGH-3: api_key not persisted in conversation files
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import json
+import os
+import tempfile
+import pytest
+from unittest.mock import patch, MagicMock
+from models.conversation import Conversation, Message, MessageRole
+
+
+class TestSaveConversationDoesNotIncludeApiKey:
+    """HIGH-3: _save_conversation_to_disk must NOT include api_key in saved JSON."""
+
+    def test_save_does_not_include_api_key_field(self, tmp_path):
+        """Direct test: the saved JSON data dict must not have an 'api_key' key."""
+        from agent.runtime import _save_conversation_to_disk
+
+        # Patch _conversations_dir to use tmp_path
+        with patch("agent.runtime._conversations_dir", return_value=str(tmp_path)):
+            conv = Conversation(
+                agent_name="test-agent",
+                model="openai/gpt-4o",
+                provider="openai",
+                api_key="sk-SECRET-KEY-12345",
+            )
+            conv.add_user_message("hello")
+            path = _save_conversation_to_disk(conv, "test-high3-key")
+
+        with open(path, "r") as f:
+            data = json.load(f)
+
+        assert "api_key" not in data, (
+            "HIGH-3 VIOLATION: api_key was written to the conversation file. "
+            f"Found keys: {list(data.keys())}"
+        )
+        assert data["model"] == "openai/gpt-4o"
+        assert data["provider"] == "openai"
+
+    def test_save_includes_provider_field(self, tmp_path):
+        """HIGH-3: provider field must be saved for api_key re-resolution on load."""
+        from agent.runtime import _save_conversation_to_disk
+
+        with patch("agent.runtime._conversations_dir", return_value=str(tmp_path)):
+            conv = Conversation(
+                agent_name="test-agent",
+                model="openai/gpt-4o",
+                provider="openai",
+            )
+            path = _save_conversation_to_disk(conv, "test-provider-field")
+
+        with open(path, "r") as f:
+            data = json.load(f)
+
+        assert "provider" in data, "provider field must be saved for re-resolution"
+        assert data["provider"] == "openai"
+
+    def test_save_file_mode_is_0600(self, tmp_path):
+        """HIGH-3: conversation file must have mode 0o600 after write."""
+        from agent.runtime import _save_conversation_to_disk
+
+        with patch("agent.runtime._conversations_dir", return_value=str(tmp_path)):
+            conv = Conversation(agent_name="test-agent", model="test/model")
+            path = _save_conversation_to_disk(conv, "test-file-mode")
+
+        # On POSIX, check mode; on non-POSIX this is skipped
+        if hasattr(os, "stat"):
+            st = os.stat(path)
+            assert (st.st_mode & 0o777) == 0o600, (
+                f"HIGH-3 VIOLATION: file mode is {oct(st.st_mode & 0o777)}, "
+                "expected 0o600"
+            )
+
+
+class TestResolveApiKeyForConversation:
+    """HIGH-3: _resolve_api_key_for_conversation must never read from saved file."""
+
+    def test_resolve_from_explicit_provider(self):
+        """When data has an explicit provider, look it up by name."""
+        from agent.runtime import _resolve_api_key_for_conversation
+
+        mock_provider = MagicMock()
+        mock_provider.name = "openai"
+        mock_provider.api_key = "sk-PROVIDER-KEY"
+
+        with patch("utils.providers_store.load_providers", return_value=[mock_provider]):
+            result = _resolve_api_key_for_conversation({
+                "model": "openai/gpt-4o",
+                "provider": "openai",
+            })
+
+        assert result == "sk-PROVIDER-KEY"
+
+    def test_resolve_from_model_prefix_when_no_provider(self):
+        """When data has no provider, extract it from the model prefix."""
+        from agent.runtime import _resolve_api_key_for_conversation
+
+        mock_provider = MagicMock()
+        mock_provider.name = "openai"
+        mock_provider.api_key = "sk-FROM-MODEL-KEY"
+
+        with patch("utils.providers_store.load_providers", return_value=[mock_provider]):
+            result = _resolve_api_key_for_conversation({
+                "model": "openai/gpt-4o",
+                # no "provider" key
+            })
+
+        assert result == "sk-FROM-MODEL-KEY"
+
+    def test_resolve_returns_none_when_no_matching_provider(self):
+        """When no provider matches, return None (not the saved api_key)."""
+        from agent.runtime import _resolve_api_key_for_conversation
+
+        mock_provider = MagicMock()
+        mock_provider.name = "openai"
+        mock_provider.api_key = "sk-REAL-KEY"
+
+        with patch("utils.providers_store.load_providers", return_value=[mock_provider]):
+            result = _resolve_api_key_for_conversation({
+                "model": "unknown/model",
+                "provider": "unknown-provider",
+            })
+
+        assert result is None, (
+            "Should return None when no provider matches. "
+            "Returning a key would mean reading from the saved file."
+        )
+
+    def test_resolve_returns_none_when_no_providers_configured(self):
+        """When providers.yaml is empty/missing, return None."""
+        from agent.runtime import _resolve_api_key_for_conversation
+
+        with patch("utils.providers_store.load_providers", return_value=[]):
+            result = _resolve_api_key_for_conversation({"model": "openai/gpt-4o"})
+
+        assert result is None
+
+
+class TestMigrateConversationFiles:
+    """HIGH-3: one-time migration removes api_key from existing conversation files."""
+
+    def test_migration_removes_api_key(self, tmp_path):
+        """Migration must delete api_key from old conversation files."""
+        from agent.runtime import (
+            _migrate_conversation_files,
+            _CONVERSATION_MIGRATION_DONE,
+        )
+
+        # Reset the module-level flag for this test
+        import agent.runtime
+        agent.runtime._CONVERSATION_MIGRATION_DONE = False
+
+        # Write an old-format conversation file with api_key
+        old_path = os.path.join(str(tmp_path), "old-session.json")
+        old_data = {
+            "session_key": "old-session",
+            "agent_name": "test-agent",
+            "model": "openai/gpt-4o",
+            "api_key": "sk-OLD-SECRET",
+            "messages": [],
+        }
+        with open(old_path, "w") as f:
+            json.dump(old_data, f)
+
+        with patch("agent.runtime._conversations_dir", return_value=str(tmp_path)):
+            count = _migrate_conversation_files()
+
+        assert count == 1, f"Expected 1 file migrated, got {count}"
+
+        with open(old_path, "r") as f:
+            migrated = json.load(f)
+
+        assert "api_key" not in migrated, (
+            "HIGH-3 VIOLATION: migration did not remove api_key. "
+            f"Keys found: {list(migrated.keys())}"
+        )
+        assert migrated["model"] == "openai/gpt-4o"
+
+    def test_migration_idempotent(self, tmp_path):
+        """Migration must not re-process already-migrated files."""
+        from agent.runtime import _migrate_conversation_files
+
+        import agent.runtime
+        agent.runtime._CONVERSATION_MIGRATION_DONE = False
+
+        # First migration
+        path1 = os.path.join(str(tmp_path), "session1.json")
+        with open(path1, "w") as f:
+            json.dump({"session_key": "session1", "agent_name": "a", "api_key": "sk-1", "messages": []}, f)
+
+        with patch("agent.runtime._conversations_dir", return_value=str(tmp_path)):
+            count1 = _migrate_conversation_files()
+            count2 = _migrate_conversation_files()  # second call
+
+        assert count1 == 1
+        assert count2 == 0, "Second call must return 0 (idempotent)"
+
+    def test_migration_ignores_non_json_files(self, tmp_path):
+        """Migration must skip non-.json files in the conversations directory."""
+        from agent.runtime import _migrate_conversation_files
+
+        import agent.runtime
+        agent.runtime._CONVERSATION_MIGRATION_DONE = False
+
+        # Write a non-JSON file
+        non_json = os.path.join(str(tmp_path), "readme.txt")
+        with open(non_json, "w") as f:
+            f.write("not a conversation file")
+
+        with patch("agent.runtime._conversations_dir", return_value=str(tmp_path)):
+            # Must not raise
+            count = _migrate_conversation_files()
+
+        assert count == 0, "Non-JSON files must be skipped"

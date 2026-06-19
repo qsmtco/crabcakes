@@ -769,21 +769,37 @@ def _format_chunks_for_llm(chunks: list) -> str:
 # ── Conversation persistence ──────────────────────────────────────────────────
 
 def _conversations_dir() -> str:
-    """Return the conversations directory, creating it if needed."""
+    """Return the conversations directory, creating it if needed.
+
+    HIGH-3: parent dir is chmod 0o700 (owner only). Each conversation file
+    is chmod 0o600 after write (in _save_conversation_to_disk).
+    """
     from utils.config import get_config_dir
     d = os.path.join(get_config_dir(), "conversations")
+    parent_existed = os.path.isdir(d)
     os.makedirs(d, exist_ok=True)
+    if not parent_existed:
+        try:
+            os.chmod(d, 0o700)
+        except OSError:
+            pass
     return d
 
 
 def _save_conversation_to_disk(conv: "Conversation", session_key: str) -> str:
-    """Save a conversation to <conversations_dir>/<session_key>.json."""
+    """Save a conversation to <conversations_dir>/<session_key>.json.
+
+    HIGH-3: api_key is NOT serialized. The api_key is re-resolved on load
+    from providers.yaml (atomic+0600) keyed by conv.model/conv.provider.
+    Conversation files should never contain raw secrets.
+    """
     path = os.path.join(_conversations_dir(), f"{session_key}.json")
     data = {
         "session_key": session_key,
         "agent_name": conv.agent_name,
         "project_path": conv.project_path,
         "model": conv.model,
+        "provider": getattr(conv, "provider", None),  # HIGH-3: for api_key re-resolution on load
         "messages": [
             {
                 "role": m.role.value if hasattr(m.role, "value") else str(m.role),
@@ -807,7 +823,7 @@ def _save_conversation_to_disk(conv: "Conversation", session_key: str) -> str:
         "total_cost": conv.total_cost,
         "step_count": conv.step_count,
         "allowed_tools": conv.allowed_tools,
-        "api_key": conv.api_key,
+        # HIGH-3: api_key NOT serialized — re-resolved from providers.yaml on load
         "mcp_servers": list(conv.mcp_servers) if conv.mcp_servers else [],
         "si_enforcement": conv.si_enforcement,
         "agent_role": conv.agent_role,
@@ -818,11 +834,57 @@ def _save_conversation_to_disk(conv: "Conversation", session_key: str) -> str:
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+    # HIGH-3: chmod 0600 after write — conversation files contain model/provider
+    # but must NOT contain raw api_key.
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass  # non-POSIX filesystem
     return path
 
 
+def _resolve_api_key_for_conversation(data: dict) -> str | None:
+    """Resolve the api_key for a loaded conversation from providers.yaml.
+
+    HIGH-3: never read api_key from the saved file. Re-resolve from the
+    provider store keyed by `provider` field (or extracted from `model`).
+    Returns None if no matching provider is configured.
+
+    Args:
+        data: The raw JSON data dict loaded from the conversation file.
+              Expected to have a "model" key (e.g., "openai/gpt-4o") and
+              optionally a "provider" key.
+    """
+    try:
+        from utils.providers_store import load_providers
+        providers = load_providers()
+        if not providers:
+            return None
+        # Prefer explicit provider field
+        provider_name = data.get("provider")
+        if not provider_name:
+            model = data.get("model", "")
+            if "/" in model:
+                provider_name = model.split("/")[0]
+        if not provider_name:
+            return None
+        # Look up matching provider
+        for p in providers:
+            if p.name == provider_name:
+                return p.api_key
+        return None
+    except Exception:
+        logger.exception("[runtime] failed to resolve api_key for conversation")
+        return None
+
+
 def _load_conversation_from_disk(session_key: str) -> tuple["Conversation", dict] | None:
-    """Load a conversation from disk. Returns (Conversation, metadata) or None."""
+    """Load a conversation from disk. Returns (Conversation, metadata) or None.
+
+    HIGH-3: api_key is re-resolved from providers.yaml (atomic+0600) keyed
+    by conv.model. Saved api_key in old files is ignored (and stripped
+    on next save by the one-time migration).
+    """
     path = os.path.join(_conversations_dir(), f"{session_key}.json")
     if not os.path.isfile(path):
         return None
@@ -855,17 +917,21 @@ def _load_conversation_from_disk(session_key: str) -> tuple["Conversation", dict
         )
         messages.append(msg)
 
+    # HIGH-3: re-resolve api_key from providers.yaml, NOT from saved data
+    api_key = _resolve_api_key_for_conversation(data)
+
     conv = Conversation(
         agent_name=data["agent_name"],
         project_path=data.get("project_path"),
         model=data.get("model", ""),
+        provider=data.get("provider"),  # HIGH-3: stored so we can re-resolve api_key
         system_prompt=data.get("system_prompt", ""),
         messages=messages,
         total_tokens=data.get("total_tokens", 0),
         total_cost=data.get("total_cost", 0.0),
         step_count=data.get("step_count", 0),
         allowed_tools=data.get("allowed_tools"),
-        api_key=data.get("api_key"),
+        api_key=api_key,  # HIGH-3: re-resolved from providers.yaml
         app_title=data.get("app_title", ""),
         mcp_servers=data.get("mcp_servers", []),
         si_enforcement=data.get("si_enforcement"),
@@ -874,6 +940,62 @@ def _load_conversation_from_disk(session_key: str) -> tuple["Conversation", dict
         fallback_model=data.get("fallback_model"),
     )
     return conv, data
+
+
+# ── HIGH-3: One-time migration ──────────────────────────────────────────────────
+
+# Module-level flag — migration runs once per process
+_CONVERSATION_MIGRATION_DONE: bool = False
+
+
+def _migrate_conversation_files() -> int:
+    """One-time sweep: remove api_key from existing conversation files.
+
+    HIGH-3: scans ~/.config/crabcakes/conversations/*.json, removes the
+    "api_key" field if present, writes back atomically with chmod 0600.
+    New saves never include api_key. Idempotent — safe to call multiple times.
+
+    Returns the number of files migrated.
+    """
+    global _CONVERSATION_MIGRATION_DONE
+    if _CONVERSATION_MIGRATION_DONE:
+        return 0
+    _CONVERSATION_MIGRATION_DONE = True
+
+    d = _conversations_dir()
+    count = 0
+    try:
+        for name in os.listdir(d):
+            if not name.endswith(".json"):
+                continue
+            path = os.path.join(d, name)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if "api_key" in data:
+                    del data["api_key"]
+                    # Atomic write
+                    tmp = path + ".tmp"
+                    with open(tmp, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2)
+                    os.replace(tmp, path)
+                    # Ensure 0600
+                    try:
+                        os.chmod(path, 0o600)
+                    except OSError:
+                        pass
+                    count += 1
+            except (OSError, json.JSONDecodeError):
+                # Skip unreadable files — don't crash the migration
+                continue
+    except OSError:
+        pass
+    if count > 0:
+        logger.info(
+            "[runtime] HIGH-3 migration: removed api_key from %d conversation file(s)",
+            count,
+        )
+    return count
 
 
 # ── AgentRuntime ──────────────────────────────────────────────────────────────
@@ -936,6 +1058,12 @@ class AgentRuntime:
         # transient prefixes on the next LLM call.
         # See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.3 (BUG #4 fix).
         self._pending_stuck_messages: dict[str, list[str]] = {}
+
+        # HIGH-3: one-time migration on startup — removes api_key from existing files
+        try:
+            _migrate_conversation_files()
+        except Exception:
+            logger.exception("[runtime] conversation migration failed (non-fatal)")
 
         # conversation_key → Conversation
         self._conversations: dict[str, Any] = {}
