@@ -51,3 +51,27 @@ Items considered and consciously parked for future consideration. Each entry rec
 **Estimated effort when triggered:** ~1 day implementation + review (design already spec'd).
 
 **See also:** `docs/proposals/PROPOSAL-security-remediation-roadmap.md` §HIGH-2 design (lines ~320–340, 469) — full design specified, not implemented.
+
+---
+
+## HIGH-4 — Gateway channel binding / wss:// (2026-06-19)
+
+**Status:** Parked. Will not be addressed in current sprint.
+
+**What:** OpenClaw gateway currently accepts `ws://` on loopback with no channel binding between the WebSocket connection and the authenticated identity. A process on the same host that can sniff loopback traffic (or hijack the local socket) can impersonate the user to the gateway. The fix is to require `wss://` (TLS) plus a channel-binding token that ties the TLS session to the auth identity.
+
+**Trigger (revisit when ANY of these is true):**
+- Binding the OpenClaw gateway to a non-loopback interface (LAN, public, cross-device).
+- Exposing the gateway port (18789) to anything other than `127.0.0.1`.
+- Adding remote/multi-device access to the gateway.
+
+**Why defer:**
+- Gateway is loopback-only (`127.0.0.1:18789`). Loopback traffic never leaves the kernel — there's no wire to sniff.
+- The trust boundary on loopback is enforced by process isolation / file permissions, not by TLS.
+- Current deployment is single-user, single-host. No external attackers can reach the gateway port.
+
+**Why it's fine as-is:** MITM on loopback requires already having compromised the host. Channel binding is the right defense at the network layer, but the network layer doesn't apply when the traffic stays in-kernel.
+
+**Estimated effort when triggered:** ~1 day (cert provisioning + handshake protocol change + client update). Design not yet fully spec'd — would need a short design pass before implementing.
+
+**See also:** `docs/proposals/PROPOSAL-security-remediation-roadmap.md` (Priority 2, defer-until-threat-model-changes).
