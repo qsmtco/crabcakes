@@ -80,6 +80,7 @@ class AgentConfig:
     enforcement: EnforcementConfig = field(default_factory=EnforcementConfig)
     fallback_provider: str | None = None   # KB provider fallback (e.g. "openrouter")
     fallback_model: str | None = None      # KB provider fallback model (e.g. "openrouter/owl-alpha")
+    user_id: str = ""                     # A-4: user identity for audit log traceability
 
 
 def _check_permissions(path: str) -> None:
@@ -147,10 +148,11 @@ def _to_llm_provider(p) -> LLMProviderConfig:
 def _load_providers_from_yaml(
     config_path: str, raw: dict[str, Any]
 ) -> dict[str, LLMProviderConfig]:
-    """Load providers from providers.yaml.
+    """Load providers from providers.yaml — the SOLE source of provider config.
 
-    1. Try utils/providers_store.load_providers() (reads providers.yaml).
+    1. Call utils/providers_store.load_providers() (reads providers.yaml).
     2. If non-empty: convert each ProviderConfig → LLMProviderConfig, return dict.
+       The agent.json `providers` field is no longer consulted.
     3. If empty (file missing or empty list): return empty dict.
     """
     try:
@@ -242,6 +244,7 @@ def load_agent_config(config_path: str | None = None) -> AgentConfig:
         enforcement=enforcement,
         fallback_provider=raw.get("fallback_provider"),
         fallback_model=raw.get("fallback_model"),
+        user_id=raw.get("user_id", ""),  # A-4: wire user_id from agent.json into config
     )
 
 
@@ -263,6 +266,7 @@ def _create_default_config(path: str) -> None:
         "step_limit": 100,
         "fallback_provider": None,
         "fallback_model": None,
+        "user_id": "",  # A-4: user identity for audit log traceability
     }
 
     try:
@@ -294,9 +298,10 @@ def ensure_providers_yaml_exists(config_path: str) -> str:
     # Create empty providers.yaml
     try:
         os.makedirs(dir_path, exist_ok=True)
-        # Match the format used by utils/providers_store.save_providers
+        # Empty list — matches _serialize([]) output. _parse() requires a YAML/JSON
+        # list at the top level (not a mapping), so this format is load-safe.
         with open(yaml_path, "w", encoding="utf-8") as f:
-            f.write("providers: []\n")
+            f.write("[]\n")
         os.chmod(yaml_path, 0o600)
         logger.info("Created empty providers.yaml at %s", yaml_path)
     except OSError as e:

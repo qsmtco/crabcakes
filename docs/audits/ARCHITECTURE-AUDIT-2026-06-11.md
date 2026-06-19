@@ -21,7 +21,7 @@
 | Environment variables | ✅ PASS | All 4 spec'd env vars respected |
 | GTK import pattern | ✅ PASS | All `gi.require_version('Gtk', '4.0')` before `from gi.repository import Gtk` |
 | Handler isolation | ✅ PASS | No handler→handler imports |
-| Config fallback | ✅ PASS | agent.json fallback not hardcoded runtime path |
+| Config fallback | ✅ PASS | providers.yaml is sole source (A-5); legacy agent.json migrated on startup |
 | PHASE additions not in spec | ⚠️ DRIFT | 6 files added in PHASE-10+ |
 | Empty stub files | ❌ FAIL | `left_progress.py` is 0 bytes |
 
@@ -286,27 +286,27 @@ Spec names (from §3.2):
 
 ## 10. Configuration & Defaults
 
-### 10.1 agent.json fallback (config.py:265–293)
+### 10.1 Provider source of truth (config.py — A-5 update)
 
-The `_load_providers_from_yaml_or_fallback()` function:
-1. Tries `utils/providers_store.load_providers()` (reads `providers.yaml`)
-2. Falls back to `agent.json`'s `providers` field
-3. Falls back to hardcoded example config (only used when both files are missing)
+**Pre-A-5:** Three stores: `agent.json` `providers` field (legacy), `providers.yaml` (current), and a hardcoded example. Provider read paths had a fallback chain across all three.
+
+**Post-A-5 (2026-06-19):** Single source of truth is `providers.yaml`. The legacy `agent.json` `providers` field is no longer consulted at runtime. On startup, `utils/providers_store.ensure_kb_provider()` calls `migrate_from_agent_json()`, which one-shot moves any legacy `agent.json` providers into `providers.yaml` and then calls `remove_providers_from_agent_json()` to strip the now-empty legacy key. From the second run onward, only `providers.yaml` is read. The hardcoded example is gone (Phase 10 already removed it).
 
 **Key code path:**
 ```python
-# agent/config.py:157
-result = {}
-for p in yaml_providers:
-    # Key by provider ID (derived from default_model prefix)
-    # e.g. "minimax/MiniMax-M2.7" → "minimax"
-    provider_id = p.default_model.split("/")[0] if "/" in p.default_model else p.name
-    result[provider_id] = _to_llm_provider(p)
-    result[p.name] = _to_llm_provider(p)  # also register by display name
-return result
+# utils/providers_store.py: ensure_kb_provider() runs on startup
+from utils.providers_store import migrate_from_agent_json
+migrate_from_agent_json()  # one-shot, idempotent
+# Then read providers.yaml
+yaml_providers = load_providers()
 ```
 
-**Verdict:** ✅ **PASS** — Providers come from the user's `providers.yaml` (or `agent.json`). The hardcoded example is only a template for first-run, not runtime behavior. This is correct per the user's requirement: "I don't want any of this hard coded."
+The `_load_providers_from_yaml()` function in `agent/config.py`:
+1. Calls `utils/providers_store.load_providers()` (reads `providers.yaml`).
+2. If non-empty: convert each `ProviderConfig` → `LLMProviderConfig`, return dict.
+3. If empty: return empty dict. No agent.json fallback. No hardcoded fallback.
+
+**Verdict:** ✅ **PASS** — Single source of truth. Legacy `agent.json` providers are transparently migrated on first run. No runtime path reads `agent.json` for provider config.
 
 ### 10.2 Provider key derivation
 

@@ -216,7 +216,7 @@ class TestProviderManagement:
         assert "test-prov" not in names
 
     def test_delete_nonexistent_provider(self, monkeypatch, tmp_path):
-        """A-5: delete_provider is safe to call with a name that doesn't exist."""
+        """A-5: delete_provider returns False when the name doesn't exist."""
         config_dir = str(tmp_path / ".config" / "crabcakes")
         os.makedirs(config_dir, exist_ok=True)
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -225,10 +225,10 @@ class TestProviderManagement:
         from ui.handlers.agent_builder_handler import AgentBuilderHandler
         h = AgentBuilderHandler()
 
-        # No providers.yaml → deleting a nonexistent provider is a no-op
-        # (handler's delete_provider returns True unconditionally; the store's
-        # remove_provider is a no-op when name is not found)
-        assert h.delete_provider("nonexistent_provider_xyz") is True
+        # No providers.yaml → deleting a nonexistent provider returns False
+        # (handler checks existence via load_providers() and returns False
+        # when the name isn't present, before calling remove_provider)
+        assert h.delete_provider("nonexistent_provider_xyz") is False
 
 
 # ── BUG 7: Name collision ─────────────────────────────────────────────────

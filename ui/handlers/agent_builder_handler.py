@@ -208,8 +208,14 @@ class AgentBuilderHandler:
         return True
 
     def delete_provider(self, name: str) -> bool:
-        """Remove a provider from providers.yaml."""
+        """Remove a provider from providers.yaml.
+
+        Returns True if the provider was removed, False if it didn't exist.
+        """
         from utils.providers_store import load_providers, remove_provider
         providers = load_providers()
+        existed = any(p.name == name for p in providers)
+        if not existed:
+            return False
         remove_provider(providers, name)
         return True
