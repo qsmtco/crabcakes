@@ -1,15 +1,21 @@
 # Proposal: Security & Architecture Remediation Roadmap (Solo-Dev Priority)
 
 **Author:** Lieutenant Qrusher
-**Date:** 2026-06-10 (revised: solo-dev priority pass)
-**Status:** Draft
+**Date:** 2026-06-10 (revised: solo-dev priority pass; **2026-06-19 SHIPPED**)
+**Status:** ✅ SHIPPED — all 4 phases complete; 3 findings formally deferred with triggers
 
-> **Status (verified 2026-06-12):** ❌ **PENDING** — 
-> **status:** `PENDING` — sortable tag for `ls | grep STATUS` This is a **proposal for a proposal** (a roadmap/audit document that references 46 findings from `docs/SECURITY_ARCHITECTURE_REVIEW.md`). It lists 4 categories of security work (Secrets Management, Agent Identity, Input Validation, API Key Hygiene) but no specific implementation has been verified in this audit. The proposal was authored 2026-06-10 (very recent) and appears to be in the early planning stage. **Filed as PENDING; no implementation evidence found in codebase.**
+> **Status (revised 2026-06-19):** All 46 findings are accounted for.
+> - **Shipped (43):** Phase 0 CRIT-1/2 (`b5dcccc`), Phase 1 HIGH-3/HIGH-6/A-1 (`9943740`), Phase 2 MED-1..13 (`3f02119`), Phase 3 LOW-1..13 + A-4/6/8/9/10 (`2fe016e`), arch cleanup A-2/3/7 (`458d3b7`), A-5 (`122e788`) + follow-ups (`86460a9`) + A-1 spec hygiene (`a48538c`).
+> - **Deferred (3):** HIGH-2 (`2aa8eba`), HIGH-4 (`955b25b`), A-11 (`339ec4b`) — all in `DEFERRED-ITEMS.md` with documented triggers.
+> - **Spec authority:** `docs/specs/SPEC-SECURITY-REMEDIATION.md` (now marked SHIPPED).
+> - **Post-mortem:** `docs/post-mortems/2026-06-19-SECURITY-REMEDIATION-PHASE-0-3-POST-MORTEM.md`.
+
 **Related docs:**
 - `docs/SECURITY_ARCHITECTURE_REVIEW.md` (the audit, 781 lines, 46 findings)
 - `docs/SECURITY_ARCHITECTURE_REVIEW_VERIFICATION.md` (my verification reader, 0 refutations)
-**Tracking issue:** SEC-1
+- `docs/specs/SPEC-SECURITY-REMEDIATION.md` (the fix specification — now SHIPPED)
+- `docs/proposals/DEFERRED-ITEMS.md` (deferred items with triggers)
+**Tracking issue:** SEC-1 ✅ closed
 
 ---
 

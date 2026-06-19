@@ -2,18 +2,33 @@
 
 **Date:** 2026-06-18
 **Author:** Qaster (supervisor) — drafted from `docs/SECURITY_ARCHITECTURE_REVIEW.md` + `docs/SECURITY_ARCHITECTURE_REVIEW_VERIFICATION.md` (Qrusher, 2026-06-10)
-**Status:** Draft — for implementation
+**Status:** ✅ SHIPPED (2026-06-19) — all 4 phases complete; 3 findings formally deferred with triggers
 **Implements:** All 46 findings from the security review (2 Critical, 6 High, 13 Medium, 13 Low, 12 Architectural)
 **Depends on:** None
 **Target branch:** main
+
+### Shipped vs deferred (final)
+
+- **Shipped (43 of 46):**
+  - Phase 0 (commit `b5dcccc`, 2026-06-18): CRIT-1, CRIT-2
+  - Phase 1 (commit `9943740`, 2026-06-18): HIGH-3, HIGH-6, A-1
+  - Phase 2 (commit `3f02119`, 2026-06-18): MED-1..MED-13 (13 findings)
+  - Phase 3 (commit `2fe016e`, 2026-06-18): LOW-1..LOW-13 (13 findings) + A-4, A-6, A-8, A-9, A-10
+  - Arch cleanup (commit `458d3b7`): A-2, A-3, A-7
+  - Separate: A-5 (`122e788`) + follow-ups (`86460a9`) + A-1 spec hygiene (`a48538c`)
+- **Deferred (3 of 46):** HIGH-2, HIGH-4, A-11 — see `docs/proposals/DEFERRED-ITEMS.md` for triggers.
+- **Post-mortem:** `docs/post-mortems/2026-06-19-SECURITY-REMEDIATION-PHASE-0-3-POST-MORTEM.md`
 
 > **Architecture compliance.** This spec follows the handler pattern (§8.6), the data-only `models/` layer, the composition-root + no-handler-imports discipline (machine-enforced by `tests/test_architecture.py`), and the `GLib.idle_add` thread→UI marshalling idiom. No new module imports cross forbidden layer boundaries (`models/` ↛ `ui/`, `utils/` ↛ `ui/`, `gateway/` ↛ `ui/`).
 >
 > **Spec authority.** Where this spec and the parent security review disagree, this spec is authoritative (the parent review is the source of findings; this spec is the fix specification). The verification report's 7 minor disputes are explicitly resolved below.
 >
-> **Scope (per Q1 decision, 2026-06-18).** All 46 findings across 4 phases. Per-finding scope decisions:
-> - **In scope (45):** all 39 fully verified findings + the 7 with minor disputes (HIGH-4, MED-1, MED-5, MED-8, LOW-2, LOW-6, LOW-11) — disputes noted per-finding
-> - **Deferred (1):** HIGH-2 A2A provenance — Q6 decision was "skip if not present" and `gateway/client.py` does not emit origin info. The gateway protocol change is out of scope; HIGH-2 remains a known gap tracked in the post-mortem backlog.
+> **Scope (per Q1 + Q6 decisions, 2026-06-18; revised 2026-06-19).** All 46 findings. Per-finding scope decisions:
+> - **Shipped in 4 phases (43):** 2 Critical + 4 High (HIGH-1, HIGH-3, HIGH-5, HIGH-6) + 13 Medium + 13 Low + 11 Architectural (A-1 through A-10, excluding A-11). Disputes noted per-finding in the relevant Phase section.
+> - **Deferred (3):**
+>   - **HIGH-2** A2A provenance — Q6 decision was "skip if not present" and `gateway/client.py` does not emit origin info. Requires gateway protocol change to add `origin: "local" | "remote"` field. **Trigger for re-opening:** the gateway emits an `origin` field, or a second remote source appears. (See `DEFERRED-ITEMS.md` commit `2aa8eba`.)
+>   - **HIGH-4** gateway channel binding — currently loopback-only. **Trigger for re-opening:** gateway is bound to a non-loopback interface (LAN/0.0.0.0/remote). (See `DEFERRED-ITEMS.md` commit `955b25b`.)
+>   - **A-11** split `crabcakes` repo — solo-dev concern. **Trigger for re-opening:** a third contributor joins, file count exceeds 2000 LOC, or a major new runtime feature requires team-scale changes. (See `DEFERRED-ITEMS.md` commit `339ec4b`.)
 
 ---
 
