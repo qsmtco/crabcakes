@@ -110,6 +110,24 @@ def _load_identity():
             f"  Run 'openclaw login' to regenerate."
         )
 
+    # LOW-6: Schema validation — ensure required top-level keys exist
+    _REQUIRED_AUTH_KEYS = {"deviceId", "tokens"}
+    _auth_missing = _REQUIRED_AUTH_KEYS - set(auth.keys())
+    if _auth_missing:
+        logger.warning(
+            "LOW-6: device-auth.json missing keys %s — regenerating identity",
+            _auth_missing,
+        )
+        try:
+            os.unlink(auth_path)
+        except OSError:
+            pass
+        raise RuntimeError(
+            f"device-auth.json is missing required keys: {_auth_missing}\n"
+            f"  File removed: {auth_path}\n"
+            f"  Run 'openclaw login' to regenerate."
+        )
+
     device_id = auth.get("deviceId")
     if not device_id:
         raise RuntimeError(
@@ -365,6 +383,7 @@ class GatewayClient:
         import websockets
         retry_delay = 1.0
         max_delay = 30.0
+        _retry_count = 0  # LOW-10
         while self._running:
             try:
                 try:
@@ -392,6 +411,11 @@ class GatewayClient:
             except Exception as e:
                 self._connected.clear()
                 self._drain_pending(str(e))
+                _retry_count += 1  # LOW-10
+                _logger.info(
+                    "Connection failed (attempt %d): %s — retrying in %.0fs",
+                    _retry_count, e, retry_delay,
+                )  # LOW-10
                 GLib.idle_add(self.on_error, f"Reconnecting in {int(retry_delay)}s…")
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, max_delay)

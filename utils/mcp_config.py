@@ -103,6 +103,24 @@ class MCPServerConfig:
 # Simple cache to avoid repeated file reads
 _config_cache: dict[str, MCPServerConfig] | None = None
 
+# LOW-5: one-time legacy path warning flag
+_LEGACY_MCP_JSON_WARNED: bool = False
+
+
+def _check_legacy_mcp_json() -> None:
+    """LOW-5: Warn once if legacy ~/.mcp.json exists."""
+    global _LEGACY_MCP_JSON_WARNED
+    if _LEGACY_MCP_JSON_WARNED:
+        return
+    _LEGACY_MCP_JSON_WARNED = True
+    from pathlib import Path
+    legacy = Path.home() / ".mcp.json"
+    if legacy.is_file():
+        logger.warning(
+            "LOW-5: Legacy %s found. Migrate to %s and remove the old file.",
+            legacy, get_mcp_servers_path(),
+        )
+
 
 def _clear_cache() -> None:
     """Clear the config cache. For testing."""
@@ -133,6 +151,8 @@ def load_mcp_servers(use_cache: bool = True) -> dict[str, MCPServerConfig]:
 
     if use_cache and _config_cache is not None:
         return _config_cache
+
+    _check_legacy_mcp_json()  # LOW-5
 
     config_path = get_mcp_servers_path()
     

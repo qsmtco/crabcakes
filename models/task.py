@@ -38,6 +38,7 @@ class Task:
     created_at: str = ""           # ISO timestamp
     updated_at: str = ""
     blocked_reason: str = ""
+    user: str = ""                 # LOW-1: user identity for traceability
 
 
 class TaskStore:

@@ -248,6 +248,14 @@ class _KBRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/health":
             self._send_json(200, {"status": "ok"})
+        elif self.path == "/agents":  # LOW-3: list all registered agent ids
+            try:
+                from agent.special_agents import get_special_agents
+                agents = get_special_agents()
+                agent_ids = [a.name for a in agents]
+                self._send_json(200, {"agents": agent_ids})
+            except Exception:
+                self._send_json(200, {"agents": []})
         else:
             self._send_json(404, _make_error_response("Not found"))
 
@@ -324,8 +332,21 @@ class _KBRequestHandler(BaseHTTPRequestHandler):
     def do_PUT(self) -> None:
         self._send_json(405, _make_error_response("Method not allowed"))
 
-    def do_DELETE(self) -> None:
-        self._send_json(405, _make_error_response("Method not allowed"))
+    def do_DELETE(self) -> None:  # LOW-2: delete agent by id
+        import re as _re
+        _m = _re.match(r"/agents/([^/]+)", self.path)
+        if not _m:
+            self._send_json(404, _make_error_response("Not found"))
+            return
+        agent_id = _m.group(1)
+        try:
+            from agent.special_agents import unregister_special_agent
+            unregister_special_agent(agent_id)
+            logger.info("kb_server: deleted agent %s", agent_id)
+            self._send_json(204, {})
+        except Exception as e:
+            logger.warning("kb_server: failed to delete agent %s: %s", agent_id, e)
+            self._send_json(500, _make_error_response(f"Failed to delete agent: {e}"))
 
     def do_PATCH(self) -> None:
         self._send_json(405, _make_error_response("Method not allowed"))
@@ -372,7 +393,24 @@ def start_kb_server(port: int = KB_SERVER_PORT) -> threading.Thread | None:
         try:
             server = HTTPServer(("127.0.0.1", port), _KBRequestHandler)
         except OSError as e:
-            logger.warning("kb_server: failed to bind 127.0.0.1:%d: %s", port, e)
+            # A-10: Clear error message with address, OS error, and hint
+            import errno as _errno
+            _hint = (
+                f"  Hint: set CRABCAKES_KB_PORT to an available port, "
+                f"or stop the process using port {port}."
+            )
+            if hasattr(e, "errno") and e.errno == _errno.EADDRINUSE:
+                logger.error(
+                    "kb_server: cannot bind 127.0.0.1:%d — address already in use "
+                    "(errno %d: %s).%s",
+                    port, e.errno, e.strerror, _hint,
+                )
+            else:
+                logger.error(
+                    "kb_server: cannot bind 127.0.0.1:%d — %s (errno %s).%s",
+                    port, e.strerror or str(e),
+                    getattr(e, "errno", "?"), _hint,
+                )
             return None
 
         thread = threading.Thread(
@@ -384,7 +422,9 @@ def start_kb_server(port: int = KB_SERVER_PORT) -> threading.Thread | None:
 
         _server = server
         _server_thread = thread
-        logger.info("kb_server: listening on http://127.0.0.1:%d", port)
+        _bound_addr = server.server_address
+        logger.info("kb_server: listening on http://%s:%d (bound to %s)",
+                     _bound_addr[0], _bound_addr[1], _bound_addr)  # LOW-7
         return thread
 
 

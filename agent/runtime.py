@@ -72,6 +72,88 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+# ── Audit Log (A-4) ──────────────────────────────────────────────────────────
+
+class AuditEntry:
+    """Single audit log entry for a tool execution."""
+    __slots__ = ("tool_name", "args_hash", "approved", "user", "timestamp", "result_hash", "exit_code")
+
+    def __init__(self, tool_name: str, args_hash: str, approved: bool | None,
+                 user: str, timestamp: float, result_hash: str = "", exit_code: int | None = None):
+        self.tool_name = tool_name
+        self.args_hash = args_hash
+        self.approved = approved
+        self.user = user
+        self.timestamp = timestamp
+        self.result_hash = result_hash
+        self.exit_code = exit_code
+
+
+class AuditLog:
+    """In-memory audit log for tool executions (A-4).
+
+    Defense-in-depth: records tool name, args hash (not raw args),
+    approval decision, user identity, timestamp, and result hash.
+    In-memory by default; flush to disk via flush_audit_log().
+    """
+
+    def __init__(self):
+        self._entries: list[AuditEntry] = []
+        self._lock = threading.Lock()
+
+    def record(self, tool_name: str, args: dict, approved: bool | None,
+               user: str, result: str = "", exit_code: int | None = None) -> None:
+        """Record a tool execution in the audit log."""
+        args_hash = hashlib.sha256(json.dumps(args, sort_keys=True).encode()).hexdigest()[:16]
+        result_hash = hashlib.sha256(result.encode()).hexdigest()[:16] if result else ""
+        entry = AuditEntry(
+            tool_name=tool_name,
+            args_hash=args_hash,
+            approved=approved,
+            user=user,
+            timestamp=time.time(),
+            result_hash=result_hash,
+            exit_code=exit_code,
+        )
+        with self._lock:
+            self._entries.append(entry)
+
+    def flush_audit_log(self, path: str | None = None) -> str | None:
+        """Flush audit log to disk as JSON lines.
+
+        Args:
+            path: Output file path. Defaults to ~/.config/crabcakes/audit-log.jsonl.
+
+        Returns:
+            The file path written, or None if no entries.
+        """
+        from utils.config import get_config_dir
+        if path is None:
+            path = os.path.join(get_config_dir(), "audit-log.jsonl")
+        with self._lock:
+            if not self._entries:
+                return None
+            entries = list(self._entries)
+            self._entries.clear()
+        with open(path, "a", encoding="utf-8") as f:
+            for e in entries:
+                f.write(json.dumps({
+                    "tool_name": e.tool_name,
+                    "args_hash": e.args_hash,
+                    "approved": e.approved,
+                    "user": e.user,
+                    "timestamp": e.timestamp,
+                    "result_hash": e.result_hash,
+                    "exit_code": e.exit_code,
+                }) + "\n")
+        return path
+
+    @property
+    def entries(self) -> list[AuditEntry]:
+        with self._lock:
+            return list(self._entries)
+
+
 # ── Cost tables (USD per 1M tokens) ─────────────────────────────────────────
 
 _OPENAI_COST = {"prompt": 2.5, "completion": 10.0}    # GPT-4o
@@ -1085,6 +1167,9 @@ class AgentRuntime:
         # MED-1: Per-instance approval callback (takes precedence over global)
         self._approval_callback: Callable[[str, str, dict], bool] | None = None
 
+        # A-4: Audit log for tool executions
+        self._audit_log = AuditLog()
+
     # ── Dispatch helpers ───────────────────────────────────────────────────────
 
     def set_approval_callback(self, cb: Callable[[str, str, dict], bool] | None) -> None:
@@ -1590,6 +1675,9 @@ class AgentRuntime:
                             tc.mark_failed("exec_command requires PM approval — request denied or timed out")
                             conv.add_tool_result(call_id, tc.result or "denied")
                             self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied")
+                            self._audit_log.record(tool_name, args, approved=False,
+                                                    user=getattr(self._config, "user_id", ""),
+                                                    result="denied")  # A-4
                             continue
 
                     # HIGH-1: Sensitive-path write/edit also requires PM approval.
@@ -1607,6 +1695,9 @@ class AgentRuntime:
                                 )
                                 conv.add_tool_result(call_id, tc.result or "denied")
                                 self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied")
+                                self._audit_log.record(tool_name, args, approved=False,
+                                                        user=getattr(self._config, "user_id", ""),
+                                                        result="denied")  # A-4
                                 continue
 
                     # Tool call start — fires AFTER approval (for exec_command and sensitive write/edit)
@@ -1678,6 +1769,17 @@ class AgentRuntime:
 
                     conv.add_tool_result(call_id, tool_result_text)
                     self._dispatch(self._on_tool_call_result, session_key, tool_name, tool_result_text)
+
+                    # A-4: Record in audit log
+                    _audit_user = getattr(self._config, "user_id", "")
+                    self._audit_log.record(
+                        tool_name=tool_name,
+                        args=args,
+                        approved=True if bypass_approval else None,
+                        user=_audit_user,
+                        result=tool_result_text,
+                        exit_code=result.exit_code,
+                    )
 
                 # Check cost/step limits after tool execution
                 if self._check_and_stop_on_limit(session_key, conv):

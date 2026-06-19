@@ -544,6 +544,8 @@ def save_provider(name: str, config: dict) -> bool:
         return False
 
     providers = raw.get("providers", {})
+    if name in providers:
+        logger.info("save_provider: overwriting existing provider %s", name)  # LOW-4
     providers[name] = {
         "base_url": config.get("base_url", ""),
         "api_key": config.get("api_key", ""),

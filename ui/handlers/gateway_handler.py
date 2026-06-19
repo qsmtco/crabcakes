@@ -83,6 +83,7 @@ class GatewayHandler:
 
         # Update toolbar to "connecting" immediately (this is from GTK thread, no idle_add needed)
         self._toolbar.update_connection_state("connecting")
+        _logger.debug("Connecting to gateway at %s", get_gateway_url())  # LOW-8
 
         self._gw = self._gw_class(
             url=get_gateway_url(),

@@ -22,6 +22,18 @@ from utils.review_log import append_review_entry
 
 logger = logging.getLogger(__name__)
 
+# LOW-12: stable session identifier
+_SESSION_ID: str | None = None
+
+
+def get_session_id() -> str:
+    """LOW-12: Return a stable session identifier (cached uuid4 hex)."""
+    global _SESSION_ID
+    if _SESSION_ID is None:
+        import uuid as _uuid
+        _SESSION_ID = _uuid.uuid4().hex[:16]
+    return _SESSION_ID
+
 
 # ── Agent self-improvement config ─────────────────────────────────────────────
 
@@ -159,6 +171,8 @@ def append_to_bug_journal(
                     continue
                 sanitized_lines.append(line)
             entry_text = "\n".join(sanitized_lines)
+            # LOW-12: append session_id for traceability
+            entry_text += f"\n**Session:** {get_session_id()}\n"
             f.seek(0, 2)  # paranoia — stay at end before writing
             if os.path.getsize(journal_path) > 0:
                 f.write("\n")

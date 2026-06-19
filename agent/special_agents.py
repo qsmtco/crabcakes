@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["SPECIAL_AGENTS", "SpecialAgentDef", "get_special_agents", "get_special_agent", "get_auto_open_agents", "get_project_onboarding_agents"]
+__all__ = ["SPECIAL_AGENTS", "SpecialAgentDef", "get_special_agents", "get_special_agent", "unregister_special_agent", "get_auto_open_agents", "get_project_onboarding_agents"]
 
 
 @dataclass
@@ -163,6 +163,25 @@ def get_special_agents() -> list[SpecialAgentDef]:
 def get_special_agent(prefix: str) -> SpecialAgentDef | None:
     """Look up a special agent by its session key prefix."""
     return _ensure_loaded().get(prefix)
+
+
+def unregister_special_agent(prefix: str) -> bool:
+    """Remove a special agent from the registry by its session key prefix.
+
+    LOW-2: Used by the KB server DELETE /agents/{id} endpoint.
+
+    Args:
+        prefix: The agent's conv_id_prefix (e.g. "special:coder").
+
+    Returns:
+        True if the agent was found and removed, False otherwise.
+    """
+    registry = _ensure_loaded()
+    if prefix in registry:
+        del registry[prefix]
+        logger.info("special_agents: unregistered agent %s", prefix)
+        return True
+    return False
 
 
 def get_auto_open_agents() -> list[SpecialAgentDef]:

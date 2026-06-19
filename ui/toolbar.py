@@ -52,6 +52,7 @@ class Toolbar(Gtk.Box):
         self._connect_btn = Gtk.Button(label="Connect")
         self._connect_btn.add_css_class("suggested-action")
         self._connect_btn.set_size_request(90, -1)
+        self._connect_btn.set_tooltip_text("Connect to the gateway server")  # LOW-9
         self._connect_btn.connect("clicked", self._on_connect_click)
 
         # Settings button + red status dot

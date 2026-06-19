@@ -607,10 +607,23 @@ class MainWindow(Gtk.ApplicationWindow):
         paned.set_shrink_end_child(False)
         paned.set_position(250)
 
-        # Vertical layout: toolbar → paned
+        # Vertical layout: toolbar → paned → status bar
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         main_box.append(toolbar)
         main_box.append(paned)
+
+        # A-9: Status bar with agent_id display
+        _status_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        _status_bar.add_css_class("statusbar")
+        _status_bar.set_margin_start(6)
+        _status_bar.set_margin_end(6)
+        _status_bar.set_margin_bottom(2)
+        self._agent_id_label = Gtk.Label(label="Agent: —")
+        self._agent_id_label.add_css_class("dim-label")
+        self._agent_id_label.set_halign(Gtk.Align.START)
+        self._agent_id_label.set_hexpand(True)
+        _status_bar.append(self._agent_id_label)
+        main_box.append(_status_bar)
 
         self.set_child(main_box)
 
@@ -780,6 +793,11 @@ class MainWindow(Gtk.ApplicationWindow):
     def _on_feed_bar_update(self, project_name: str, member_count: int):
         """Update the project settings bar with project name + member count."""
         self._main_content._update_project_settings_from_project(project_name, member_count)
+
+    def update_agent_id_display(self, agent_id: str) -> None:
+        """A-9: Update the agent_id label in the status bar."""
+        if hasattr(self, "_agent_id_label") and self._agent_id_label:
+            self._agent_id_label.set_text(f"Agent: {agent_id}")
 
     def _on_ws_event(self, event, payload):
         """Handle incoming gateway events — route to handlers.

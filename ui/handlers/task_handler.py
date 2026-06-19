@@ -104,6 +104,7 @@ class TaskHandler:
             created_by=cmd.source_session_key,
             created_at=now,
             updated_at=now,
+            user=cmd.source_session_key,  # LOW-1: traceability
         ))
         status_label = TASK_STATUS_LABELS.get(task.status, task.status)
         priority_label = PRIORITY_LABELS.get(task.priority, task.priority)
