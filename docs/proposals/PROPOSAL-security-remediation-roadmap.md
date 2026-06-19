@@ -250,9 +250,19 @@ Wrap every project-sourced text block (bug journal, rules, `project.md`, `contex
 
 #### 6.2 A-1 — make gateway identity loading lazy
 
-**Still real for solo use.** Currently, importing `gateway.client` runs `_load_identity()` which raises if `~/.openclaw/identity/device-auth.json` is missing. `window._build()` constructs `GatewayHandler` unconditionally. This means: if your identity dir gets corrupted or you reset OpenClaw config, crabcakes won't even import — it's a hard crash on launch.
+**Status: ✅ SHIPPED (Phase 1, commit `9943740` on 2026-06-18).**
 
-**Fix:** Stop running `_load_identity()` at module import. Make `GatewayClient.connect()` the first place that touches identity. Surface identity errors as a toolbar error state, not an import-time crash. Contradicts the "runs standalone, no account required" promise — restore that promise.
+**Original problem:** Importing `gateway.client` ran `_load_identity()` at module load, which raised if `~/.openclaw/identity/device-auth.json` was missing. `window._build()` constructs `GatewayHandler` unconditionally. Result: if identity dir was missing or corrupted, crabcakes wouldn't even import — hard crash on launch. Contradicted the "runs standalone, no account required" promise.
+
+**Fix shipped:**
+- Module-level `_load_identity()` call removed (`gateway/client.py:185`).
+- `__init__` no longer calls `_load_identity()`; sets `self._identity_loaded = False` and `self._id = {}` instead (`gateway/client.py:265-266`).
+- `start()` does the lazy load: `if not self._identity_loaded: self._id = _load_identity(); self._identity_loaded = True` (`gateway/client.py:282-285`).
+- `GatewayHandler` constructs `GatewayClient` lazily in `connect()`, not in `__init__`, so `Window._build()` no longer touches identity.
+- Identity errors surface as a `disconnected` toolbar state via `on_error()` callback (no specific `error` state in toolbar; `disconnected` is the right UX since offline local-agents-available is the fallback).
+- 5 tests in `tests/test_gateway.py::TestLazyIdentityLoading` pass: `test_constructor_does_not_raise_without_identity_file`, `test_identity_loaded_flag_initialized_to_false`, `test_start_loads_identity_and_sets_flag`, `test_identity_id_is_empty_dict_before_start`, `test_module_preload_does_not_affect_client`.
+
+**Verified 2026-06-19:** import + construct with no identity file → no raise. Identity error surfaces at `start()` as expected. Spec updated to reflect shipped state.
 
 **Effort: S (0.5 day).**
 
@@ -275,7 +285,7 @@ Wrap every project-sourced text block (bug journal, rules, `project.md`, `contex
 ### Priority 1 Exit Criteria
 
 - [ ] HIGH-6 failing tests (Prompt B-3) pass
-- [ ] A-1: importing `gateway.client` does not raise; identity errors only surface at `connect()`
+- [x] A-1: importing `gateway.client` does not raise; identity errors only surface at `connect()` ✅ shipped Phase 1 (9943740)
 - [ ] MED-3: `web_fetch` to 127.0.0.1 / RFC1918 ranges is refused
 - [ ] MED-13: `record_usage` receives real token counts during streaming; manual loop test shows cost limit trips at the right point
 - [ ] Full suite green
@@ -478,7 +488,7 @@ The following decisions have been resolved (per Captain JAQ, 2026-06-10):
    ```
 
 3. **MED-3 `web_fetch` SSRF allowlist** — open. (Recommendation: strict default, per-project override.)
-4. **A-1 gateway identity loading** — open. (Recommendation: fail at connect, with a toolbar error state.)
+4. **A-1 gateway identity loading** — ✅ SHIPPED Phase 1 (9943740, 2026-06-18). Import is side-effect-free; identity loads on first start(); toolbar shows `disconnected` state on error. 5 tests in `tests/test_gateway.py::TestLazyIdentityLoading` pass. See §6.2 for full evidence.
 5. **A-8 `pyproject.toml` backend** — open. (Recommendation: `setuptools.build_meta`; minimal change.)
 6. **LOW-6 STT manifest correction** — open. (Recommendation: correct the manifest, allowlist sizes, pin `download_root` + `local_files_only`.)
 
@@ -529,7 +539,7 @@ Caveats:
 | HIGH-1 | 0 | Prompt B-2 |
 | HIGH-5 | 0 | Prompt B-5 |
 | HIGH-6 | 1 | Prompt B-3 |
-| A-1 | 1 | |
+| A-1 | 1 | ✅ shipped Phase 1 (9943740) |
 | MED-3 | 1 | still real for solo use |
 | MED-13 | 1 | operational concern |
 
