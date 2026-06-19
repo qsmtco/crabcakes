@@ -862,7 +862,6 @@ notebook > header > tabs > tab {
     font-size: 10px;
     font-weight: bold;
     min-width: 20px;
-    text-align: center;
 }
 
 /* Batch accept bar */
