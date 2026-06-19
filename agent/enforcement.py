@@ -37,6 +37,61 @@ SYNTAX_CHECKERS: dict[str, str] = {
     ".zsh": "zsh -n {path}",
 }
 
+# CRIT-1/CRIT-2: Binary allowlist for project-supplied test/lint commands.
+# Enforces that .crabcakes/enforcement.json `full_suite_command` first token
+# is one of these. See docs/SPEC-SECURITY-REMEDIATION.md §2.1.
+_ALLOWED_BINARIES: frozenset[str] = frozenset({
+    "python3", "pytest", "ruff", "mypy", "eslint", "npx", "node", "go",
+})
+
+# CRIT-2: Scrubbed environment for all enforcement subprocesses.
+# Only safe vars survive; provider API keys, gateway tokens, etc. stripped.
+_ALLOWED_ENV_VARS: frozenset[str] = frozenset({
+    "PATH", "HOME", "LANG", "LC_ALL", "LANGUAGES", "TZ", "TMPDIR", "PWD",
+})
+
+
+def _get_scrubbed_env() -> dict[str, str]:
+    """Return a minimal env dict for enforcement subprocesses.
+
+    Includes only safe vars (PATH, HOME, LANG, etc.). All provider API keys,
+    gateway tokens, and other sensitive env vars are stripped. Used by
+    _run_timed_command. (Phase 0 / CRIT-2)
+    """
+    return {k: v for k, v in os.environ.items() if k in _ALLOWED_ENV_VARS}
+
+
+# CRIT-1: Shell metacharacters that must NOT appear in a filename basename.
+# Defense-in-depth — _check_syntax interpolates the path into a shell command,
+# so a basename with `;`, `|`, backticks, or $() enables RCE.
+_SHELL_METACHARS: frozenset[str] = frozenset(";|&`$()<>*?[]{}!\\\"'")
+
+
+def _is_safe_filename(file_path: str) -> bool:
+    """Return True if `file_path`'s basename contains no shell metacharacters.
+
+    CRIT-1 defense-in-depth: rejects filenames like `x;touch evil.py` even if
+    the path sandbox would allow them. (Phase 0)
+    """
+    basename = os.path.basename(file_path)
+    if not basename:
+        return False
+    return not any(c in _SHELL_METACHARS for c in basename)
+
+
+def _validate_test_command(command: str | None) -> bool:
+    """Return True if `command`'s first token is in _ALLOWED_BINARIES.
+
+    Strips leading whitespace, splits on whitespace, lowercases the first token,
+    strips path components. Used to gate project-supplied .crabcakes/enforcement.json
+    commands. (Phase 0 / CRIT-2)
+    """
+    if not command or not command.strip():
+        return False
+    first_token = command.strip().split(maxsplit=1)[0].lower()
+    first_token = os.path.basename(first_token)
+    return first_token in _ALLOWED_BINARIES
+
 # ── Data models ────────────────────────────────────────────────────────────────
 
 
@@ -222,24 +277,19 @@ def _load_project_enforcement_config(project_path: str) -> dict | None:
         return None
 
 
-def _detect_venv_prefix(project_path: str, venv_path: str = ".venv") -> str:
-    """Detect if a project has a virtual environment and return activation prefix.
+def _detect_venv_prefix(project_path: str, venv_path: str = ".venv") -> str | None:
+    """Return absolute path to venv Python interpreter, or None if no venv.
 
-    Returns empty string if no venv detected, or the activation command prefix
-    (e.g. ". .venv/bin/activate && ") if the activate script exists.
-
-    Uses POSIX dot command (.) instead of bash-specific 'source' for
-    compatibility with /bin/sh used by subprocess.run(shell=True).
-
-    Args:
-        project_path: Absolute path to the project root.
-        venv_path: Relative path to venv directory from project root.
+    Replaces the previous shell-sourcing behavior (which was a CRIT-2 RCE vector —
+    a poisoned activate script would run on every enforcement check).
+    Callers should substitute `python3 -m pytest` → `<result> -m pytest` when
+    this returns a non-None value. (Phase 0 / CRIT-2)
     """
     venv_abs = os.path.join(project_path, venv_path)
-    activate_script = os.path.join(venv_abs, "bin", "activate")
-    if os.path.isfile(activate_script):
-        return f". {shlex.quote(os.path.join(venv_path, 'bin', 'activate'))} && "
-    return ""
+    python_abs = os.path.join(venv_abs, "bin", "python")
+    if os.path.isfile(python_abs):
+        return python_abs
+    return None
 
 
 # ── Tier 1: Syntax Guard ──────────────────────────────────────────────────────
@@ -272,12 +322,25 @@ def _check_syntax(
         logger.debug("[enforcement] syntax checker not available: %s", binary)
         return None
 
-    command = checker.format(path=abs_path)
+    # CRIT-1: defense-in-depth filename check
+    if not _is_safe_filename(abs_path):
+        return EnforcementCheck(
+            tier="syntax", tool="write_file", file=file_path,
+            passed=False,
+            detail=f"Filename contains shell metacharacters: {os.path.basename(abs_path)}",
+            output="", duration_ms=0,
+        )
+
+    # Build argv list — no shell=True, no string interpolation
+    # Split the template and substitute {path} with the absolute path
+    argv = [arg.replace("{path}", abs_path) for arg in checker.split()]
+
     start = time.monotonic()
     try:
         result = subprocess.run(
-            command, shell=True, capture_output=True,
+            argv, shell=False, capture_output=True,
             timeout=config.syntax_timeout_seconds,
+            env=_get_scrubbed_env(),
         )
         duration_ms = int((time.monotonic() - start) * 1000)
         output = (result.stdout + result.stderr).decode("utf-8", errors="replace")
@@ -307,10 +370,10 @@ def _check_syntax(
 # ── Tier 2: Test Runner ────────────────────────────────────────────────────────
 
 
-def _detect_test_framework(project_path: str) -> tuple[str, str] | None:
+def _detect_test_framework(project_path: str) -> tuple[str, list[str]] | None:
     """
     Detect test framework for a project.
-    Returns (framework_name, base_command) or None.
+    Returns (framework_name, argv_list) or None. (Phase 0 / CRIT-2)
     """
     # pytest — pyproject.toml with [tool.pytest] or pytest in dependencies
     pyproject = os.path.join(project_path, "pyproject.toml")
@@ -320,20 +383,20 @@ def _detect_test_framework(project_path: str) -> tuple[str, str] | None:
             with open(pyproject, "rb") as f:
                 data = tomllib.load(f)
             if "tool" in data and "pytest" in data["tool"]:
-                return ("pytest", "python3 -m pytest")
+                return ("pytest", ["python3", "-m", "pytest"])
             deps = data.get("project", {}).get("dependencies", [])
             if any("pytest" in str(d) for d in deps):
-                return ("pytest", "python3 -m pytest")
+                return ("pytest", ["python3", "-m", "pytest"])
             opt_deps = data.get("project", {}).get("optional-dependencies", {})
             for extra, deps_list in opt_deps.items():
                 if any("pytest" in str(d) for d in deps_list):
-                    return ("pytest", "python3 -m pytest")
+                    return ("pytest", ["python3", "-m", "pytest"])
         except Exception:
             pass
 
     # pytest.ini
     if os.path.isfile(os.path.join(project_path, "pytest.ini")):
-        return ("pytest", "python3 -m pytest")
+        return ("pytest", ["python3", "-m", "pytest"])
 
     # setup.cfg with [tool:pytest]
     setup_cfg = os.path.join(project_path, "setup.cfg")
@@ -342,7 +405,7 @@ def _detect_test_framework(project_path: str) -> tuple[str, str] | None:
             with open(setup_cfg, "r", encoding="utf-8") as f:
                 content = f.read()
             if "[tool:pytest]" in content or "[pytest]" in content:
-                return ("pytest", "python3 -m pytest")
+                return ("pytest", ["python3", "-m", "pytest"])
         except Exception:
             pass
 
@@ -355,9 +418,9 @@ def _detect_test_framework(project_path: str) -> tuple[str, str] | None:
                 data = json.load(f)
             dev_deps = data.get("devDependencies", {}) or data.get("dependencies", {})
             if "jest" in dev_deps:
-                return ("jest", "npx jest --no-coverage")
+                return ("jest", ["npx", "jest", "--no-coverage"])
             if "vitest" in dev_deps:
-                return ("vitest", "npx vitest run")
+                return ("vitest", ["npx", "vitest", "run"])
         except Exception:
             pass
 
@@ -368,7 +431,7 @@ def _detect_test_framework(project_path: str) -> tuple[str, str] | None:
             with open(makefile, "r", encoding="utf-8") as f:
                 content = f.read()
             if "\ntest:" in content or "\ntest :\n" in content:
-                return ("make", "make test")
+                return ("make", ["make", "test"])
         except Exception:
             pass
 
@@ -415,6 +478,36 @@ def _find_related_test(
     return None
 
 
+def _parse_command_to_argv(command: str) -> list[str]:
+    """Parse a shell-like command string into an argv list.
+
+    Handles basic quoting (single and double) and whitespace splitting.
+    Used to convert project-supplied command strings (from enforcement.json)
+    into argv lists for subprocess.run(shell=False). (Phase 0 / CRIT-2)
+    """
+    import shlex
+    try:
+        return shlex.split(command)
+    except ValueError:
+        # Fallback: basic whitespace split if shlex fails
+        return command.split()
+
+
+def _substitute_venv_python(argv: list[str], venv_python: str | None) -> list[str]:
+    """Replace 'python3' with venv_python in argv if venv_python is set.
+
+    Used after _detect_venv_prefix returns an absolute path. (Phase 0 / CRIT-2)
+    """
+    if venv_python is None:
+        return argv
+    result = list(argv)
+    for i, token in enumerate(result):
+        if token == "python3":
+            result[i] = venv_python
+            break
+    return result
+
+
 def _check_tests(
     file_path: str,
     project_path: str,
@@ -427,6 +520,10 @@ def _check_tests(
 
     Uses per-project TestConfig from .crabcakes/enforcement.json when available,
     falling back to auto-detection defaults otherwise.
+
+    CRIT-2: All subprocess calls use argv lists + shell=False.
+    _ALLOWED_BINARIES gate is applied to project-supplied full_suite_command.
+    (Phase 0)
     """
     # Skip if syntax failed — no point running tests on broken code
     if not syntax_passed:
@@ -444,8 +541,8 @@ def _check_tests(
     # Load per-project test configuration
     test_config = _load_test_config(project_path) or TestConfig()
 
-    # Detect venv and build activation prefix
-    venv_prefix = _detect_venv_prefix(project_path, test_config.venv_path)
+    # Detect venv python path (CRIT-2 fix: no shell-sourcing)
+    venv_python = _detect_venv_prefix(project_path, test_config.venv_path)
 
     # Determine test timeout (project override or config default)
     test_timeout = test_config.timeout_seconds if test_config.timeout_seconds is not None else config.test_timeout_seconds
@@ -460,22 +557,34 @@ def _check_tests(
             return None  # No related test and not running full suite
 
         if test_config.run_full_suite and test_config.full_suite_command:
-            command = venv_prefix + test_config.full_suite_command
+            # CRIT-2: validate first token is an allowed binary
+            if not _validate_test_command(test_config.full_suite_command):
+                logger.warning("[enforcement] full_suite_command uses non-allowed binary: %s",
+                                test_config.full_suite_command)
+                return None
+            argv = _parse_command_to_argv(test_config.full_suite_command)
+            argv = _substitute_venv_python(argv, venv_python)
         elif related_test:
             abs_test = os.path.join(project_path, related_test)
-            command = venv_prefix + test_config.command.replace("{test_file}", abs_test)
+            cmd_str = test_config.command.replace("{test_file}", abs_test)
+            argv = _parse_command_to_argv(cmd_str)
+            argv = _substitute_venv_python(argv, venv_python)
         elif test_config.full_suite_command:
-            # No related test, no run_full_suite flag, but full_suite_command defined
-            command = venv_prefix + test_config.full_suite_command
+            if not _validate_test_command(test_config.full_suite_command):
+                logger.warning("[enforcement] full_suite_command uses non-allowed binary: %s",
+                                test_config.full_suite_command)
+                return None
+            argv = _parse_command_to_argv(test_config.full_suite_command)
+            argv = _substitute_venv_python(argv, venv_python)
         else:
             logger.debug("[enforcement] No related test and no full_suite_command — skipping")
             return None
     else:
-        # Auto-detect test framework
+        # Auto-detect test framework (now returns argv list)
         framework = _detect_test_framework(project_path)
         if framework is None:
             return None
-        framework_name, base_cmd = framework
+        framework_name, argv = framework
 
         related_test = _find_related_test(
             file_path, project_path,
@@ -483,16 +592,18 @@ def _check_tests(
         )
 
         if test_config.run_full_suite:
-            command = f"{venv_prefix}{base_cmd} {test_config.extra_args} --tb=short"
+            argv = list(argv) + test_config.extra_args.split() + ["--tb=short"]
+            argv = _substitute_venv_python(argv, venv_python)
         elif related_test:
             abs_test = os.path.join(project_path, related_test)
-            command = f"{venv_prefix}{base_cmd} {abs_test} {test_config.extra_args} --tb=short"
+            argv = list(argv) + [abs_test] + test_config.extra_args.split() + ["--tb=short"]
+            argv = _substitute_venv_python(argv, venv_python)
         else:
             # No related test found — skip unless run_full_suite is true
             return None
 
     try:
-        result, duration_ms = _run_timed_command(command, project_path, test_timeout)
+        result, duration_ms = _run_timed_command(argv, project_path, test_timeout)
         output = (result.stdout + result.stderr).decode("utf-8", errors="replace")
         # pytest returns exit code 5 when no tests collected
         if result.returncode == 5:
@@ -537,10 +648,10 @@ def _check_tests(
 # ── Tier 3: Lint Check ─────────────────────────────────────────────────────────
 
 
-def _detect_linter(file_path: str, project_path: str) -> tuple[str, str] | None:
+def _detect_linter(file_path: str, project_path: str) -> tuple[str, list[str]] | None:
     """
     Detect linter for this file type.
-    Returns (linter_name, command) or None.
+    Returns (linter_name, argv_list) or None. (Phase 0 / CRIT-2)
     """
     ext = os.path.splitext(file_path)[1].lower()
 
@@ -556,10 +667,10 @@ def _detect_linter(file_path: str, project_path: str) -> tuple[str, str] | None:
                     with open(ruff_pyproject, "rb") as f:
                         data = tomllib.load(f)
                     if "tool" in data and "ruff" in data["tool"]:
-                        return ("ruff", f"ruff check {file_path} --output-format=concise")
+                        return ("ruff", ["ruff", "check", file_path, "--output-format=concise"])
                 except Exception:
                     pass
-            return ("ruff", f"ruff check {file_path} --output-format=concise")
+            return ("ruff", ["ruff", "check", file_path, "--output-format=concise"])
 
     # mypy — Python type checking
     if ext == ".py":
@@ -570,7 +681,7 @@ def _detect_linter(file_path: str, project_path: str) -> tuple[str, str] | None:
                 with open(pyproject, "rb") as f:
                     data = tomllib.load(f)
                 if "tool" in data and "mypy" in data["tool"]:
-                    return ("mypy", f"mypy {file_path} --no-error-summary")
+                    return ("mypy", ["mypy", file_path, "--no-error-summary"])
             except Exception:
                 pass
 
@@ -580,17 +691,22 @@ def _detect_linter(file_path: str, project_path: str) -> tuple[str, str] | None:
         eslint_config = os.path.join(project_path, "eslint.config.js")
         if os.path.isfile(eslintrc) or os.path.isfile(eslint_config):
             if shutil.which("npx"):
-                return ("eslint", f"npx eslint {file_path}")
+                return ("eslint", ["npx", "eslint", file_path])
 
     return None
 
 
-def _run_timed_command(command: str, project_path: str, timeout: int) -> tuple[subprocess.CompletedProcess, int]:
-    """Run a subprocess command. Returns (result, duration_ms). Raises on timeout."""
+def _run_timed_command(argv: list[str], project_path: str, timeout: int) -> tuple[subprocess.CompletedProcess, int]:
+    """Run a subprocess with argv list, shell=False, scrubbed env.
+
+    Returns (result, duration_ms). Raises on timeout.
+    CRIT-1/CRIT-2: shell=False is enforced. Env is scrubbed to PATH/HOME/LANG only. (Phase 0)
+    """
     start = time.monotonic()
     result = subprocess.run(
-        command, shell=True, capture_output=True,
+        argv, shell=False, capture_output=True,
         cwd=project_path, timeout=timeout,
+        env=_get_scrubbed_env(),
     )
     return result, int((time.monotonic() - start) * 1000)
 
@@ -615,16 +731,16 @@ def _check_lint(
     if linter is None:
         return None
 
-    linter_name, command = linter
+    linter_name, argv = linter
 
     # Check if the linter binary is available
-    binary = linter_name.split()[0]
+    binary = linter_name
     if not shutil.which(binary):
         return None
 
     start = time.monotonic()
     try:
-        result, duration_ms = _run_timed_command(command, project_path, config.lint_timeout_seconds)
+        result, duration_ms = _run_timed_command(argv, project_path, config.lint_timeout_seconds)
         output = (result.stdout + result.stderr).decode("utf-8", errors="replace")
         passed = result.returncode == 0
 

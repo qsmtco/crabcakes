@@ -112,6 +112,63 @@ _BLOCKLIST = [
     ":(){:|:&};:",    # fork bomb
 ]
 
+# HIGH-1: Sensitive path patterns — write/edit to these paths requires PM approval
+# even if the project sandbox would technically allow them.
+# Patterns use glob-style matching (fnmatch) relative to project root.
+# HIGH-1: Sensitive path patterns — write/edit to these requires PM approval.
+# Per security audit (HIGH-1) and Q5 user decision (2026-06-18).
+# Format: (kind, pattern) where kind is "prefix" or "glob".
+_SENSITIVE_PATH_PATTERNS: tuple[tuple[str, str], ...] = (
+    # Prefix matches — path components sensitive at any depth
+    ("prefix", ".git/"),
+    ("prefix", ".crabcakes/"),
+    ("prefix", ".github/"),
+    # Basename glob matches
+    ("glob", "Makefile"),
+    ("glob", "*.toml"),
+    ("glob", "*.yml"),
+    ("glob", "*.yaml"),
+    ("glob", "*hook*"),
+    ("glob", "*venv*"),
+    # Leading-dot files handled separately in is_sensitive_path below.
+)
+
+
+def is_sensitive_path(path: str) -> bool:
+    """Return True if `path` requires PM approval before write/edit.
+
+    HIGH-1 (per security audit): gates writes to build/CI infrastructure
+    (.git/, .crabcakes/, .github/, Makefile, *.toml, *.yml, *.yaml,
+    *hook*, *venv*) and leading-dot files in any directory.
+    These files can affect the enforcement pipeline, shell environment, or
+    build/test execution graph. Tampering achieves RCE or supply-chain compromise.
+    Per audit and Q5 user decision (2026-06-18).
+    """
+    import fnmatch
+    if not path:
+        return False
+    # Normalize to forward-slash
+    norm = path.replace("\\", "/")
+    basename = norm.split("/")[-1]
+    if not basename:
+        return False
+    for kind, pattern in _SENSITIVE_PATH_PATTERNS:
+        if kind == "prefix" and norm.startswith(pattern):
+            return True
+        if kind == "glob":
+            # For *venv* and *hook*, check full path since these names
+            # can appear in directory components (e.g. .venv/bin/activate).
+            # Use substring containment (not fnmatch) so "post-receive" matches "*hook*".
+            if pattern in ("*venv*", "*hook*"):
+                if pattern.replace("*", "") in norm:
+                    return True
+            elif fnmatch.fnmatch(basename, pattern):
+                return True
+    # Leading-dot files in any directory (but not . or ..)
+    if basename.startswith(".") and basename not in (".", ".."):
+        return True
+    return False
+
 
 def _is_blocked(command: str) -> bool:
     """Return True if command matches the hardcoded blocklist."""
@@ -197,11 +254,24 @@ def _read_file(path: str, project_path: str, offset: int | None = None, limit: i
         return ToolResult(success=False, error=f"Cannot read {path}: {e}")
 
 
-def _write_file(path: str, content: str, project_path: str) -> ToolResult:
+def _write_file(path: str, content: str, project_path: str, session_key: str = "") -> ToolResult:
     """Write content to a file relative to project_path."""
     resolved = _resolve_project_path(path, project_path)
     if resolved is None:
         return ToolResult(success=False, error=f"Path escapes project sandbox: {path}")
+
+    # HIGH-1: Sensitive-path guard — require PM approval before writing
+    if is_sensitive_path(path):
+        approved = _get_approval(session_key, "write_file", {"path": path})
+        if not approved:
+            return ToolResult(
+                success=False,
+                error=(
+                    f"write_file blocked: {path} is a sensitive path\n"
+                    f"(credential, secret, SSH key, or cloud config file).\n"
+                    f"PM approval is required before writing to this file."
+                ),
+            )
 
     # Create parent directories if needed
     parent = os.path.dirname(resolved)
@@ -224,7 +294,7 @@ def _write_file(path: str, content: str, project_path: str) -> ToolResult:
         return ToolResult(success=False, error=f"Cannot write {path}: {e}")
 
 
-def _edit_file(path: str, old_text: str, new_text: str, project_path: str) -> ToolResult:
+def _edit_file(path: str, old_text: str, new_text: str, project_path: str, session_key: str = "") -> ToolResult:
     """Replace exact old_text with new_text in a file within project_path.
 
     Both old_text and new_text are matched exactly — no regex, no fuzzy matching.
@@ -234,6 +304,19 @@ def _edit_file(path: str, old_text: str, new_text: str, project_path: str) -> To
     resolved = _resolve_project_path(path, project_path)
     if resolved is None:
         return ToolResult(success=False, error=f"Path escapes project sandbox: {path}")
+
+    # HIGH-1: Sensitive-path guard — require PM approval before editing
+    if is_sensitive_path(path):
+        approved = _get_approval(session_key, "edit_file", {"path": path})
+        if not approved:
+            return ToolResult(
+                success=False,
+                error=(
+                    f"edit_file blocked: {path} is a sensitive path\n"
+                    f"(credential, secret, SSH key, or cloud config file).\n"
+                    f"PM approval is required before editing this file."
+                ),
+            )
 
     if not os.path.isfile(resolved):
         return ToolResult(success=False, error=f"Not a file: {path}")
@@ -573,7 +656,7 @@ def _register_tools() -> None:
             requires_approval=False,
         ),
         lambda path, content, project_path, **kwargs:  # type: ignore
-            _write_file(path, content, project_path),
+            _write_file(path, content, project_path, session_key=kwargs.get("session_key", "")),
     )
 
     # edit_file
@@ -611,7 +694,7 @@ def _register_tools() -> None:
             requires_approval=False,
         ),
         lambda path, old_text, new_text, project_path, **kwargs:  # type: ignore
-            _edit_file(path, old_text, new_text, project_path),
+            _edit_file(path, old_text, new_text, project_path, session_key=kwargs.get("session_key", "")),
     )
 
     # exec_command

@@ -1437,6 +1437,9 @@ class AgentRuntime:
                 ]
                 conv.add_assistant_message(text_content, tool_call_objects)
 
+                # Import once per loop iteration (avoid repeated import overhead)
+                import agent.tools as agent_tools_module
+
                 for call_id, tool_name, args in tool_calls_raw:
                     tc = next(tc for tc in tool_call_objects if tc.call_id == call_id)
 
@@ -1451,20 +1454,42 @@ class AgentRuntime:
                             self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied")
                             continue
 
-                    # Tool call start — fires AFTER approval (for exec_command)
+                    # HIGH-1: Sensitive-path write/edit also requires PM approval.
+                    # Fires before tool_call_start so the PM sees the card.
+                    if tool_name in ("write_file", "edit_file"):
+                        path_arg = args.get("path", "")
+                        if agent_tools_module.is_sensitive_path(path_arg):
+                            approved = self._dispatch_approval(session_key, tool_name, args)
+                            logger.debug("[tool-loop] sk=%s %s sensitive approval: %s",
+                                         session_key, tool_name, approved)
+                            if approved is False or approved is None:
+                                tc.mark_failed(
+                                    f"{tool_name} blocked: {path_arg} is a sensitive path\n"
+                                    "PM approval denied or timed out."
+                                )
+                                conv.add_tool_result(call_id, tc.result or "denied")
+                                self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied")
+                                continue
+
+                    # Tool call start — fires AFTER approval (for exec_command and sensitive write/edit)
                     # so the "running" card is truthful: the tool is actually about to run.
                     self._dispatch(self._on_tool_call_start, session_key, tool_name, args)
                     tc.mark_executing()
 
                     # Execute tool
-                    import agent.tools as agent_tools_module
                     from agent.tools import execute_tool, set_approval_callback, _approval_callback
                     logger.debug("[tool-loop] sk=%s executing tool: %s args_keys=%s",
                                  session_key, tool_name, list(args.keys()))
                     # Bypass exec_command's internal approval check — the runtime already
                     # confirmed PM approval via _dispatch_approval above (returned True).
+                    # HIGH-1: write_file/edit_file with sensitive paths — runtime already
+                    # dispatched to PM above, so bypass the tool's internal check.
                     prev_cb = _approval_callback
-                    set_approval_callback(lambda *a: True)
+                    bypass_approval = (tool_name == "exec_command" or
+                                       (tool_name in ("write_file", "edit_file") and
+                                        agent_tools_module.is_sensitive_path(args.get("path", ""))))
+                    if bypass_approval:
+                        set_approval_callback(lambda *a: True)
                     try:
                         result = execute_tool(tool_name, args, conv.project_path or "/tmp", session_key)
                     finally:

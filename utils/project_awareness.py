@@ -33,6 +33,8 @@ import re
 import time
 from typing import TYPE_CHECKING
 
+from utils.prompt_loader import _untrusted_fence
+
 if TYPE_CHECKING:
     from models.task import TaskStore
 
@@ -431,11 +433,13 @@ def build_awareness_block(
     # 1. Project manifest
     manifest = load_project_manifest(project_path)
     if manifest:
-        # Take first ~2000 chars of manifest (avoid flooding context)
-        truncated = manifest[:2000]
+        # HIGH-5: wrap in untrusted-data fence to mitigate prompt injection
+        manifest_wrapped = _untrusted_fence(
+            manifest[:2000], "project.md"
+        )
         if len(manifest) > 2000:
-            truncated += "\n[... project manifest truncated ...]"
-        parts.append(f"## Project Manifest\n\n{truncated}")
+            manifest_wrapped += "\n[... project manifest truncated ...]"
+        parts.append(f"## Project Manifest\n\n{manifest_wrapped}")
 
     # 2. Team roster
     team = load_team(project_path)
@@ -482,11 +486,13 @@ def build_awareness_block(
     # 4. Persistent context
     context = load_project_context(project_path)
     if context.strip():
-        # Take first ~3000 chars of context
-        truncated = context[:3000]
+        # HIGH-5: wrap in untrusted-data fence to mitigate prompt injection
+        context_wrapped = _untrusted_fence(
+            context[:3000], "context.md"
+        )
         if len(context) > 3000:
-            truncated += "\n[... context memory truncated ...]"
-        parts.append(f"## Project Memory\n\n{truncated}")
+            context_wrapped += "\n[... context memory truncated ...]"
+        parts.append(f"## Project Memory\n\n{context_wrapped}")
 
     return "\n\n".join(parts)
 
@@ -611,10 +617,11 @@ def build_awareness_dict(project_path: str) -> dict[str, str]:
     # Project memory
     context = load_project_context(project_path)
     if context.strip():
-        truncated = context[:3000]
+        # HIGH-5: wrap in untrusted-data fence to mitigate prompt injection
+        context_wrapped = _untrusted_fence(context[:3000], "context.md")
         if len(context) > 3000:
-            truncated += "\n[... context memory truncated ...]"
-        parts["PROJECT_MEMORY"] = truncated
+            context_wrapped += "\n[... context memory truncated ...]"
+        parts["PROJECT_MEMORY"] = context_wrapped
     else:
         parts["PROJECT_MEMORY"] = ""
 

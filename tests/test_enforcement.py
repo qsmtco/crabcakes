@@ -73,12 +73,16 @@ def _create_test_file(project_path: str, test_filename: str, content: str = "def
 
 
 def _create_venv(project_path: str, venv_path: str = ".venv") -> str:
-    """Create a minimal fake venv with an activate script."""
+    """Create a minimal fake venv with activate script and python binary."""
     venv_bin = os.path.join(project_path, venv_path, "bin")
     os.makedirs(venv_bin, exist_ok=True)
     activate = os.path.join(venv_bin, "activate")
     with open(activate, "w") as f:
         f.write("# fake activate\ntrue\n")
+    python = os.path.join(venv_bin, "python")
+    with open(python, "w") as f:
+        f.write("#!/bin/sh\nexit 0\n")
+    os.chmod(python, 0o755)
     return venv_bin
 
 
@@ -171,36 +175,36 @@ class TestTestConfig:
 
 
 class TestVenvDetection:
-    """SPEC-2 §6.1 — _detect_venv_prefix()."""
+    """SPEC-2 §6.1 — _detect_venv_prefix(). Phase 0: now returns absolute python path or None."""
 
     def test_venv_detected(self, tmp_path):
-        """Returns POSIX activation prefix when venv exists."""
+        """Returns absolute python path when venv exists."""
         venv = tmp_path / ".venv" / "bin"
         venv.mkdir(parents=True)
-        (venv / "activate").write_text("# activation script")
+        (venv / "python").write_text("# python placeholder")
         result = _detect_venv_prefix(str(tmp_path), ".venv")
-        assert result == ". .venv/bin/activate && "
+        assert result == str(tmp_path / ".venv" / "bin" / "python")
 
     def test_no_venv(self, tmp_path):
-        """Returns empty string when no venv exists."""
+        """Returns None when no venv exists."""
         result = _detect_venv_prefix(str(tmp_path), ".venv")
-        assert result == ""
+        assert result is None
 
     def test_custom_venv_path(self, tmp_path):
         """Detects venv at custom path."""
         venv = tmp_path / "env" / "bin"
         venv.mkdir(parents=True)
-        (venv / "activate").write_text("# activation script")
+        (venv / "python").write_text("# python placeholder")
         result = _detect_venv_prefix(str(tmp_path), "env")
-        assert result == ". env/bin/activate && "
+        assert result == str(tmp_path / "env" / "bin" / "python")
 
-    def test_venv_exists_but_no_activate(self, tmp_path):
-        """Returns empty string when venv dir exists but no activate script."""
+    def test_venv_exists_but_no_python(self, tmp_path):
+        """Returns None when venv dir exists but no python binary."""
         venv = tmp_path / ".venv" / "bin"
         venv.mkdir(parents=True)
-        # No activate file
+        # No python file
         result = _detect_venv_prefix(str(tmp_path), ".venv")
-        assert result == ""
+        assert result is None
 
 
 # ── _load_test_config ───────────────────────────────────────────────────────
