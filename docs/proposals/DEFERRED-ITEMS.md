@@ -25,3 +25,29 @@ Items considered and consciously parked for future consideration. Each entry rec
 - The file grows past ~2000 LOC.
 
 **See also:** `docs/audits/ARCHITECTURE-AUDIT-2026-06-11.md` (the audit that flagged A-11 originally).
+
+---
+
+## HIGH-2 — Remote A2A provenance / per-source trust list (2026-06-19)
+
+**Status:** Parked. Will not be addressed in current sprint.
+
+**What:** When agent A asks agent B to run a tool/command, B currently treats the request as if A is fully trusted (same trust level as the local user). If A is a remote third-party gateway, that's a trust-boundary violation. The fix is provenance tagging (`source_id` on every inbound request, set by the transport layer) plus a per-source trust list (`~/.config/crabcakes/remote_sources.yaml`) consulted before any tool/command execution.
+
+**Trigger (revisit when ANY of these is true):**
+- Connecting crabcakes to a remote gateway operated by a third party (not just "you from your phone").
+- Adding cross-device sync via a remote intermediary.
+- A second user is added to the deployment with different trust posture.
+
+**Why defer:**
+- Current deployment is single-user, loopback-only. The only "remote" source is the user's own phone relaying the user's own commands.
+- Trust boundary is the user, not the network. No third-party gateway in the picture.
+- Requires gateway protocol change (add `source_id` field, propagate through every transport).
+- Adds latency: per-source trust lookup + possibly confirm dialog per inbound command.
+- New config file to maintain.
+
+**Why it's fine as-is:** Threat model doesn't apply. Local agent, local user, loopback. The "remote A2A" path doesn't exist.
+
+**Estimated effort when triggered:** ~1 day implementation + review (design already spec'd).
+
+**See also:** `docs/proposals/PROPOSAL-security-remediation-roadmap.md` §HIGH-2 design (lines ~320–340, 469) — full design specified, not implemented.
