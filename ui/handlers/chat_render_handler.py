@@ -692,7 +692,8 @@ class ChatRenderHandler:
 
         # Title label
         title_label = Gtk.Label()
-        title_label.set_markup(f"<b>Task {action.capitalize()}:</b> {task_id}")
+        # MED-9: escape interpolated values to prevent Pango markup injection
+        title_label.set_markup(f"<b>Task {action.capitalize()}:</b> {escape_for_pango(task_id)}")
         title_label.set_xalign(0)
         box.append(title_label)
 
@@ -706,14 +707,17 @@ class ChatRenderHandler:
         # Status + priority row
         meta_label = Gtk.Label()
         parts = [s for s in [status, priority] if s]
-        meta_label.set_markup(" | ".join(parts))
+        # MED-9: escape interpolated values to prevent Pango markup injection
+        escaped_parts = [escape_for_pango(s) for s in parts if s]
+        meta_label.set_markup(" | ".join(escaped_parts))
         meta_label.set_xalign(0)
         box.append(meta_label)
 
         # Assigned-to
         if assigned_to:
             at_label = Gtk.Label()
-            at_label.set_markup(f"→ {assigned_to}")
+            # MED-9: escape interpolated values to prevent Pango markup injection
+            at_label.set_markup(f"→ {escape_for_pango(assigned_to)}")
             at_label.set_xalign(0)
             box.append(at_label)
 

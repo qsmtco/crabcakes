@@ -15,6 +15,7 @@ _logger = logging.getLogger(__name__)
 
 from ui.views.chat_input_toolbar import ChatInputToolbar
 from ui.views.session_menu import show_session_menu, show_project_menu
+from utils.escaping import escape_for_pango
 
 class MainContent(Gtk.Box):
     """
@@ -235,8 +236,10 @@ class MainContent(Gtk.Box):
         """Internal — called by window to refresh the project settings bar."""
         if project_name:
             self._project_settings.set_visible(True)
+            # MED-9: escape interpolated values to prevent Pango markup injection
+            safe_name = escape_for_pango(project_name)
             self.set_project_settings_text(
-                f'<span font_desc="Sans 10"><b>{project_name}</b>  ·  {member_count} member{"s" if member_count != 1 else ""}</span>'
+                f'<span font_desc="Sans 10"><b>{safe_name}</b>  ·  {member_count} member{"s" if member_count != 1 else ""}</span>'
             )
         else:
             self._project_settings.set_visible(False)

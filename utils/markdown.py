@@ -105,16 +105,20 @@ def format_markdown(text: str) -> str:
     if not text:
         return ""
 
-    # ── Step 0: Isolate adjacent bold boundaries ──────────────────────────────
+    # ── Step 0: Cap input length to prevent ReDoS on adversarial input ──────
+    # MED-10: Cap at 100 KB. Truncate and append a truncation marker.
+    _MAX_INPUT_LEN = 100 * 1024  # 100 KB
+    if len(text) > _MAX_INPUT_LEN:
+        text = text[:_MAX_INPUT_LEN] + "\n[... input truncated at 100 KB ...]"
+
+    # ── Step 0a: Isolate adjacent bold boundaries ────────────────────────────
     # The pattern **** (closing ** immediately followed by opening **) causes
     # the bold+italic regex (Step 2) to match across what should be two separate
     # bold blocks. Insert ZWSP between adjacent ** pairs to prevent cross-boundary
     # matching. ZWSP is invisible in rendered output. Removed after all substitutions.
+    # MED-10: Replace quadratic while-loop with single non-overlapping regex pass.
     _ZWSP = '\u200b'
-    prev = None
-    while text != prev:
-        prev = text
-        text = text.replace('****', f'**{_ZWSP}**')
+    text = re.sub(r'\*\*(?=\*\*)', f'**{_ZWSP}', text)
 
     # ── Step 1: Protect inline code spans ────────────────────────────────────
     code_spans: list[str] = []

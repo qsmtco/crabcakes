@@ -3,6 +3,7 @@
 # Coordinates git_ops, diff_parser, and GTK views.
 # All GTK via GLib.idle_add(). No git calls on the main thread.
 
+import re
 import threading
 from datetime import datetime, timezone
 from typing import Callable
@@ -13,6 +14,16 @@ from models.feed_card import FeedCardData
 from models.review_state import ReviewState
 from utils import git_ops
 from utils.diff_parser import parse_diff
+
+
+# MED-11: Validate git commit SHA to prevent argument injection
+_VALID_SHA_RE = re.compile(r"^(HEAD|[0-9a-fA-F]{4,40})$")
+
+
+def _validate_sha(sha: str, context: str = "") -> None:
+    """Raise ValueError if sha does not match a valid git ref pattern."""
+    if not _VALID_SHA_RE.match(sha):
+        raise ValueError(f"Invalid git ref in {context}: {sha!r}")
 
 
 class ReviewHandler:
@@ -370,8 +381,20 @@ class ReviewHandler:
         sha = state.checkpoint_sha
 
         def _do():
-            # Revert all files to checkpoint
-            result = git_ops.checkout_paths(project_path, sha, ["."])
+            # MED-4: Scope reject to last_check_files (agent-modified files), not all tracked files
+            files_to_revert = state.last_check_files if state.last_check_files else ["."]
+
+            # Show confirmation with file list
+            file_list_display = ", ".join(files_to_revert) if len(files_to_revert) <= 5 else \
+                ", ".join(files_to_revert[:5]) + f"... (+{len(files_to_revert)-5} more)"
+            self._GLib.idle_add(lambda sk=sk: self._on_display_text(
+                sk, f"Reverting {len(files_to_revert)} file(s): {file_list_display}"
+            ))
+
+            # MED-11: Validate commit_sha before passing to git
+            _validate_sha(sha)
+
+            result = git_ops.checkout_paths(project_path, sha, files_to_revert)
             if not result.success:
                 self._GLib.idle_add(lambda sk=sk: self._on_display_text(sk, f"Failed to revert: {result.error}"))
                 return

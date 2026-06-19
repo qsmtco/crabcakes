@@ -12,6 +12,25 @@ import os
 import threading
 import urllib.request
 
+
+# MED-5: Custom redirect handler that strips Authorization on cross-host redirects
+class _NoAuthRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Strips Authorization header when following redirects to a different host."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        from urllib.parse import urlparse
+        result = urllib.request.HTTPRedirectHandler.redirect_request(
+            self, req, fp, code, msg, headers, newurl
+        )
+        if result is not None:
+            old_host = urlparse(req.full_url).hostname
+            new_host = urlparse(newurl).hostname
+            if old_host and new_host and old_host != new_host:
+                if "Authorization" in result.headers:
+                    del result.headers["Authorization"]
+                if "authorization" in result.unredirected_hdrs:
+                    del result.unredirected_hdrs["authorization"]
+        return result
+
 from utils.config import get_config_file
 
 DEFAULT_BASE_URL = "https://api.minimax.io/v1/text/chatcompletion_v2"
@@ -83,7 +102,31 @@ def improve_prompt(raw_text, callback, GLib=None):
         return
 
     base_url = cfg.get("baseUrl", DEFAULT_BASE_URL).strip() or DEFAULT_BASE_URL
+
+    # MED-5: Validate non-loopback provider URL must use https://
+    try:
+        from utils.provider_url import validate_provider_url
+        validate_provider_url(base_url)
+    except ImportError:
+        pass  # Skip validation if provider_url module is unavailable
+    except ValueError as e:
+        _dispatch(callback, None, str(e), GLib)
+        return
+
     model = cfg.get("model", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+
+    # MED-6: Validate config file permissions
+    try:
+        path = get_config_file()
+        if os.path.isfile(path):
+            from utils.file_security import assert_secure_file
+            assert_secure_file(path)
+    except (ImportError, FileNotFoundError):
+        pass  # Skip if security module is unavailable
+    except PermissionError as e:
+        # Warn but proceed; config.json API keys are used at runtime
+        import logging
+        logging.getLogger(__name__).warning("MED-6: %s", e)
 
     # Load system prompt from file
     prompts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "prompts", "system")
@@ -128,7 +171,9 @@ def improve_prompt(raw_text, callback, GLib=None):
                     "Authorization": f"Bearer {api_key}",
                 },
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            # MED-5: Use custom redirect handler that strips Authorization on cross-host redirect
+            _opener = urllib.request.build_opener(_NoAuthRedirectHandler)
+            with _opener.open(req, timeout=30) as resp:
                 body = json.loads(resp.read())
             choices = body.get("choices")
             if not choices:

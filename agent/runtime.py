@@ -403,6 +403,7 @@ def _stream_openai_events(
         "model": _model_id(model),
         "messages": messages,
         "stream": True,
+        "stream_options": {"include_usage": True},
     }
     if tools:
         payload["tools"] = tools
@@ -471,6 +472,7 @@ def _stream_minimax_events(
         "model": _model_id(model),
         "messages": messages,
         "stream": True,
+        "stream_options": {"include_usage": True},
     }
     if tools:
         payload["tools"] = tools
@@ -596,6 +598,7 @@ def _stream_anthropic_events(
         "messages": api_messages,
         "max_tokens": 4096,
         "stream": True,
+        "stream_options": {"include_usage": True},
     }
     if system_msg:
         payload["system"] = system_msg
@@ -1079,7 +1082,14 @@ class AgentRuntime:
         self._tool_history: dict[str, list[dict]] = {}
         self._tool_history_lock = threading.Lock()
 
+        # MED-1: Per-instance approval callback (takes precedence over global)
+        self._approval_callback: Callable[[str, str, dict], bool] | None = None
+
     # ── Dispatch helpers ───────────────────────────────────────────────────────
+
+    def set_approval_callback(self, cb: Callable[[str, str, dict], bool] | None) -> None:
+        """Set per-instance approval callback (MED-1). Takes precedence over global."""
+        self._approval_callback = cb
 
     def _dispatch(self, callback: Callable | None, *args: Any, **kwargs: Any) -> None:
         """Dispatch a callback thread-safely via GLib.idle_add or directly."""
@@ -1605,23 +1615,23 @@ class AgentRuntime:
                     tc.mark_executing()
 
                     # Execute tool
-                    from agent.tools import execute_tool, set_approval_callback, _approval_callback
+                    from agent.tools import execute_tool
                     logger.debug("[tool-loop] sk=%s executing tool: %s args_keys=%s",
                                  session_key, tool_name, list(args.keys()))
                     # Bypass exec_command's internal approval check — the runtime already
                     # confirmed PM approval via _dispatch_approval above (returned True).
                     # HIGH-1: write_file/edit_file with sensitive paths — runtime already
                     # dispatched to PM above, so bypass the tool's internal check.
-                    prev_cb = _approval_callback
+                    # MED-1: Use per-call approval_callback (bypass = lambda True, normal = None).
                     bypass_approval = (tool_name == "exec_command" or
                                        (tool_name in ("write_file", "edit_file") and
                                         agent_tools_module.is_sensitive_path(args.get("path", ""))))
-                    if bypass_approval:
-                        set_approval_callback(lambda *a: True)
+                    per_call_cb = (lambda *a: True) if bypass_approval else None
                     try:
-                        result = execute_tool(tool_name, args, conv.project_path or "/tmp", session_key)
+                        result = execute_tool(tool_name, args, conv.project_path or "/tmp", session_key,
+                                              approval_callback=per_call_cb)
                     finally:
-                        set_approval_callback(prev_cb)
+                        pass
                     logger.debug("[tool-loop] sk=%s tool %s result: success=%s output_len=%d",
                                  session_key, tool_name, result.success, len(result.output or ""))
 

@@ -5,9 +5,14 @@
 # New dependency: gitpython (pip install gitpython).
 # Import: import git (as gitpython to avoid shadowing the module name).
 
+import re
 import git as gitpython
 from dataclasses import dataclass
 from typing import Optional
+
+
+# MED-11: Validate git commit SHA to prevent argument injection
+_VALID_SHA_RE = re.compile(r"^(HEAD|[0-9a-fA-F]{4,40})$")
 
 
 @dataclass
@@ -142,7 +147,13 @@ def diff_file_against(project_path: str, sha: str, file_path: str) -> GitResult:
 
 
 def checkout_paths(project_path: str, sha: str, paths: list[str]) -> GitResult:
-    """Revert file(s) to their state at sha. Equivalent to git checkout <sha> -- <paths>."""
+    """Revert file(s) to their state at sha. Equivalent to git checkout <sha> -- <paths>.
+
+    MED-11: Validates sha before passing to git to prevent argument injection.
+    """
+    # MED-11: Validate SHA before git call
+    if sha != "HEAD" and not _VALID_SHA_RE.match(sha):
+        return GitResult(success=False, stdout="", error=f"Invalid git ref: {sha}", sha=None)
     try:
         repo = gitpython.Repo(project_path)
         repo.git.checkout(sha, "--", *paths)

@@ -554,11 +554,23 @@ def save_provider(name: str, config: dict) -> bool:
     }
     raw["providers"] = providers
 
+    # MED-8: atomic write via .tmp + chmod 0o600
+    tmp_path = path + ".tmp"
     try:
-        with open(path, "w", encoding="utf-8") as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(raw, f, indent=4, ensure_ascii=False)
+        os.rename(tmp_path, path)
+        os.chmod(path, 0o600)
         logger.info("Saved provider: %s", name)
         return True
+    except Exception:
+        # Clean up tmp on failure
+        if os.path.isfile(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        raise
     except OSError as e:
         logger.error("Cannot write agent.json: %s", e)
         return False

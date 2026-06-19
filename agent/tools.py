@@ -80,12 +80,16 @@ def set_approval_callback(cb: Callable[[str, str, dict], bool] | None) -> None:
     _approval_callback = cb
 
 
-def _get_approval(session_key: str, tool_name: str, arguments: dict) -> bool:
-    """Return True if exec_command is approved, False otherwise."""
-    if _approval_callback is None:
+def _get_approval(session_key: str, tool_name: str, arguments: dict, *, approval_callback=None) -> bool:
+    """Return True if exec_command is approved, False otherwise.
+
+    MED-1: If a per-call callback is provided, it takes precedence over the global.
+    """
+    cb = approval_callback or _approval_callback
+    if cb is None:
         return False
     try:
-        return _approval_callback(session_key, tool_name, arguments)
+        return cb(session_key, tool_name, arguments)
     except Exception:
         return False
 
@@ -254,7 +258,7 @@ def _read_file(path: str, project_path: str, offset: int | None = None, limit: i
         return ToolResult(success=False, error=f"Cannot read {path}: {e}")
 
 
-def _write_file(path: str, content: str, project_path: str, session_key: str = "") -> ToolResult:
+def _write_file(path: str, content: str, project_path: str, session_key: str = "", approval_callback=None) -> ToolResult:
     """Write content to a file relative to project_path."""
     resolved = _resolve_project_path(path, project_path)
     if resolved is None:
@@ -262,7 +266,7 @@ def _write_file(path: str, content: str, project_path: str, session_key: str = "
 
     # HIGH-1: Sensitive-path guard — require PM approval before writing
     if is_sensitive_path(path):
-        approved = _get_approval(session_key, "write_file", {"path": path})
+        approved = _get_approval(session_key, "write_file", {"path": path}, approval_callback=approval_callback)
         if not approved:
             return ToolResult(
                 success=False,
@@ -294,7 +298,7 @@ def _write_file(path: str, content: str, project_path: str, session_key: str = "
         return ToolResult(success=False, error=f"Cannot write {path}: {e}")
 
 
-def _edit_file(path: str, old_text: str, new_text: str, project_path: str, session_key: str = "") -> ToolResult:
+def _edit_file(path: str, old_text: str, new_text: str, project_path: str, session_key: str = "", approval_callback=None) -> ToolResult:
     """Replace exact old_text with new_text in a file within project_path.
 
     Both old_text and new_text are matched exactly — no regex, no fuzzy matching.
@@ -307,7 +311,7 @@ def _edit_file(path: str, old_text: str, new_text: str, project_path: str, sessi
 
     # HIGH-1: Sensitive-path guard — require PM approval before editing
     if is_sensitive_path(path):
-        approved = _get_approval(session_key, "edit_file", {"path": path})
+        approved = _get_approval(session_key, "edit_file", {"path": path}, approval_callback=approval_callback)
         if not approved:
             return ToolResult(
                 success=False,
@@ -373,14 +377,14 @@ def _edit_file(path: str, old_text: str, new_text: str, project_path: str, sessi
         return ToolResult(success=False, error=f"Cannot write {path}: {e}")
 
 
-def _exec_command(command: str, project_path: str, timeout: int = 30, session_key: str = "_unknown") -> ToolResult:
+def _exec_command(command: str, project_path: str, timeout: int = 30, session_key: str = "_unknown", approval_callback=None) -> ToolResult:
     """Run a shell command in the project directory. Requires PM approval."""
     # Hard blocklist check first — always denied before callback fires
     if _is_blocked(command):
         return ToolResult(success=False, error=f"Command blocked by safety policy: {command}")
 
     # PM approval check via registered callback (Bug #3 fix)
-    if not _get_approval(session_key, "exec_command", {"command": command, "cwd": project_path}):
+    if not _get_approval(session_key, "exec_command", {"command": command, "cwd": project_path}, approval_callback=approval_callback):
         return ToolResult(success=False, error="exec_command requires PM approval", duration_ms=0)
 
     start = time.monotonic()
@@ -488,7 +492,8 @@ def _search_files(pattern: str, project_path: str, path: str | None = None, file
     cmd = ["grep", "-n", "-H", "--directories=skip", "-r"]
     if file_type:
         cmd += ["--include=*." + file_type]
-    cmd += [pattern, "."]  # search from resolved path as cwd
+    # MED-11: prepend -- before pattern to prevent argument injection
+    cmd += ["--", pattern, "."]
 
     try:
         result = subprocess.run(
@@ -560,8 +565,63 @@ def _web_search(query: str, count: int = 5) -> ToolResult:
         return ToolResult(success=False, error=f"web_search failed: {e}")
 
 
+def _is_web_fetch_restricted() -> bool:
+    """MED-3 opt-in check: returns True when CRABCAKES_WEB_FETCH_RESTRICT=1.
+    Default off per Q3 decision."""
+    return os.environ.get("CRABCAKES_WEB_FETCH_RESTRICT", "") == "1"
+
+
+def _reject_restricted_url(url: str) -> ToolResult | None:
+    """MED-3: If restricted mode is on, validate URL against private IP ranges.
+    Returns ToolResult(failure) if blocked, None if allowed."""
+    if not _is_web_fetch_restricted():
+        return None
+
+    import ipaddress
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if hostname is None:
+        return ToolResult(success=False, error=f"MED-3: No hostname in URL: {url}")
+
+    # Check hostname match first (fast path)
+    host_lower = hostname.lower()
+    if host_lower in ("localhost", "127.0.0.1", "::1"):
+        return ToolResult(success=False, error=f"MED-3: Refusing loopback request: {url}")
+    if host_lower.startswith("169.254."):
+        return ToolResult(success=False, error=f"MED-3: Refusing link-local request: {url}")
+    if host_lower.startswith("fe80:"):
+        return ToolResult(success=False, error=f"MED-3: Refusing link-local request: {url}")
+
+    # Try IP address resolution for private ranges
+    try:
+        import socket
+        addr = socket.getaddrinfo(hostname, None)
+        for family, _, _, _, sockaddr in addr:
+            ip = ipaddress.ip_address(sockaddr[0])
+            if ip.is_private:
+                return ToolResult(success=False, error=f"MED-3: Refusing private IP request: {url} → {ip}")
+            if ip.is_loopback:
+                return ToolResult(success=False, error=f"MED-3: Refusing loopback request: {url} → {ip}")
+            if ip.is_link_local:
+                return ToolResult(success=False, error=f"MED-3: Refusing link-local request: {url} → {ip}")
+    except socket.gaierror:
+        # Hostname doesn't resolve — refuse (could be SSRF attempt)
+        return ToolResult(success=False, error=f"MED-3: Hostname does not resolve: {hostname}")
+    except Exception as e:
+        # Resolution failed — refuse for safety
+        return ToolResult(success=False, error=f"MED-3: Failed to resolve {hostname}: {e}")
+
+    return None
+
+
 def _web_fetch(url: str, max_chars: int = 10000) -> ToolResult:
     """Fetch and extract readable content from a URL."""
+    # MED-3: Opt-in host allowlist check
+    blocked = _reject_restricted_url(url)
+    if blocked is not None:
+        return blocked
     try:
         resp = httpx.get(url, timeout=10.0, follow_redirects=True)
         resp.raise_for_status()
@@ -656,7 +716,7 @@ def _register_tools() -> None:
             requires_approval=False,
         ),
         lambda path, content, project_path, **kwargs:  # type: ignore
-            _write_file(path, content, project_path, session_key=kwargs.get("session_key", "")),
+            _write_file(path, content, project_path, session_key=kwargs.get("session_key", ""), approval_callback=kwargs.get("approval_callback")),
     )
 
     # edit_file
@@ -694,7 +754,7 @@ def _register_tools() -> None:
             requires_approval=False,
         ),
         lambda path, old_text, new_text, project_path, **kwargs:  # type: ignore
-            _edit_file(path, old_text, new_text, project_path, session_key=kwargs.get("session_key", "")),
+            _edit_file(path, old_text, new_text, project_path, session_key=kwargs.get("session_key", ""), approval_callback=kwargs.get("approval_callback")),
     )
 
     # exec_command
@@ -732,7 +792,7 @@ def _register_tools() -> None:
             requires_approval=True,
         ),
         lambda command, project_path, timeout=30, session_key="_unknown", **kwargs:  # type: ignore
-            _exec_command(command, project_path, min(timeout, 120), session_key),
+            _exec_command(command, project_path, min(timeout, 120), session_key, approval_callback=kwargs.get("approval_callback")),
     )
 
     # list_files
@@ -896,6 +956,7 @@ def execute_tool(
     arguments: dict,
     project_path: str,
     session_key: str = "_unknown",
+    approval_callback: Callable[[str, str, dict], bool] | None = None,
 ) -> ToolResult:
     """
     Execute a tool by name with the given arguments.
@@ -905,6 +966,8 @@ def execute_tool(
         arguments: Parsed arguments dict (e.g. {"path": "src/main.py"})
         project_path: Absolute path to the project working directory
         session_key: Session key of the agent (for exec_command approval)
+        approval_callback: Per-call approval callback (MED-1). Takes precedence
+            over the global _approval_callback.
 
     Returns:
         ToolResult with output or error.
@@ -949,10 +1012,11 @@ def execute_tool(
     start = time.monotonic()
 
     try:
-        # Inject project_path and session_key into arguments
+        # Inject project_path, session_key, and approval_callback into arguments
         args = dict(arguments)
         args["project_path"] = project_path
         args["session_key"] = session_key
+        args["approval_callback"] = approval_callback
 
         result = handler(**args)
         duration_ms = int((time.monotonic() - start) * 1000)

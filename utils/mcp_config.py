@@ -10,12 +10,23 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from utils.config import get_config_dir
+
+
+logger = logging.getLogger(__name__)
+
+
+# MED-12: Only forward these environment variables to MCP servers.
+# All other vars are refused (log + skip) to prevent leaking sensitive config.
+_MCP_FORWARDABLE_ENV_VARS: frozenset[str] = frozenset({
+    "PATH", "HOME", "LANG", "VIRTUAL_ENV", "PYTHONPATH",
+})
 
 
 # ── Dataclasses ────────────────────────────────────────────────────────────────
@@ -60,7 +71,22 @@ class MCPServerConfig:
                 match = re.match(r"^\$\{(\w+)}$", value)
                 if match:
                     var_name = match.group(1)
-                    env[key] = os.environ.get(var_name, "")
+                    # MED-12: Check allowlist before forwarding
+                    if var_name not in _MCP_FORWARDABLE_ENV_VARS:
+                        logger.warning(
+                            "MED-12: Refusing to forward env var '%s' for server '%s' "
+                            "— not in forwardable allowlist. Allowed: %s",
+                            var_name, self.name, sorted(_MCP_FORWARDABLE_ENV_VARS),
+                        )
+                        continue
+                    resolved = os.environ.get(var_name, "")
+                    if not resolved:
+                        logger.warning(
+                            "MED-12: Environment variable '%s' is set for server '%s' "
+                            "but is empty or not found in process environment",
+                            var_name, self.name,
+                        )
+                    env[key] = resolved
                 else:
                     env[key] = value
 
@@ -112,6 +138,15 @@ def load_mcp_servers(use_cache: bool = True) -> dict[str, MCPServerConfig]:
     
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"MCP config not found: {config_path}")
+
+    # MED-6: Check file ownership and permissions before reading
+    try:
+        from utils.file_security import assert_secure_file
+        assert_secure_file(config_path)
+    except (ImportError, FileNotFoundError):
+        pass  # Allow read if security check is unavailable
+    except PermissionError as e:
+        logger.warning("MED-6: %s — proceeding with config read anyway", e)
     
     with open(config_path, "r", encoding="utf-8") as f:
         raw: Any = json.load(f)

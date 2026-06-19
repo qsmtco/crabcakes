@@ -77,9 +77,16 @@ def _load_identity():
     identity_dir = get_identity_dir()
 
     auth_path = os.path.join(identity_dir, "device-auth.json")
+
+    # MED-6: Check file ownership and permissions before reading credential files
     try:
-        with open(auth_path) as f:
-            auth = json.load(f)
+        from utils.file_security import assert_secure_file
+        assert_secure_file(auth_path)
+    except PermissionError as e:
+        raise RuntimeError(
+            f"Insecure device-auth.json permissions: {e}"
+            f"\n  Run 'openclaw login' to regenerate."
+        ) from e
     except FileNotFoundError:
         raise RuntimeError(
             f"OpenClaw identity not found.\n"

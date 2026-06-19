@@ -141,6 +141,24 @@ def append_to_bug_journal(
 
             today = datetime.date.today().isoformat()
             entry_text = report.to_bug_journal_entry(next_num, today)
+
+            # MED-7: Sanitize entry_text before writing to prevent injection
+            # of markdown headings, fence breaks, or instruction overrides.
+            sanitized_lines = []
+            for line in entry_text.split("\n"):
+                # Strip markdown heading lines
+                if line.strip().startswith("#"):
+                    continue
+                # Strip fence-break sequences (backtick fences)
+                if "```" in line:
+                    line = line.replace("```", "")
+                # Strip instruction-override patterns
+                if re.search(r"(?i)(ignore|disregard|forget)\s+(previous|prior|above|all)", line):
+                    continue
+                if re.search(r"(?i)new instructions:", line):
+                    continue
+                sanitized_lines.append(line)
+            entry_text = "\n".join(sanitized_lines)
             f.seek(0, 2)  # paranoia — stay at end before writing
             if os.path.getsize(journal_path) > 0:
                 f.write("\n")

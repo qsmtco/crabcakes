@@ -21,7 +21,7 @@
 
 import gi
 gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk
+from gi.repository import Gtk, GLib
 
 
 def show_session_menu(parent, agent_name, sessions, on_select, current_session_key=None):
@@ -46,7 +46,8 @@ def show_session_menu(parent, agent_name, sessions, on_select, current_session_k
 
     # Header — agent name, non-interactive
     header = Gtk.Label()
-    header.set_markup(f"<b>{agent_name}</b>")
+    # MED-9: escape interpolated values to prevent Pango markup injection
+    header.set_markup(f"<b>{GLib.markup_escape_text(agent_name)}</b>")
     header.set_sensitive(False)
     header.set_margin_bottom(4)
     vbox.append(header)
@@ -76,7 +77,8 @@ def show_session_menu(parent, agent_name, sessions, on_select, current_session_k
 
             display = _shorten_session_key(sk)
             if sk == current_session_key:
-                label.set_markup(f"✓ {display}")
+                # MED-9: escape interpolated values
+                label.set_markup(f"✓ {GLib.markup_escape_text(display)}")
             else:
                 label.set_text(display)
 
@@ -136,7 +138,8 @@ def show_project_menu(parent, project_name, member_names, current_solo, on_selec
 
     # Header — project name
     header = Gtk.Label()
-    header.set_markup(f"<b>{project_name}</b>")
+    # MED-9: escape interpolated values
+    header.set_markup(f"<b>{GLib.markup_escape_text(project_name)}</b>")
     header.set_sensitive(False)
     header.set_margin_bottom(4)
     vbox.append(header)
@@ -188,7 +191,8 @@ def show_project_menu(parent, project_name, member_names, current_solo, on_selec
         for row in list_box:
             if not row._is_all and row._target_key == current_solo:
                 lbl = row.get_child()
-                lbl.set_markup(f"<b>✓ {lbl.get_text()}</b>")
+                # MED-9: escape interpolated values
+                lbl.set_markup(f"<b>✓ {GLib.markup_escape_text(lbl.get_text())}</b>")
                 break
 
     list_box.connect("row-activated", lambda _lb, row: _on_project_selected(popover, row, on_select))

@@ -10,9 +10,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import re
 from typing import Callable
 import threading
 import time
+
+
+# MED-11: Validate git commit SHA to prevent argument injection
+_VALID_SHA_RE = re.compile(r"^(HEAD|[0-9a-fA-F]{4,40})$")
 import uuid
 from datetime import datetime, timezone
 
@@ -700,6 +705,15 @@ class FeedHandler:
             def _git_reject():
                 fp = card.file_path
                 sha = card.commit_sha or "HEAD"
+
+                # MED-11: Validate commit_sha before git call
+                if not _VALID_SHA_RE.match(sha):
+                    _logger.warning(
+                        "MED-11: Invalid commit SHA %r for card %s — skipping reject",
+                        sha, card_id,
+                    )
+                    return
+
                 result_reject = git_ops.checkout_paths(project_path, sha, [fp]) if fp else None
 
                 def _mark():

@@ -19,6 +19,25 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+
+# MED-5: Custom redirect handler that strips Authorization on cross-host redirects
+class _NoAuthRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Strips Authorization header when following redirects to a different host."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        from urllib.parse import urlparse
+        result = urllib.request.HTTPRedirectHandler.redirect_request(
+            self, req, fp, code, msg, headers, newurl
+        )
+        if result is not None:
+            old_host = urlparse(req.full_url).hostname
+            new_host = urlparse(newurl).hostname
+            if old_host and new_host and old_host != new_host:
+                if "Authorization" in result.headers:
+                    del result.headers["Authorization"]
+                if "authorization" in result.unredirected_hdrs:
+                    del result.unredirected_hdrs["authorization"]
+        return result
+
 # Provider names that use the OpenAI-compatible chat/completions endpoint
 _OPENAI_COMPATIBLE = {"openai", "openrouter", "zai", "minimax"}
 
@@ -82,6 +101,19 @@ def test_connection(
     bare_model = _model_id(model)
 
     if provider in _OPENAI_COMPATIBLE:
+        # MED-5: Validate non-loopback provider URL must use https://
+        try:
+            from utils.provider_url import validate_provider_url
+            validate_provider_url(base_url)
+        except ImportError:
+            pass
+        except ValueError:
+            return TestResult(
+                ok=False,
+                latency_ms=0,
+                error=f"Provider URL is not HTTPS for non-loopback host: {base_url}",
+                model_used=model,
+            )
         return _test_openai_compat(base_url, api_key, model, bare_model, provider, timeout_seconds)
     elif provider == "anthropic":
         return _test_anthropic(base_url, api_key, model, bare_model, timeout_seconds)
@@ -154,7 +186,9 @@ def _do_request(
     req = urllib.request.Request(endpoint, data=body, headers=headers, method="POST")
 
     try:
-        with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+        # MED-5: Use custom redirect handler that strips Authorization on cross-host redirect
+        _opener = urllib.request.build_opener(_NoAuthRedirectHandler)
+        with _opener.open(req, timeout=timeout_seconds) as resp:
             raw = resp.read()
             elapsed_ms = int((time.monotonic() - start) * 1000)
 
