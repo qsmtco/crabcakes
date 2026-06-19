@@ -384,6 +384,8 @@ class CommandHandler:
             target_session_key=target_sk,
             is_broadcast=is_broadcast,
             broadcast_targets=broadcast_targets,
+            # LOW-1: human-readable user identity from session key
+            user=self._human_label_for_session(session_key),
         )
 
         # Re-parse flags from args_after_mentions for the Command object
@@ -567,6 +569,26 @@ class CommandHandler:
         if self._project_handler is not None:
             return self._project_handler.get_active_project_name()
         return None
+
+    def _human_label_for_session(self, session_key: str) -> str:
+        """Return a human-readable label for a session key (LOW-1).
+
+        Tries, in order:
+        1. The agent display name from AgentManager (gateway agents)
+        2. The display name from _special_agents (special agents)
+        3. The last segment of the session key (e.g. 'telegram' from
+           'agent:qaster:telegram:direct:7478874934')
+        """
+        if self._agent_mgr is not None:
+            name = self._agent_mgr.get_name(session_key)
+            if name:
+                return name
+        if self._special_agents:
+            name = self._special_agents.get(session_key)
+            if name:
+                return name
+        segments = session_key.split(":")
+        return segments[-1] if segments else session_key
 
     def _dispatch_result(self, result: CommandResult, session_key: str) -> None:
         """Dispatch GTK side effects of a handled CommandResult.

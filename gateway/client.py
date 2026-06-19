@@ -313,6 +313,10 @@ class GatewayClient:
         """Return the hello-ok snapshot dict (or None before first successful connect)."""
         return self._hello_snapshot
 
+    def get_identity(self) -> dict[str, Any]:
+        """Return the device identity dict (device_id, etc.)."""
+        return self._id
+
     def send_message(
         self,
         session_key: str,

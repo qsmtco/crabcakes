@@ -52,6 +52,7 @@ class ConnectionSyncHandler:
                                  entry point; window passes the ForwardHandler's
                                  show_forward_popover method.
         project_path_provider:  Callable[[], str | None] — for project path lookup
+        main_window:            MainWindow instance — for update_agent_id_display (A-9)
     """
 
     def __init__(
@@ -72,6 +73,7 @@ class ConnectionSyncHandler:
         agent_to_project,
         on_forward_clicked: Callable,
         project_path_provider: Callable[[], str | None],
+        main_window=None,
     ) -> None:
         self._chat_handler = chat_handler
         self._main_content = main_content
@@ -88,6 +90,7 @@ class ConnectionSyncHandler:
         self._agent_to_project = agent_to_project
         self._on_forward_clicked = on_forward_clicked
         self._project_path_provider = project_path_provider
+        self._main_window = main_window
         # ActivityDrawer (SPEC-activity-drawer Phase 1) — set via setter after construction
         self._activity_drawer = None
 
@@ -114,6 +117,12 @@ class ConnectionSyncHandler:
         self._main_content.set_agent_manager(self._gateway_handler.agent_mgr)
         # Wire AgentListHandler to the live AgentManager
         self._agent_list_handler.set_agent_mgr(self._gateway_handler.agent_mgr)
+        # A-9: Update status bar agent ID label from gateway identity
+        if self._main_window is not None:
+            identity = gw.get_identity()
+            agent_id = identity.get("device_id", "")
+            if agent_id:
+                self._main_window.update_agent_id_display(agent_id)
         # Refresh agents list for the currently open project — fixes members not
         # appearing after gateway reconnect (session keys change on reconnect)
         if self._project_handler.get_active_project_name():

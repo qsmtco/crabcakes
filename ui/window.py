@@ -562,6 +562,7 @@ class MainWindow(Gtk.ApplicationWindow):
             agent_to_project=self._agent_to_project,
             on_forward_clicked=self._forward_handler.show_forward_popover,
             project_path_provider=lambda: self._project_handler.get_active_project_path() if self._project_handler else None,
+            main_window=self,
         )
         # Wire the sync callback to fire on gateway connect
         self._gateway_handler.set_sync_callback(self._connection_sync_handler.sync)

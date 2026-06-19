@@ -150,3 +150,28 @@ class TestLoadAgentConfigIntegration:
         config = load_agent_config(str(agent_json))
         assert hasattr(config, "providers")
         assert config.providers == {}
+
+
+class TestUserIdWireUp:
+    def test_user_id_loaded_from_config(self, tmp_config_dir):
+        """A-4: user_id from agent.json should populate AgentConfig.user_id."""
+        agent_json = tmp_config_dir / "agent.json"
+        agent_json.write_text(json.dumps({
+            "default_provider": "local-kb",
+            "default_model": "local-kb/local-kb",
+            "user_id": "alice@example.com",
+        }))
+        os.chmod(agent_json, 0o600)
+        config = load_agent_config(str(agent_json))
+        assert config.user_id == "alice@example.com"
+
+    def test_user_id_empty_when_missing(self, tmp_config_dir):
+        """A-4: user_id is empty string when not present in agent.json."""
+        agent_json = tmp_config_dir / "agent.json"
+        agent_json.write_text(json.dumps({
+            "default_provider": "local-kb",
+            "default_model": "local-kb/local-kb",
+        }))
+        os.chmod(agent_json, 0o600)
+        config = load_agent_config(str(agent_json))
+        assert config.user_id == ""

@@ -60,6 +60,7 @@ class Command:
     target_session_key: str | None = None   # single target
     is_broadcast: bool = False              # True when @ mentions all project members
     broadcast_targets: list[str] = field(default_factory=list)   # BUG #4 fix: all fan-out targets for @ broadcast
+    user: str = ""                        # LOW-1: human-readable user identity for traceability
 
 
 @dataclass

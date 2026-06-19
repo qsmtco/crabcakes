@@ -252,7 +252,7 @@ class _KBRequestHandler(BaseHTTPRequestHandler):
             try:
                 from agent.special_agents import get_special_agents
                 agents = get_special_agents()
-                agent_ids = [a.name for a in agents]
+                agent_ids = [a.display_name for a in agents]
                 self._send_json(200, {"agents": agent_ids})
             except Exception:
                 self._send_json(200, {"agents": []})
