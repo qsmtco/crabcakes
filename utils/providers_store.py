@@ -195,6 +195,122 @@ def has_any_verified_provider(providers: list[ProviderConfig]) -> bool:
 # ── KB provider auto-registration ─────────────────────────────────────────────
 
 
+def remove_providers_from_agent_json() -> bool:
+    """One-shot: remove legacy providers key from agent.json.
+
+    Idempotent — returns True if removed, False if key was not present.
+    Uses atomic .tmp + chmod 0o600 write, matching save_provider pattern.
+    """
+    from utils.config import get_config_dir
+    agent_json_path = os.path.join(get_config_dir(), "agent.json")
+
+    if not os.path.isfile(agent_json_path):
+        return False
+
+    try:
+        with open(agent_json_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        _logger.debug("remove_providers_from_agent_json: cannot read agent.json: %s", e)
+        return False
+
+    if "providers" not in raw:
+        return False
+
+    del raw["providers"]
+
+    # Atomic write: .tmp → rename → chmod 0o600
+    tmp_path = agent_json_path + ".tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(raw, f, indent=4, ensure_ascii=False)
+        os.rename(tmp_path, agent_json_path)
+        os.chmod(agent_json_path, 0o600)
+        _logger.info("removed legacy providers key from agent.json")
+        return True
+    except Exception:
+        if os.path.isfile(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        raise
+
+
+def migrate_from_agent_json() -> int:
+    """One-time migration: copy agent.json providers → providers.yaml.
+
+    Reads the legacy `providers` key from agent.json. For each entry,
+    converts to a ProviderConfig and merges into providers.yaml. YAML wins
+    on name conflict (it's the current source of truth). Safe to call
+    multiple times — idempotent after first migration.
+
+    After migrating, removes the `providers` key from agent.json so the
+    legacy store is fully consolidated into providers.yaml.
+
+    Returns the count of providers migrated.
+    """
+    from utils.config import get_config_dir
+    agent_json_path = os.path.join(get_config_dir(), "agent.json")
+
+    if not os.path.isfile(agent_json_path):
+        return 0
+
+    try:
+        with open(agent_json_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        _logger.debug("migrate_from_agent_json: cannot read agent.json: %s", e)
+        return 0
+
+    providers_dict = raw.get("providers")
+    has_providers_key = "providers" in raw
+    if not providers_dict or not isinstance(providers_dict, dict) or len(providers_dict) == 0:
+        # No providers to migrate, but strip the empty/missing key so agent.json is clean
+        if has_providers_key:
+            remove_providers_from_agent_json()
+        return 0
+
+    # Convert legacy agent.json entries to ProviderConfig
+    migrated = []
+    for name, cfg in providers_dict.items():
+        if not isinstance(cfg, dict):
+            continue
+        try:
+            migrated.append(ProviderConfig(
+                name=name,
+                base_url=cfg.get("base_url", ""),
+                api_key=cfg.get("api_key", ""),
+                default_model=cfg.get("default_model", ""),
+                caller=cfg.get("caller", ""),
+                supports_tools=cfg.get("supports_tools", True),
+                supports_streaming=cfg.get("supports_streaming", True),
+                max_tokens=cfg.get("max_tokens", 128_000),
+            ))
+        except (KeyError, TypeError) as e:
+            _logger.warning("migrate_from_agent_json: skipping malformed entry %s: %s", name, e)
+            continue
+
+    if not migrated:
+        return 0
+
+    # Merge with existing YAML providers (YAML wins on name conflict)
+    yaml_providers = load_providers()
+    yaml_names = {p.name for p in yaml_providers}
+    added_count = 0
+    for p in migrated:
+        if p.name not in yaml_names:
+            yaml_providers.append(p)
+            added_count += 1
+            _logger.debug("migrate_from_agent_json: added %s from agent.json", p.name)
+
+    save_providers(yaml_providers)
+    # 1b: strip the providers key from agent.json after successful migration
+    remove_providers_from_agent_json()
+    _logger.info("migrated %d providers from agent.json to providers.yaml", added_count)
+    return added_count
+
+
 def ensure_kb_provider() -> None:
     """Seed the local-kb provider into providers.yaml if missing.
 
@@ -211,6 +327,7 @@ def ensure_kb_provider() -> None:
     the Auxilium agent to answer questions from the local knowledge base
     without requiring an external LLM.
     """
+    migrate_from_agent_json()
     _ensure_kb_provider_entry()
     _ensure_auxilium_uses_kb()
 

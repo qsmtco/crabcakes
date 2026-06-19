@@ -166,44 +166,69 @@ class TestRenameCleanup:
 
 class TestProviderManagement:
     def test_save_and_delete_provider(self, monkeypatch, tmp_path):
-        """save_provider and delete_provider work round-trip on agent.json."""
-        # Note: save_provider/delete_provider still mutate agent.json (legacy).
-        # get_available_providers() now reads from providers.yaml, so we verify
-        # agent.json directly instead of going through get_available_providers.
+        """A-5: AgentBuilderHandler.save_provider/delete_provider round-trip on providers.yaml.
+
+        Pre-A-5 this test verified utils.agent_defs.save_provider/delete_provider
+        mutated agent.json. A-5 removed those functions entirely (provider config
+        consolidated to providers.yaml). The test now exercises the handler's
+        new methods which delegate to utils.providers_store.
+        """
         config_dir = str(tmp_path / ".config" / "crabcakes")
         os.makedirs(config_dir, exist_ok=True)
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", os.path.join(str(tmp_path), ".config"))
 
-        # Create a minimal agent.json so save_provider has something to write to
+        # Create a minimal agent.json (no providers — provider config now lives
+        # in providers.yaml per A-5)
         agent_json_path = os.path.join(config_dir, "agent.json")
         with open(agent_json_path, "w") as f:
-            json.dump({"providers": {}, "default_provider": "openrouter"}, f)
+            json.dump({"default_provider": "openrouter"}, f)
 
-        from utils.agent_defs import save_provider, delete_provider, _get_agent_json_path
+        from ui.handlers.agent_builder_handler import AgentBuilderHandler
+        h = AgentBuilderHandler()
 
-        ok = save_provider("test-prov", {
+        ok = h.save_provider("test-prov", {
             "base_url": "http://localhost:11434/v1",
             "api_key": "test-key",
             "default_model": "test-model",
         })
         assert ok
 
-        # Verify directly in agent.json (not via get_available_providers)
+        # Verify in providers.yaml (NOT in agent.json)
+        from utils.providers_store import load_providers
+        yaml_providers = load_providers()
+        names = [p.name for p in yaml_providers]
+        assert "test-prov" in names
+        test_prov = next(p for p in yaml_providers if p.name == "test-prov")
+        assert test_prov.api_key == "test-key"
+
+        # agent.json must not have a providers key
         with open(agent_json_path) as f:
             raw = json.load(f)
-        assert "test-prov" in raw["providers"]
-        assert raw["providers"]["test-prov"]["api_key"] == "test-key"
+        assert "providers" not in raw
 
-        ok = delete_provider("test-prov")
+        ok = h.delete_provider("test-prov")
         assert ok
 
-        with open(agent_json_path) as f:
-            raw = json.load(f)
-        assert "test-prov" not in raw["providers"]
+        # Verify removed from providers.yaml
+        yaml_providers = load_providers()
+        names = [p.name for p in yaml_providers]
+        assert "test-prov" not in names
 
-    def test_delete_nonexistent_provider(self):
-        from utils.agent_defs import delete_provider
-        assert delete_provider("nonexistent_provider_xyz") is False
+    def test_delete_nonexistent_provider(self, monkeypatch, tmp_path):
+        """A-5: delete_provider is safe to call with a name that doesn't exist."""
+        config_dir = str(tmp_path / ".config" / "crabcakes")
+        os.makedirs(config_dir, exist_ok=True)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", os.path.join(str(tmp_path), ".config"))
+
+        from ui.handlers.agent_builder_handler import AgentBuilderHandler
+        h = AgentBuilderHandler()
+
+        # No providers.yaml → deleting a nonexistent provider is a no-op
+        # (handler's delete_provider returns True unconditionally; the store's
+        # remove_provider is a no-op when name is not found)
+        assert h.delete_provider("nonexistent_provider_xyz") is True
 
 
 # ── BUG 7: Name collision ─────────────────────────────────────────────────

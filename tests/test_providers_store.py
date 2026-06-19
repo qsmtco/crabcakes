@@ -313,3 +313,174 @@ class TestHasAnyVerifiedProvider:
             _make_provider("a", last_verified_at="2026-06-07T20:30:00Z", last_error="old error"),
         ]
         assert ps.has_any_verified_provider(providers) is True
+
+
+# ── TestRemoveProvidersFromAgentJson ──────────────────────────────────
+
+
+class TestRemoveProvidersFromAgentJson:
+    def test_remove_providers_key_deletes_it(self, tmp_config_dir):
+        """agent.json with providers → returns True, key removed, other keys preserved."""
+        import utils.config
+        agent_json = os.path.join(utils.config.get_config_dir(), "agent.json")
+        os.makedirs(os.path.dirname(agent_json), exist_ok=True)
+        with open(agent_json, "w") as f:
+            json.dump({
+                "providers": {"openai": {"base_url": "x", "api_key": "k", "default_model": "m"}},
+                "default_provider": "openai",
+                "default_model": "openai/gpt-4o",
+            }, f)
+        os.chmod(agent_json, 0o600)
+
+        result = ps.remove_providers_from_agent_json()
+        assert result is True
+
+        with open(agent_json) as f:
+            remaining = json.load(f)
+        assert "providers" not in remaining
+        assert remaining["default_provider"] == "openai"  # other keys preserved
+
+    def test_remove_providers_key_idempotent(self, tmp_config_dir):
+        """agent.json without providers key → returns False, no error."""
+        import utils.config
+        agent_json = os.path.join(utils.config.get_config_dir(), "agent.json")
+        os.makedirs(os.path.dirname(agent_json), exist_ok=True)
+        with open(agent_json, "w") as f:
+            json.dump({"default_provider": "openai"}, f)
+        os.chmod(agent_json, 0o600)
+
+        result = ps.remove_providers_from_agent_json()
+        assert result is False
+
+        # File still intact
+        with open(agent_json) as f:
+            remaining = json.load(f)
+        assert "default_provider" in remaining
+
+    def test_remove_providers_key_missing_file(self, tmp_config_dir):
+        """No agent.json at all → returns False, no error."""
+        result = ps.remove_providers_from_agent_json()
+        assert result is False
+
+
+# ── TestMigrateFromAgentJson ──────────────────────────────────────────────
+
+
+class TestMigrateFromAgentJson:
+    def test_migrate_handles_missing_agent_json(self, tmp_config_dir):
+        """No agent.json file at all — returns 0, no error."""
+        count = ps.migrate_from_agent_json()
+        assert count == 0
+
+    def test_migrate_from_empty_agent_json_returns_zero(self, tmp_config_dir):
+        """agent.json with no providers key — returns 0."""
+        import utils.config
+        agent_json = os.path.join(utils.config.get_config_dir(), "agent.json")
+        os.makedirs(os.path.dirname(agent_json), exist_ok=True)
+        with open(agent_json, "w") as f:
+            json.dump({}, f)
+        os.chmod(agent_json, 0o600)
+
+        count = ps.migrate_from_agent_json()
+        assert count == 0
+
+    def test_migrate_moves_providers_to_yaml(self, tmp_config_dir):
+        """agent.json with 2 providers, empty YAML — returns 2, YAML now has 2."""
+        import utils.config
+        agent_json = os.path.join(utils.config.get_config_dir(), "agent.json")
+        os.makedirs(os.path.dirname(agent_json), exist_ok=True)
+        with open(agent_json, "w") as f:
+            json.dump({
+                "providers": {
+                    "openai": {
+                        "base_url": "https://api.openai.com/v1",
+                        "api_key": "sk-test",
+                        "default_model": "gpt-4o",
+                    },
+                    "local-ollama": {
+                        "base_url": "http://localhost:11434/v1",
+                        "api_key": "ollama",
+                        "default_model": "llama3",
+                    },
+                }
+            }, f)
+        os.chmod(agent_json, 0o600)
+
+        count = ps.migrate_from_agent_json()
+        assert count == 2
+
+        yaml_providers = ps.load_providers()
+        names = {p.name for p in yaml_providers}
+        assert "openai" in names
+        assert "local-ollama" in names
+
+    def test_migrate_skips_yaml_existing(self, tmp_config_dir):
+        """agent.json has 'openai', YAML already has 'openai' — returns 0, YAML wins."""
+        import utils.config
+        # Seed YAML with openai
+        ps.save_providers([_make_provider("openai")])
+        # Create agent.json with openai (should be skipped) and a new one
+        agent_json = os.path.join(utils.config.get_config_dir(), "agent.json")
+        os.makedirs(os.path.dirname(agent_json), exist_ok=True)
+        with open(agent_json, "w") as f:
+            json.dump({
+                "providers": {
+                    "openai": {
+                        "base_url": "https://different.com/v1",
+                        "api_key": "should-not-appear",
+                        "default_model": "ignored",
+                    },
+                    "minimax": {
+                        "base_url": "https://api.minimax.chat/v1",
+                        "api_key": "sk-mini",
+                        "default_model": "MiniMax-M2.7",
+                    },
+                }
+            }, f)
+        os.chmod(agent_json, 0o600)
+
+        count = ps.migrate_from_agent_json()
+        assert count == 1  # only minimax migrated
+
+        yaml_providers = ps.load_providers()
+        names = {p.name for p in yaml_providers}
+        assert "openai" in names
+        assert "minimax" in names
+        # openai in YAML keeps its original key (YAML wins)
+        openai_provider = next(p for p in yaml_providers if p.name == "openai")
+        assert openai_provider.api_key == "sk-openai-key"  # YAML value preserved
+
+    def test_migrate_idempotent_second_call_returns_zero(self, tmp_config_dir):
+        """Calling twice — second call returns 0 (already migrated)."""
+        import utils.config
+        agent_json = os.path.join(utils.config.get_config_dir(), "agent.json")
+        os.makedirs(os.path.dirname(agent_json), exist_ok=True)
+        with open(agent_json, "w") as f:
+            json.dump({"providers": {"testprov": {"base_url": "x", "api_key": "k", "default_model": "m"}}}, f)
+        os.chmod(agent_json, 0o600)
+
+        first = ps.migrate_from_agent_json()
+        assert first == 1
+        second = ps.migrate_from_agent_json()
+        assert second == 0
+
+    def test_migrate_empty_providers_dict_strips_key(self, tmp_config_dir):
+        """A-5: agent.json with empty providers={} — key is removed even though nothing was migrated.
+
+        Pre-fix bug: early return left the empty `providers` key in agent.json
+        forever, leaving legacy state for users who had an empty legacy store.
+        """
+        import utils.config
+        agent_json = os.path.join(utils.config.get_config_dir(), "agent.json")
+        os.makedirs(os.path.dirname(agent_json), exist_ok=True)
+        with open(agent_json, "w") as f:
+            json.dump({"providers": {}, "default_provider": "openai"}, f)
+        os.chmod(agent_json, 0o600)
+
+        count = ps.migrate_from_agent_json()
+        assert count == 0  # nothing to migrate
+
+        with open(agent_json) as f:
+            raw = json.load(f)
+        assert "providers" not in raw  # but key should be stripped
+        assert raw.get("default_provider") == "openai"  # other keys preserved

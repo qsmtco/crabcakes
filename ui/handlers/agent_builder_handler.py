@@ -186,15 +186,30 @@ class AgentBuilderHandler:
         return get_available_prompts()
 
     def get_provider_options(self) -> list[dict]:
-        """Available providers from agent.json. For UI dropdown."""
+        """Available providers from providers.yaml. For UI dropdown."""
         return get_available_providers()
 
     def save_provider(self, name: str, config: dict) -> bool:
-        """Add or update a provider in agent.json."""
-        from utils.agent_defs import save_provider as _save
-        return _save(name, config)
+        """Add or update a provider in providers.yaml."""
+        from utils.providers_store import add_provider, load_providers
+        from models.providers import ProviderConfig
+        provider = ProviderConfig(
+            name=name,
+            base_url=config.get("base_url", ""),
+            api_key=config.get("api_key", ""),
+            default_model=config.get("default_model", ""),
+            caller=config.get("caller", ""),
+            supports_tools=config.get("supports_tools", True),
+            supports_streaming=config.get("supports_streaming", True),
+            max_tokens=config.get("max_tokens", 128_000),
+        )
+        providers = load_providers()
+        add_provider(providers, provider)
+        return True
 
     def delete_provider(self, name: str) -> bool:
-        """Remove a provider from agent.json."""
-        from utils.agent_defs import delete_provider as _del
-        return _del(name)
+        """Remove a provider from providers.yaml."""
+        from utils.providers_store import load_providers, remove_provider
+        providers = load_providers()
+        remove_provider(providers, name)
+        return True

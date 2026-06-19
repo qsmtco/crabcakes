@@ -163,3 +163,31 @@ class TestOptions:
         providers = h.get_provider_options()
         assert len(providers) > 0
         assert all("name" in p for p in providers)
+
+    def test_save_provider_writes_to_yaml_not_agent_json(self, handler, tmp_config_dir):
+        """A-5: save_provider writes to providers.yaml, NOT agent.json."""
+        from utils.providers_store import load_providers
+        import utils.config
+
+        h, _, _ = handler
+        h.save_provider("testprov", {
+            "base_url": "https://api.test.com/v1",
+            "api_key": "sk-testkey",
+            "default_model": "test-model",
+            "supports_tools": True,
+            "supports_streaming": True,
+            "max_tokens": 128_000,
+        })
+
+        # Provider should be in providers.yaml
+        yaml_providers = load_providers()
+        names = [p.name for p in yaml_providers]
+        assert "testprov" in names
+
+        # Provider should NOT be in agent.json
+        agent_json = os.path.join(utils.config.get_config_dir(), "agent.json")
+        if os.path.exists(agent_json):
+            import json
+            with open(agent_json) as f:
+                raw = json.load(f)
+            assert "providers" not in raw or "testprov" not in raw.get("providers", {})
