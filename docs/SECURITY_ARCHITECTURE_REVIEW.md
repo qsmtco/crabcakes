@@ -753,7 +753,7 @@ Preserve these during remediation — they are genuine strengths:
 - **HIGH-5** ✅ Shipped (`d96780b`). `utils/project_trust.py` per-project trust gate + `agent_runtime_handler._maybe_prompt_project_trust()` dialog.
 - **HIGH-6** ✅ Shipped (`593391e` + `38a3236`). `utils/gtk_safe_link.py` `activate-link` scheme guard + `make_safe_label()` factory wired into chat/feed labels. Phase 6.1 fixed the missed blockquote path.
 - **MED-2** ✅ Shipped (`38d8652`). `utils/env_security.py` shared scrubbed env + `_exec_command` uses it.
-- **MED-3** ✅ Shipped (`a6edb30` + `5d6cc35`). `_web_fetch` re-checks full redirect chain. Phase 6.1 rewrote to manual redirect handling so validation happens BEFORE following.
+- **MED-3** ✅ Shipped (`a6edb30` + `5d6cc35`). `_web_fetch` redirect validation. Phase 6 used post-hoc re-check (caught redirects but after TCP connect). Phase 6.1 rewrote to manual redirect loop (`follow_redirects=False`) so validation happens BEFORE following — blocked URLs are never passed to `httpx.get`.
 - **MED-12** ✅ Shipped (`4555686`). `utils/mcp_client.py:_sanitize_tool_description()` strips role-header injection, fence-breaks, Anthropic role tokens, directive phrases; called from `get_tools_for_api()`.
 - **MED-13** ✅ Shipped (verified Phase 6). Anthropic `message_delta.usage` parse path at `runtime.py:725-731` already wired to `record_usage`; end-to-end test exists.
 - **A-2** ✅ Reclassified from 🟡 to ✅ after Phase 6 verification.
@@ -769,6 +769,16 @@ Two real shipping bugs identified by the [Phase 6 adversarial audit](audits/2026
 - **MED-3 (pre-redirect validation)** ✅ Shipped (`5d6cc35`). `_web_fetch` in `agent/tools.py` used `follow_redirects=True` + post-hoc re-check — TCP connections to private hosts were made before validation. Rewrote to manual redirect loop with `follow_redirects=False`, validating each `Location` header via `_reject_restricted_url()` BEFORE following. New test `test_web_fetch_validates_location_before_following` asserts the blocked URL is never passed to `httpx.get`.
 
 The other 6 audit findings (1, 3, 4, 5, 7, 8) are cosmetic, low-severity, or n/a — not addressed in this phase.
+
+### Phase 6.2 — Adversarial audit round 2 fixes (DONE 2026-06-19)
+
+Five findings from the [Phase 6.1 adversarial audit](audits/2026-06-19-PHASE-6.1-ADVERSARIAL-AUDIT.md):
+
+- **P6.1-1** ✅ Fixed. `raise_for_status()` was outside try/except — `HTTPStatusError` propagated uncaught. Wrapped in try/except with proper error message.
+- **P6.1-2** ✅ Fixed. Dead code removed: impossible `except HTTPStatusError` inside loop (httpx.get with `follow_redirects=False` never raises it). Unreachable `resp is None` check replaced with `for/else` that fires when all 10 iterations were redirects.
+- **P6.1-3** ✅ Fixed. Blockquote regression test strengthened to use `label.emit("activate-link", uri)` — verifies the handler is actually *connected* to the label's signal, not just that `on_activate_link` works in isolation. Also checks safe URLs are not over-blocked.
+- **P6.1-4** ✅ Documented. DNS rebinding TOCTOU limitation added to `_reject_restricted_url` docstring. Inherent to DNS-based SSRF prevention without custom transport — not a regression.
+- **P6.1-5** ✅ Fixed. §8 MED-3 row updated to distinguish Phase 6 (post-hoc re-check) from Phase 6.1 (manual redirect loop with pre-validation).
 
 ### Backlog (remaining open work after Phase 6)
 

@@ -592,7 +592,16 @@ def _is_web_fetch_restricted() -> bool:
 
 def _reject_restricted_url(url: str) -> ToolResult | None:
     """MED-3: If restricted mode is on, validate URL against private IP ranges.
-    Returns ToolResult(failure) if blocked, None if allowed."""
+    Returns ToolResult(failure) if blocked, None if allowed.
+
+    Known limitation (P6.1-4): DNS rebinding TOCTOU. This function resolves the
+    hostname via socket.getaddrinfo, but httpx.get makes a separate TCP
+    connection that triggers a NEW DNS resolution. A malicious DNS server can
+    return a public IP here and a private IP on the actual connection. This is
+    inherent to DNS-based SSRF prevention without a custom transport that pins
+    the resolved IP. The Phase 6.1 manual redirect loop narrows the window
+    (validation happens before each connection) but does not eliminate it.
+    """
     if not _is_web_fetch_restricted():
         return None
 
@@ -648,15 +657,15 @@ def _web_fetch(url: str, max_chars: int = 10000) -> ToolResult:
     # hop (including private/loopback hosts) before the post-hoc re-check ran.
     current_url = url
     resp = None
+    redirect_count = 0
     for _ in range(10):  # max 10 redirects
         try:
             resp = httpx.get(current_url, timeout=10.0, follow_redirects=False)
-        except httpx.HTTPStatusError as e:
-            return ToolResult(success=False, error=f"web_fetch HTTP {e.response.status_code}: {current_url}")
         except httpx.RequestError as e:
             return ToolResult(success=False, error=f"web_fetch failed: {e}")
 
         if 300 <= resp.status_code < 400:
+            redirect_count += 1
             location = resp.headers.get("location", "")
             if not location:
                 return ToolResult(success=False, error="web_fetch: redirect without Location header")
@@ -672,11 +681,14 @@ def _web_fetch(url: str, max_chars: int = 10000) -> ToolResult:
             current_url = next_url
             continue
         break
+    else:
+        # Loop completed without break — all 10 iterations were redirects
+        return ToolResult(success=False, error="web_fetch: exceeded max redirects (10)")
 
-    if resp is None:
-        return ToolResult(success=False, error="web_fetch: exceeded max redirects")
-
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        return ToolResult(success=False, error=f"web_fetch HTTP {e.response.status_code}: {current_url}")
 
     # Defense in depth: re-validate the final response URL
     if _is_web_fetch_restricted():

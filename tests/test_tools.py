@@ -532,6 +532,69 @@ class TestWebFetch:
             assert "127.0.0.1" not in called_url, \
                 f"MED-3 violation: httpx.get was called with blocked URL {called_url}"
 
+    # ── P6.1-1: raise_for_status error handling ────────────────────
+
+    def test_web_fetch_http_error_caught(self, monkeypatch):
+        """P6.1-1: HTTPStatusError from raise_for_status must be caught.
+
+        A non-redirect 4xx/5xx response must return a ToolResult with a
+        descriptive error, not raise an uncaught HTTPStatusError.
+        """
+        from agent import tools as tools_mod
+
+        class FakeErrorResponse:
+            status_code = 404
+            url = "http://example.com/notfound"
+            headers = {"content-type": "text/html"}
+            text = "<html>not found</html>"
+
+            def raise_for_status(self):
+                raise tools_mod.httpx.HTTPStatusError(
+                    "404 Not Found",
+                    request=tools_mod.httpx.Request("GET", "http://example.com/notfound"),
+                    response=tools_mod.httpx.Response(404),
+                )
+
+        monkeypatch.delenv("CRABCAKES_WEB_FETCH_RESTRICT", raising=False)
+        monkeypatch.setattr(tools_mod.httpx, "get", lambda *a, **kw: FakeErrorResponse())
+        r = execute_tool("web_fetch", {"url": "https://example.com/notfound"}, "/tmp")
+        assert r.success is False
+        assert "404" in r.error
+
+    # ── P6.1-2: max redirects exceeded ─────────────────────────────
+
+    def test_web_fetch_exceeded_max_redirects(self, monkeypatch):
+        """P6.1-2: when all 10 iterations are redirects, the for/else fires.
+
+        Previously the loop would exit and fall through to raise_for_status
+        on a 3xx response (which doesn't raise), returning empty content.
+        Now it returns a proper error.
+        """
+        from agent import tools as tools_mod
+
+        monkeypatch.delenv("CRABCAKES_WEB_FETCH_RESTRICT", raising=False)
+
+        class FakeAlwaysRedirect:
+            status_code = 302
+            headers = {"location": "http://example.com/next"}
+            text = ""
+            url = "http://example.com/"
+
+            def raise_for_status(self):
+                pass  # should never be called
+
+        call_count = [0]
+
+        def fake_get(url, **kwargs):
+            call_count[0] += 1
+            return FakeAlwaysRedirect()
+
+        monkeypatch.setattr(tools_mod.httpx, "get", fake_get)
+        r = execute_tool("web_fetch", {"url": "https://example.com/loop"}, "/tmp")
+        assert r.success is False
+        assert "max redirects" in r.error.lower()
+        assert call_count[0] == 10
+
 
 
 # ═══════════════════════════════════════════════════════════════════
