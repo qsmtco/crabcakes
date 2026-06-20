@@ -490,7 +490,13 @@ class TestWebFetch:
 
     def test_web_fetch_validates_location_before_following(self, monkeypatch):
         """MED-3 (Phase 6.1): httpx.get must be called with follow_redirects=False,
-        and the private IP URL must NEVER be passed to httpx.get."""
+        and the private IP URL must NEVER be passed to httpx.get.
+
+        QA-NEW-1 fix: use the REAL _reject_restricted_url with restricted mode ON,
+        not a fake that only checks 127.0.0.1/localhost/::1. The previous fake
+        would let the test pass even if the production check were broken for
+        other private-IP forms (169.254.x, RFC1918, IPv6 link-local, etc.).
+        """
         from agent import tools as tools_mod
 
         monkeypatch.setenv("CRABCAKES_WEB_FETCH_RESTRICT", "1")
@@ -504,21 +510,24 @@ class TestWebFetch:
             def raise_for_status(self):
                 pass
 
-        def fake_reject(url):
-            from agent.tools import ToolResult
-            from urllib.parse import urlparse as _up
-            p = _up(url)
-            host = (p.hostname or "").lower()
-            if host in ("127.0.0.1", "localhost", "::1"):
-                return ToolResult(success=False, error=f"MED-3: Refusing loopback request: {url}")
-            return None  # allow
         urls_called = []
 
         def fake_get(url, **kwargs):
             urls_called.append(url)
             return FakeRedirectResponse()
 
-        monkeypatch.setattr(tools_mod, "_reject_restricted_url", fake_reject)
+        # Patch getaddrinfo so the real _reject_restricted_url sees a public IP
+        # for the initial hostname (otherwise the test would fail at the initial
+        # check, never reaching the redirect path we want to exercise).
+        import socket as _socket
+        orig_getaddrinfo = _socket.getaddrinfo
+        def fake_getaddrinfo(host, *args, **kwargs):
+            if host == "initial.example.com":
+                return [(2, 1, 6, "", ("93.184.216.34", 0))]  # example.com
+            return orig_getaddrinfo(host, *args, **kwargs)
+        monkeypatch.setattr(_socket, "getaddrinfo", fake_getaddrinfo)
+
+        # Only mock httpx.get — let the real _reject_restricted_url validate.
         monkeypatch.setattr(tools_mod.httpx, "get", fake_get)
         r = execute_tool("web_fetch", {"url": "https://initial.example.com/"}, "/tmp")
 
@@ -531,6 +540,75 @@ class TestWebFetch:
         for called_url in urls_called:
             assert "127.0.0.1" not in called_url, \
                 f"MED-3 violation: httpx.get was called with blocked URL {called_url}"
+
+    def test_web_fetch_blocks_private_ip_mid_redirect_chain(self, monkeypatch):
+        """QA-NEW-2: a private IP appearing as redirect #5 (not #1) must be blocked.
+
+        The previous exceeded_max_redirects test only verified the for/else
+        fired with allowed redirects. It did not verify the URL was validated.
+        This test exercises both code paths simultaneously: a chain where
+        hops 1-4 are public, hop 5 is private. The MED-3 check must fire
+        before the 6th httpx.get call.
+        """
+        from agent import tools as tools_mod
+
+        monkeypatch.setenv("CRABCAKES_WEB_FETCH_RESTRICT", "1")
+
+        locations = [
+            "https://public{}.example.com/h{}",
+            "https://public{}.example.com/h{}",
+            "https://public{}.example.com/h{}",
+            "https://public{}.example.com/h{}",
+            "http://127.0.0.1/private",  # hop 5: blocked
+            "https://should-never-be-fetched.example.com/",
+        ]
+
+        class FakeHopResponse:
+            def __init__(self, status, location, url):
+                self.status_code = status
+                self.headers = {"location": location, "content-type": "text/html"} if location else {"content-type": "text/html"}
+                self.text = ""
+                self.url = url
+
+            def raise_for_status(self):
+                pass
+
+        urls_called = []
+        hop = [0]
+
+        def fake_get(url, **kwargs):
+            urls_called.append(url)
+            i = hop[0]
+            hop[0] += 1
+            if i < len(locations) - 1:
+                return FakeHopResponse(302, locations[i].format(i + 1, i + 2), url)
+            return FakeHopResponse(302, locations[i], url)
+
+        # Patch getaddrinfo so the real _reject_restricted_url sees public IPs
+        # for the public hops (otherwise the test would fail before reaching
+        # hop 5 where the private IP is meant to be caught).
+        import socket as _socket
+        orig_getaddrinfo = _socket.getaddrinfo
+        def fake_getaddrinfo(host, *args, **kwargs):
+            if host == "start.example.com" or host.startswith("public") and host.endswith(".example.com"):
+                return [(2, 1, 6, "", ("93.184.216.34", 0))]  # example.com
+            return orig_getaddrinfo(host, *args, **kwargs)
+        monkeypatch.setattr(_socket, "getaddrinfo", fake_getaddrinfo)
+
+        monkeypatch.setattr(tools_mod.httpx, "get", fake_get)
+        r = execute_tool("web_fetch", {"url": "https://start.example.com/"}, "/tmp")
+
+        assert r.success is False
+        assert "MED-3" in r.error
+        assert "127.0.0.1" in r.error
+        # The 6th URL must NEVER have been fetched
+        assert len(urls_called) == 5, (
+            f"Expected exactly 5 httpx.get calls (hop 5 blocked before fetch), "
+            f"got {len(urls_called)}: {urls_called}"
+        )
+        assert "127.0.0.1" not in urls_called[-1], (
+            f"Last httpx.get call was the blocked private IP: {urls_called[-1]}"
+        )
 
     # ── P6.1-1: raise_for_status error handling ────────────────────
 

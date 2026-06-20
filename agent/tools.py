@@ -656,8 +656,6 @@ def _web_fetch(url: str, max_chars: int = 10000) -> ToolResult:
     # Previously, httpx.get(follow_redirects=True) would connect to every
     # hop (including private/loopback hosts) before the post-hoc re-check ran.
     current_url = url
-    resp = None
-    redirect_count = 0
     for _ in range(10):  # max 10 redirects
         try:
             resp = httpx.get(current_url, timeout=10.0, follow_redirects=False)
@@ -665,7 +663,6 @@ def _web_fetch(url: str, max_chars: int = 10000) -> ToolResult:
             return ToolResult(success=False, error=f"web_fetch failed: {e}")
 
         if 300 <= resp.status_code < 400:
-            redirect_count += 1
             location = resp.headers.get("location", "")
             if not location:
                 return ToolResult(success=False, error="web_fetch: redirect without Location header")
