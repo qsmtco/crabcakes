@@ -218,7 +218,7 @@ class FeedTab(Gtk.Box):
             # Insert before feed_scroll in the parent (pinned to top, outside scrolled window)
             parent = self._feed_scroll.get_parent()
             if parent is not None:
-                parent.insert_child_before(self._batch_bar, self._feed_scroll)
+                parent.prepend(self._batch_bar)
 
         # Update the count text
         self._batch_bar._info_label.set_text(  # type: ignore[attr-defined]
