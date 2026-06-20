@@ -364,7 +364,7 @@ Each finding: stable ID · CodeGuard category · file:line · evidence · impact
   ```
 - **Impact:** Streaming agent output such as `[click me](file:///home/user/.ssh/id_rsa)` — or a raw `<a href="...">` — becomes a live hyperlink in a `GtkLabel`. No activate-link handler is overridden anywhere in the codebase, so GTK's default invokes `gtk_show_uri` on click, launching the system handler for any scheme: opening arbitrary local files, triggering `smb://`/`ftp://` fetches, or custom URI-scheme handlers. One user click on attacker-authored text. Corroborated by two independent auditors.
 - **Original fix spec:** Allow only `http`/`https`/`mailto` for `<a href>` — parse the scheme in `format_markdown` and emit non-allowlisted links as escaped plain text. Drop `a`/`span` from the Pango whitelist unless their attributes are validated, or connect an `activate-link` handler that cancels navigation for non-allowlisted schemes.
-- **Remediation status (verified 2026-06-19):** ✅ **Shipped (Phase 1 + Phase 6, commit `593391e`).** Confirmed in `main`: `utils/markdown.py` `_ALLOWED_LINK_SCHEMES` allowlist + scheme validation in the render pipeline (Phase 1). **Phase 6 added `utils/gtk_safe_link.py`** with `on_activate_link()` and `make_safe_label()` factory; wired into `ui/views/chat_bubble.py` and `ui/handlers/chat_render_handler.py` for all user-text labels. The activate-link signal returns True for non-allowlisted schemes (javascript:, file:, data:, custom URIs), blocking navigation. Tests in `tests/test_gtk_safe_link.py` (19 tests) cover each scheme + a consistency check that the gtk_safe_link allowlist matches the markdown allowlist. The Pango whitelist of `a`/`span` was **not** removed (deemed low risk because both layers now block non-allowlisted schemes).
+- **Remediation status (verified 2026-06-19):** ✅ **Shipped (Phase 1 + Phase 6 + Phase 6.1, commits `593391e` + `38a3236`).** Confirmed in `main`: `utils/markdown.py` `_ALLOWED_LINK_SCHEMES` allowlist + scheme validation in the render pipeline (Phase 1). **Phase 6 added `utils/gtk_safe_link.py`** with `on_activate_link()` and `make_safe_label()` factory; wired into `ui/views/chat_bubble.py` and `ui/handlers/chat_render_handler.py` for all user-text labels. The activate-link signal returns True for non-allowlisted schemes (javascript:, file:, data:, custom URIs), blocking navigation. **Phase 6.1 fixed the blockquote path** (`_build_quote_segment`) that was missed in Phase 6 — now uses `make_safe_label(formatted, css_class="blockquote-text")`. Tests in `tests/test_gtk_safe_link.py` (21 tests) cover each scheme, blockquote link guard regression, and a consistency check that the gtk_safe_link allowlist matches the markdown allowlist. The Pango whitelist of `a`/`span` was **not** removed (deemed low risk because both layers now block non-allowlisted schemes).
 
 ### 4.3 Medium Findings
 
@@ -397,7 +397,7 @@ Each finding: stable ID · CodeGuard category · file:line · evidence · impact
 - **Evidence (original review):** `resp = httpx.get(url, timeout=10.0, follow_redirects=True)` — url chosen by the model, no allowlist, not approval-gated.
 - **Impact:** Reachable via prompt injection. No scheme/host filtering and `follow_redirects=True` lets a public URL redirect to `http://127.0.0.1:<port>/`, LAN services, or cloud-metadata endpoints; response text returns to the model (exfiltration channel).
 - **Original fix spec:** Resolve the host and block private/loopback/link-local ranges (re-check after each redirect), restrict schemes to `https`/`http`, and gate `web_fetch` behind approval or an allowlist.
-- **Remediation status (verified 2026-06-19):** ✅ **Shipped (Phase 2 + Phase 6, commit `a6edb30`).** Confirmed in `main`: `agent/tools.py:_web_fetch` now re-checks the full redirect chain (`resp.url` + each entry in `resp.history`) through `_reject_restricted_url()` after the request returns. A public URL that redirects to loopback/private/link-local is now blocked. The opt-in-by-default is per Q3 Captain decision (2026-06-18). Tests `test_web_fetch_rejects_redirect_to_loopback` + `test_web_fetch_rejects_redirect_to_private_ip` + `test_web_fetch_no_redirect_check_when_unrestricted` in `tests/test_tools.py::TestWebFetch` validate end-to-end.
+- **Remediation status (verified 2026-06-19):** ✅ **Shipped (Phase 2 + Phase 6 + Phase 6.1, commits `a6edb30` + `5d6cc35`).** Confirmed in `main`: `agent/tools.py:_web_fetch` now handles redirects manually with `follow_redirects=False`, validating each `Location` header via `_reject_restricted_url()` BEFORE following the redirect. A public URL that redirects to loopback/private/link-local is now blocked before any TCP connection is made to the target. The opt-in-by-default is per Q3 Captain decision (2026-06-18). Tests in `tests/test_tools.py::TestWebFetch` (7 tests) validate end-to-end, including `test_web_fetch_validates_location_before_following` which asserts the blocked URL is never passed to `httpx.get`.
 
 #### MED-4 · [B2] `/reject` reverts ALL tracked files to checkpoint, destroying uncommitted user work
 
@@ -508,7 +508,7 @@ Each finding: stable ID · CodeGuard category · file:line · evidence · impact
 | A1 SQL Injection | ✅ N/A — no SQL anywhere (file/JSON/YAML persistence only) | — |
 | A2 Command Injection | 🟢 Mitigated. CRIT-1 ✅, CRIT-2 ✅, MED-11 ✅, LOW-7 ✅ (Phase 5). MED-2 (exec_command env-scrub) 🟡 partial. | 4 of 5 shipped, 1 partial |
 | A3 Path Traversal | 🟢 Mitigated. LOW-2 ✅, LOW-10 ✅. NEEDS-VERIFICATION (session_key) 🐛 confirmed unaddressed. | 2 of 3 shipped, 1 open |
-| A4 Markup/XSS Injection | 🟢 Mitigated. HIGH-6 🟡 partial, MED-9 ✅, MED-10 ✅, LOW-8 ✅. | 3 of 4 fully shipped, 1 partial |
+| A4 Markup/XSS Injection | ✅ Clear. HIGH-6 ✅ (Phase 6.1), MED-9 ✅, MED-10 ✅, LOW-8 ✅. | 4 of 4 fully shipped |
 | A5 Insecure Deserialization | ✅ Clean — `yaml.safe_load` everywhere, no `pickle`/`eval`/`exec` | LOW-11 ✅ (validation, not deserialization) |
 | B1 Hardcoded Credentials | ✅ None found (only placeholder `sk-your-key-here` examples) | — |
 | B2 Missing Auth / Approval | ⚠️ Partial. CRIT-2 ✅, HIGH-1 ✅, MED-1 ✅, MED-4 ✅. HIGH-2 🕐 deferred, HIGH-4 🕐 deferred. | 4 of 6 shipped, 2 deferred (with triggers) |
@@ -524,7 +524,7 @@ Each finding: stable ID · CodeGuard category · file:line · evidence · impact
 | F2 Missing Validation | ⚠️ Partial. HIGH-5 🟡 partial, MED-7 ✅, MED-12 🟡 partial, LOW-5 ✅, LOW-11 ✅. | 3 of 5 fully shipped, 2 partial |
 | G1 Cleartext Transport | ⚠️ Partial. MED-5 ✅, LOW-1 ✅. HIGH-4 🕐 deferred (wss://-enforcement not implemented). | 2 of 3 shipped, 1 deferred |
 | G2 Disabled Cert Validation | ✅ Clean — no `verify=False` / `CERT_NONE` anywhere | — |
-| G3 SSRF | ⚠️ Partial. MED-3 🟡 partial (re-check-after-redirect not implemented). | 1 partial |
+| G3 SSRF | ✅ Clear. MED-3 ✅ (Phase 6.1 — pre-redirect validation). | 1 of 1 shipped |
 
 **Summary of coverage change since 2026-06-10 original review:** 33 of 46 findings fully shipped · 7 partially shipped · 3 deferred with triggers · 1 open (NEEDS-VERIFICATION `session_key` validation) · 0 knowingly regressed. See individual finding rows for evidence.
 
@@ -751,15 +751,24 @@ Preserve these during remediation — they are genuine strengths:
 ### Phase 6 — Partial backlog purge (DONE 2026-06-19)
 
 - **HIGH-5** ✅ Shipped (`d96780b`). `utils/project_trust.py` per-project trust gate + `agent_runtime_handler._maybe_prompt_project_trust()` dialog.
-- **HIGH-6** ✅ Shipped (`593391e`). `utils/gtk_safe_link.py` `activate-link` scheme guard + `make_safe_label()` factory wired into chat/feed labels.
+- **HIGH-6** ✅ Shipped (`593391e` + `38a3236`). `utils/gtk_safe_link.py` `activate-link` scheme guard + `make_safe_label()` factory wired into chat/feed labels. Phase 6.1 fixed the missed blockquote path.
 - **MED-2** ✅ Shipped (`38d8652`). `utils/env_security.py` shared scrubbed env + `_exec_command` uses it.
-- **MED-3** ✅ Shipped (`a6edb30`). `_web_fetch` re-checks full redirect chain (`resp.url` + `resp.history`) through `_reject_restricted_url()`.
+- **MED-3** ✅ Shipped (`a6edb30` + `5d6cc35`). `_web_fetch` re-checks full redirect chain. Phase 6.1 rewrote to manual redirect handling so validation happens BEFORE following.
 - **MED-12** ✅ Shipped (`4555686`). `utils/mcp_client.py:_sanitize_tool_description()` strips role-header injection, fence-breaks, Anthropic role tokens, directive phrases; called from `get_tools_for_api()`.
 - **MED-13** ✅ Shipped (verified Phase 6). Anthropic `message_delta.usage` parse path at `runtime.py:725-731` already wired to `record_usage`; end-to-end test exists.
 - **A-2** ✅ Reclassified from 🟡 to ✅ after Phase 6 verification.
 - **A-3** ✅ Reclassified from 🟡 to ✅ after Phase 6 verification.
 - **A-7** ✅ Reclassified from 🟡 to ✅ after Phase 6 verification (same as MED-13).
 - **A-8** 🟡 **Partially closed.** `httpx`/`PyYAML`/`faster-whisper` declared; build backend + packages.find + `package-lock.json` cleanup remain.
+
+### Phase 6.1 — Adversarial audit bug fixes (DONE 2026-06-19)
+
+Two real shipping bugs identified by the [Phase 6 adversarial audit](audits/2026-06-19-PHASE-6-ADVERSARIAL-AUDIT.md) (Findings 2 and 6):
+
+- **HIGH-6 (blockquote path)** ✅ Shipped (`38a3236`). `_build_quote_segment` in `chat_bubble.py` was missed in Phase 6 — used raw `Gtk.Label()` + `set_markup()` with no `activate-link` guard. Fixed to use `make_safe_label(formatted, css_class="blockquote-text")`. Regression tests in `TestBlockquoteLinkGuard`.
+- **MED-3 (pre-redirect validation)** ✅ Shipped (`5d6cc35`). `_web_fetch` in `agent/tools.py` used `follow_redirects=True` + post-hoc re-check — TCP connections to private hosts were made before validation. Rewrote to manual redirect loop with `follow_redirects=False`, validating each `Location` header via `_reject_restricted_url()` BEFORE following. New test `test_web_fetch_validates_location_before_following` asserts the blocked URL is never passed to `httpx.get`.
+
+The other 6 audit findings (1, 3, 4, 5, 7, 8) are cosmetic, low-severity, or n/a — not addressed in this phase.
 
 ### Backlog (remaining open work after Phase 6)
 
