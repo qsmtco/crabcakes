@@ -442,21 +442,23 @@ Each finding: stable ID · CodeGuard category · file:line · evidence · impact
 
 ### 4.4 Low Findings
 
-| ID | Cat | Where | Summary | Fix |
-|---|---|---|---|---|
-| LOW-1 | G1 | `agent/tools.py:483`; `runtime.py:1340-1364` | `web_fetch` & provider `base_url` accept cleartext `http://` carrying the API key | Warn/refuse on non-`https` base_url with credentials |
-| LOW-2 | A3 | `agent/runtime.py:1176` | File tools default sandbox to shared `/tmp` when no project is set | Refuse file ops without a project; use a per-session 0700 temp dir |
-| LOW-3 | B2 | `gateway/client.py:188` | Client always requests `operator.admin` scope | Make scopes a constructor param; request minimal set |
-| LOW-4 | D2 | `gateway/client.py:281, 447` | Debug logs dump full gateway frames; empty-session warning logs full message text | Log type/length, never raw content |
-| LOW-5 | F2 | `gateway/client.py:451-453` | Event payloads dispatched without type validation (only the connect snapshot is validated) | Require `isinstance(payload, dict)` + event-name allowlist |
-| LOW-6 | E1 | `utils/stt.py:16, 162-166` | Manifest claims "no network"; `faster_whisper` downloads model weights from HF Hub at runtime; `STT_MODEL_SIZE` accepts arbitrary repo ids | Correct manifest; allowlist sizes; pin `download_root` + `local_files_only` |
-| LOW-7 | A2 | `ui/views/chat_bubble.py:50-59` | `_open_in_viewer` runs `xdg-open` on an LLM-controlled file path (list form, no shell — MIME-dispatch risk) | Restrict to validated image ext/MIME within project; prefer `Gtk.FileLauncher` |
-| LOW-8 | A4 | `utils/icons.py:82-92, 148-156` | Unescaped color/letter/initials interpolated into generated SVG (librsvg disables scripting/XXE) | `xml.sax.saxutils.escape` text; validate `^#[0-9A-Fa-f]{6}$` |
-| LOW-9 | D1 | `utils/git_ops.py` (many) → `ui/handlers/review_handler.py:143` | Raw `str(e)` GitPython errors (abs paths, commands) surfaced to the UI | Log full, show generic message |
-| LOW-10 | A3 | `utils/diff_parser.py:149-150` | `lstrip("a/")`/`lstrip("b/")` strips a char *set*, mangling real paths (e.g. `a/app.py`→`pp.py`) | Use prefix removal (`re.sub(r'^a/', '', p)`) |
-| LOW-11 | A5/validation | `utils/agent_defs.py:197-223` | `load_agent_defs` does not run `validate_agent_def` on load (tools/provider/mcp unvalidated) | Validate on load; quarantine failures |
-| LOW-12 | F1 | `utils/feed_store.py:122-128`; `utils/conversation_store.py` | `.crabcakes/feed.json` snapshots (may contain pasted secrets) are not auto-gitignored | Append `.crabcakes/` state files to project `.gitignore` on creation |
-| LOW-13 | F2 | `utils/feed_store.py:122-128` | Standalone `save_feed` is non-atomic (interrupted write truncates all cards) | Write `.tmp` + `os.rename` under the existing flock |
+> **Status legend:** ✅ Shipped (Phase 1–5 + LOW-7 wiring follow-up) · 🅿️ Stale-by-evolution (review cited code that no longer exists) · 🐛 Open
+
+| ID | Cat | Where | Summary | Fix | Status |
+|---|---|---|---|---|---|
+| LOW-1 | G1 | `agent/tools.py:483`; `runtime.py:1340-1364` | `web_fetch` & provider `base_url` accept cleartext `http://` carrying the API key | Warn/refuse on non-`https` base_url with credentials | ✅ Shipped (Phase 3) |
+| LOW-2 | A3 | `agent/runtime.py:1176` | File tools default sandbox to shared `/tmp` when no project is set | Refuse file ops without a project; use a per-session 0700 temp dir | ✅ Shipped (Phase 1) |
+| LOW-3 | B2 | `gateway/client.py:188` | Client always requests `operator.admin` scope | Make scopes a constructor param; request minimal set | ✅ Shipped (Phase 2) |
+| LOW-4 | D2 | `gateway/client.py:281, 447` | Debug logs dump full gateway frames; empty-session warning logs full message text | Log type/length, never raw content | ✅ Shipped (Phase 2) |
+| LOW-5 | F2 | `gateway/client.py:451-453` | Event payloads dispatched without type validation (only the connect snapshot is validated) | Require `isinstance(payload, dict)` + event-name allowlist | ✅ Shipped (Phase 2) |
+| LOW-6 | E1 | `utils/stt.py:16, 162-166` | Manifest claims "no network"; `faster_whisper` downloads model weights from HF Hub at runtime; `STT_MODEL_SIZE` accepts arbitrary repo ids | Correct manifest; allowlist sizes; pin `download_root` + `local_files_only` | ✅ Shipped (Phase 3) |
+| LOW-7 | A2 | `ui/views/chat_bubble.py:50-59` | `_open_in_viewer` runs `xdg-open` on an LLM-controlled file path (list form, no shell — MIME-dispatch risk) | Restrict to validated image ext/MIME within project; prefer `Gtk.FileLauncher` | ✅ Shipped (Phase 5) — path validation via `os.path.realpath` + `os.path.commonpath` against active project / home / /tmp; env var wired in `ui/wiring.py` and set from `ui/window.py` project callbacks |
+| LOW-8 | A4 | `utils/icons.py:82-92, 148-156` | Unescaped color/letter/initials interpolated into generated SVG (librsvg disables scripting/XXE) | `xml.sax.saxutils.escape` text; validate `^#[0-9A-Fa-f]{6}$` | ✅ Shipped (Phase 3) |
+| LOW-9 | D1 | `utils/git_ops.py` (many) → `ui/handlers/review_handler.py:143` | Raw `str(e)` GitPython errors (abs paths, commands) surfaced to the UI | Log full, show generic message | ✅ Shipped (Phase 3) |
+| LOW-10 | A3 | `utils/diff_parser.py:149-150` | `lstrip("a/")`/`lstrip("b/")` strips a char *set*, mangling real paths (e.g. `a/app.py`→`pp.py`) | Use prefix removal (`re.sub(r'^a/', '', p)`) | ✅ Shipped (Phase 3) |
+| LOW-11 | A5/validation | `utils/agent_defs.py:197-223` | `load_agent_defs` does not run `validate_agent_def` on load (tools/provider/mcp unvalidated) | Validate on load; quarantine failures | ✅ Shipped (Phase 3) |
+| LOW-12 | F1 | `utils/feed_store.py:122-128`; `utils/conversation_store.py` | `.crabcakes/feed.json` snapshots (may contain pasted secrets) are not auto-gitignored | Append `.crabcakes/` state files to project `.gitignore` on creation | ✅ Shipped (Phase 4) — `_ensure_gitignore_entry` helper creates/updates gitignore with whole-line match, called by all three write functions in `utils/feed_store.py` |
+| LOW-13 | F2 | `utils/feed_store.py:122-128` | Standalone `save_feed` is non-atomic (interrupted write truncates all cards) | Write `.tmp` + `os.rename` under the existing flock | ✅ Shipped (Phase 4) — `_atomic_write_json` (0o600) and `_atomic_write_text` (0o644) helpers; all three write functions in `utils/feed_store.py` use them |
 
 > **NEEDS VERIFICATION:** `agent/runtime.py:730, 770` build conversation filenames from `session_key` without an explicit `^[A-Za-z0-9_:-]+$` check. If any code path lets a remote/gateway peer choose `session_key`, this is a path-traversal read/write primitive. Confirm `session_key` is validated at its producers.
 
@@ -610,9 +612,9 @@ sequenceDiagram
 | A-7 | Med | Streaming path drops usage → cost limits ineffective (also MED-13) | `runtime.py:614, 631, 1424` | Parse streaming usage |
 | A-8 | Low/High packaging | `pyproject.toml` is broken for install: `build-backend = "setuptools.backends._legacy:_Backend"` is not a real backend; `packages.find include=["ui/*", ...]` misuses glob; `httpx`/`PyYAML`/`faster-whisper` are imported but absent from dependencies; a vestigial 6-line empty `package-lock.json` exists with no `package.json` | `pyproject.toml`; `tools.py:26`, `providers_store.py:71`, `stt.py` | Fix backend to `setuptools.build_meta`, correct package patterns, declare all runtime deps, delete `package-lock.json` |
 | A-9 | Low | `tests/test_architecture.py` references `pytest.skip` without importing `pytest` (latent `NameError`) and enforces less than the README implies | `test_architecture.py:18` | Import pytest; extend coverage |
-| A-10 | Low | Dead/vestigial code: `utils/image_utils.py` has zero importers; `left_panel.py:13` unused `PromptsHandler` import; `review_log.py:19` references nonexistent `agent/dream_engine. |
+| A-10 | Low | Dead/vestigial code: `utils/image_utils.py` has zero importers; `left_panel.py:13` unused `PromptsHandler` import; `review_log.py:19` references nonexistent `agent/dream_engine`; `ui/handlers/feed_handler.py` has a duplicate `Remove` column header (table-formatting bug) | grep | Remove | ✅ Shipped (sub-items 1, 3 in Phase 4) · 🅿️ Stale-by-evolution (sub-items 2, 4: review cited `left_panel.py:13` `PromptsHandler` import that does not exist; `Remove` column header was in older `Gtk.TreeView` UI replaced by `ListBox` rows) |
 
-| A-10 | Low | Dead/vestigial code: `utils/image_utils.py` has zero importers; `left_panel.py:13` unused `PromptsHandler` import; `review_log.py:19` references nonexistent `agent/dream_engine`; `ui/handlers/feed_handler.py` has a duplicate `Remove` column header (table-formatting bug) | grep | Remove |
+| A-10 | Low | Dead/vestigial code: `utils/image_utils.py` has zero importers; `left_panel.py:13` unused `PromptsHandler` import; `review_log.py:19` references nonexistent `agent/dream_engine`; `ui/handlers/feed_handler.py` has a duplicate `Remove` column header (table-formatting bug) | grep | Remove | ✅ Shipped (sub-items 1, 3 in Phase 4) · 🅿️ Stale-by-evolution (sub-items 2, 4) |
 | A-11 | Low | God objects: `agent/runtime.py` (1,501 LOC) mixes provider adapters, tool loop, cost tracking, persistence, and approval | metrics | Extract provider adapters + persistence |
 
 ### 6.5 Metrics
