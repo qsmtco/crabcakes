@@ -163,8 +163,26 @@ class AgentRuntimeHandler:
 
         This injects project_path into all existing conversations and ensures
         new conversations get the correct project context (fixes Phase A root cause).
+
+        HIGH-5 (Phase 6): If the project has a `.crabcakes/` directory with
+        rule/bug files AND is not yet trusted, show a confirmation dialog
+        before injecting its content. The dialog is shown asynchronously via
+        GLib.idle_add (we're called from a tab-open callback that may not be
+        on the GTK main thread).
         """
         self._active_project = (project_name, project_path)
+
+        # HIGH-5: Schedule a trust check + dialog on the main thread, BEFORE
+        # we rebuild system prompts. The dialog blocks visually but doesn't
+        # block the call site; subsequent prompts will pull fresh state.
+        if self._GLib is not None:
+            self._GLib.idle_add(self._maybe_prompt_project_trust, project_name, project_path)
+        else:
+            # No GLib (tests): skip the dialog and rely on the trust store.
+            # If the project isn't trusted, compose_system_prompt will skip
+            # the .crabcakes/ files anyway (fail-secure default).
+            pass
+
         # Update project_path on all existing conversations
         for sk, agent_def in self._agents.items():
             rt = self._runtimes.get(agent_def.display_name)
@@ -181,6 +199,56 @@ class AgentRuntimeHandler:
                     agent_role=agent_def.role,
                 )
         logger.info("AgentRuntimeHandler: active project set to %s (%s)", project_name, project_path)
+
+    def _maybe_prompt_project_trust(self, project_name: str, project_path: str) -> None:
+        """HIGH-5: Show a confirmation dialog if the project has .crabcakes/
+        content that hasn't been trusted yet. Runs on the GTK main thread
+        (scheduled via GLib.idle_add)."""
+        from utils.project_trust import (
+            has_crabcakes_content,
+            is_project_trusted,
+            trust_project,
+        )
+        if not has_crabcakes_content(project_path):
+            return  # nothing to gate
+        if is_project_trusted(project_path):
+            return  # already trusted
+
+        try:
+            import gi
+            gi.require_version("Gtk", "4.0")
+            from gi.repository import Gtk
+        except (ImportError, ValueError):
+            logger.warning("HIGH-5: Gtk not available; skipping trust dialog")
+            return
+
+        dialog = Gtk.MessageDialog(
+            modal=True,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text=f"Trust project “{project_name}”?",
+        )
+        dialog.set_property(
+            "secondary-text",
+            "This project contains a .crabcakes/ directory with rules and "
+            "bug-journal entries. These will be injected into every agent's "
+            "system prompt for this project. Only approve if you trust the "
+            "project's contents — untrusted project content can attempt to "
+            "manipulate agent behavior.",
+        )
+
+        def on_response(_dialog, response_id):
+            try:
+                if response_id == Gtk.ResponseType.YES:
+                    trust_project(project_path, reason="user-approved-via-dialog")
+                    logger.info("HIGH-5: user trusted project %s via dialog", project_path)
+                else:
+                    logger.info("HIGH-5: user declined trust for project %s", project_path)
+            finally:
+                _dialog.close()
+
+        dialog.connect("response", on_response)
+        dialog.show()
 
     def clear_active_project(self) -> None:
         """

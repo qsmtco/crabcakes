@@ -213,6 +213,21 @@ class TestVariableContractIntegration:
 class TestProjectContextInjection:
     """Test bug journal and project rules injection into system prompts."""
 
+    @pytest.fixture(autouse=True)
+    def _trust_tmp_project(self, tmp_path, monkeypatch):
+        """Auto-trust the tmp_path so the HIGH-5 gate doesn't block injection.
+
+        Phase 6 added the trust gate (utils.project_trust). Tests that exercise
+        the injection logic pre-trust their tmp project so the test runs as if
+        the user had approved trust via the UI dialog.
+        """
+        from utils import project_trust
+        # Redirect trust store to a tmp dir so we don't pollute user config
+        cfg_dir = tmp_path / "_cfg"
+        cfg_dir.mkdir()
+        monkeypatch.setattr(project_trust.get_config_dir, "__call__", lambda: str(cfg_dir))
+        project_trust.trust_project(str(tmp_path))
+
     def test_bug_journal_injected_by_role(self, tmp_path):
         """When project has {role}-bugs.md and agent has that role, it appears in prompt."""
         crab_dir = tmp_path / ".crabcakes"

@@ -243,30 +243,45 @@ def compose_system_prompt(
             parts.append(ct)
 
     # 7. Per-agent self-improvement context files (bug journal + project rules)
+    # HIGH-5 (Phase 6): Gate `.crabcakes/` ingestion behind a per-project
+    # trust check on first open. The fence wraps the content; the trust gate
+    # decides whether to load it at all. If the project isn't trusted AND no
+    # UI callback is registered, the files are silently skipped (fail-secure).
     if project_path and agent_role:
-        si_config = _get_agent_self_improvement_config(agent_role)
+        from utils.project_trust import request_trust_if_needed
+        # Single trust check per compose call (not per file)
+        _trusted = request_trust_if_needed(project_path)
 
-        if si_config.get("bug_journal", True):
-            bugs_file = f"{agent_role}-bugs.md"
-            bug_journal = _load_project_context_file(project_path, bugs_file)
-            # HIGH-5: Wrap project-supplied content in untrusted-data fence
-            # to mitigate prompt injection from cloned repos.
-            if bug_journal and bug_journal.strip():
-                parts.append(_untrusted_fence(
-                    bug_journal,
-                    f".crabcakes/{agent_role}-bugs.md",
-                ))
+        if _trusted:
+            si_config = _get_agent_self_improvement_config(agent_role)
 
-        if si_config.get("project_rules", True):
-            rules_file = f"{agent_role}-rules.md"
-            project_rules = _load_project_context_file(project_path, rules_file)
-            # HIGH-5: Wrap project-supplied content in untrusted-data fence
-            # to mitigate prompt injection from cloned repos.
-            if project_rules and project_rules.strip():
-                parts.append(_untrusted_fence(
-                    project_rules,
-                    f".crabcakes/{agent_role}-rules.md",
-                ))
+            if si_config.get("bug_journal", True):
+                bugs_file = f"{agent_role}-bugs.md"
+                bug_journal = _load_project_context_file(project_path, bugs_file)
+                # HIGH-5: Wrap project-supplied content in untrusted-data fence
+                # to mitigate prompt injection from cloned repos.
+                if bug_journal and bug_journal.strip():
+                    parts.append(_untrusted_fence(
+                        bug_journal,
+                        f".crabcakes/{agent_role}-bugs.md",
+                    ))
+
+            if si_config.get("project_rules", True):
+                rules_file = f"{agent_role}-rules.md"
+                project_rules = _load_project_context_file(project_path, rules_file)
+                # HIGH-5: Wrap project-supplied content in untrusted-data fence
+                # to mitigate prompt injection from cloned repos.
+                if project_rules and project_rules.strip():
+                    parts.append(_untrusted_fence(
+                        project_rules,
+                        f".crabcakes/{agent_role}-rules.md",
+                    ))
+        else:
+            _logger.info(
+                "HIGH-5: project %s not trusted; skipping .crabcakes/ "
+                "bug journal + rules ingestion",
+                project_path,
+            )
 
     if not parts:
         _logger.warning("No system prompt templates found in %s", SYSTEM_DIR)
