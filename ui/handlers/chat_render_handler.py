@@ -28,6 +28,7 @@ from gi.repository import Gtk
 
 from utils.escaping import escape_for_pango
 from utils.markdown import format_markdown
+from utils.gtk_safe_link import make_safe_label  # HIGH-6: activate-link guard
 from concurrent.futures import ThreadPoolExecutor
 
 from ui.views.chat_bubble import build_role_bubble, process_segments, _clear_crabcards_registry
@@ -117,14 +118,8 @@ def _assemble_from_processed(role: str, raw_text: str, processed: list[dict], on
             if not markup.strip():
                 bubble.append(Gtk.Box())
                 continue
-            label = Gtk.Label()
-            label.set_markup(markup)
-            label.set_xalign(0)
-            label.set_wrap(True)
-            label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-            label.set_can_focus(False)
-            label.set_selectable(True)
-            label.add_css_class("chat-msg-label")
+            # HIGH-6: make_safe_label wires the activate-link scheme guard
+            label = make_safe_label(markup, css_class="chat-msg-label")
             bubble.append(label)
         elif seg_type == "code":
             code_markup = pseg.get("code_markup", "")

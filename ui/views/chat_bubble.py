@@ -39,6 +39,7 @@ from utils.escaping import escape_for_pango
 from utils.markdown import format_markdown
 from utils.block_parser import extract_blocks
 from utils.crabcard_parser import is_crabcards_placeholder, get_placeholder_index as _get_placeholder_index
+from utils.gtk_safe_link import make_safe_label  # HIGH-6: activate-link guard
 
 # Module-level registry for placeholder card lookup in chat bubbles.
 # Populated by ChatRenderHandler when crabcards are extracted.
@@ -324,14 +325,7 @@ def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool =
             if not markup.strip():
                 bubble.append(Gtk.Box())  # empty spacer
                 continue
-            label = Gtk.Label()
-            label.set_markup(markup)
-            label.set_xalign(0)
-            label.set_wrap(True)
-            label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-            label.set_can_focus(False)
-            label.set_selectable(True)
-            label.add_css_class("chat-msg-label")
+            label = make_safe_label(markup, css_class="chat-msg-label")
             bubble.append(label)
         elif seg_type == "code":
             # Build code widget using pre-highlighted markup
@@ -610,13 +604,9 @@ def _make_table_cell(text: str, is_header: bool = False, is_odd_row: bool = Fals
     # Apply inline markdown formatting (escape first, then format)
     escaped = escape_for_pango(text)
     formatted = format_markdown(escaped)
-    label.set_markup(formatted)
-    label.set_xalign(0)
+    # HIGH-6: use make_safe_label so links are gated on scheme allowlist
+    label = make_safe_label(formatted)
     label.set_valign(Gtk.Align.CENTER)
-    label.set_wrap(True)
-    label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-    label.set_can_focus(False)
-    label.set_selectable(True)
 
     # Styling
     if is_header:
@@ -643,14 +633,9 @@ def _build_text_segment(seg: dict) -> Gtk.Widget:
     # original text don't corrupt the Pango tags that format_markdown produces.
     escaped = escape_for_pango(raw)
     formatted = format_markdown(escaped)
-    label = Gtk.Label()
-    label.set_markup(formatted)
-    label.set_xalign(0)
-    label.set_wrap(True)
-    label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-    label.set_can_focus(False)
-    label.set_selectable(True)
-    label.add_css_class("chat-msg-label")
+    # HIGH-6: make_safe_label wires the activate-link handler so non-allowlisted
+    # schemes (javascript:, file://, custom URIs, etc.) cannot be opened.
+    label = make_safe_label(formatted, css_class="chat-msg-label")
     return label
 
 
