@@ -625,13 +625,34 @@ def _reject_restricted_url(url: str) -> ToolResult | None:
 
 def _web_fetch(url: str, max_chars: int = 10000) -> ToolResult:
     """Fetch and extract readable content from a URL."""
-    # MED-3: Opt-in host allowlist check
+    # MED-3: Opt-in host allowlist check (initial URL)
     blocked = _reject_restricted_url(url)
     if blocked is not None:
         return blocked
+
+    # MED-3 (re-check-after-redirect): Track every URL the redirect chain visits and
+    # run the same allowlist check on each. This closes the gap where a public URL
+    # redirects to a private/loopback/link-local range.
+    def _validate_response(resp: httpx.Response) -> ToolResult | None:
+        # When restricted mode is on, re-check the final URL (and any intermediate
+        # hops the client visited) against the private-IP blocklist.
+        if not _is_web_fetch_restricted():
+            return None
+        for hop_url in [str(resp.url)] + [str(h.url) for h in resp.history]:
+            blocked = _reject_restricted_url(hop_url)
+            if blocked is not None:
+                return ToolResult(
+                    success=False,
+                    error=f"MED-3: Redirected to blocked URL: {hop_url}",
+                )
+        return None
+
     try:
         resp = httpx.get(url, timeout=10.0, follow_redirects=True)
         resp.raise_for_status()
+        redirected_blocked = _validate_response(resp)
+        if redirected_blocked is not None:
+            return redirected_blocked
         content_type = resp.headers.get("content-type", "")
         if "text/html" not in content_type and "text/plain" not in content_type:
             return ToolResult(success=False, error=f"Cannot fetch non-text content type: {content_type}")
