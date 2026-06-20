@@ -780,17 +780,29 @@ Five findings from the [Phase 6.1 adversarial audit](audits/2026-06-19-PHASE-6.1
 - **P6.1-4** ✅ Documented. DNS rebinding TOCTOU limitation added to `_reject_restricted_url` docstring. Inherent to DNS-based SSRF prevention without custom transport — not a regression.
 - **P6.1-5** ✅ Fixed. §8 MED-3 row updated to distinguish Phase 6 (post-hoc re-check) from Phase 6.1 (manual redirect loop with pre-validation).
 
+### Phase 6.3 — Test hygiene & dead code (DONE 2026-06-19)
+
+Four findings from the Phase 6.2 independent re-audit ([`docs/audits/2026-06-19-QASTER-PHASE-6.2-AUDIT.md`](audits/2026-06-19-QASTER-PHASE-6.2-AUDIT.md)) — three test-theater / dead-code, one new MED:
+
+- **QA-NEW-1** ✅ Fixed (`e92fbf3`). `test_web_fetch_validates_location_before_following` now uses the real `_reject_restricted_url()` with `CRABCAKES_WEB_FETCH_RESTRICT=1` instead of a fake that only checked `127.0.0.1`/`localhost`/`::1`. The previous fake would have passed even if the production check were broken for any other private-IP form (RFC1918, 169.254.x, IPv6 link-local, etc.). `getaddrinfo` is shimmed per-test to return public IPs for the test hostnames.
+- **QA-NEW-2** ✅ Fixed (`e92fbf3`). New `test_web_fetch_blocks_private_ip_mid_redirect_chain` exercises a 5-hop public chain where hop 5 targets `127.0.0.1` and asserts the MED-3 check fires before the 6th `httpx.get` call (exactly 5 calls made, not 6+).
+- **QA-NEW-3** 🐛 **Open (Phase 7 backlog).** DNS-rebinding TOCTOU window between `_reject_restricted_url`'s `getaddrinfo` call and `httpx.get`'s independent resolution. **Plus: `_is_web_fetch_restricted()` defaults to OFF**, so an unrestricted agent has the full SSRF surface; the restricted-mode gate is currently opt-in per Q3 Captain decision. Inherent limitation of DNS-based SSRF prevention; proper mitigation is OS-level network namespace or a custom `httpx` transport that pins resolved IPs across the request lifecycle. See audit doc §"QA-NEW-3" for full analysis.
+- **QA-NEW-4** ✅ Fixed (`e92fbf3`). Removed dead `redirect_count` variable (assigned + incremented, never read) and unreachable `resp = None` initialization. The `for/else` construct handles the max-redirects case cleanly.
+
+126 of 126 security-surface tests pass after Phase 6.3.
+
 ### Backlog (remaining open work after Phase 6)
 
 1. 🐛 **session_key validation** (NEEDS-VERIFICATION, §4.4 footnote) — only known unaddressed finding in the spec. `agent/runtime.py:881, 973` build `_conversations_dir()/<session_key>.json` with no regex validation.
-2. 🐛 **A-6** shutdown lifecycle wiring — `stop_all` not connected to `close-request`.
-3. 🐛 **A-9** `import pytest` in `tests/test_architecture.py:18` (latent `NameError`).
-4. 🐛 **A-4** `_build_awareness_prefix` duplication not refactored.
-5. 🟡 **A-8 packaging residue** — build backend (`setuptools.buildends._legacy:_Backend`), `packages.find` patterns, and vestigial `package-lock.json` not addressed.
-6. 🕐 **HIGH-2** (revisit when gateway adds `origin`).
-7. 🕐 **HIGH-4** (revisit when gateway binds non-loopback).
-8. 🕐 **A-11** (revisit when file > 2000 LOC — already past).
-9. 🕐 14 pre-existing test failures (out of scope per C+A pass).
+2. 🐛 **QA-NEW-3 (MED)** DNS-rebinding TOCTOU + `_is_web_fetch_restricted()` defaults to OFF. Proper fix needs OS-level network sandbox or a custom `httpx` transport that pins resolved IPs (Phase 6.3 commit `e92fbf3`).
+3. 🐛 **A-6** shutdown lifecycle wiring — `stop_all` not connected to `close-request`.
+4. 🐛 **A-9** `import pytest` in `tests/test_architecture.py:18` (latent `NameError`).
+5. 🐛 **A-4** `_build_awareness_prefix` duplication not refactored.
+6. 🟡 **A-8 packaging residue** — build backend (`setuptools.buildends._legacy:_Backend`), `packages.find` patterns, and vestigial `package-lock.json` not addressed.
+7. 🕐 **HIGH-2** (revisit when gateway adds `origin`).
+8. 🕐 **HIGH-4** (revisit when gateway binds non-loopback).
+9. 🕐 **A-11** (revisit when file > 2000 LOC — already past).
+10. 🕐 14 pre-existing test failures (out of scope per C+A pass).
 
 ---
 
