@@ -18,7 +18,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-
+from utils.git_ops import _safe_error  # LOW-9
 
 # MED-5: Custom redirect handler that strips Authorization on cross-host redirects
 class _NoAuthRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -242,6 +242,6 @@ def _do_request(
         return TestResult(
             ok=False,
             latency_ms=elapsed_ms,
-            error=str(e)[:200],
+            error=_safe_error(e),
             model_used=model,
         )

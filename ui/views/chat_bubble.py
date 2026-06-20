@@ -47,15 +47,79 @@ _crabcards_registry: dict[int, tuple] = {}
 from utils.syntax_highlight import highlight
 
 
+import shutil
+import subprocess
+
+# LOW-7: paths outside these roots are rejected to prevent the LLM from
+# tricking the user into opening /etc/passwd or similar sensitive files.
+_ALLOWED_ROOTS_FALLBACK = (
+    os.path.expanduser("~"),
+    "/tmp",
+)
+
+
+def _get_allowed_roots() -> tuple[str, ...]:
+    """LOW-7: compute the set of allowed root paths for the image viewer.
+
+    Reads CRABCAKES_ACTIVE_PROJECT_PATH env var if set, plus the fallback
+    roots (home + /tmp). The active project path is passed by the handler
+    that owns the chat bubble, via os.environ (ui/handlers/ sets this when
+    a project is active).
+    """
+    roots: list[str] = []
+    project = os.environ.get("CRABCAKES_ACTIVE_PROJECT_PATH", "").strip()
+    if project:
+        roots.append(project)
+    roots.extend(_ALLOWED_ROOTS_FALLBACK)
+    return tuple(roots)
+
+
+def _is_path_in_allowed_roots(file_path: str) -> bool:
+    """LOW-7: return True if file_path is under one of the allowed roots.
+
+    Resolves symlinks via realpath. If the resolved path is not under any
+    allowed root, returns False.
+    """
+    try:
+        resolved = os.path.realpath(file_path)
+    except OSError:
+        return False
+    for root in _get_allowed_roots():
+        try:
+            root_resolved = os.path.realpath(root)
+        except OSError:
+            continue
+        try:
+            common = os.path.commonpath([resolved, root_resolved])
+        except ValueError:
+            # Different drives on Windows
+            continue
+        if common == root_resolved:
+            return True
+    return False
+
+
 def _open_in_viewer(file_path: str) -> None:
-    """Open file_path in the system's default image viewer."""
-    import subprocess, shutil
-    if not os.path.isfile(file_path):
+    """Open file_path in the system's default image viewer.
+
+    LOW-7: only opens files inside an allowed root (active project, home, /tmp).
+    Logs a warning if the path is rejected.
+    """
+    if not file_path or not os.path.isfile(file_path):
+        return
+    if not _is_path_in_allowed_roots(file_path):
+        import logging
+        logging.getLogger(__name__).warning(
+            "LOW-7: refusing to open %r — not under any allowed root",
+            file_path,
+        )
         return
     opener = shutil.which("xdg-open") or shutil.which("open") or "xdg-open"
     try:
+        # Use list-form (no shell), and pass only the file path (no extra args)
+        # to avoid argument injection.
         subprocess.Popen([opener, file_path])
-    except Exception:
+    except (OSError, ValueError):
         pass
 
 

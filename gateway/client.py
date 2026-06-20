@@ -16,6 +16,7 @@ import base64
 import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -220,7 +221,90 @@ def _reload_identity():
 # Importing the module is now safe even if ~/.openclaw/identity/device-auth.json is absent.
 
 # Auth scopes
+# LOW-3: ALL_SCOPES is preserved for backward compatibility;
+# GatewayClient now accepts a scopes parameter in __init__.
 ALL_SCOPES = "operator.admin,operator.approvals,operator.pairing"
+# LOW-3: default scope list used when no scopes parameter is supplied
+DEFAULT_SCOPES = ["operator.admin", "operator.approvals", "operator.pairing"]
+
+# LOW-4: sensitive keys to redact from gateway log previews
+_GATEWAY_REDACT_KEYS = (
+    "apiKey", "apikey", "api_key",
+    "token", "deviceToken", "device_token",
+    "password", "secret",
+)
+
+
+def _redact_gateway_log_preview(raw: str) -> str:
+    """Replace sensitive values with *** in a gateway log preview.
+
+    Matches:
+      - JSON-style "key":"value" and 'key': value (case-insensitive key)
+      - URL query-string style ?apiKey=secret&... or &apiKey=secret
+      - Authorization: Bearer <token> headers
+    Truncation is the caller's responsibility (raw[:N] is the input).
+    """
+    out = raw
+    for key in _GATEWAY_REDACT_KEYS:
+        # Pattern 1: JSON-style "key":"value" or "key": value
+        # Excludes '=', '&' so this can't bleed into query-string contexts
+        json_pattern = re.compile(
+            rf'("{re.escape(key)}"\s*:\s*)"?[^"\s,}}=&]+',
+            re.IGNORECASE,
+        )
+        out = json_pattern.sub(r'\1"***"', out)
+        # Pattern 2: URL query-string style ?apiKey=secret&... or &apiKey=secret
+        # (?:...) is non-capturing so group(1) = [?&]key, group(2) = key
+        qs_pattern = re.compile(
+            rf'(?:([?&])({re.escape(key)})=[^&"\s]+)',
+            re.IGNORECASE,
+        )
+        out = qs_pattern.sub(
+            lambda m: m.group(1) + m.group(2) + '=***',
+            out,
+        )
+    # Pattern 3: Authorization: Bearer <token> (case-insensitive)
+    bearer_pattern = re.compile(
+        r'(Bearer\s+)([^\s"}]+)',
+        re.IGNORECASE,
+    )
+    out = bearer_pattern.sub(r'\1***', out)
+    return out
+
+
+# LOW-5: known event names (used only for DEBUG logging — unknown events still
+# pass through, but we log a warning when payload type is wrong)
+_KNOWN_EVENT_NAMES = frozenset({
+    "agent", "agent.start", "agent.end", "agent.thinking",
+    "chat", "chat.final", "chat.delta",
+    "message", "message.received",
+    "tick",
+    "approve.required", "approve.resolved",
+})
+
+
+def _validate_event(name: object, payload: object) -> bool:
+    """LOW-5: return True if (name, payload) is a valid gateway event.
+
+    Validation rules:
+      - name must be a non-empty str
+      - payload must be a dict (events are JSON objects)
+    Unknown event names pass through (we don't break new events) but are
+    logged at DEBUG. Malformed (wrong types) returns False and the event
+    is dropped.
+    """
+    if not isinstance(name, str) or not name:
+        _logger.warning("LOW-5: dropping event with non-string/empty name: %r", name)
+        return False
+    if not isinstance(payload, dict):
+        _logger.warning(
+            "LOW-5: dropping event %r with non-dict payload (type=%s)",
+            name, type(payload).__name__,
+        )
+        return False
+    if name not in _KNOWN_EVENT_NAMES:
+        _logger.debug("LOW-5: passing through unknown event name: %r", name)
+    return True
 
 
 # ── Gateway Client ─────────────────────────────────────────────────────────────
@@ -244,6 +328,7 @@ class GatewayClient:
         on_error: Callable[[str], None],
         on_event: Callable[[str, dict[str, Any]], None],
         on_tick: Callable[[], None] | None = None,
+        scopes: list[str] | None = None,  # LOW-3
     ) -> None:
         self.url: str = url
         self.on_connect: Callable[[], None] = on_connect
@@ -264,6 +349,11 @@ class GatewayClient:
         # Constructing GatewayClient is now safe even if ~/.openclaw/identity/ is absent.
         self._identity_loaded: bool = False
         self._id: dict[str, Any] = {}
+        # LOW-3: scopes is a constructor parameter; default to all 3 if None
+        self._scopes: list[str] = list(scopes) if scopes is not None else list(DEFAULT_SCOPES)
+        if not self._scopes:
+            raise ValueError("LOW-3: scopes must be non-empty")
+        self._scopes_str: str = ",".join(self._scopes)
         self._RPC_TIMEOUT_SEC: float = 30.0
         self._on_res: Callable[[str, dict[str, Any]], None] | None = None  # res correlation callback
 
@@ -433,11 +523,12 @@ class GatewayClient:
         ts = int(time.time() * 1000)
 
         # 2. Build v3 auth payload
+        # LOW-3: use self._scopes_str instead of ALL_SCOPES
         v3_payload = (
             f"v3|{self._id['device_id']}"
             f"|openclaw-control-ui|ui"
             f"|operator"
-            f"|{ALL_SCOPES}"
+            f"|{self._scopes_str}"
             f"|{ts}"
             f"|{self._id['device_token']}"
             f"|{nonce}"
@@ -465,7 +556,7 @@ class GatewayClient:
                     "displayName": "crabcakes",
                 },
                 "role": "operator",
-                "scopes": ALL_SCOPES.split(","),
+                "scopes": self._scopes,  # LOW-3: use constructor's scoped list
                 "auth": {"token": self._id["device_token"]},
                 "locale": "en-US",
                 "userAgent": "crabcakes/1.0",
@@ -503,13 +594,17 @@ class GatewayClient:
         assert self._ws is not None, "_ws must be set before _listen"
         async for raw in self._ws:
             self._expire_pending()
-            _logger.debug("[gateway>>] %s", raw[:300])
+            # LOW-4: redact sensitive keys before logging
+            _logger.debug("[gateway>>] %s", _redact_gateway_log_preview(raw[:300]))
             self._expire_pending()
             try:
                 msg = json.loads(raw)
                 if msg.get("type") == "event":
                     evt_name = msg.get("event", "")
-                    GLib.idle_add(self.on_event, evt_name, msg.get("payload", {}))
+                    payload = msg.get("payload", {})
+                    # LOW-5: validate before dispatch — drop if name/payload have wrong types
+                    if _validate_event(evt_name, payload):
+                        GLib.idle_add(self.on_event, evt_name, payload)
                 elif msg.get("type") == "res":
                     req_id = msg.get("id")
                     with self._pending_lock:
@@ -520,7 +615,11 @@ class GatewayClient:
                     if self._on_res:
                         GLib.idle_add(self._on_res, req_id, msg.get("payload", {}))
             except json.JSONDecodeError:
-                _logger.warning("Gateway sent malformed JSON: %r", raw[:200])
+                # LOW-4: truncate to 80 chars and redact sensitive keys
+                _logger.warning(
+                    "Gateway sent malformed JSON (first 80 chars redacted): %s",
+                    _redact_gateway_log_preview(raw[:80]),
+                )
             except Exception as exc:
                 _logger.error("Unexpected error processing gateway message: %s", exc)
 

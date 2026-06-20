@@ -377,8 +377,13 @@ def _edit_file(path: str, old_text: str, new_text: str, project_path: str, sessi
         return ToolResult(success=False, error=f"Cannot write {path}: {e}")
 
 
-def _exec_command(command: str, project_path: str, timeout: int = 30, session_key: str = "_unknown", approval_callback=None) -> ToolResult:
-    """Run a shell command in the project directory. Requires PM approval."""
+def _exec_command(command: str, project_path: str, timeout: int = 30, session_key: str = "_unknown", approval_callback=None, scratch_dir: str | None = None) -> ToolResult:
+    """Run a shell command in the project directory. Requires PM approval.
+
+    Args:
+        scratch_dir: Per-session scratch directory for exec_command working directory.
+            When provided, subprocess runs in scratch_dir instead of project_path.
+    """
     # Hard blocklist check first — always denied before callback fires
     if _is_blocked(command):
         return ToolResult(success=False, error=f"Command blocked by safety policy: {command}")
@@ -388,11 +393,13 @@ def _exec_command(command: str, project_path: str, timeout: int = 30, session_ke
         return ToolResult(success=False, error="exec_command requires PM approval", duration_ms=0)
 
     start = time.monotonic()
+    # Use scratch_dir if provided, otherwise fall back to project_path
+    exec_cwd = scratch_dir if scratch_dir else project_path
     try:
         result = subprocess.run(
             command,
             shell=True,
-            cwd=project_path,
+            cwd=exec_cwd,
             capture_output=True,
             timeout=timeout,
         )
@@ -791,8 +798,8 @@ def _register_tools() -> None:
             },
             requires_approval=True,
         ),
-        lambda command, project_path, timeout=30, session_key="_unknown", **kwargs:  # type: ignore
-            _exec_command(command, project_path, min(timeout, 120), session_key, approval_callback=kwargs.get("approval_callback")),
+        lambda command, project_path, timeout=30, session_key="_unknown", scratch_dir=None, **kwargs:  # type: ignore
+            _exec_command(command, project_path, min(timeout, 120), session_key, approval_callback=kwargs.get("approval_callback"), scratch_dir=scratch_dir),
     )
 
     # list_files
@@ -957,6 +964,7 @@ def execute_tool(
     project_path: str,
     session_key: str = "_unknown",
     approval_callback: Callable[[str, str, dict], bool] | None = None,
+    scratch_dir: str | None = None,
 ) -> ToolResult:
     """
     Execute a tool by name with the given arguments.
@@ -964,10 +972,14 @@ def execute_tool(
     Args:
         name: Tool name (e.g. "read_file")
         arguments: Parsed arguments dict (e.g. {"path": "src/main.py"})
-        project_path: Absolute path to the project working directory
+        project_path: Absolute path to the project working directory (sandbox base)
         session_key: Session key of the agent (for exec_command approval)
         approval_callback: Per-call approval callback (MED-1). Takes precedence
             over the global _approval_callback.
+        scratch_dir: Per-session scratch directory for exec_command working directory.
+            File tools (read_file, write_file, edit_file, list_files, search_files)
+            ignore this and always use project_path as their sandbox base.
+            exec_command uses scratch_dir (or project_path if None) as cwd.
 
     Returns:
         ToolResult with output or error.
@@ -1012,11 +1024,12 @@ def execute_tool(
     start = time.monotonic()
 
     try:
-        # Inject project_path, session_key, and approval_callback into arguments
+        # Inject project_path, session_key, approval_callback, and scratch_dir into arguments
         args = dict(arguments)
         args["project_path"] = project_path
         args["session_key"] = session_key
         args["approval_callback"] = approval_callback
+        args["scratch_dir"] = scratch_dir
 
         result = handler(**args)
         duration_ms = int((time.monotonic() - start) * 1000)

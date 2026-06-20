@@ -146,8 +146,8 @@ def _parse_file_block(block: str) -> tuple[FileDiff | None, int, int]:
             # Handle "diff --git a/old b/new" (renamed) or "diff --git a/file b/file"
             parts = line.split(" ", 3)
             if len(parts) >= 4:
-                old_path = parts[2].lstrip("a/")
-                new_path = parts[3].lstrip("b/")
+                old_path = parts[2].removeprefix("a/")
+                new_path = parts[3].removeprefix("b/")
                 is_renamed = old_path != new_path
                 display_path = new_path if new_path else old_path
         elif line.startswith("--- "):

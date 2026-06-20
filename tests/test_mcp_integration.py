@@ -143,6 +143,7 @@ class TestYAMLLoading(TestState):
             "prompts": ["system/default.md"],
             "tools": ["read_file"],
             "provider": "openai",
+            "llm_name": "local-kb",
             "mcp_servers": "memory",  # String, not list
         }
         agent_file.write_text(json.dumps(agent_dict))
@@ -237,7 +238,7 @@ class TestToolRouting(TestState):
 
     @patch("utils.mcp_client._connect_async", side_effect=FakeMCPFactory.fake_connect_async)
     @patch("utils.mcp_client.get_server_config")
-    def test_mcp_tool_routes_through_execute_tool(self, mock_get_config, mock_connect):
+    def test_mcp_tool_routes_through_execute_tool(self, mock_get_config, mock_connect, tmp_path):
         """execute_tool('memory/search_nodes', ...) → MCP call_tool → results."""
         mock_get_config.return_value = MagicMock(
             name="memory", transport="stdio", command="npx",
@@ -247,7 +248,7 @@ class TestToolRouting(TestState):
         result = execute_tool(
             "memory/search_nodes",
             {"query": "test"},
-            "/tmp",
+            str(tmp_path),
             "test-conv",
         )
         assert result.success is True
@@ -279,12 +280,12 @@ class TestToolRouting(TestState):
             assert result.success is True
             assert "hello" in result.output
 
-    def test_invalid_mcp_name_returns_error(self):
+    def test_invalid_mcp_name_returns_error(self, tmp_path):
         """Missing '/' separator returns proper error."""
         result = execute_tool(
             "noslash_tool",
             {},
-            "/tmp",
+            str(tmp_path),
             "test-conv",
         )
         # If noslash_tool doesn't exist in _TOOLS, it returns "Unknown tool"
@@ -293,7 +294,7 @@ class TestToolRouting(TestState):
         result = execute_tool(
             "/badname",
             {},
-            "/tmp",
+            str(tmp_path),
             "test-conv",
         )
         assert result.success is False
@@ -301,7 +302,7 @@ class TestToolRouting(TestState):
 
     @patch("utils.mcp_client._connect_async", side_effect=Exception("server exploded"))
     @patch("utils.mcp_client.get_server_config")
-    def test_mcp_connection_failure_returns_error_result(self, mock_get_config, mock_connect):
+    def test_mcp_connection_failure_returns_error_result(self, mock_get_config, mock_connect, tmp_path):
         """If MCP connect fails, execute_tool returns ToolResult(success=False)."""
         mock_get_config.return_value = MagicMock(
             name="memory", transport="stdio", command="npx",
@@ -311,7 +312,7 @@ class TestToolRouting(TestState):
         result = execute_tool(
             "memory/search_nodes",
             {"query": "test"},
-            "/tmp",
+            str(tmp_path),
             "test-conv",
         )
         assert result.success is False

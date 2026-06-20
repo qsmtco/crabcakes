@@ -36,8 +36,17 @@ def _make_config() -> AgentConfig:
     )
 
 
-def _make_runtime(agent_role: str = "helper") -> tuple[AgentRuntime, str]:
-    """Build a runtime with one conversation registered. Returns (rt, session_key)."""
+def _make_runtime(agent_role: str = "helper", tmp_path=None) -> tuple[AgentRuntime, str]:
+    """Build a runtime with one conversation registered. Returns (rt, session_key).
+
+    Args:
+        agent_role: "helper" or "coder".
+        tmp_path: py.path.local or str; used as project_path so LOW-2 (empty project_path
+            raises) is satisfied. When None a temp dir is used.
+    """
+    if tmp_path is None:
+        import tempfile
+        tmp_path = tempfile.mkdtemp()
     cfg = _make_config()
     rt = AgentRuntime(cfg)
     rt.start()
@@ -45,6 +54,7 @@ def _make_runtime(agent_role: str = "helper") -> tuple[AgentRuntime, str]:
         session_key="test-session",
         agent_name="Auxilium",
         agent_role=agent_role,
+        project_path=str(tmp_path),
     )
     return rt, "test-session"
 

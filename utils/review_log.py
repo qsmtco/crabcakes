@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 
 REVIEW_LOG_FILENAME = "review-log.jsonl"
-DREAM_LOG_FILENAME = "dream-log.jsonl"  # Shared with agent/dream_engine.py
+DREAM_LOG_FILENAME = "dream-log.jsonl"  # LOW-A10: dream-engine subsystem is deferred; constant kept for future use
 
 
 def get_review_log_path(project_path: str) -> str:

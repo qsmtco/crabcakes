@@ -11,6 +11,35 @@ from dataclasses import dataclass
 from typing import Optional
 
 
+# LOW-9: path patterns for _safe_error
+_PATH_PATTERNS = [
+    re.compile(r"/home/[^/\s'\"\\]+"),
+    re.compile(r"/Users/[^/\s'\"\\]+"),
+    re.compile(r"C:\\\\Users\\\\[^\\\s'\"\\]+"),
+    re.compile(r"/tmp/[^/\s'\"\\]+"),
+]
+
+
+def _safe_error(e: Exception, *, max_len: int = 200) -> str:
+    """LOW-9: convert an exception to a safe, truncated error string.
+
+    - Uses the exception class name + a sanitized message
+    - Strips absolute paths (replaces with ~ or ...)
+    - Truncates to max_len
+    - Never includes the full repr/args
+    """
+    cls = type(e).__name__
+    msg = str(e) or ""
+    for pat in _PATH_PATTERNS:
+        msg = pat.sub("~", msg)
+    # Remove newlines and control chars
+    msg = "".join(c for c in msg if c.isprintable() and c not in "\r\n\t")
+    prefix = f"{cls}: "
+    if len(msg) > max_len:
+        msg = msg[: max(0, max_len - len(prefix) - 3)] + "..."
+    return f"{prefix}{msg}" if msg else cls
+
+
 # MED-11: Validate git commit SHA to prevent argument injection
 _VALID_SHA_RE = re.compile(r"^(HEAD|[0-9a-fA-F]{4,40})$")
 
@@ -39,7 +68,7 @@ def init_repo(project_path: str) -> GitResult:
         gitpython.Repo.init(project_path)
         return GitResult(success=True, stdout="", error="", sha=None)
     except Exception as e:
-        return GitResult(success=False, stdout="", error=str(e), sha=None)
+        return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
 
 
 def get_head_sha(project_path: str) -> GitResult:
@@ -52,7 +81,7 @@ def get_head_sha(project_path: str) -> GitResult:
             sha = repo.head.commit.hexsha
         return GitResult(success=True, stdout=sha, error="", sha=sha)
     except Exception as e:
-        return GitResult(success=False, stdout="", error=str(e), sha=None)
+        return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
 
 
 def get_branch(project_path: str) -> GitResult:
@@ -63,7 +92,7 @@ def get_branch(project_path: str) -> GitResult:
             return GitResult(success=True, stdout="(detached HEAD)", error="")
         return GitResult(success=True, stdout=repo.active_branch.name, error="")
     except Exception as e:
-        return GitResult(success=False, stdout="", error=str(e))
+        return GitResult(success=False, stdout="", error=_safe_error(e))
 
 
 def stage_all(project_path: str) -> GitResult:
@@ -74,7 +103,7 @@ def stage_all(project_path: str) -> GitResult:
         repo.git.add("-A")
         return GitResult(success=True, stdout="", error="", sha=None)
     except Exception as e:
-        return GitResult(success=False, stdout="", error=str(e), sha=None)
+        return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
 
 
 def commit(project_path: str, message: str, allow_empty: bool = False) -> GitResult:
@@ -112,7 +141,7 @@ def commit(project_path: str, message: str, allow_empty: bool = False) -> GitRes
         commit_obj = repo.index.commit(message)
         return GitResult(success=True, stdout=str(commit_obj.hexsha), error="", sha=commit_obj.hexsha)
     except Exception as e:
-        return GitResult(success=False, stdout="", error=str(e), sha=None)
+        return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
 
 
 def diff_against(project_path: str, sha: str) -> GitResult:
@@ -123,7 +152,7 @@ def diff_against(project_path: str, sha: str) -> GitResult:
         diff_text = repo.git.diff(sha, "HEAD")
         return GitResult(success=True, stdout=diff_text, error="", sha=repo.head.commit.hexsha)
     except Exception as e:
-        return GitResult(success=False, stdout="", error=str(e), sha=None)
+        return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
 
 
 def diff_stat_against(project_path: str, sha: str) -> GitResult:
@@ -133,7 +162,7 @@ def diff_stat_against(project_path: str, sha: str) -> GitResult:
         stat_text = repo.git.diff(sha, "HEAD", "--stat")
         return GitResult(success=True, stdout=stat_text, error="", sha=repo.head.commit.hexsha)
     except Exception as e:
-        return GitResult(success=False, stdout="", error=str(e), sha=None)
+        return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
 
 
 def diff_file_against(project_path: str, sha: str, file_path: str) -> GitResult:
@@ -143,7 +172,7 @@ def diff_file_against(project_path: str, sha: str, file_path: str) -> GitResult:
         diff_text = repo.git.diff(sha, "HEAD", "--", file_path)
         return GitResult(success=True, stdout=diff_text, error="", sha=repo.head.commit.hexsha)
     except Exception as e:
-        return GitResult(success=False, stdout="", error=str(e), sha=None)
+        return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
 
 
 def checkout_paths(project_path: str, sha: str, paths: list[str]) -> GitResult:
@@ -159,7 +188,7 @@ def checkout_paths(project_path: str, sha: str, paths: list[str]) -> GitResult:
         repo.git.checkout(sha, "--", *paths)
         return GitResult(success=True, stdout="", error="", sha=sha)
     except Exception as e:
-        return GitResult(success=False, stdout="", error=str(e), sha=None)
+        return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
 
 
 def log(project_path: str, count: int = 10) -> GitResult:
@@ -169,7 +198,7 @@ def log(project_path: str, count: int = 10) -> GitResult:
         log_text = repo.git.log(f"-{count}", "--oneline", "--all")
         return GitResult(success=True, stdout=log_text, error="", sha=None)
     except Exception as e:
-        return GitResult(success=False, stdout="", error=str(e), sha=None)
+        return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
 
 
 def get_recent_commits(project_path: str, count: int = 10) -> GitResult:
@@ -189,7 +218,7 @@ def get_recent_commits(project_path: str, count: int = 10) -> GitResult:
             lines.append(f"{sha} {subject}")
         return GitResult(success=True, stdout="\n".join(lines), error="", sha=None)
     except Exception as e:
-        return GitResult(success=False, stdout="", error=str(e), sha=None)
+        return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
 
 
 def push(project_path: str, remote: str = "origin", branch: str = "main") -> GitResult:
@@ -204,7 +233,7 @@ def push(project_path: str, remote: str = "origin", branch: str = "main") -> Git
             return GitResult(success=False, stdout="", error=f"Push rejected: {push_info.summary}", sha=None)
         return GitResult(success=True, stdout=push_info.summary, error="", sha=None)
     except Exception as e:
-        return GitResult(success=False, stdout="", error=str(e), sha=None)
+        return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
 
 
 def diff_working_tree(project_path: str, file_path: str | None = None) -> GitResult:
@@ -221,7 +250,7 @@ def diff_working_tree(project_path: str, file_path: str | None = None) -> GitRes
         diff_text = repo.git.diff(*args)
         return GitResult(success=True, stdout=diff_text, error="", sha=None)
     except Exception as e:
-        return GitResult(success=False, stdout="", error=str(e), sha=None)
+        return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
 
 
 def status(project_path: str) -> GitResult:
@@ -231,4 +260,4 @@ def status(project_path: str) -> GitResult:
         status_text = repo.git.status("--porcelain")
         return GitResult(success=True, stdout=status_text, error="", sha=None)
     except Exception as e:
-        return GitResult(success=False, stdout="", error=str(e), sha=None)
+        return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)

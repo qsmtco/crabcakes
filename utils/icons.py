@@ -7,6 +7,8 @@
 #   External: none
 #   GTK: Gdk.Texture (utils/ is allowed GTK access)
 
+import html as _html
+import logging as _logging
 import math
 import os
 import tempfile
@@ -15,6 +17,38 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk
+
+_logger = _logging.getLogger(__name__)
+
+_VALID_COLOR_HEX_RE = __import__('re').compile(r"^#[0-9a-fA-F]{3,8}$")
+_SAFE_FALLBACK_COLOR = "#6366f1"
+_SAFE_FALLBACK_INITIALS = "??"
+
+
+def _escape_svg_attr(value: str) -> str:
+    """LOW-8: escape a value for safe inclusion as an SVG attribute.
+
+    Uses html.escape to neutralize HTML-/SVG-injection in attribute values.
+    """
+    if not isinstance(value, str):
+        return ""
+    return _html.escape(value)
+
+
+def _validate_color_hex(value: str) -> str:
+    """LOW-8: validate that `value` is a hex color string. Return the value if valid, else a safe fallback."""
+    if isinstance(value, str) and _VALID_COLOR_HEX_RE.match(value):
+        return value
+    _logger.warning("LOW-8: invalid color_hex %r — using fallback", value)
+    return _SAFE_FALLBACK_COLOR
+
+
+def _validate_initials(value: str) -> str:
+    """LOW-8: validate that `value` is 1-2 alphanumerics. Return the value if valid, else a safe fallback."""
+    if isinstance(value, str) and 1 <= len(value) <= 2 and value.isalnum():
+        return value
+    _logger.warning("LOW-8: invalid initials %r — using fallback", value)
+    return _SAFE_FALLBACK_INITIALS
 
 
 def render_folder_icon(color_hex: str, letter: str, size: int = 44) -> Gdk.Texture | None:
@@ -30,6 +64,10 @@ def render_folder_icon(color_hex: str, letter: str, size: int = 44) -> Gdk.Textu
         Gdk.Texture — safe to use with Gtk.Picture.set_paintable()
         Returns None on error (texture load failure, missing display).
     """
+    # LOW-8: validate inputs before use
+    color_hex = _validate_color_hex(color_hex)
+    letter = _validate_initials(letter)
+
     if size < 4:
         size = 44
 
@@ -117,6 +155,10 @@ def render_agent_icon(color_hex: str, initials: str, size: int = 44) -> Gdk.Text
     Returns:
         Gdk.Texture — safe to use with Gtk.Picture.set_paintable()
     """
+    # LOW-8: validate inputs before use
+    color_hex = _validate_color_hex(color_hex)
+    initials = _validate_initials(initials)
+
     if size < 1 or size > 512:
         size = 44
 

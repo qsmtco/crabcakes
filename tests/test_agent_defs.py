@@ -24,10 +24,23 @@ def tmp_agents_dir(monkeypatch, tmp_path):
 
 @pytest.fixture
 def default_agents_src(monkeypatch, tmp_path):
-    """Redirect default agent source to a temp directory."""
+    """Redirect default agent source to a temp directory.
+
+    Also patches os.path.isfile so prompt file existence checks pass
+    (validate_agent_def checks that prompt files exist on disk).
+    """
     src_dir = str(tmp_path / "default_agents")
     os.makedirs(src_dir, exist_ok=True)
     monkeypatch.setattr(ad, "_get_default_agents_src", lambda: src_dir)
+    # Make validate_agent_def's prompt-file existence checks pass
+    import os as _os
+    original_isfile = _os.path.isfile
+    def fake_isfile(path):
+        path_str = str(path)
+        if "system/" in path_str:
+            return True  # fake existence for system/ prompt paths
+        return original_isfile(path)
+    monkeypatch.setattr(_os.path, "isfile", fake_isfile)
     return src_dir
 
 
@@ -66,7 +79,7 @@ class TestSaveLoad:
             "role": "tester",
             "prompts": ["system/coder.md"],
             "tools": ["read_file", "list_files"],
-            "llm_name": "MiniMax M2.7",
+            "llm_name": "local-kb",
         }
         path = ad.save_agent_def(agent)
         assert os.path.isfile(path)
@@ -79,7 +92,7 @@ class TestSaveLoad:
         assert loaded["tools"] == ["read_file", "list_files"]
 
     def test_save_sanitizes_filename(self, tmp_agents_dir):
-        agent = {"name": "My Cool Agent!", "tools": [], "prompts": [], "llm_name": "local-kb"}
+        agent = {"name": "My Cool Agent!", "tools": ["read_file"], "prompts": ["system/coder.md"], "llm_name": "local-kb"}
         path = ad.save_agent_def(agent)
         basename = os.path.basename(path)
         assert " " not in basename
@@ -143,7 +156,7 @@ class TestLoadAgentDefs:
             "role": "coder",
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
-            "llm_name": "MiniMax M2.7",
+            "llm_name": "local-kb",
         }
         with open(os.path.join(default_agents_src, "coder.yaml"), "w") as f:
             import yaml
@@ -156,14 +169,14 @@ class TestLoadAgentDefs:
     def test_does_not_overwrite_existing(self, tmp_agents_dir, default_agents_src):
         # User already has a custom agent
         os.makedirs(tmp_agents_dir, exist_ok=True)
-        custom = {"name": "Custom", "tools": ["read_file"], "prompts": [], "llm_name": "local-kb"}
+        custom = {"name": "Custom", "tools": ["read_file"], "prompts": ["system/coder.md"], "llm_name": "local-kb"}
         with open(os.path.join(tmp_agents_dir, "custom.yaml"), "w") as f:
             import yaml
             yaml.dump(custom, f)
 
         # Default source has a different file
         with open(os.path.join(default_agents_src, "coder.yaml"), "w") as f:
-            yaml.dump({"name": "Coder", "tools": [], "prompts": [], "llm_name": "local-kb"}, f)
+            yaml.dump({"name": "Coder", "tools": ["read_file"], "prompts": ["system/coder.md"], "llm_name": "local-kb"}, f)
 
         defs = ad.load_agent_defs()
         names = [d["name"] for d in defs]
@@ -173,7 +186,7 @@ class TestLoadAgentDefs:
 
     def test_deduplicates_by_name(self, tmp_agents_dir):
         os.makedirs(tmp_agents_dir, exist_ok=True)
-        agent = {"name": "Dup", "tools": [], "prompts": [], "llm_name": "local-kb"}
+        agent = {"name": "Dup", "tools": ["read_file"], "prompts": ["system/coder.md"], "llm_name": "local-kb"}
         with open(os.path.join(tmp_agents_dir, "dup.yaml"), "w") as f:
             import yaml
             yaml.dump(agent, f)
@@ -190,7 +203,7 @@ class TestLoadAgentDefs:
 
 class TestDeleteAgentDef:
     def test_delete_existing(self, tmp_agents_dir):
-        agent = {"name": "ToDelete", "tools": [], "prompts": [], "llm_name": "local-kb"}
+        agent = {"name": "ToDelete", "tools": ["read_file"], "prompts": ["system/coder.md"], "llm_name": "local-kb"}
         ad.save_agent_def(agent)
         assert ad.load_agent_def("ToDelete") is not None
 
@@ -227,7 +240,7 @@ class TestValidateAgentDef:
             "name": "BadTools",
             "prompts": ["system/coder.md"],
             "tools": ["read_file", "not_a_real_tool"],
-            "llm_name": "MiniMax M2.7",
+            "llm_name": "local-kb",
         }
         errors = ad.validate_agent_def(agent)
         assert any("not_a_real_tool" in e for e in errors)
@@ -257,7 +270,7 @@ class TestValidateAgentDef:
             "name": "BadPrompt",
             "prompts": ["nonexistent_prompt.md"],
             "tools": ["read_file"],
-            "llm_name": "MiniMax M2.7",
+            "llm_name": "local-kb",
         }
         errors = ad.validate_agent_def(agent)
         assert any("nonexistent_prompt.md" in e for e in errors)
@@ -267,7 +280,7 @@ class TestValidateAgentDef:
             "name": "",
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
-            "llm_name": "MiniMax M2.7",
+            "llm_name": "local-kb",
         }
         errors = ad.validate_agent_def(agent)
         assert any("name" in e for e in errors)

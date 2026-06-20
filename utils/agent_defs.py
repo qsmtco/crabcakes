@@ -222,6 +222,31 @@ def load_agent_defs() -> list[dict]:
         if "role" not in agent_def:
             agent_def["role"] = _derive_role(agent_def)
 
+        # LOW-11: validate at load time; skip invalid defs with a WARNING
+        errors = validate_agent_def(agent_def)
+        # Role-aware exemptions ---
+        # (a) helper: llm_name may be empty; ensure_kb_provider patches it to "local-kb"
+        #     at startup. If we treated empty llm_name as a hard error here,
+        #     ensure_kb_provider would always see None and fail to patch.
+        #     All other validation (tools, prompts, unknown providers) stays strict.
+        # (b) all roles: mcp_servers string values are tolerated here because
+        #     _load_registry in agent/special_agents.py handles the coercion
+        #     (BUG #30: single-string → list).  The validation error for non-list
+        #     types is still filtered so the coercion can run.
+        if agent_def.get("role") == "helper":
+            errors = [e for e in errors if "llm_name" not in e]
+        errors = [e for e in errors if not (
+            e == "Field 'mcp_servers' must be a list" and
+            agent_def.get("mcp_servers") is not None and
+            not isinstance(agent_def.get("mcp_servers"), list)
+        )]
+        if errors:
+            logger.warning(
+                "LOW-11: skipping invalid agent def %s (%s): %s",
+                fname, agent_def.get("name", "?"), "; ".join(errors),
+            )
+            continue
+
         # Track the source file
         agent_def["_source_file"] = fname
 

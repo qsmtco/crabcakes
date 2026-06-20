@@ -13,6 +13,7 @@ import logging
 import threading
 from dataclasses import dataclass
 from typing import Any
+from utils.git_ops import _safe_error  # LOW-9
 
 from utils.mcp_config import (
     MCPServerConfig,
@@ -270,7 +271,7 @@ async def _call_tool_async(conn: dict[str, Any], tool_name: str, arguments: dict
         return MCPToolResult(success=True, output=output, duration_ms=duration)
     except Exception as e:
         duration = int((time.monotonic() - start) * 1000)
-        return MCPToolResult(success=False, error=str(e), duration_ms=duration)
+        return MCPToolResult(success=False, error=_safe_error(e), duration_ms=duration)
 
 
 # ── Sync Wrappers ────────────────────────────────────────────────────────────────

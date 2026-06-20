@@ -11,6 +11,7 @@ import fcntl
 import json
 import logging
 import os
+import stat
 import time
 
 from models.feed_card import FeedCardData
@@ -19,6 +20,62 @@ FEED_FILENAME = "feed.json"
 _LOCK_RETRIES = 5          # max attempts to acquire lock
 _LOCK_RETRY_DELAY = 0.05  # 50ms between retries
 _logger = logging.getLogger(__name__)
+
+
+# ── LOW-12 / LOW-13 helpers ──────────────────────────────────────────────────
+
+
+def _atomic_write_json(path: str, data) -> None:
+    """LOW-13: write JSON atomically — write to .tmp, then os.replace.
+
+    Sets permissions to 0o600 (matches the security pattern in
+    agent/runtime.py:1069-1072). Caller is responsible for the lock.
+    """
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass  # some filesystems don't support chmod
+
+
+def _atomic_write_text(path: str, content: str) -> None:
+    """Atomic write of a text file. Uses .tmp + os.replace + 0o644 permissions."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(content)
+    os.replace(tmp, path)
+    try:
+        os.chmod(path, 0o644)
+    except OSError:
+        pass
+
+
+def _ensure_gitignore_entry(project_path: str, entry: str) -> None:
+    """LOW-12: ensure `entry` is in `<project_path>/.gitignore`.
+
+    Creates the file if it doesn't exist. If the file exists, checks for
+    the entry (whole-line match, ignoring trailing comments) and appends
+    if missing. The write is atomic via _atomic_write_text.
+    """
+    gitignore = os.path.join(project_path, ".gitignore")
+    lines: list[str] = []
+    if os.path.isfile(gitignore):
+        try:
+            with open(gitignore, "r", encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        except OSError:
+            lines = []
+    # Check if entry is already present (ignore trailing comments)
+    for line in lines:
+        stripped = line.split("#", 1)[0].strip()
+        if stripped == entry:
+            return  # already present
+    # Append
+    lines.append(entry)
+    _atomic_write_text(gitignore, "\n".join(lines) + "\n")
 
 
 def _feed_path(project_path: str) -> str:
@@ -122,8 +179,8 @@ def save_feed(project_path: str, cards: list[FeedCardData]) -> None:
     try:
         _ensure_crabcakes_dir(project_path)
         path = _feed_path(project_path)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump([c.to_dict() for c in cards], f, indent=2)
+        _ensure_gitignore_entry(project_path, ".crabcakes/feed.json")
+        _atomic_write_json(path, [c.to_dict() for c in cards])
     except OSError as e:
         _logger.error("save_feed: failed to write %s: %s", path, e)
 
@@ -135,6 +192,7 @@ def append_feed_card(project_path: str, card: FeedCardData) -> None:
     """
     path = _feed_path(project_path)
     _ensure_crabcakes_dir(project_path)
+    _ensure_gitignore_entry(project_path, ".crabcakes/feed.json")
     fd, lock_path = _acquire_lock(path)
     try:
         # Read
@@ -156,8 +214,10 @@ def append_feed_card(project_path: str, card: FeedCardData) -> None:
                     continue
         # Append + Write
         cards.append(card)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump([c.to_dict() for c in cards], f, indent=2)
+        try:
+            _atomic_write_json(path, [c.to_dict() for c in cards])
+        except OSError as e:
+            _logger.error("append_feed_card: failed to write %s: %s", path, e)
     finally:
         _release_lock(fd, lock_path)
 
@@ -172,6 +232,8 @@ def update_feed_card(project_path: str, card_id: str, updates: dict) -> bool:
     path = _feed_path(project_path)
     if not os.path.isfile(path):
         return False
+    _ensure_crabcakes_dir(project_path)
+    _ensure_gitignore_entry(project_path, ".crabcakes/feed.json")
     fd, lock_path = _acquire_lock(path)
     try:
         # Read
@@ -196,8 +258,11 @@ def update_feed_card(project_path: str, card_id: str, updates: dict) -> bool:
                 for key, val in updates.items():
                     if key in allowed and hasattr(c, key):
                         setattr(c, key, val)
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump([cd.to_dict() for cd in cards], f, indent=2)
+                try:
+                    _atomic_write_json(path, [cd.to_dict() for cd in cards])
+                except OSError as e:
+                    _logger.error("update_feed_card: failed to write %s: %s", path, e)
+                    return False
                 return True
         return False
     finally:

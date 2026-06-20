@@ -3,6 +3,7 @@
 name: Coder
 emoji: "🛠️"
 role: coder
+llm_name: local-kb  # placeholder; user configures their own in Settings → Providers
 prompts:
   - system/coder.md
 tools:

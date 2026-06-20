@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -399,7 +400,6 @@ for _pk, _caller in _PROVIDER_CALLERS.items():
 
 # ── SSE Streaming (Phase 1.3b) ─────────────────────────────────────────────────
 
-import re
 import ssl
 import urllib.request
 from collections import namedtuple
@@ -1083,6 +1083,40 @@ def _migrate_conversation_files() -> int:
     return count
 
 
+# ── LOW-2: Per-session secure workspace ─────────────────────────────────────
+
+
+def _resolve_session_workspace(project_path: str | None, session_key: str) -> str:
+    """Return a per-session secure workspace under the project's .crabcakes/ dir.
+
+    LOW-2: never fall back to /tmp — raise if project_path is empty.
+    The workspace dir is created with 0o700 permissions (owner-only).
+
+    Args:
+        project_path: The project directory (must not be empty).
+        session_key: Must be non-empty, whitespace-free, and contain only
+            [a-zA-Z0-9._-]. Path separators and ".." are rejected.
+
+    Returns:
+        Absolute path to the session's scratch workspace directory.
+    """
+    if not project_path:
+        raise ValueError(
+            f"LOW-2: project_path is empty for session {session_key!r}; "
+            "refusing to use a world-writable default"
+        )
+    # session_key validation — prevent empty keys, path escapes, and traversal
+    if not session_key or not session_key.strip():
+        raise ValueError(f"LOW-2: session_key must be non-empty and contain no whitespace: {session_key!r}")
+    if ".." in session_key:
+        raise ValueError(f"LOW-2: session_key must not contain '..': {session_key!r}")
+    if not re.fullmatch(r"[a-zA-Z0-9._-]+", session_key):
+        raise ValueError(f"LOW-2: session_key must match [a-zA-Z0-9._-]+, got: {session_key!r}")
+    workspace = os.path.join(project_path, ".crabcakes", "tmp", session_key)
+    os.makedirs(workspace, mode=0o700, exist_ok=True)
+    return workspace
+
+
 # ── AgentRuntime ──────────────────────────────────────────────────────────────
 
 class AgentRuntime:
@@ -1718,9 +1752,13 @@ class AgentRuntime:
                                        (tool_name in ("write_file", "edit_file") and
                                         agent_tools_module.is_sensitive_path(args.get("path", ""))))
                     per_call_cb = (lambda *a: True) if bypass_approval else None
+                    # LOW-2: resolve workspace before use; raises ValueError if project_path is empty
+                    workspace = _resolve_session_workspace(conv.project_path, session_key)
                     try:
-                        result = execute_tool(tool_name, args, conv.project_path or "/tmp", session_key,
-                                              approval_callback=per_call_cb)
+                        # project_path = sandbox base (file tools resolve relative paths here)
+                        # scratch_dir = per-session workspace for exec_command cwd
+                        result = execute_tool(tool_name, args, conv.project_path, session_key,
+                                              approval_callback=per_call_cb, scratch_dir=workspace)
                     finally:
                         pass
                     logger.debug("[tool-loop] sk=%s tool %s result: success=%s output_len=%d",
@@ -1733,7 +1771,7 @@ class AgentRuntime:
                     if tool_name in ("write_file", "edit_file") and global_enabled and agent_enabled:
                         enf_result = _enforcement_check(
                             tool_name, args, result,
-                            conv.project_path or "/tmp",
+                            conv.project_path,
                             self._config.enforcement,
                         )
                         if enf_result.appended_message:

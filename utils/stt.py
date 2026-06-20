@@ -9,11 +9,31 @@
 #   STT_MODEL_SIZE  — faster-whisper model size, default "tiny.en".
 #                    Values: "tiny.en", "base.en", "small.en", "medium.en", etc.
 
+import logging
 import os
+
+# LOW-6: allowlist of valid faster-whisper model sizes
+_VALID_MODEL_SIZES: frozenset[str] = frozenset({
+    "tiny.en", "tiny",
+    "base.en", "base",
+    "small.en", "small",
+    "medium.en", "medium",
+    "large-v1", "large-v2", "large-v3",
+    "distil-large-v3",
+})
+_DEFAULT_MODEL_SIZE = "tiny.en"
+
+_logger = logging.getLogger(__name__)
+
 #
 # Security Manifest:
 #   Reads: ALSA device ("default" via PipeWire ALSA plugin)
-#   No files written; no network calls; no secrets
+#   Writes: none
+#   Network: faster-whisper downloads model files on first transcription
+#            (one-time, from Hugging Face Hub)
+#   External: Hugging Face Hub (model download)
+#   STT_MODEL_SIZE must be in _VALID_MODEL_SIZES — invalid values
+#   fall back to "tiny.en" with a WARNING log (LOW-6).
 
 import io
 import subprocess
@@ -55,7 +75,20 @@ class STTEngine:
                           "default" uses PipeWire ALSA plugin (~5ms open vs ~230ms direct HW).
             on_result:    Callback(text: str) — called with transcript on stop_async.
         """
-        self._model_size = model_size or os.environ.get("STT_MODEL_SIZE", "tiny.en")
+        # LOW-6: validate model_size against allowlist; fall back to default if invalid
+        self._model_size = self._resolve_model_size(model_size)
+
+    @staticmethod
+    def _resolve_model_size(model_size: str | None) -> str:
+        """LOW-6: validate and resolve the model size. Falls back to _DEFAULT_MODEL_SIZE on invalid input."""
+        candidate = model_size or os.environ.get("STT_MODEL_SIZE", _DEFAULT_MODEL_SIZE)
+        if candidate in _VALID_MODEL_SIZES:
+            return candidate
+        _logger.warning(
+            "LOW-6: invalid STT_MODEL_SIZE %r — falling back to %r (valid sizes: %s)",
+            candidate, _DEFAULT_MODEL_SIZE, sorted(_VALID_MODEL_SIZES),
+        )
+        return _DEFAULT_MODEL_SIZE
         self._device = device
         self._on_result = on_result
 
