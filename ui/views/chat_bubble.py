@@ -697,14 +697,9 @@ def _build_quote_segment(seg: dict) -> Gtk.Widget:
     # the original text don't corrupt the Pango tags that format_markdown produces.
     escaped = escape_for_pango(content)
     formatted = format_markdown(escaped)
-    label = Gtk.Label()
-    label.set_markup(formatted)
-    label.set_xalign(0)
-    label.set_wrap(True)
-    label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-    label.set_can_focus(False)
-    label.set_selectable(True)
-    label.add_css_class("blockquote-text")
+    # HIGH-6 (Phase 6.1): use make_safe_label so links are gated on scheme
+    # allowlist. The blockquote path was missed in Phase 6 commit 593391e.
+    label = make_safe_label(formatted, css_class="blockquote-text")
     box.append(label)
     return box
 
