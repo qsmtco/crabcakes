@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import threading
 from dataclasses import dataclass
 from typing import Any
@@ -437,54 +438,105 @@ def connect_servers(
     return results
 
 
+# MED-12: Sanitize MCP tool descriptions before exposing them to the agent.
+# MCP tool descriptions come from external MCP servers (processes the user runs),
+# so they are UNTRUSTED and could contain prompt-injection content that would
+# be interpreted as instructions by the agent. We strip:
+#   - Anything that looks like system/assistant/user role headers (Markdown-style)
+#   - Fence-break sequences that could escape the surrounding <function-call> wrapping
+#   - Lines that resemble the agent's own tool-call syntax
+#
+# This is defense-in-depth on top of the HIGH-5 <untrusted-project-data> fence
+# wrapping the *tool result*. The description is injected before the model sees
+# the tool, so it can poison the system prompt if not sanitized.
+
+# Patterns that should never appear in a tool description
+_INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^\s*(system|assistant|user)\s*:\s*", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"```\s*(system|assistant|user)\b", re.IGNORECASE),
+    re.compile(r"<\|.*?\|>", re.DOTALL),  # Anthropic-style role tokens
+    re.compile(r"\\u0000|\\x00|\\r\\n", re.IGNORECASE),  # control chars / escapes
+    re.compile(r"\b(ignore|disregard|forget)\s+(all|previous|above)\b", re.IGNORECASE),
+    re.compile(r"\bact\s+as\s+(if|though)\b", re.IGNORECASE),
+)
+
+_DESCRIPTION_MAX_CHARS = 2000  # Bound description size to prevent context bloat
+
+
+def _sanitize_tool_description(text: str) -> str:
+    """MED-12: Strip prompt-injection patterns from an MCP tool description.
+
+    Returns a sanitized version of the input. If sanitization removes everything
+    meaningful, falls back to a minimal placeholder.
+    """
+    if not text:
+        return ""
+
+    sanitized = text
+    for pat in _INJECTION_PATTERNS:
+        sanitized = pat.sub("", sanitized)
+
+    # Cap length to prevent context-bloat attacks
+    if len(sanitized) > _DESCRIPTION_MAX_CHARS:
+        sanitized = sanitized[:_DESCRIPTION_MAX_CHARS] + "..."
+
+    # Strip leading/trailing whitespace
+    sanitized = sanitized.strip()
+
+    return sanitized
+
+
 def get_tools_for_api(
     server_names: list[str],
     conversation_key: str | None = None,
 ) -> list[dict]:
     """Get MCP tool definitions in OpenAI function-calling format.
-    
+
     BUG #24 Fix: Caches tool definitions per server to avoid repeated MCP calls.
+    MED-12: Sanitizes tool descriptions before exposure (defense-in-depth).
     """
     tools = []
     for server_name in server_names:
         key = _make_conversation_key(conversation_key, server_name)
-        
+
         # Check cache first
         with _tools_cache_lock:
             cached = _tools_cache.get(key)
             if cached is not None:
                 tools.extend(cached)
                 continue
-        
+
         # Ensure connected (idempotent)
         try:
             connect(server_name, conversation_key)
         except Exception as e:
             logger.warning(f"Skipping {server_name}: {e}")
             continue
-        
+
         try:
             server_tools = discover_tools(server_name, conversation_key)
             server_tool_dicts = []
             for tool in server_tools:
                 namespaced = f"{server_name}/{tool.name}"
+                raw_desc = tool.description or f"MCP: {tool.name}"
+                sanitized_desc = _sanitize_tool_description(raw_desc)
                 func_dict = {
                     "type": "function",
                     "function": {
                         "name": namespaced,
-                        "description": tool.description or f"MCP: {tool.name}",
+                        "description": sanitized_desc or f"MCP: {tool.name}",
                         "parameters": tool.parameters or {"type": "object", "properties": {}},
                     },
                 }
                 tools.append(func_dict)
                 server_tool_dicts.append(func_dict)
-            
-            # Cache the results
+
+            # Cache the results (post-sanitization; cache is safe to reuse)
             with _tools_cache_lock:
                 _tools_cache[key] = server_tool_dicts
-                
+
         except Exception as e:
             logger.warning(f"Failed to discover tools from {server_name}: {e}")
             continue
-    
+
     return tools
