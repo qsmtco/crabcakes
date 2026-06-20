@@ -231,6 +231,78 @@ class TestExecCommand:
             assert r.success is False
             assert "timed out" in r.error.lower()
 
+    # ── MED-2: env scrubbing ────────────────────────────────────────────
+    def test_exec_command_scrubs_secrets_from_env(self, monkeypatch):
+        """MED-2 (Phase 6): subprocess env must NOT inherit provider secrets.
+
+        Sets a fake secret in the parent env, runs `env` via exec_command, and
+        asserts the secret does NOT appear in the subprocess output.
+        """
+        set_approval_callback(lambda sk, tn, args: True)
+        # Plant a fake secret that should be scrubbed
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-fake-secret-DO-NOT-LEAK-12345")
+        monkeypatch.setenv("CRABCAKES_GATEWAY_TOKEN", "fake-gateway-token-67890")
+        with tempfile.TemporaryDirectory() as proj:
+            r = execute_tool("exec_command", {"command": "env"}, proj, "special:coder")
+        assert r.success is True
+        assert "sk-fake-secret-DO-NOT-LEAK-12345" not in r.output, (
+            f"MED-2: secret leaked into subprocess env! Output: {r.output[:500]}"
+        )
+        assert "fake-gateway-token-67890" not in r.output, (
+            f"MED-2: gateway token leaked into subprocess env! Output: {r.output[:500]}"
+        )
+        # Sanity: the safe allowlist vars ARE present
+        assert "PATH=" in r.output or "PATH" in r.output
+
+    def test_exec_command_allows_safe_vars(self, monkeypatch):
+        """MED-2: safe vars (PATH, HOME, LANG) ARE forwarded to subprocess."""
+        set_approval_callback(lambda sk, tn, args: True)
+        monkeypatch.setenv("PATH", "/usr/bin:/bin")
+        monkeypatch.setenv("HOME", "/home/test")
+        with tempfile.TemporaryDirectory() as proj:
+            r = execute_tool("exec_command", {"command": "env"}, proj, "special:coder")
+        assert r.success is True
+        # At least PATH should be in the output
+        assert "/usr/bin:/bin" in r.output or "PATH" in r.output
+
+    def test_get_scrubbed_env_allowlist(self):
+        """MED-2: the allowlist in utils.env_security is the source of truth."""
+        from utils.env_security import ALLOWED_SUBPROCESS_ENV_VARS, get_scrubbed_env
+        # All allowed vars are documented shell/locale vars
+        expected_safe = {"PATH", "HOME", "LANG", "LC_ALL", "LANGUAGES", "TZ", "TMPDIR", "PWD"}
+        assert ALLOWED_SUBPROCESS_ENV_VARS == frozenset(expected_safe)
+        # Function returns only those vars
+        import os as _os
+        _os.environ["MED2_TEST_SECRET"] = "should-not-appear"
+        try:
+            scrubbed = get_scrubbed_env()
+            assert "MED2_TEST_SECRET" not in scrubbed
+            assert "PATH" in scrubbed  # PATH is in env from test runner
+        finally:
+            del _os.environ["MED2_TEST_SECRET"]
+
+
+class TestEnvSecurity:
+    """MED-2: dedicated tests for utils.env_security."""
+
+    def test_allowlist_excludes_api_keys(self):
+        from utils.env_security import ALLOWED_SUBPROCESS_ENV_VARS
+        # None of the common secret env var names should be in the allowlist
+        for name in [
+            "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_KEY",
+            "CRABCAKES_GATEWAY_TOKEN", "OPENCLAW_DEVICE_AUTH",
+            "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+            "GITHUB_TOKEN", "GH_TOKEN", "NPM_TOKEN",
+        ]:
+            assert name not in ALLOWED_SUBPROCESS_ENV_VARS, (
+                f"MED-2: secret env var {name} is in the forward allowlist!"
+            )
+
+    def test_allowlist_includes_shell_basics(self):
+        from utils.env_security import ALLOWED_SUBPROCESS_ENV_VARS
+        for name in ["PATH", "HOME", "LANG", "LC_ALL", "TZ", "PWD"]:
+            assert name in ALLOWED_SUBPROCESS_ENV_VARS
+
 
 class TestListFiles:
     def test_list_empty_directory(self):

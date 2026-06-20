@@ -383,6 +383,13 @@ def _exec_command(command: str, project_path: str, timeout: int = 30, session_ke
     Args:
         scratch_dir: Per-session scratch directory for exec_command working directory.
             When provided, subprocess runs in scratch_dir instead of project_path.
+
+    MED-2 (Phase 6): env= is now scrubbed to the same allowlist used by
+    agent/enforcement.py. The shell semantics (shell=True, pipes, redirects,
+    globs) are intentional for this tool — the PM approval dialog is the
+    primary defense. env scrubbing is defense-in-depth: a command like
+    `echo $OPENAI_API_KEY` or `env | grep KEY` will see only PATH/HOME/LANG/etc,
+    never the user's provider secrets.
     """
     # Hard blocklist check first — always denied before callback fires
     if _is_blocked(command):
@@ -391,6 +398,10 @@ def _exec_command(command: str, project_path: str, timeout: int = 30, session_ke
     # PM approval check via registered callback (Bug #3 fix)
     if not _get_approval(session_key, "exec_command", {"command": command, "cwd": project_path}, approval_callback=approval_callback):
         return ToolResult(success=False, error="exec_command requires PM approval", duration_ms=0)
+
+    # MED-2: Scrub env so secrets (provider keys, gateway tokens) don't leak
+    # into shell tool output (e.g. via `env`, `echo $OPENAI_API_KEY`, etc.).
+    from utils.env_security import get_scrubbed_env
 
     start = time.monotonic()
     # Use scratch_dir if provided, otherwise fall back to project_path
@@ -402,6 +413,7 @@ def _exec_command(command: str, project_path: str, timeout: int = 30, session_ke
             cwd=exec_cwd,
             capture_output=True,
             timeout=timeout,
+            env=get_scrubbed_env(),
         )
         duration_ms = int((time.monotonic() - start) * 1000)
         stdout_bytes = result.stdout

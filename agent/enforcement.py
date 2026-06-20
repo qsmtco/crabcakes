@@ -57,8 +57,13 @@ def _get_scrubbed_env() -> dict[str, str]:
     Includes only safe vars (PATH, HOME, LANG, etc.). All provider API keys,
     gateway tokens, and other sensitive env vars are stripped. Used by
     _run_timed_command. (Phase 0 / CRIT-2)
+
+    MED-2 (Phase 6): alias for utils.env_security.get_scrubbed_env. Kept here
+    to avoid touching all existing call sites; the canonical implementation
+    lives in utils/env_security.py so agent.tools._exec_command can share it.
     """
-    return {k: v for k, v in os.environ.items() if k in _ALLOWED_ENV_VARS}
+    from utils.env_security import get_scrubbed_env
+    return get_scrubbed_env()
 
 
 # CRIT-1: Shell metacharacters that must NOT appear in a filename basename.
