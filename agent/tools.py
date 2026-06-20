@@ -642,49 +642,63 @@ def _web_fetch(url: str, max_chars: int = 10000) -> ToolResult:
     if blocked is not None:
         return blocked
 
-    # MED-3 (re-check-after-redirect): Track every URL the redirect chain visits and
-    # run the same allowlist check on each. This closes the gap where a public URL
-    # redirects to a private/loopback/link-local range.
-    def _validate_response(resp: httpx.Response) -> ToolResult | None:
-        # When restricted mode is on, re-check the final URL (and any intermediate
-        # hops the client visited) against the private-IP blocklist.
-        if not _is_web_fetch_restricted():
-            return None
-        for hop_url in [str(resp.url)] + [str(h.url) for h in resp.history]:
-            blocked = _reject_restricted_url(hop_url)
+    # MED-3 (Phase 6.1): Handle redirects manually so we can validate each
+    # Location header BEFORE making a TCP connection to the target.
+    # Previously, httpx.get(follow_redirects=True) would connect to every
+    # hop (including private/loopback hosts) before the post-hoc re-check ran.
+    current_url = url
+    resp = None
+    for _ in range(10):  # max 10 redirects
+        try:
+            resp = httpx.get(current_url, timeout=10.0, follow_redirects=False)
+        except httpx.HTTPStatusError as e:
+            return ToolResult(success=False, error=f"web_fetch HTTP {e.response.status_code}: {current_url}")
+        except httpx.RequestError as e:
+            return ToolResult(success=False, error=f"web_fetch failed: {e}")
+
+        if 300 <= resp.status_code < 400:
+            location = resp.headers.get("location", "")
+            if not location:
+                return ToolResult(success=False, error="web_fetch: redirect without Location header")
+            # Resolve relative redirect URLs against the current URL
+            next_url = str(httpx.URL(current_url).join(location))
+            # MED-3: validate the redirect target BEFORE following it
+            blocked = _reject_restricted_url(next_url)
             if blocked is not None:
                 return ToolResult(
                     success=False,
-                    error=f"MED-3: Redirected to blocked URL: {hop_url}",
+                    error=f"MED-3: Redirected to blocked URL: {next_url}",
                 )
-        return None
+            current_url = next_url
+            continue
+        break
 
-    try:
-        resp = httpx.get(url, timeout=10.0, follow_redirects=True)
-        resp.raise_for_status()
-        redirected_blocked = _validate_response(resp)
-        if redirected_blocked is not None:
-            return redirected_blocked
-        content_type = resp.headers.get("content-type", "")
-        if "text/html" not in content_type and "text/plain" not in content_type:
-            return ToolResult(success=False, error=f"Cannot fetch non-text content type: {content_type}")
+    if resp is None:
+        return ToolResult(success=False, error="web_fetch: exceeded max redirects")
 
-        text = resp.text
-        # Basic extraction: strip HTML tags
-        text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL)
-        text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
-        text = re.sub(r"<[^>]+>", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
+    resp.raise_for_status()
 
-        if len(text) > max_chars:
-            text = text[:max_chars] + f"\n[... truncated at {max_chars} chars ...]"
+    # Defense in depth: re-validate the final response URL
+    if _is_web_fetch_restricted():
+        final_check = _reject_restricted_url(str(resp.url))
+        if final_check is not None:
+            return final_check
 
-        return ToolResult(success=True, output=text)
+    content_type = resp.headers.get("content-type", "")
+    if "text/html" not in content_type and "text/plain" not in content_type:
+        return ToolResult(success=False, error=f"Cannot fetch non-text content type: {content_type}")
 
-    except httpx.HTTPStatusError as e:
-        return ToolResult(success=False, error=f"web_fetch HTTP {e.response.status_code}: {url}")
-    except httpx.RequestError as e:
-        return ToolResult(success=False, error=f"web_fetch failed: {e}")
+    text = resp.text
+    # Basic extraction: strip HTML tags
+    text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    if len(text) > max_chars:
+        text = text[:max_chars] + f"\n[... truncated at {max_chars} chars ...]"
+
+    return ToolResult(success=True, output=text)
 
 
 # ── Tool registry ───────────────────────────────────────────────────────────────

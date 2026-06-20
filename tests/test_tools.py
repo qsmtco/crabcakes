@@ -385,106 +385,86 @@ class TestWebFetch:
         assert "loopback" in r.error.lower()
 
     def test_web_fetch_rejects_redirect_to_loopback(self, monkeypatch):
-        """MED-3 (Phase 6): a public URL that redirects to loopback is rejected.
+        """MED-3 (Phase 6.1): a public URL that redirects to loopback is rejected.
 
-        Verifies the re-check-after-redirect logic: even though the initial URL
-        passes the check, the redirect target must also be checked.
+        Verifies that _reject_restricted_url is called on the Location header
+        BEFORE the TCP connection to the redirect target is made.
         """
         from agent import tools as tools_mod
 
         monkeypatch.setenv("CRABCAKES_WEB_FETCH_RESTRICT", "1")
 
-        # Build a fake Response that mimics httpx.Response.url / .history
-        class FakeResponse:
-            def __init__(self, final_url, history_urls):
-                self.url = final_url
-                self.history = [type("H", (), {"url": u})() for u in history_urls]
-                self.headers = {"content-type": "text/html"}
-                self.text = "<html>private</html>"
+        class FakeRedirectResponse:
+            """Simulates a 302 redirect response."""
+            status_code = 302
+            headers = {"location": "http://127.0.0.1/private", "content-type": "text/html"}
+            text = ""
+            url = "http://initial.example.com/"
 
             def raise_for_status(self):
                 pass
 
-        # Patch _reject_restricted_url so the initial URL check passes, leaving only
-        # the re-check-after-redirect path active.
+        # Patch _reject_restricted_url so the initial URL passes but loopback is blocked
         def fake_reject(url):
             from agent.tools import ToolResult
-            import ipaddress as _ip
             from urllib.parse import urlparse as _up
-            try:
-                p = _up(url)
-                host = (p.hostname or "").lower()
-                if host in ("127.0.0.1", "localhost", "::1"):
-                    return ToolResult(success=False, error=f"MED-3: Refusing loopback request: {url}")
-                if host.startswith("169.254.") or host.startswith("fe80:"):
-                    return ToolResult(success=False, error=f"MED-3: Refusing link-local request: {url}")
-                try:
-                    ip = _ip.ip_address(host)
-                    if ip.is_private or ip.is_loopback or ip.is_link_local:
-                        return ToolResult(success=False, error=f"MED-3: Refusing private IP request: {url}")
-                except ValueError:
-                    pass
-            except Exception:
-                return None
-            return None
+            p = _up(url)
+            host = (p.hostname or "").lower()
+            if host in ("127.0.0.1", "localhost", "::1"):
+                return ToolResult(success=False, error=f"MED-3: Refusing loopback request: {url}")
+            return None  # allow
 
         def fake_get(url, **kwargs):
-            return FakeResponse(
-                final_url="http://127.0.0.1/private",
-                history_urls=["http://127.0.0.1/private"],
-            )
+            assert kwargs.get("follow_redirects") is False, \
+                f"Expected follow_redirects=False, got {kwargs.get('follow_redirects')}"
+            return FakeRedirectResponse()
 
         monkeypatch.setattr(tools_mod, "_reject_restricted_url", fake_reject)
         monkeypatch.setattr(tools_mod.httpx, "get", fake_get)
         r = execute_tool("web_fetch", {"url": "https://initial.example.com/"}, "/tmp")
         assert r.success is False, f"Expected rejection, got: {r}"
         assert "MED-3" in r.error
-        assert "loopback" in r.error.lower() or "127.0.0.1" in r.error or "Redirected to blocked" in r.error
+        assert "Redirected to blocked" in r.error or "127.0.0.1" in r.error
 
     def test_web_fetch_rejects_redirect_to_private_ip(self, monkeypatch):
-        """MED-3 (Phase 6): redirect to RFC1918 private IP is rejected."""
+        """MED-3 (Phase 6.1): redirect to RFC1918 private IP is rejected before connecting."""
         from agent import tools as tools_mod
 
         monkeypatch.setenv("CRABCAKES_WEB_FETCH_RESTRICT", "1")
 
-        class FakeResponse:
-            def __init__(self, final_url, history_urls):
-                self.url = final_url
-                self.history = [type("H", (), {"url": u})() for u in history_urls]
-                self.headers = {"content-type": "text/html"}
-                self.text = "<html>private</html>"
+        class FakeRedirectResponse:
+            status_code = 302
+            headers = {"location": "http://10.0.0.5/internal", "content-type": "text/html"}
+            text = ""
+            url = "http://initial.example.com/"
 
             def raise_for_status(self):
                 pass
 
         def fake_reject(url):
             from agent.tools import ToolResult
+            import ipaddress as _ip
+            from urllib.parse import urlparse as _up
+            p = _up(url)
+            host = p.hostname or ""
             try:
-                import ipaddress as _ip
-                from urllib.parse import urlparse as _up
-                p = _up(url)
-                host = p.hostname or ""
-                try:
-                    ip = _ip.ip_address(host)
-                    if ip.is_private or ip.is_loopback or ip.is_link_local:
-                        return ToolResult(success=False, error=f"MED-3: Refusing private IP request: {url}")
-                except ValueError:
-                    pass
-            except Exception:
+                ip = _ip.ip_address(host)
+                if ip.is_private or ip.is_loopback or ip.is_link_local:
+                    return ToolResult(success=False, error=f"MED-3: Refusing private IP request: {url}")
+            except ValueError:
                 pass
-            return None
+            return None  # allow
 
         def fake_get(url, **kwargs):
-            return FakeResponse(
-                final_url="http://10.0.0.5/internal",
-                history_urls=["http://10.0.0.5/internal"],
-            )
+            assert kwargs.get("follow_redirects") is False
+            return FakeRedirectResponse()
 
         monkeypatch.setattr(tools_mod, "_reject_restricted_url", fake_reject)
         monkeypatch.setattr(tools_mod.httpx, "get", fake_get)
         r = execute_tool("web_fetch", {"url": "https://initial.example.com/"}, "/tmp")
         assert r.success is False
         assert "MED-3" in r.error
+        assert "Redirected to blocked" in r.error
 
     def test_web_fetch_no_redirect_check_when_unrestricted(self, monkeypatch):
         """MED-3: when restriction is OFF, redirect chain is not re-checked."""
@@ -492,22 +472,65 @@ class TestWebFetch:
 
         monkeypatch.delenv("CRABCAKES_WEB_FETCH_RESTRICT", raising=False)
 
-        class FakeResponse:
-            def __init__(self, final_url):
-                self.url = final_url
-                self.history = []
-                self.headers = {"content-type": "text/html"}
-                self.text = "<html>ok</html>"
+        class FakeOkResponse:
+            status_code = 200
+            url = "http://example.com/"
+            headers = {"content-type": "text/html"}
+            text = "<html>ok</html>"
 
             def raise_for_status(self):
                 pass
 
         def fake_get(url, **kwargs):
-            return FakeResponse(final_url="http://example.com/")
+            return FakeOkResponse()
 
         monkeypatch.setattr(tools_mod.httpx, "get", fake_get)
         r = execute_tool("web_fetch", {"url": "https://example.com/"}, "/tmp")
         assert r.success is True
+
+    def test_web_fetch_validates_location_before_following(self, monkeypatch):
+        """MED-3 (Phase 6.1): httpx.get must be called with follow_redirects=False,
+        and the private IP URL must NEVER be passed to httpx.get."""
+        from agent import tools as tools_mod
+
+        monkeypatch.setenv("CRABCAKES_WEB_FETCH_RESTRICT", "1")
+
+        class FakeRedirectResponse:
+            status_code = 302
+            headers = {"location": "http://127.0.0.1/private", "content-type": "text/html"}
+            text = ""
+            url = "http://initial.example.com/"
+
+            def raise_for_status(self):
+                pass
+
+        def fake_reject(url):
+            from agent.tools import ToolResult
+            from urllib.parse import urlparse as _up
+            p = _up(url)
+            host = (p.hostname or "").lower()
+            if host in ("127.0.0.1", "localhost", "::1"):
+                return ToolResult(success=False, error=f"MED-3: Refusing loopback request: {url}")
+            return None  # allow
+        urls_called = []
+
+        def fake_get(url, **kwargs):
+            urls_called.append(url)
+            return FakeRedirectResponse()
+
+        monkeypatch.setattr(tools_mod, "_reject_restricted_url", fake_reject)
+        monkeypatch.setattr(tools_mod.httpx, "get", fake_get)
+        r = execute_tool("web_fetch", {"url": "https://initial.example.com/"}, "/tmp")
+
+        # Must return failure
+        assert r.success is False
+        assert "MED-3" in r.error
+        assert "Redirected to blocked" in r.error
+
+        # The private IP URL must NEVER have been passed to httpx.get
+        for called_url in urls_called:
+            assert "127.0.0.1" not in called_url, \
+                f"MED-3 violation: httpx.get was called with blocked URL {called_url}"
 
 
 
