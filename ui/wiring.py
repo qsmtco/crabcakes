@@ -6,12 +6,51 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Callable
 
 from ui.handlers.settings_handler import SettingsHandler
 from utils.providers_store import has_any_verified_provider, load_providers
 
 logger = logging.getLogger(__name__)
+
+# LOW-7: process-global env var that the image viewer in chat_bubble.py reads
+# to determine the active project root. Set by set_active_project_path() on
+# project open, cleared by clear_active_project_path() on project close.
+# Without this wiring, the viewer only ever has the home + /tmp fallback
+# roots — see test_low7_image_viewer.py for the threat model.
+ACTIVE_PROJECT_ENV = "CRABCAKES_ACTIVE_PROJECT_PATH"
+
+
+def set_active_project_path(project_path: str) -> None:
+    """LOW-7 wiring: publish the active project path for the image viewer.
+
+    Overwrites any prior value. Process-global (env vars are not per-window);
+    this is the documented limitation — only the most recently opened project
+    is in scope. The viewer falls back to home + /tmp if the env var is empty.
+
+    Normalizes the path: expands ~ and resolves to an absolute path. This is
+    required so chat_bubble.py's _is_path_in_allowed_roots (which calls
+    os.path.realpath, which does NOT expand ~) can correctly check whether
+    a file lives under this root.
+    """
+    if not project_path:
+        logger.warning(
+            "LOW-7: set_active_project_path called with empty path; "
+            "viewer will fall back to home + /tmp"
+        )
+        return
+    normalized = os.path.abspath(os.path.expanduser(project_path))
+    os.environ[ACTIVE_PROJECT_ENV] = normalized
+
+
+def clear_active_project_path() -> None:
+    """LOW-7 wiring: clear the active project path on project close.
+
+    Uses pop with a default so a stale value from a prior session cannot
+    leak (and so the call is safe even if no project was ever opened).
+    """
+    os.environ.pop(ACTIVE_PROJECT_ENV, None)
 
 
 def wire_settings_handler(

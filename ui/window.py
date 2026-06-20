@@ -46,6 +46,8 @@ from ui.handlers.task_handler import TaskHandler
 from ui.handlers.collab_handler import CollabHandler
 from ui.handlers.session_handler import SessionHandler
 
+from ui.wiring import set_active_project_path, clear_active_project_path
+
 
 from models.task import Task
 from models import task_store
@@ -445,6 +447,11 @@ class MainWindow(Gtk.ApplicationWindow):
                 # SPEC-activity-drawer: clear stale events when switching projects
                 self._activity_drawer.clear_events(),
                 self._on_feed_bar_update(n, len(self._project_handler.get_project_members(n)) if n else 0),
+                # LOW-7 wiring: publish the active project path so the image viewer
+                # in chat_bubble.py can scope _open_in_viewer to the project root
+                # (in addition to the home + /tmp fallbacks). Helper lives in
+                # ui/wiring.py so it's testable in isolation.
+                set_active_project_path(p),
             )
         )
         self._project_handler.set_on_project_closed(
@@ -454,6 +461,9 @@ class MainWindow(Gtk.ApplicationWindow):
                 self._chat_render_handler.set_project_name(""),
                 self._agent_runtime_handler.clear_active_project(),
                 self._on_feed_bar_update(None, 0),
+                # LOW-7 wiring: clear the env var when no project is active so
+                # the viewer falls back to home + /tmp only.
+                clear_active_project_path(),
             )
         )
         self._project_handler.set_on_members_changed(
