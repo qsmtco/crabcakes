@@ -77,6 +77,14 @@ class STTEngine:
         """
         # LOW-6: validate model_size against allowlist; fall back to default if invalid
         self._model_size = self._resolve_model_size(model_size)
+        self._device = device
+        self._on_result = on_result
+
+        self._model = None       # loaded lazily on first transcription
+        self._recording = False
+        self._capture_thread = None
+        self._capture_proc = None
+        self._frames = []       # raw PCM bytes captured during this session
 
     @staticmethod
     def _resolve_model_size(model_size: str | None) -> str:
@@ -89,14 +97,6 @@ class STTEngine:
             candidate, _DEFAULT_MODEL_SIZE, sorted(_VALID_MODEL_SIZES),
         )
         return _DEFAULT_MODEL_SIZE
-        self._device = device
-        self._on_result = on_result
-
-        self._model = None       # loaded lazily on first transcription
-        self._recording = False
-        self._capture_thread = None
-        self._capture_proc = None
-        self._frames = []       # raw PCM bytes captured during this session
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
