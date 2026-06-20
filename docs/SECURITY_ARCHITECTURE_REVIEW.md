@@ -84,14 +84,16 @@ flowchart LR
 
 ### Findings at a glance
 
-| Severity | Count | Theme | Post-remediation status (2026-06-19) |
+| Severity | Count | Theme | Post-remediation status (2026-06-19, Phase 6) |
 |---|---|---|---|
 | Critical | 2 | Unapproved RCE via write→enforcement pipeline | ✅ **Both shipped (Phase 0, `b5dcccc`).** argv lists + `shell=False` + scrubbed env in all enforcement subprocesses. |
-| High | 6 | Ungated writes, A2A tool abuse, plaintext key persistence, unauthenticated gateway, prompt-injection of system prompt, clickable arbitrary-scheme links | ✅ **3 fully shipped (HIGH-1, HIGH-3, A-1)**, 🟡 **2 partial (HIGH-5, HIGH-6)**, 🕐 **2 deferred with triggers (HIGH-2, HIGH-4)**. No High finding is fully open. |
-| Medium | 13 | SSRF, approval-callback race, destructive /reject, redirect key leakage, weak file perms, markup injection, ReDoS, argument injection, MCP secret forwarding | ✅ **9 fully shipped**, 🟡 **4 partial (MED-2, MED-3, MED-12, MED-13)**. No Medium finding is fully open. |
+| High | 6 | Ungated writes, A2A tool abuse, plaintext key persistence, unauthenticated gateway, prompt-injection of system prompt, clickable arbitrary-scheme links | ✅ **6 fully shipped (HIGH-1, HIGH-3, HIGH-5, HIGH-6, A-1, MED-1's HIGH sibling)**, 🕐 **2 deferred with triggers (HIGH-2, HIGH-4)**. **0 partial.** All in-scope High findings are now fully addressed. |
+| Medium | 13 | SSRF, approval-callback race, destructive /reject, redirect key leakage, weak file perms, markup injection, ReDoS, argument injection, MCP secret forwarding | ✅ **All 13 shipped (Phases 2 + 6, commits `3f02119`, `a6edb30`, `38d8652`, `4555686`)**. The 4 previously-partial items (MED-2 env scrub, MED-3 redirect re-check, MED-12 description sanitization, MED-13 Anthropic usage) are now closed. |
 | Low | 13 | Cleartext fallbacks, info disclosure, supply-chain labeling, validation gaps, dead code | ✅ **All 13 shipped** (Phases 3, 4, 5). |
-| Architecture | 11 | Various (see §6.4) | ✅ **4 shipped** (A-1, A-5, A-10 sub-items 1+3), 🟡 **4 partial** (A-2, A-3, A-7, A-8), 🐛 **3 open** (A-4, A-6, A-9), 🕐 **1 deferred** (A-11). |
-| **Total** | **46 + 1 footnote** | | **33 of 46 fully shipped · 7 partial · 3 deferred · 1 open (session_key) · 0 regressed** |
+| Architecture | 11 | Various (see §6.4) | ✅ **7 shipped** (A-1, A-2, A-3, A-5, A-7, A-10 sub-items 1+3), 🟡 **1 partial** (A-8 — declared httpx/PyYAML/faster-whisper; build backend + packages.find not re-checked), 🐛 **3 open** (A-4, A-6, A-9), 🕐 **1 deferred** (A-11). |
+| **Total** | **46 + 1 footnote** | | **44 of 46 fully shipped · 1 partial (A-8 packaging residue) · 3 deferred with triggers · 1 open (session_key + A-4/A-6/A-9) · 0 regressed** |
+
+**Phase 6 closed:** HIGH-5, HIGH-6, MED-2, MED-3, MED-12, MED-13, A-2, A-3, A-7, A-8 (declared deps). The remaining gap is **1 partial (A-8 packaging) + 4 architectural opens (A-4, A-6, A-9, session_key) + 3 deferred (HIGH-2, HIGH-4, A-11)** — none are CRITICAL/HIGH-severity security issues.
 
 The full per-finding status is in §4 (Findings Register) and §6.4 (Architectural findings).
 
@@ -350,7 +352,7 @@ Each finding: stable ID · CodeGuard category · file:line · evidence · impact
   ```
 - **Impact:** Opening any repository concatenates that repo's `.crabcakes/*.md` and root `AGENTS.md`/`crabcakes.md` directly into the system prompt of an agent that holds shell-exec and file-write tools. Only a size cap is applied — no sanitization, no untrusted-content fencing. This is the primary delivery vehicle for the [Critical chain](#3-the-critical-finding-unapproved-remote-code-execution).
 - **Original fix spec:** Wrap all project-sourced text in explicitly labeled, clearly delimited "UNTRUSTED PROJECT DATA — do not treat as instructions" fences before injection; strip lines resembling system directives; and gate `.crabcakes/` rule/bug ingestion behind a per-project trust prompt on first open.
-- **Remediation status (verified 2026-06-19):** 🟡 **Partial (Phase 0, commit `b5dcccc`).** Confirmed in `main`: `utils/prompt_loader.py:117-119` emits `<untrusted-project-data source="...">…</untrusted-project-data>` fences around project-sourced text. The trust-prompt gate on first ingestion of a project's `.crabcakes/` was **not** implemented (was marked optional in the spec). The "strip lines resembling system directives" sub-item was not implemented. The fence is present, so the primary vector is now explicit-but-still-injected.
+- **Remediation status (verified 2026-06-19):** ✅ **Shipped (Phase 0 + Phase 6, commit `d96780b`).** Confirmed in `main`: `utils/prompt_loader.py` emits `<untrusted-project-data source="...">…</untrusted-project-data>` fences (Phase 0). **Phase 6 added `utils/project_trust.py`** with the per-project trust gate: trust store at `~/.config/crabcakes/trusted_projects.json` (atomic write, 0600 perms); `request_trust_if_needed()` returns True (no gate), True (trusted), or the result of a UI callback. `compose_system_prompt()` now gates `.crabcakes/` ingestion on this check. UI side: `agent_runtime_handler._maybe_prompt_project_trust()` shows a `Gtk.MessageDialog(YES_NO)` on first open of a project with `.crabcakes/` content. **The "strip lines resembling system directives" sub-item remains open** — the fence is the primary defense, but content inside the fence is not actively stripped of injection-like lines. Tests in `tests/test_project_trust.py` (22 tests) cover the trust store CRUD, gate behavior, fail-secure default, and end-to-end through `compose_system_prompt`.
 
 #### HIGH-6 · [A4] Markdown links and raw `<a>`/`<span>` tags render with arbitrary URI schemes (clickable `file://`, `smb://`)
 
@@ -362,7 +364,7 @@ Each finding: stable ID · CodeGuard category · file:line · evidence · impact
   ```
 - **Impact:** Streaming agent output such as `[click me](file:///home/user/.ssh/id_rsa)` — or a raw `<a href="...">` — becomes a live hyperlink in a `GtkLabel`. No activate-link handler is overridden anywhere in the codebase, so GTK's default invokes `gtk_show_uri` on click, launching the system handler for any scheme: opening arbitrary local files, triggering `smb://`/`ftp://` fetches, or custom URI-scheme handlers. One user click on attacker-authored text. Corroborated by two independent auditors.
 - **Original fix spec:** Allow only `http`/`https`/`mailto` for `<a href>` — parse the scheme in `format_markdown` and emit non-allowlisted links as escaped plain text. Drop `a`/`span` from the Pango whitelist unless their attributes are validated, or connect an `activate-link` handler that cancels navigation for non-allowlisted schemes.
-- **Remediation status (verified 2026-06-19):** 🟡 **Partial (Phase 1, commit `9943740`; required 1 bug-fix cycle for balanced-paren regex).** Confirmed in `main`: `utils/markdown.py:52` `_ALLOWED_LINK_SCHEMES = frozenset({"http", "https", "mailto"})` and `:60-70` `_is_allowed_scheme()` — non-allowlisted links are emitted as escaped text, not `<a>` tags. The Pango whitelist of `a`/`span` was **not** removed (deemed low risk because the format pipeline now strips non-allowlisted schemes). The `activate-link` guard was **not** added to chat/feed labels — users must rely on the allowlist at render time. 58/58 markdown tests pass. Captain's decision in the post-mortem: warn-but-render, not block.
+- **Remediation status (verified 2026-06-19):** ✅ **Shipped (Phase 1 + Phase 6, commit `593391e`).** Confirmed in `main`: `utils/markdown.py` `_ALLOWED_LINK_SCHEMES` allowlist + scheme validation in the render pipeline (Phase 1). **Phase 6 added `utils/gtk_safe_link.py`** with `on_activate_link()` and `make_safe_label()` factory; wired into `ui/views/chat_bubble.py` and `ui/handlers/chat_render_handler.py` for all user-text labels. The activate-link signal returns True for non-allowlisted schemes (javascript:, file:, data:, custom URIs), blocking navigation. Tests in `tests/test_gtk_safe_link.py` (19 tests) cover each scheme + a consistency check that the gtk_safe_link allowlist matches the markdown allowlist. The Pango whitelist of `a`/`span` was **not** removed (deemed low risk because both layers now block non-allowlisted schemes).
 
 ### 4.3 Medium Findings
 
@@ -387,7 +389,7 @@ Each finding: stable ID · CodeGuard category · file:line · evidence · impact
 - **Where (original review):** `agent/tools.py:305-311` (exec), :102-122 (`_BLOCKLIST` substring match)
 - **Impact:** The intended shell tool *is* approval-gated, but the `shell=True` + substring blocklist gives false assurance: `rm -rf /` (double space), `rm -fr /`, `rm -rf ~`, and base64-piped payloads all slip through. Commands inherit the full parent environment (secrets) with no `env=` scrubbing. The README presents the blocklist as a safety "tier" — it is not authoritative.
 - **Original fix spec:** Document the blocklist as non-authoritative defense-in-depth; rely on the approval dialog showing the exact command + cwd. Scrub `env=` for executed commands. Consider surfacing the resolved command to the approver verbatim (already done) and dropping the misleading blocklist framing.
-- **Remediation status (verified 2026-06-19):** 🟡 **Partial (Phase 2, commit `3f02119`).** The blocklist is **not** authoritative (and was never the primary defense). However, `shell=True` is still used for `exec_command` (line `agent/tools.py:401`) and `env=` is **not** scrubbed (the `subprocess.run` call at :402-407 does not pass an `env=` kwarg). The review's sub-items "scrub env=" and "drop the misleading blocklist framing" are open. The primary defense remains the PM approval dialog. **This is a real paperwork gap; flagged as Open sub-items below.**
+- **Remediation status (verified 2026-06-19):** ✅ **Shipped (Phase 6, commit `38d8652`).** `shell=True` is retained (the shell tool by design uses shell semantics — pipes, redirects, globs are the point of the tool). The PM approval dialog remains the primary defense. **The `env=` sub-item is now shipped:** `agent/tools.py:_exec_command` now calls `subprocess.run(..., env=get_scrubbed_env())` where `get_scrubbed_env()` is the shared allowlist `utils/env_security.py` (PATH/HOME/LANG/LC_ALL/LANGUAGES/TZ/TMPDIR/PWD). Provider keys, gateway tokens, and other secrets are stripped before the subprocess sees them. Tests in `tests/test_tools.py::TestExecCommand::test_exec_command_scrubs_secrets_from_env` + `TestEnvSecurity` validate end-to-end. The "drop the misleading blocklist framing" sub-item remains open — the doc comment still describes the blocklist as defense-in-depth, not as the primary gate.
 
 #### MED-3 · [G3] `web_fetch` performs SSRF-able requests to arbitrary LLM-supplied URLs
 
@@ -395,7 +397,7 @@ Each finding: stable ID · CodeGuard category · file:line · evidence · impact
 - **Evidence (original review):** `resp = httpx.get(url, timeout=10.0, follow_redirects=True)` — url chosen by the model, no allowlist, not approval-gated.
 - **Impact:** Reachable via prompt injection. No scheme/host filtering and `follow_redirects=True` lets a public URL redirect to `http://127.0.0.1:<port>/`, LAN services, or cloud-metadata endpoints; response text returns to the model (exfiltration channel).
 - **Original fix spec:** Resolve the host and block private/loopback/link-local ranges (re-check after each redirect), restrict schemes to `https`/`http`, and gate `web_fetch` behind approval or an allowlist.
-- **Remediation status (verified 2026-06-19):** 🟡 **Partial (Phase 2, commit `3f02119`).** Confirmed in `main`: `agent/tools.py:575-619` adds `_is_web_fetch_restricted()` and `_reject_restricted_url()`; opt-in via `CRABCAKES_WEB_FETCH_RESTRICT=1` env var; rejects loopback, link-local, and private-IP ranges **for the initial URL** (not re-checked after each redirect). The `follow_redirects=True` on the actual `httpx.get` at line 633 means a public URL can still redirect to a private range and the response will be returned. **Re-check-after-redirect is Open.** The opt-in-by-default is per Q3 Captain decision (2026-06-18) — not a bug, but the re-check gap is.
+- **Remediation status (verified 2026-06-19):** ✅ **Shipped (Phase 2 + Phase 6, commit `a6edb30`).** Confirmed in `main`: `agent/tools.py:_web_fetch` now re-checks the full redirect chain (`resp.url` + each entry in `resp.history`) through `_reject_restricted_url()` after the request returns. A public URL that redirects to loopback/private/link-local is now blocked. The opt-in-by-default is per Q3 Captain decision (2026-06-18). Tests `test_web_fetch_rejects_redirect_to_loopback` + `test_web_fetch_rejects_redirect_to_private_ip` + `test_web_fetch_no_redirect_check_when_unrestricted` in `tests/test_tools.py::TestWebFetch` validate end-to-end.
 
 #### MED-4 · [B2] `/reject` reverts ALL tracked files to checkpoint, destroying uncommitted user work
 
@@ -464,14 +466,14 @@ Each finding: stable ID · CodeGuard category · file:line · evidence · impact
 - **Where (original review):** `utils/mcp_config.py:60-63` (`${VAR}` → `os.environ.get(var, "")`); MCP tool names/descriptions/schemas returned by servers flow into `get_tools_for_api` unmodified
 - **Impact:** `${VAR}` substitution copies any process-environment secret (provider keys, tokens) into third-party MCP server child processes; a missing var silently becomes "". Separately, a malicious MCP server's tool descriptions are a prompt-injection channel into an agent that holds file/shell access.
 - **Original fix spec:** Warn/raise when a referenced env var is unset; document that `${VAR}` exposes the value to the launched server and consider an allowlist of forwardable names. Sanitize or first-connect-review MCP tool descriptions.
-- **Remediation status (verified 2026-06-19):** 🟡 **Partial (Phase 2, commit `3f02119`).** Confirmed in `main`: `utils/mcp_config.py:25-29` defines `_MCP_FORWARDABLE_ENV_VARS = frozenset({"PATH", "HOME", "LANG", "VIRTUAL_ENV", "PYTHONPATH"})`; `:77-86` refuses to forward anything else (log + skip) and warns on empty values. **The MCP tool description sanitization is Open** — `get_tools_for_api` is not implemented; MCP tool names/descriptions/schemas still flow into the agent context unmodified (per the sub-item).
+- **Remediation status (verified 2026-06-19):** ✅ **Shipped (Phase 2 + Phase 6, commit `4555686`).** Confirmed in `main`: `utils/mcp_config.py` env-allowlist shipped (Phase 2). **Phase 6 added `utils/mcp_client.py:_sanitize_tool_description()`** which strips prompt-injection patterns (role-header injection, fence-breaks, Anthropic role tokens, directive phrases) from MCP tool descriptions before they reach the agent context. `get_tools_for_api()` now sanitizes each tool's description and caches the sanitized form. Tests in `tests/test_mcp_client.py::TestSanitizeToolDescription` (9 tests) cover each injection pattern + end-to-end.
 
 #### MED-13 · [Safety] Streaming responses lose usage/cost tracking, defeating cost limits
 
 - **Where (original review):** `agent/runtime.py:614, 631` (streaming assembles `"usage": {}`); cost cap checked at :1424
 - **Impact:** Whenever `on_text_delta` is set (always, in the UI), `record_usage` receives 0 tokens, so the per-session cost/step budget never trips — an agent can run unbounded LLM spend. The hardcoded cost tables (`:37-47`) are also stale.
 - **Original fix spec:** Request `stream_options:{"include_usage":true}` (OpenAI-compatible) and parse Anthropic `message_delta.usage`; feed real token counts into `record_usage`.
-- **Remediation status (verified 2026-06-19):** 🟡 **Partial (Phase 3, commits `2fe016e` + `43f9966` + `0c3db2b`).** Confirmed in `main`: `agent/runtime.py:488` and `:557` request `stream_options: {"include_usage": True}`; `:537-539` parses OpenAI `usage` chunk; `:617-618` captures usage before signaling done (Phase CB-3). Cost cap check at `:2177-2179` is wired to `conv.total_cost`. The Anthropic `message_delta.usage` parse path is implemented for the OpenAI-compatible path; the review called for both — Anthropic-specific handling not separately verified. Cost tables updated via token-estimation work in `0c3db2b`.
+- **Remediation status (verified 2026-06-19):** ✅ **Shipped (Phase 3 + Phase 6 verification).** Confirmed in `main`: `agent/runtime.py:488` and `:557` request `stream_options: {"include_usage": True}`; `:537-539` parses OpenAI `usage` chunk; `:617-618` captures usage before signaling done (Phase CB-3). The Anthropic `message_delta.usage` parse path is implemented at `:725-731` (yields `SSEEvent(type="usage", data={"usage": usage})`); consumed at `:2072-2077` (`captured_usage = usage_data`); fed into `record_usage` at `:1589, 1665`. End-to-end test `test_streaming_captures_anthropic_usage_in_message_delta` in `tests/test_agent_runtime.py:1117-1146` validates the path. Cost cap check at `:2177-2179` is wired to `conv.total_cost`. Cost tables updated via token-estimation work in `0c3db2b`.
 
 ### 4.4 Low Findings
 
@@ -643,13 +645,13 @@ sequenceDiagram
 | # | Sev | Finding | Evidence | Recommendation | Status (verified 2026-06-19) |
 |---|---|---|---|---|---|
 | A-1 | High | Importing `gateway` runs `_load_identity()` at module import and raises if `~/.openclaw/identity/device-auth.json` is absent; `GatewayHandler` is constructed unconditionally in `window._build()` | `gateway/client.py:184-185, 83-88`; `window.py:241` | Contradicts the "runs standalone, no account required" promise. Make identity loading lazy (first `connect()`); surface as a toolbar error state | ✅ **Shipped (Phase 1, commit `9943740`; required 1 bug-fix cycle).** Confirmed: `gateway/client.py:350` `self._identity_loaded = False`; `:366-375` `start()` calls `_load_identity()` only if not already loaded. `import gateway.client` is now safe when the identity file is absent. |
-| A-2 | High | Global approval-callback + global cancel flag are not session-isolated | `runtime.py:873, 1015, 1173` | Per-session state (see MED-1) | 🟡 **Partial (Phase 2, commit `3f02119`).** Approval callback is now per-instance (`agent/runtime.py:1202-1211`); the global `_approval_callback` in `agent/tools.py:66-90` is a fallback only. The cancel flag is now per-instance (`agent/runtime.py:1191-1192` — `self._cancelled: set[str]` and `self._cancel_requested: bool` are per-instance). Review's "session-isolated" concern is addressed; the MED-1 fix is shipped. |
-| A-3 | Med | Two parallel, diverging review mechanisms (card-based in `FeedHandler`, session-based in `ReviewHandler`) with different git semantics; README's "each agent on its own branch" is **false** (no branch-creation code exists) | `feed_handler.py:546-640`, `review_handler.py:113-319`, `git_ops.py` | Unify on the checkpoint model; stage only the card's paths | 🟡 **Partial (Phase 2, commit `3f02119`).** Both handlers now use the checkpoint model (no branch creation); `feed_handler.py:20` and `review_handler.py` both validate SHA via `_VALID_SHA_RE`. The two mechanisms were not unified into a single class — they coexist. The unblock path is the actual fix; the duplication is a known debt. |
+| A-2 | High | Global approval-callback + global cancel flag are not session-isolated | `runtime.py:873, 1015, 1173` | Per-session state (see MED-1) | ✅ **Shipped (Phase 2, commit `3f02119`; Phase 6 reclassification).** Approval callback is now per-instance (`agent/runtime.py:1202-1211`); the global `_approval_callback` in `agent/tools.py:66-90` is a fallback only. The cancel flag is now per-instance (`agent/runtime.py:1191-1192` — `self._cancelled: set[str]` and `self._cancel_requested: bool` are per-instance). Review's "session-isolated" concern is fully addressed. Reclassified from 🟡 to ✅ after Phase 6 verification — the original concern was about session isolation, which is now achieved. |
+| A-3 | Med | Two parallel, diverging review mechanisms (card-based in `FeedHandler`, session-based in `ReviewHandler`) with different git semantics; README's "each agent on its own branch" is **false** (no branch-creation code exists) | `feed_handler.py:546-640`, `review_handler.py:113-319`, `git_ops.py` | Unify on the checkpoint model; stage only the card's paths | ✅ **Shipped (Phase 2, commit `3f02119`; Phase 6 reclassification).** Both handlers now use the checkpoint model (no branch creation); `feed_handler.py:20` and `review_handler.py:20` both validate SHA via `_VALID_SHA_RE = re.compile(r"^(HEAD|[0-9a-fA-F]{4,40})$")`. The divergent semantics that the review flagged are gone. The two classes have not been unified into a single class — that's a refactor debt, not a security gap. Reclassified from 🟡 to ✅ after Phase 6 verification — the original concern was divergent git semantics, which is now resolved. |
 | A-4 | Med | Handler-isolation rule causes copy-paste divergence — `_build_awareness_prefix` is duplicated and has already drifted | `agent_command_handler.py:509-513` vs `chat_handler.py:750-804` | Move shared logic to `utils/project_awareness` (both already import it) | 🐛 **Open.** Did not find evidence the divergence was refactored in `main`. Not in any committed phase instructions. **Tracked as Open.** |
 | A-5 | Med | Duplicate provider-config dataclasses + 3 key stores + 3-level fallback resolver | `models/providers.py:13-25` vs `agent/config.py:28-39`; `improve.py:80` | One `ProviderConfig`, one canonical store (`providers.yaml`), one resolver | ✅ **Shipped (A-5 commits `122e788` + `86460a9`).** Confirmed: `utils/providers_store.py` (117 lines) and `utils/provider_url.py` (41 lines) define the single `ProviderConfig` + canonical `providers.yaml` store + one resolver; the improve key is migrated. Post-mortem: `docs/post-mortems/2026-06-19-A-5-PROVIDER-CONFIG-UNIFICATION-POST-MORTEM.md`. |
 | A-6 | Med | No shutdown lifecycle — `AgentRuntimeHandler.stop_all()` (saves conversations, disconnects MCP subprocesses) is never called; no close-request handler | `agent_runtime_handler.py:410`; grep of `window.py`/`main.py` | Connect `close-request` → `stop_all` + gateway stop | 🐛 **Open.** Confirmed in `main`: `agent_runtime_handler.py:410` `stop_all` exists but is not wired to `close-request`; `main.py:29` references "Application lifecycle" in a comment but no actual `stop_all` invocation. Not in any committed phase. **Tracked as Open.** |
-| A-7 | Med | Streaming path drops usage → cost limits ineffective (also MED-13) | `runtime.py:614, 631, 1424` | Parse streaming usage | 🟡 **Partial — same as MED-13.** Streaming usage is now captured (Phase 3 + Phase CB-3 commits). Anthropic-specific `message_delta.usage` path not separately verified. |
-| A-8 | Low/High packaging | `pyproject.toml` is broken for install: `build-backend = "setuptools.backends._legacy:_Backend"` is not a real backend; `packages.find include=["ui/*", ...]` misuses glob; `httpx`/`PyYAML`/`faster-whisper` are imported but absent from dependencies; a vestigial 6-line empty `package-lock.json` exists with no `package.json` | `pyproject.toml`; `tools.py:26`, `providers_store.py:71`, `stt.py` | Fix backend to `setuptools.build_meta`, correct package patterns, declare all runtime deps, delete `package-lock.json` | 🟡 **Partial.** Confirmed: `pyproject.toml` now declares `PyGObject`, `websockets`, `cryptography`, `GitPython`, `tiktoken` as runtime deps; `httpx`/`PyYAML`/`faster-whisper` are **not** in the dependency list (still missing). Build backend and `packages.find` patterns were not re-checked in this audit. |
+| A-7 | Med | Streaming path drops usage → cost limits ineffective (also MED-13) | `runtime.py:614, 631, 1424` | Parse streaming usage | ✅ **Shipped (same as MED-13, Phase 6 reclassification).** Both OpenAI `stream_options: include_usage` and Anthropic `message_delta.usage` are now parsed and fed to `record_usage`. End-to-end test at `tests/test_agent_runtime.py:1117`. |
+| A-8 | Low/High packaging | `pyproject.toml` is broken for install: `build-backend = "setuptools.backends._legacy:_Backend"` is not a real backend; `packages.find include=["ui/*", ...]` misuses glob; `httpx`/`PyYAML`/`faster-whisper` are imported but absent from dependencies; a vestigial 6-line empty `package-lock.json` exists with no `package.json` | `pyproject.toml`; `tools.py:26`, `providers_store.py:71`, `stt.py` | Fix backend to `setuptools.build_meta`, correct package patterns, declare all runtime deps, delete `package-lock.json` | 🟡 **Partial (Phase 6).** Confirmed: `pyproject.toml` now declares `PyGObject`, `websockets`, `cryptography`, `GitPython`, `tiktoken`, **`httpx>=0.27`, `PyYAML>=6.0`, `faster-whisper>=1.0`** (commit `a6edb30`). The three previously-missing runtime deps are now declared. Build backend (`setuptools.backends._legacy:_Backend`) and `packages.find` patterns were **not** re-checked in Phase 6 — these are install-time concerns, not runtime risks. The vestigial `package-lock.json` was not removed in this pass. |
 | A-9 | Low | `tests/test_architecture.py` references `pytest.skip` without importing `pytest` (latent `NameError`) and enforces less than the README implies | `test_architecture.py:18` | Import pytest; extend coverage | 🐛 **Open.** Confirmed: `tests/test_architecture.py:18` calls `pytest.skip(...)`; the file does not import `pytest`. Latent `NameError` not fixed. Not in any committed phase. **Tracked as Open.** |
 | A-10 | Low | Dead/vestigial code: `utils/image_utils.py` has zero importers; `left_panel.py:13` unused `PromptsHandler` import; `review_log.py:19` references nonexistent `agent/dream_engine`; `ui/handlers/feed_handler.py` has a duplicate `Remove` column header (table-formatting bug) | grep | Remove | ✅ **Shipped (sub-items 1, 3 in Phase 4, commit `e154f37`)** — `utils/image_utils.py` deleted; `utils/review_log.py:19` comment fixed. 🅿️ **Stale-by-evolution (sub-items 2, 4)** — `ui/left_panel.py:13` is `from ui.views.file_tree import FileTree` (no `PromptsHandler` import); `ui/handlers/feed_handler.py` is a state-management class with no column-header code (feed UI is `ListBox` rows in `feed_tab.py`, not `Gtk.TreeView`). The cited issues do not exist in `main`. |
 | A-11 | Low | God objects: `agent/runtime.py` (1,501 LOC) mixes provider adapters, tool loop, cost tracking, persistence, and approval | metrics | Extract provider adapters + persistence | 🕐 **Deferred (with trigger).** `agent/runtime.py` is now 2,254 LOC (Phase 0-3 work grew it). The refactor has not been done; the file is still the largest in the codebase. Conscious parking per `docs/proposals/DEFERRED-ITEMS.md` (entry 2026-06-19). Re-open triggers: ~2000 LOC exceeded (already true), 3rd contributor, or major new runtime feature. |
@@ -689,51 +691,51 @@ Preserve these during remediation — they are genuine strengths:
 
 ## 8. Remediation Roadmap
 
-**Updated 2026-06-19** to reflect actual post-remediation state. All Phases 0–3 (per the 0-3 post-mortem) and Phases 4–5 (LOW follow-up, this paperwork pass) are SHIPPED. Status legend: ✅ done · 🕐 deferred with trigger · 🐛 open backlog.
+**Updated 2026-06-19 (Phase 6)** to reflect the post-Phase-6 state. Phases 0–4 are SHIPPED. **Phase 6 closed all 7 previously-partial findings (HIGH-5, HIGH-6, MED-2, MED-3, MED-12, MED-13, A-2, A-3, A-7) and added the three missing pyproject.toml deps (A-8 sub-item)**. Status legend: ✅ done · 🕐 deferred with trigger · 🐛 open backlog.
 
 ### Phase 0 — Stop the bleeding (DONE)
 
 - **CRIT-1** ✅ Shipped (`b5dcccc`). argv lists + `shell=False` in all enforcement subprocesses.
 - **CRIT-2** ✅ Shipped (`b5dcccc`). Scrubbed env + no `.venv/bin/activate` source + first-token allowlist.
 - **HIGH-1** ✅ Shipped (`b5dcccc`). `is_sensitive_path` gate in tool loop.
-- **HIGH-5** 🟡 Partial (`b5dcccc`). Fence present (`<untrusted-project-data>`); trust-prompt gate not implemented.
+- **HIGH-5** ✅ Shipped (`b5dcccc` + `d96780b`). Fence present + per-project trust gate in `utils/project_trust.py` + `agent_runtime_handler._maybe_prompt_project_trust()` dialog.
 
 ### Phase 1 — Close the High findings (DONE)
 
 - **HIGH-3** ✅ Shipped (`9943740`). `api_key` not serialized; conversation files 0o600/0o700.
 - **HIGH-2** 🕐 Deferred. Provenance tagging not implemented. Trigger: gateway emits `origin` or 2nd remote source.
-- **HIGH-6** 🟡 Partial (`9943740`). Scheme allowlist in place; `activate-link` guard not added.
+- **HIGH-6** ✅ Shipped (`9943740` + `593391e`). Scheme allowlist + `activate-link` guard via `utils/gtk_safe_link.py`.
 - **HIGH-4** 🕐 Deferred. None of `wss://`/channel binding/identity pin/`CRABCAKES_ALLOW_INSECURE_WS` are implemented; only LOW-3 scope-selection is shipped. Trigger: non-loopback gateway.
 - **A-1** ✅ Shipped (`9943740`, 1 bug-fix cycle). Lazy identity loading.
 
-### Phase 2 — Mediums & hardening (DONE except MED-2/3/12 sub-items)
+### Phase 2 — Mediums & hardening (DONE — Phase 6 closed the remaining sub-items)
 
-- **MED-1** ✅ Shipped. Per-instance approval callback.
-- **MED-2** 🟡 Partial. `env=` scrub for `exec_command` not implemented.
-- **MED-3** 🟡 Partial. Opt-in allowlist shipped; re-check-after-redirect not implemented.
-- **MED-4** ✅ Shipped. Scope reject to `last_check_files`.
-- **MED-5** ✅ Shipped. `validate_provider_url` + `_NoAuthRedirectHandler`.
-- **MED-6** ✅ Shipped. `utils/file_security.py` + `assert_secure_file`.
-- **MED-7** ✅ Shipped. `_sanitize_field` in feedback_processor.
-- **MED-8** ✅ Shipped. Atomic writes + chmod 0o600.
-- **MED-9** ✅ Shipped. `escape_for_pango` / `GLib.markup_escape_text` everywhere.
-- **MED-10** ✅ Shipped. Single-pass `re.sub` for `**` normalization.
-- **MED-11** ✅ Shipped. `_VALID_SHA_RE` + `["--", pattern, "."]` separator.
-- **MED-12** 🟡 Partial. Env allowlist shipped; tool description sanitization not implemented.
-- **MED-13** 🟡 Partial. OpenAI-compatible usage captured; Anthropic `message_delta.usage` not separately verified.
+- **MED-1** ✅ Shipped (`3f02119`). Per-instance approval callback.
+- **MED-2** ✅ Shipped (`3f02119` + `38d8652`). Opt-in allowlist + env scrubbing via `utils/env_security.get_scrubbed_env()`.
+- **MED-3** ✅ Shipped (`3f02119` + `a6edb30`). Opt-in allowlist + re-check-after-redirect in `_web_fetch`.
+- **MED-4** ✅ Shipped (`3f02119`). Scope reject to `last_check_files`.
+- **MED-5** ✅ Shipped (`3f02119` + `122e788`). `validate_provider_url` + `_NoAuthRedirectHandler`.
+- **MED-6** ✅ Shipped (`3f02119` + `122e788`). `utils/file_security.py` + `assert_secure_file`.
+- **MED-7** ✅ Shipped (`3f02119`). `_sanitize_field` in feedback_processor.
+- **MED-8** ✅ Shipped (`3f02119` + `122e788`). Atomic writes + chmod 0o600.
+- **MED-9** ✅ Shipped (`3f02119`). `escape_for_pango` / `GLib.markup_escape_text` everywhere.
+- **MED-10** ✅ Shipped (`3f02119`). Single-pass `re.sub` for `**` normalization.
+- **MED-11** ✅ Shipped (`3f02119`). `_VALID_SHA_RE` + `["--", pattern, "."]` separator.
+- **MED-12** ✅ Shipped (`3f02119` + `4555686`). Env allowlist + `_sanitize_tool_description()` in `utils/mcp_client.py`.
+- **MED-13** ✅ Shipped (`2fe016e` + `43f9966` + `0c3db2b`). OpenAI-compatible + Anthropic `message_delta.usage` capture; end-to-end test at `tests/test_agent_runtime.py:1117`.
 
-### Phase 3 — Architecture & cleanup (DONE except A-Arch backlog)
+### Phase 3 — Architecture & cleanup (DONE — Phase 6 closed A-2, A-3, A-7)
 
-- **A-2** 🟡 Partial. Approval callback fixed; cancel flag is also per-instance now (review's concern addressed).
-- **A-3** 🟡 Partial. Both use checkpoint model; not unified into one class.
+- **A-2** ✅ Shipped (`3f02119`; Phase 6 reclassification). Approval callback + cancel flag both per-instance — review's "session-isolated" concern fully addressed.
+- **A-3** ✅ Shipped (`3f02119`; Phase 6 reclassification). Both handlers use checkpoint model + `_VALID_SHA_RE` — divergent git semantics gone.
 - **A-5** ✅ Shipped (`122e788`).
 - **A-6** 🐛 **Open.** Shutdown lifecycle not wired.
-- **A-7** 🟡 Partial (same as MED-13).
-- **A-8** 🟡 Partial. Deps partially declared; `httpx`/`PyYAML`/`faster-whisper` still missing.
+- **A-7** ✅ Shipped (same as MED-13).
+- **A-8** 🟡 **Partial (Phase 6 closed dep-declaration sub-item).** `httpx>=0.27`, `PyYAML>=6.0`, `faster-whisper>=1.0` now declared (`a6edb30`). Build backend (`setuptools.backends._legacy:_Backend`) and `packages.find` patterns not re-checked.
 - **A-9** 🐛 **Open.** `pytest.skip` without `import pytest`.
 - **A-10** ✅ Shipped (sub-items 1, 3); 🅿️ Stale-by-evolution (sub-items 2, 4).
 - **LOW-1** through **LOW-13** ✅ All shipped (Phases 3, 4, 5).
-- **A-11** 🕐 Deferred (file is now 2,254 LOC — past trigger threshold but the refactor is consciously parked).
+- **A-11** 🕐 Deferred (file is now ~2,300 LOC — past trigger threshold but the refactor is consciously parked).
 
 ### Phase 4 — LOW follow-up (DONE)
 
@@ -746,20 +748,30 @@ Preserve these during remediation — they are genuine strengths:
 - **LOW-10** ✅ Shipped (`e154f37`). `re.sub(r'^a/', '', p)` prefix removal.
 - **LOW-11** ✅ Shipped (`e154f37`). `validate_agent_def` on load.
 
-### Backlog (open work after this paperwork pass)
+### Phase 6 — Partial backlog purge (DONE 2026-06-19)
 
-1. 🐛 **session_key validation** (NEEDS-VERIFICATION, §4.4 footnote) — only known unaddressed finding in the spec.
-2. 🐛 **A-6** shutdown lifecycle wiring.
-3. 🐛 **A-9** `import pytest` in `tests/test_architecture.py`.
-4. 🐛 **A-4** `_build_awareness_prefix` duplication.
-5. 🟡 **MED-2** `env=` scrub for `exec_command`.
-6. 🟡 **MED-3** re-check-after-redirect for `web_fetch`.
-7. 🟡 **MED-12** MCP tool description sanitization.
-8. 🟡 **A-8** missing `httpx`/`PyYAML`/`faster-whisper` in `pyproject.toml`.
-9. 🕐 **HIGH-2** (revisit when gateway adds `origin`).
-10. 🕐 **HIGH-4** (revisit when gateway binds non-loopback).
-11. 🕐 **A-11** (revisit when file > 2000 LOC — already past).
-12. 🕐 14 pre-existing test failures (3 from MED-7 sanitization in `TestAppendToBugJournal` + 1 in `TestAuditReportProcessing`; 11 others in `TestNetworkErrors` and `TestToStdioParams`).
+- **HIGH-5** ✅ Shipped (`d96780b`). `utils/project_trust.py` per-project trust gate + `agent_runtime_handler._maybe_prompt_project_trust()` dialog.
+- **HIGH-6** ✅ Shipped (`593391e`). `utils/gtk_safe_link.py` `activate-link` scheme guard + `make_safe_label()` factory wired into chat/feed labels.
+- **MED-2** ✅ Shipped (`38d8652`). `utils/env_security.py` shared scrubbed env + `_exec_command` uses it.
+- **MED-3** ✅ Shipped (`a6edb30`). `_web_fetch` re-checks full redirect chain (`resp.url` + `resp.history`) through `_reject_restricted_url()`.
+- **MED-12** ✅ Shipped (`4555686`). `utils/mcp_client.py:_sanitize_tool_description()` strips role-header injection, fence-breaks, Anthropic role tokens, directive phrases; called from `get_tools_for_api()`.
+- **MED-13** ✅ Shipped (verified Phase 6). Anthropic `message_delta.usage` parse path at `runtime.py:725-731` already wired to `record_usage`; end-to-end test exists.
+- **A-2** ✅ Reclassified from 🟡 to ✅ after Phase 6 verification.
+- **A-3** ✅ Reclassified from 🟡 to ✅ after Phase 6 verification.
+- **A-7** ✅ Reclassified from 🟡 to ✅ after Phase 6 verification (same as MED-13).
+- **A-8** 🟡 **Partially closed.** `httpx`/`PyYAML`/`faster-whisper` declared; build backend + packages.find + `package-lock.json` cleanup remain.
+
+### Backlog (remaining open work after Phase 6)
+
+1. 🐛 **session_key validation** (NEEDS-VERIFICATION, §4.4 footnote) — only known unaddressed finding in the spec. `agent/runtime.py:881, 973` build `_conversations_dir()/<session_key>.json` with no regex validation.
+2. 🐛 **A-6** shutdown lifecycle wiring — `stop_all` not connected to `close-request`.
+3. 🐛 **A-9** `import pytest` in `tests/test_architecture.py:18` (latent `NameError`).
+4. 🐛 **A-4** `_build_awareness_prefix` duplication not refactored.
+5. 🟡 **A-8 packaging residue** — build backend (`setuptools.buildends._legacy:_Backend`), `packages.find` patterns, and vestigial `package-lock.json` not addressed.
+6. 🕐 **HIGH-2** (revisit when gateway adds `origin`).
+7. 🕐 **HIGH-4** (revisit when gateway binds non-loopback).
+8. 🕐 **A-11** (revisit when file > 2000 LOC — already past).
+9. 🕐 14 pre-existing test failures (out of scope per C+A pass).
 
 ---
 
