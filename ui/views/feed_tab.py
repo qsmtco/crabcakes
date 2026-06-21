@@ -1,5 +1,5 @@
 # ui/views/feed_tab.py
-# Feed tab container — pure view for the Projects notebook's "Feed" sub-tab.
+# Feed tab container - pure view for the Projects notebook's "Feed" sub-tab.
 # No business logic, no state mutations.
 #
 # Public API:
@@ -26,8 +26,8 @@ class FeedTab(Gtk.Box):
               └── Gtk.Box (vertical, card_container)
 
     CSS classes:
-      .feed-scroll  — the scrolled window
-      .feed-card-list — the vertical box holding cards
+      .feed-scroll  - the scrolled window
+      .feed-card-list - the vertical box holding cards
     """
 
     def __init__(self):
@@ -95,19 +95,35 @@ class FeedTab(Gtk.Box):
         if self._empty_widget is not None and self._empty_widget in self._card_container:
             self._card_container.remove(self._empty_widget)
             self._empty_widget = None
-        # Append to bottom (newest card at bottom — social-media order)
+        # Append to bottom (newest card at bottom - social-media order)
         self._card_container.append(card_widget)
         if card_id is not None:
             self._cards_by_id[card_id] = card_widget
 
     def remove_card(self, card_id: str) -> None:
-        """Remove a card widget by card_id."""
+        """Remove a card widget by card_id.
+
+        Unrealizes and clears active/focus state before removal so GTK4's
+        internal "active state accounting" doesn't fire
+        'Broken accounting of active state for widget' warnings when a card
+        is removed while the cursor is over it (project close path).
+        """
         if card_id not in self._cards_by_id:
             return
         widget = self._cards_by_id[card_id]
+        # Drop GTK's active/focus tracker before unparenting
+        if widget.has_focus():
+            try:
+                # Grab focus to a safe target so widget loses focus first
+                if self._feed_scroll is not None:
+                    self._feed_scroll.grab_focus()
+            except Exception:
+                pass
+        if widget.get_realized():
+            widget.unrealize()
         if self._card_container and widget in self._card_container:
             self._card_container.remove(widget)
-        del self._cards_by_id[card_id]
+        del self._cards_by_id[card_id]      
 
     def prepend_card(self, card_widget: Gtk.Widget, card_id: str | None = None) -> None:
         """
@@ -132,7 +148,7 @@ class FeedTab(Gtk.Box):
         Replace an existing card widget with a new one at the same position.
 
         Used by FeedHandler.update_card() when a tool call card is updated
-        with results — the widget is rebuilt and swapped in-place.
+        with results - the widget is rebuilt and swapped in-place.
         """
         if card_id not in self._cards_by_id:
             return
@@ -149,7 +165,7 @@ class FeedTab(Gtk.Box):
         except ValueError:
             return
 
-        # Remove old widget — now children[0..idx-1] are what come before new_widget
+        # Remove old widget - now children[0..idx-1] are what come before new_widget
         self._card_container.remove(old_widget)
 
         # predecessor is children[idx-1] if idx > 0, else None (insert at start)
@@ -172,7 +188,7 @@ class FeedTab(Gtk.Box):
     def smart_scroll_to_bottom(self) -> None:
         """
         Only scroll to bottom if the user is already near the bottom (within 80px).
-        If the user has scrolled up to read old cards, do NOT auto-scroll —
+        If the user has scrolled up to read old cards, do NOT auto-scroll -
         preserve their reading position. (Phase 4)
 
         Distinguishes from scroll_to_bottom() (unconditional) which is used
@@ -228,7 +244,7 @@ class FeedTab(Gtk.Box):
 
     def _on_batch_accept_clicked(self) -> None:
         """
-        Placeholder — overridden by FeedHandler when it wires the batch accept flow.
+        Placeholder - overridden by FeedHandler when it wires the batch accept flow.
         The handler calls set_batch_accept_callback() to install the real handler. (Phase 5)
         """
         pass

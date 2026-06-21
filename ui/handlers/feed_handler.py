@@ -432,10 +432,13 @@ class FeedHandler:
                 load_more_widget = self._build_load_more_widget(backlog_count)
                 self._load_more_widget = load_more_widget
 
-            # Add cards + load-more on main thread
-            def _render_feed():
+            # Add cards + load-more on main thread.
+            # Split into two idle callbacks so GTK measures the new layout
+            # before we scroll — otherwise scroll_to_bottom reads a stale
+            # vadjustment upper and can snap to the top. (Phase 4 race fix)
+            def _append_cards():
                 if self._feed_tab is None:
-                    return
+                    return False
 
                 # Prepend "Load More" at top if backlog exists
                 if load_more_widget is not None:
@@ -447,10 +450,16 @@ class FeedHandler:
                     if widget:
                         self._feed_tab.append_card(widget, card.card_id)
 
-                # Auto-scroll to bottom (newest card visible)
-                self._feed_tab.scroll_to_bottom()
+                return False  # one-shot, continue to next idle callback
 
-            self._GLib.idle_add(_render_feed)
+            def _scroll_after_layout():
+                if self._feed_tab is None:
+                    return False
+                self._feed_tab.scroll_to_bottom()
+                return False  # one-shot
+
+            self._GLib.idle_add(_append_cards)
+            self._GLib.idle_add(_scroll_after_layout)
             self._loading = False
 
         t = threading.Thread(target=_load_and_render, daemon=True)

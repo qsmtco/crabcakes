@@ -350,3 +350,5 @@ grep -n "_api_key_entry" ui/views/agent_builder.py   # should return nothing
 Any mismatch between these greps and the spec is a code bug, not a UI bug — file it as a defect.
 
 <!-- feed-card manual-test marker: touch -- 2026-06-21 -->
+
+<!-- feed-card manual-test marker: scroll-up -- 2026-06-21 -->
