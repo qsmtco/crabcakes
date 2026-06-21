@@ -78,6 +78,10 @@ class MockFeedTab:
     def scroll_to_bottom(self):
         pass  # no-op in tests
 
+    def schedule_scroll_to_bottom(self):
+        # Mirror the real FeedTab: scroll after a simulated layout pass
+        self.scroll_to_bottom()
+
     def smart_scroll_to_bottom(self):
         """Mirror of FeedTab.smart_scroll_to_bottom() for test."""
         vadj = self._vadjustment

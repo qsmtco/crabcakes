@@ -40,6 +40,8 @@ class FeedTab(Gtk.Box):
         self._empty_widget: Gtk.Widget | None = None
         # Batch accept bar (Phase 5): shown when ≥2 consecutive file-change cards are pending
         self._batch_bar: Gtk.Box | None = None
+        # One-shot scroll handler ID for deferred scroll-to-bottom (Bug A fix)
+        self._scroll_handler_id: int | None = None
 
         # ── Build scrolled card list ────────────────────────────────────
         scroll = Gtk.ScrolledWindow()
@@ -72,9 +74,10 @@ class FeedTab(Gtk.Box):
         if self._card_container is None:
             return
 
-        # Remove all card widgets
+        # Remove all card widgets, clearing CSS state first (Bug B fix)
         for card_id in list(self._cards_by_id.keys()):
             widget = self._cards_by_id[card_id]
+            self._clear_widget_state_recursive(widget)
             if widget in self._card_container:
                 self._card_container.remove(widget)
         self._cards_by_id.clear()
@@ -103,24 +106,21 @@ class FeedTab(Gtk.Box):
     def remove_card(self, card_id: str) -> None:
         """Remove a card widget by card_id.
 
-        Unrealizes and clears active/focus state before removal so GTK4's
-        internal "active state accounting" doesn't fire
-        'Broken accounting of active state for widget' warnings when a card
-        is removed while the cursor is over it (project close path).
+        Clears CSS state flags (PRELIGHT/ACTIVE/SELECTED) on the card and
+        all its children BEFORE unparenting. This prevents GTK4's
+        'Broken accounting of active state for widget' warning that fires
+        when a widget is removed while the cursor is over it or while a
+        child button is in :active state (e.g. user mid-click on Accept).
         """
         if card_id not in self._cards_by_id:
             return
         widget = self._cards_by_id[card_id]
-        # Drop GTK's active/focus tracker before unparenting
-        if widget.has_focus():
-            try:
-                # Grab focus to a safe target so widget loses focus first
-                if self._feed_scroll is not None:
-                    self._feed_scroll.grab_focus()
-            except Exception:
-                pass
-        if widget.get_realized():
-            widget.unrealize()
+        # Clear CSS state on the card and all descendant widgets.
+        # The 'Broken accounting' warning is about GtkStyleContext state
+        # (PRELIGHT/ACTIVE/SELECTED), not focus. unset_state_flags is the
+        # documented GTK4 API and is safe to call on widgets that never
+        # had the flags set.
+        self._clear_widget_state_recursive(widget)
         if self._card_container and widget in self._card_container:
             self._card_container.remove(widget)
         del self._cards_by_id[card_id]      
@@ -173,10 +173,32 @@ class FeedTab(Gtk.Box):
         self._card_container.insert_child_after(new_widget, predecessor)
         self._cards_by_id[card_id] = new_widget
 
+    def _clear_widget_state_recursive(self, widget: Gtk.Widget) -> None:
+        """
+        Recursively clear PRELIGHT/ACTIVE/SELECTED state flags on a widget
+        and all its children. Called before removing widgets from the
+        container to prevent GTK4's 'Broken accounting of active state'
+        warning.
+        """
+        try:
+            widget.unset_state_flags(
+                Gtk.StateFlags.PRELIGHT | Gtk.StateFlags.ACTIVE | Gtk.StateFlags.SELECTED
+            )
+        except Exception:
+            pass  # unset_state_flags is safe but we guard anyway
+        child = widget.get_first_child()
+        while child is not None:
+            self._clear_widget_state_recursive(child)
+            child = child.get_next_sibling()
+
     def scroll_to_bottom(self) -> None:
         """
         Scroll the feed so the newest card (bottom of list) is visible.
         Called after loading persisted cards on project open (unconditional).
+
+        Note: caller must ensure layout has settled before calling this.
+        For deferred scroll after pending appends, use schedule_scroll_to_bottom()
+        instead, which waits for the vadjustment 'changed' signal.
         """
         if self._feed_scroll is None:
             return
@@ -184,6 +206,64 @@ class FeedTab(Gtk.Box):
         if vadj is None:
             return
         vadj.set_value(vadj.get_upper())
+
+    def schedule_scroll_to_bottom(self) -> None:
+        """
+        Schedule a one-shot scroll-to-bottom that fires AFTER GTK updates
+        the vadjustment upper following a layout pass.
+
+        GTK4 does NOT recompute vadjustment.upper synchronously after
+        append_child — the upper reflects allocated content height which
+        happens during the next frame clock tick. Reading upper immediately
+        after appends returns a stale value and can cause the feed to snap
+        to the top.
+
+        We connect to the vadjustment's 'changed' signal (fired when
+        upper/lower/page-size change) and scroll once, then disconnect.
+        If 'changed' has already fired by the time we connect (unlikely
+        but safe), we also install a short timeout fallback.
+        """
+        if self._feed_scroll is None:
+            return
+        vadj = self._feed_scroll.get_vadjustment()
+        if vadj is None:
+            return
+
+        # Disconnect any prior one-shot handler to avoid double-firing
+        if self._scroll_handler_id is not None:
+            try:
+                vadj.disconnect(self._scroll_handler_id)
+            except Exception:
+                pass
+            self._scroll_handler_id = None
+
+        def _on_adj_changed(adj):
+            # Vadjustment upper has been updated — scroll to bottom now
+            adj.set_value(adj.get_upper())
+            # Disconnect this one-shot handler
+            if self._scroll_handler_id is not None:
+                try:
+                    adj.disconnect(self._scroll_handler_id)
+                except Exception:
+                    pass
+                self._scroll_handler_id = None
+            return False  # not used for GObject signals
+
+        self._scroll_handler_id = vadj.connect("changed", _on_adj_changed)
+
+        # Safety net: if 'changed' doesn't fire within 150ms (e.g. zero
+        # cards added so no layout change), scroll directly and clean up.
+        from gi.repository import GLib
+        def _timeout_fallback():
+            if self._scroll_handler_id is not None:
+                vadj.set_value(vadj.get_upper())
+                try:
+                    vadj.disconnect(self._scroll_handler_id)
+                except Exception:
+                    pass
+                self._scroll_handler_id = None
+            return GLib.SOURCE_REMOVE
+        GLib.timeout_add(150, _timeout_fallback)
 
     def smart_scroll_to_bottom(self) -> None:
         """
