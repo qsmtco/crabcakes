@@ -124,6 +124,47 @@ class ActivityHandler:
         """chat final — no state change here; on_agent_end handles completion."""
         pass
 
+    def _extract_chat_text(self, payload: dict) -> str:
+        """Extract plain text from a gateway chat event payload.
+
+        The gateway sends chat event payloads with the text at payload.message.content,
+        in one of two forms:
+        - A string (simple text responses)
+        - A list of typed blocks (block-level formatting: code, quote, media, etc.)
+
+        This helper normalizes both forms into a single string for token counting.
+        It is a local copy of chat_handler._extract_text (ui/handlers/chat_handler.py:645)
+        to keep handlers decoupled — see tests/conftest.py::test_handlers_do_not_import_each_other
+        for the rule. If a third handler ever needs the same logic, promote to
+        a shared module (out of scope for this phase).
+        """
+        msg_obj = payload.get("message", {})
+        if isinstance(msg_obj, dict):
+            content = msg_obj.get("content", "")
+        else:
+            content = msg_obj
+        if isinstance(content, list):
+            parts = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                block_type = block.get("type", "")
+                if block_type == "text":
+                    t = block.get("text", "")
+                    if t:
+                        parts.append(t)
+                elif block_type == "input_image":
+                    # Gateway media attachment — not text, but include as a marker
+                    # so the token count reflects the response's size in spirit.
+                    # The image content itself is not counted (we cannot estimate
+                    # its token cost from a URL); we count a 0-length placeholder
+                    # by simply not appending. Token velocity is dominated by text.
+                    continue
+            return "".join(parts)
+        elif isinstance(content, str):
+            return content
+        return str(content) if content else ""
+
     def set_on_assistant_buffer(self, cb):
         """Set callback for buffering assistant text: cb(session_key, text).
         ActivityHandler calls this after every stream=assistant event so ChatHandler
@@ -466,7 +507,7 @@ class ActivityHandler:
         elif event == "chat":
             state = payload.get("state", "")
             if state == "delta":
-                self.on_chat_delta(payload.get("text", "") or "", session_key)
+                self.on_chat_delta(self._extract_chat_text(payload) or "", session_key)
             elif state == "final":
                 self.on_chat_final(session_key)
 

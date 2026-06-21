@@ -675,6 +675,146 @@ class TestActivityHandlerActivityBubbles:
             "firing site should pass 5 args (session_key, command, output, exit_code, duration_ms)"
         )
 
+    # ── Phase 4E: streaming token count field-name fix ────────────────
+    # BUG: activity_handler.py:469 used to read payload["text"], but the gateway
+    # sends text at payload["message"]["content"]. Helper _extract_chat_text
+    # normalizes the field. These tests pin the regression and the helper contract.
+
+    def test_chat_delta_increments_token_count_from_string_content(self, fake_glib):
+        """Regression test for Phase 4E: a chat delta with message.content='Hello, world!'
+        must increment _streaming_token_count to 13. Pre-fix it stayed at 0 because
+        the dispatcher read payload['text'] (which is not in the payload shape).
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+
+        handler.on_gateway_event("chat", {
+            "state": "delta",
+            "sessionKey": "agent:test:1",
+            "message": {"content": "Hello, world!"},
+        })
+
+        assert handler._streaming_token_count == 13, (
+            f"Expected _streaming_token_count == 13 for 'Hello, world!', got {handler._streaming_token_count}"
+        )
+
+    def test_chat_delta_increments_token_count_across_multiple_deltas(self, fake_glib):
+        """Three deltas with DISTINCT text must each contribute their length to the running
+        counter. This pins the per-delta accumulation via the helper field path.
+
+        Design note: per models/streaming.py:28 the gateway sends cumulative text in
+        production, so real deltas would be 'Hello', 'Hello world', 'Hello world!'
+        and the += accumulator would over-count (5+11+12=28 for a 12-char final).
+        That cumulative-vs-delta semantics quirk is out of scope for Phase 4E —
+        use distinct delta texts here to keep the assertion deterministic and
+        focused on the field-name fix.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+
+        handler.on_gateway_event("chat", {"state": "delta", "sessionKey": "agent:test:1", "message": {"content": "Hello"}})
+        handler.on_gateway_event("chat", {"state": "delta", "sessionKey": "agent:test:1", "message": {"content": " world"}})
+        handler.on_gateway_event("chat", {"state": "delta", "sessionKey": "agent:test:1", "message": {"content": "!"}})
+
+        # 5 + 6 + 1 = 12 — sum of distinct delta lengths
+        assert handler._streaming_token_count == 12, (
+            f"Expected _streaming_token_count == 12 (sum of distinct delta lengths), "
+            f"got {handler._streaming_token_count}"
+        )
+
+    def test_chat_delta_handles_list_of_blocks_form(self, fake_glib):
+        """A chat delta with message.content as a list of text blocks must yield
+        the concatenated text length. Two 'abc'/'def' blocks → 'abcdef' → 6.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+
+        handler.on_gateway_event("chat", {
+            "state": "delta",
+            "sessionKey": "agent:test:1",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "abc"},
+                    {"type": "text", "text": "def"},
+                ]
+            },
+        })
+
+        assert handler._streaming_token_count == 6, (
+            f"Expected _streaming_token_count == 6 for concatenated 'abcdef', "
+            f"got {handler._streaming_token_count}"
+        )
+
+    def test_chat_delta_handles_input_image_block(self, fake_glib):
+        """input_image blocks are skipped by the helper (no text content) and a
+        trailing text block contributes its length. Image contributes 0.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+
+        handler.on_gateway_event("chat", {
+            "state": "delta",
+            "sessionKey": "agent:test:1",
+            "message": {
+                "content": [
+                    {"type": "input_image", "image_url": "https://example.com/foo.png"},
+                    {"type": "text", "text": "look at this"},
+                ]
+            },
+        })
+
+        assert handler._streaming_token_count == 12, (
+            f"Expected _streaming_token_count == 12 (length of 'look at this'), "
+            f"got {handler._streaming_token_count}"
+        )
+
+    def test_chat_delta_handles_missing_message_field(self, fake_glib):
+        """A chat delta with no 'message' key must not raise and must not
+        increment the counter. The helper safely returns ''.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+
+        # Should not raise
+        handler.on_gateway_event("chat", {
+            "state": "delta",
+            "sessionKey": "agent:test:1",
+        })
+
+        assert handler._streaming_token_count == 0, (
+            f"Expected _streaming_token_count == 0 when message key is absent, "
+            f"got {handler._streaming_token_count}"
+        )
+
+    def test_chat_delta_handles_string_message_field(self, fake_glib):
+        """Some hypothetical gateway variant might send message as a raw string.
+        The helper's `else: content = msg_obj` branch handles this — the string
+        is treated as the content directly and contributes its length.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+
+        handler.on_gateway_event("chat", {
+            "state": "delta",
+            "sessionKey": "agent:test:1",
+            "message": "hello",
+        })
+
+        assert handler._streaming_token_count == 5, (
+            f"Expected _streaming_token_count == 5 for raw-string message='hello', "
+            f"got {handler._streaming_token_count}"
+        )
+
+    def test_extract_chat_text_returns_empty_for_empty_payload(self, fake_glib):
+        """Direct unit test on the helper: _extract_chat_text({}) must return ''.
+        Pins the helper's contract for the edge case where the dispatcher might
+        call it with an empty dict.
+        """
+        from ui.handlers.activity_handler import ActivityHandler
+        handler = ActivityHandler(feedbar=MagicMock(), main_content=MagicMock(), GLib_module=fake_glib)
+
+        assert handler._extract_chat_text({}) == ""
+
 
 # ── Class: TestActivityHandlerStateMachineGuard — BUGFIX-4 ──────
 
