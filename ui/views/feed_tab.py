@@ -286,6 +286,36 @@ class FeedTab(Gtk.Box):
             return GLib.SOURCE_REMOVE
         self._scroll_timeout_id = GLib.timeout_add(150, _timeout_fallback)
 
+    def schedule_smart_scroll_to_bottom(self) -> None:
+        """
+        Deferred smart scroll: only scroll to bottom if the user is already
+        near the bottom (within 80px), BUT wait for the vadjustment 'changed'
+        signal before scrolling so we read the post-layout upper.
+
+        This fixes the stale-upper bug in smart_scroll_to_bottom() where
+        append_card + smart_scroll run in the same idle callback, and GTK
+        hasn't updated vadjustment.upper yet.
+
+        The proximity check uses the pre-append (stale) upper, which is fine:
+        we're measuring 'where is the user right now?' not 'where will the
+        new bottom be after layout?'. If the user was near the bottom before
+        the card was added, they want to see the new card.
+        """
+        if self._feed_scroll is None:
+            return
+        vadj = self._feed_scroll.get_vadjustment()
+        if vadj is None:
+            return
+        current = vadj.get_value()
+        upper = vadj.get_upper()
+        page_size = vadj.get_page_size()
+        distance_from_bottom = upper - page_size - current
+        if distance_from_bottom >= 80:
+            # User has scrolled up to read old cards — don't auto-scroll.
+            return
+        # User is near the bottom — defer the actual scroll until layout settles.
+        self.schedule_scroll_to_bottom()
+
     def smart_scroll_to_bottom(self) -> None:
         """
         Only scroll to bottom if the user is already near the bottom (within 80px).

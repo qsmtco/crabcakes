@@ -92,6 +92,17 @@ class MockFeedTab:
         if distance_from_bottom < 80:
             vadj.set_value(upper)
 
+    def schedule_smart_scroll_to_bottom(self):
+        """Mirror of FeedTab.schedule_smart_scroll_to_bottom() for test.
+        Proximity check + delegate to schedule_scroll_to_bottom."""
+        vadj = self._vadjustment
+        current = vadj.get_value()
+        upper = vadj.get_upper()
+        page_size = vadj.get_page_size()
+        distance_from_bottom = upper - page_size - current
+        if distance_from_bottom < 80:
+            self.schedule_scroll_to_bottom()
+
     # Phase 5 batch bar mocks
     def update_batch_bar(self, pending_count: int):
         self._batch_bar_count = pending_count
@@ -827,19 +838,19 @@ class TestSmartScroll:
         assert hasattr(mock_tab, 'scroll_to_bottom')
 
     def test_add_card_uses_smart_scroll_not_unconditional(self, feed_handler, mock_feed_tab):
-        """add_card() calls smart_scroll_to_bottom, not scroll_to_bottom."""
+        """add_card() calls schedule_smart_scroll_to_bottom, not scroll_to_bottom."""
         ts = datetime.now(timezone.utc)
         card = FeedCardData(
             card_type="diff", source="agent", title="Test card",
             body="", author="x", timestamp=ts, project_name="testproj",
         )
-        # Patch smart_scroll_to_bottom to track calls
-        original_smart = mock_feed_tab.smart_scroll_to_bottom
+        # Patch schedule_smart_scroll_to_bottom to track calls
+        original_smart = mock_feed_tab.schedule_smart_scroll_to_bottom
         called = []
         def tracking_smart():
             called.append(True)
             return original_smart()
-        mock_feed_tab.smart_scroll_to_bottom = tracking_smart
+        mock_feed_tab.schedule_smart_scroll_to_bottom = tracking_smart
 
         original_unconditional = mock_feed_tab.scroll_to_bottom
         unconditional_called = []
@@ -850,7 +861,7 @@ class TestSmartScroll:
 
         feed_handler.add_card(card)
 
-        assert len(called) == 1, "smart_scroll_to_bottom should be called once in add_card"
+        assert len(called) == 1, "schedule_smart_scroll_to_bottom should be called once in add_card"
         assert len(unconditional_called) == 0, "scroll_to_bottom (unconditional) should NOT be called in add_card"
 
 
@@ -1489,4 +1500,177 @@ class TestClearWidgetStateRecursive:
         assert not bool(outer.get_state_flags() & Gtk.StateFlags.PRELIGHT), (
             f"outer should have been cleared but still has PRELIGHT: "
             f"{outer.get_state_flags()}"
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  TestScheduleSmartScrollToBottom — Deferred Smart Scroll with Proximity
+#  Tests the real schedule_smart_scroll_to_bottom method on FeedTab.
+#  Uses _FakeAdjustment (not MockFeedTab) to exercise the real code path
+#  with full control over when 'changed' fires and what upper returns.
+# ═══════════════════════════════════════════════════════════════════
+
+class TestScheduleSmartScrollToBottom:
+    """
+    Tests schedule_smart_scroll_to_bottom: proximity check + deferred scroll.
+
+    These tests exercise the actual FeedTab.schedule_smart_scroll_to_bottom
+    code, NOT the MockFeedTab stub. They use _FakeAdjustment to control
+    vadjustment values and signal timing.
+    """
+
+    def test_schedule_smart_scrolls_when_user_near_bottom(
+        self, real_feed_tab, monkeypatch
+    ):
+        """When the user is within 80px of the bottom, the method must delegate
+        to schedule_scroll_to_bottom so the scroll fires after the layout pass.
+
+        Setup: upper=1000, page_size=600, value=350.
+        distance_from_bottom = 1000 - 600 - 350 = 50px (< 80 → near bottom).
+
+        After calling schedule_smart_scroll_to_bottom:
+        - The 'changed' handler must be connected (proof delegation happened)
+        - When we simulate layout (set upper to 1500, emit 'changed'), the
+          scroll must fire to 1500 (the post-layout upper, not the stale 1000)
+        """
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import GLib
+
+        monkeypatch.setattr(GLib, "timeout_add", lambda ms, cb: 42)
+        monkeypatch.setattr(GLib, "source_remove", lambda sid: None)
+
+        tab = real_feed_tab
+        adj = tab._feed_scroll.get_vadjustment()
+
+        # User is near the bottom: distance = 1000 - 600 - 350 = 50px
+        adj.set_upper(1000.0)
+        adj._value = 350.0
+        adj._page_size = 600.0
+
+        tab.schedule_smart_scroll_to_bottom()
+
+        # Proof that delegation to schedule_scroll_to_bottom happened:
+        # the 'changed' handler must be connected.
+        assert tab._scroll_handler_id is not None, (
+            "Expected _scroll_handler_id to be set (delegation to "
+            "schedule_scroll_to_bottom), got None"
+        )
+
+        # No scroll should have happened yet (waiting for 'changed')
+        assert adj.set_value_calls == [], (
+            f"Expected no set_value before 'changed', got {adj.set_value_calls}"
+        )
+
+        # Simulate layout pass: upper grows to 1500 (new card appended)
+        adj.set_upper(1500.0)
+        adj.emit_changed()
+
+        # Scroll must fire to the post-layout upper, not the stale 1000
+        assert adj.set_value_calls == [1500.0], (
+            f"Expected set_value(1500.0) after layout, got {adj.set_value_calls}"
+        )
+
+    def test_schedule_smart_does_not_scroll_when_user_scrolled_up(
+        self, real_feed_tab, monkeypatch
+    ):
+        """When the user has scrolled up more than 80px from the bottom, the
+        method must NOT scroll at all — preserve the user's reading position.
+
+        Setup: upper=2000, page_size=600, value=200.
+        distance_from_bottom = 2000 - 600 - 200 = 1200px (>> 80 → scrolled up).
+
+        After calling schedule_smart_scroll_to_bottom:
+        - No 'changed' handler connected (no delegation)
+        - No timeout installed
+        - No set_value calls
+        """
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import GLib
+
+        timeout_calls = []
+        monkeypatch.setattr(
+            GLib, "timeout_add",
+            lambda ms, cb: timeout_calls.append((ms, cb)) or 99,
+        )
+
+        tab = real_feed_tab
+        adj = tab._feed_scroll.get_vadjustment()
+
+        # User has scrolled way up: distance = 2000 - 600 - 200 = 1200px
+        adj.set_upper(2000.0)
+        adj._value = 200.0
+        adj._page_size = 600.0
+
+        tab.schedule_smart_scroll_to_bottom()
+
+        # No handler must be connected
+        assert tab._scroll_handler_id is None, (
+            f"Expected _scroll_handler_id=None (user scrolled up, no scroll), "
+            f"got {tab._scroll_handler_id}"
+        )
+        # No timeout must be installed
+        assert tab._scroll_timeout_id is None, (
+            f"Expected _scroll_timeout_id=None (no delegation), "
+            f"got {tab._scroll_timeout_id}"
+        )
+        assert timeout_calls == [], (
+            f"Expected no timeout_add call, got {timeout_calls}"
+        )
+        # No scroll
+        assert adj.set_value_calls == [], (
+            f"Expected no set_value calls, got {adj.set_value_calls}"
+        )
+
+    def test_schedule_smart_uses_stale_upper_for_proximity_not_future(
+        self, real_feed_tab, monkeypatch
+    ):
+        """Pins the design decision: the proximity check intentionally uses the
+        pre-append (stale) upper because it measures the user's reading position,
+        not the future content height.
+
+        Setup: upper=800, page_size=600, value=180.
+        distance_from_bottom = 800 - 600 - 180 = 20px (< 80 → near bottom).
+
+        If the method used some hypothetical post-layout upper (say 1500),
+        the distance would be 1500 - 600 - 180 = 720px (>> 80 → would NOT scroll).
+        The test proves the stale upper is used by asserting the scroll fires.
+
+        This test would FAIL if someone tried to be 'smart' and wait for the
+        post-layout upper before doing the proximity check.
+        """
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import GLib
+
+        monkeypatch.setattr(GLib, "timeout_add", lambda ms, cb: 55)
+        monkeypatch.setattr(GLib, "source_remove", lambda sid: None)
+
+        tab = real_feed_tab
+        adj = tab._feed_scroll.get_vadjustment()
+
+        # Stale upper = 800. User at value=180, page=600.
+        # Stale distance = 800 - 600 - 180 = 20px (< 80 → near bottom).
+        adj.set_upper(800.0)
+        adj._value = 180.0
+        adj._page_size = 600.0
+
+        tab.schedule_smart_scroll_to_bottom()
+
+        # Delegation must have happened because stale distance < 80
+        assert tab._scroll_handler_id is not None, (
+            "Expected delegation to schedule_scroll_to_bottom because "
+            "stale distance (20px) < 80px threshold. "
+            "If _scroll_handler_id is None, the method used a post-layout "
+            "upper for the proximity check, which is the wrong design."
+        )
+
+        # Now simulate layout: upper grows to 1500 (card was appended)
+        adj.set_upper(1500.0)
+        adj.emit_changed()
+
+        # Scroll fires to post-layout upper
+        assert adj.set_value_calls == [1500.0], (
+            f"Expected set_value(1500.0) after layout, got {adj.set_value_calls}"
         )

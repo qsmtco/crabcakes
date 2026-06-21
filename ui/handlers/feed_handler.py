@@ -185,7 +185,7 @@ class FeedHandler:
         def _append():
             if self._feed_tab is not None:
                 self._feed_tab.append_card(widget, card_id)
-                self._feed_tab.smart_scroll_to_bottom()  # Phase 4
+                self._feed_tab.schedule_smart_scroll_to_bottom()  # Phase 4
                 if self._on_card_added:
                     self._on_card_added(card_id)
 
