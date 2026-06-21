@@ -42,6 +42,8 @@ class FeedTab(Gtk.Box):
         self._batch_bar: Gtk.Box | None = None
         # One-shot scroll handler ID for deferred scroll-to-bottom (Bug A fix)
         self._scroll_handler_id: int | None = None
+        # Timeout source ID for scroll fallback; disarmed when 'changed' fires (4D-3)
+        self._scroll_timeout_id: int | None = None
 
         # ── Build scrolled card list ────────────────────────────────────
         scroll = Gtk.ScrolledWindow()
@@ -237,9 +239,27 @@ class FeedTab(Gtk.Box):
                 pass
             self._scroll_handler_id = None
 
+        # Cancel any prior timeout (defensive — re-entrancy guard)
+        if self._scroll_timeout_id is not None:
+            try:
+                from gi.repository import GLib as _GLib
+                _GLib.source_remove(self._scroll_timeout_id)
+            except Exception:
+                pass
+            self._scroll_timeout_id = None
+
+        from gi.repository import GLib
+
         def _on_adj_changed(adj):
             # Vadjustment upper has been updated — scroll to bottom now
             adj.set_value(adj.get_upper())
+            # Disarm the timeout — success path wins (4D-3 fix)
+            if self._scroll_timeout_id is not None:
+                try:
+                    GLib.source_remove(self._scroll_timeout_id)
+                except Exception:
+                    pass
+                self._scroll_timeout_id = None
             # Disconnect this one-shot handler
             if self._scroll_handler_id is not None:
                 try:
@@ -253,8 +273,8 @@ class FeedTab(Gtk.Box):
 
         # Safety net: if 'changed' doesn't fire within 150ms (e.g. zero
         # cards added so no layout change), scroll directly and clean up.
-        from gi.repository import GLib
         def _timeout_fallback():
+            # If we got here, 'changed' didn't fire in time. Scroll now.
             if self._scroll_handler_id is not None:
                 vadj.set_value(vadj.get_upper())
                 try:
@@ -262,8 +282,9 @@ class FeedTab(Gtk.Box):
                 except Exception:
                     pass
                 self._scroll_handler_id = None
+            self._scroll_timeout_id = None
             return GLib.SOURCE_REMOVE
-        GLib.timeout_add(150, _timeout_fallback)
+        self._scroll_timeout_id = GLib.timeout_add(150, _timeout_fallback)
 
     def smart_scroll_to_bottom(self) -> None:
         """

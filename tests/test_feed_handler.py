@@ -1013,3 +1013,480 @@ class TestBatchAccept:
         feed_handler.add_card(c2)
         assert mock_feed_tab._batch_bar_visible is True
         assert mock_feed_tab._batch_bar_count == 2
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  TestScheduleScrollToBottom — Phase 4D-1
+#  Tests the real schedule_scroll_to_bottom mechanism on FeedTab.
+#  Uses _FakeAdjustment (not MockFeedTab) to exercise the actual
+#  connect/disconnect/emit/timeout logic in feed_tab.py.
+# ═══════════════════════════════════════════════════════════════════
+
+import gi
+gi.require_version('Gtk', '4.0')
+
+
+class _FakeAdjustment:
+    """
+    Duck-typed replacement for Gtk.Adjustment that does NOT auto-emit
+    'changed' when properties change. Tests manually call emit_changed()
+    to control exactly when the 'changed' signal fires, and set_upper()
+    to control what get_upper() returns.
+
+    This is necessary because Gtk.Adjustment.set_upper() emits 'changed'
+    internally — making it impossible to test the 'changed never fires'
+    timeout-fallback path with a real Adjustment.
+    """
+
+    def __init__(self, upper=0.0, page_size=600.0):
+        self._upper = upper
+        self._value = 0.0
+        self._page_size = page_size
+        self._handlers: dict[int, callable] = {}
+        self._next_id = 1
+        self.set_value_calls: list[float] = []
+        self.disconnect_calls: list[int] = []
+
+    def connect(self, signal: str, callback) -> int:
+        assert signal == "changed", (
+            f"_FakeAdjustment.connect: unexpected signal {signal!r}"
+        )
+        handler_id = self._next_id
+        self._next_id += 1
+        self._handlers[handler_id] = callback
+        return handler_id
+
+    def disconnect(self, handler_id: int):
+        self.disconnect_calls.append(handler_id)
+        self._handlers.pop(handler_id, None)
+
+    def emit_changed(self):
+        """Manually fire the 'changed' signal to all connected handlers."""
+        # Copy the list because handlers may disconnect during iteration
+        for cb in list(self._handlers.values()):
+            cb(self)
+
+    def get_upper(self) -> float:
+        return self._upper
+
+    def set_upper(self, upper: float):
+        """Set upper WITHOUT emitting 'changed' (unlike real Gtk.Adjustment)."""
+        self._upper = upper
+
+    def get_value(self) -> float:
+        return self._value
+
+    def set_value(self, value: float):
+        self._value = value
+        self.set_value_calls.append(value)
+
+    def get_page_size(self) -> float:
+        return self._page_size
+
+
+class _FakeScrolledWindow:
+    """Minimal stand-in for Gtk.ScrolledWindow holding a _FakeAdjustment."""
+
+    def __init__(self, vadj: _FakeAdjustment):
+        self._vadj = vadj
+
+    def get_vadjustment(self) -> _FakeAdjustment:
+        return self._vadj
+
+
+@pytest.fixture
+def real_feed_tab():
+    """Create a real FeedTab instance for testing schedule_scroll_to_bottom.
+
+    FeedTab constructs a Gtk.ScrolledWindow in __init__, but we replace
+    _feed_scroll with a _FakeScrolledWindow holding a _FakeAdjustment so
+    we can control when 'changed' fires.
+    """
+    from ui.views.feed_tab import FeedTab
+    tab = FeedTab()
+    # Replace the real scrolled window with our fake
+    adj = _FakeAdjustment(upper=0.0)
+    tab._feed_scroll = _FakeScrolledWindow(adj)
+    return tab
+
+
+class TestScheduleScrollToBottom:
+    """
+    Phase 4D-1: Test the real schedule_scroll_to_bottom mechanism.
+
+    These tests exercise the actual FeedTab.schedule_scroll_to_bottom code,
+    NOT the MockFeedTab stub. They use _FakeAdjustment to control when the
+    'changed' signal fires and what upper returns.
+    """
+
+    def test_schedule_scroll_does_not_scroll_immediately_when_upper_is_stale(
+        self, real_feed_tab
+    ):
+        """Bug A regression: when upper is stale (0) at connect time, the scroll
+        must NOT happen synchronously. It must wait for 'changed' to fire after
+        GTK updates upper during the layout pass.
+
+        Steps:
+        1. FakeAdjustment starts with upper=0 (stale, pre-layout).
+        2. Call schedule_scroll_to_bottom().
+        3. Assert set_value was NOT called yet (stale upper would scroll to top).
+        4. Simulate layout pass: set upper to 1000, then emit 'changed'.
+        5. Assert set_value(1000) was called.
+        """
+        tab = real_feed_tab
+        adj = tab._feed_scroll.get_vadjustment()
+
+        tab.schedule_scroll_to_bottom()
+
+        # set_value must NOT have been called synchronously
+        assert adj.set_value_calls == [], (
+            f"Expected no set_value call before 'changed', got {adj.set_value_calls}"
+        )
+
+        # Simulate layout pass updating upper
+        adj.set_upper(1000.0)
+        adj.emit_changed()
+
+        assert adj.set_value_calls == [1000.0], (
+            f"Expected set_value(1000.0) after 'changed', got {adj.set_value_calls}"
+        )
+
+    def test_schedule_scroll_fires_via_timeout_fallback_when_changed_never_fires(
+        self, real_feed_tab, monkeypatch
+    ):
+        """Safety net: if 'changed' never fires, the 150ms timeout must scroll.
+
+        We monkeypatch GLib.timeout_add to capture the callback and timeout
+        so we can invoke it manually without waiting 150ms.
+        """
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import GLib
+
+        captured_timeouts = []
+
+        def fake_timeout_add(ms, callback):
+            source_id = 42  # deterministic fake source ID
+            captured_timeouts.append((source_id, ms, callback))
+            return source_id
+
+        monkeypatch.setattr(GLib, "timeout_add", fake_timeout_add)
+
+        tab = real_feed_tab
+        adj = tab._feed_scroll.get_vadjustment()
+
+        tab.schedule_scroll_to_bottom()
+
+        # A timeout must have been registered
+        assert len(captured_timeouts) == 1, (
+            f"Expected 1 timeout registered, got {len(captured_timeouts)}"
+        )
+        source_id, ms, callback = captured_timeouts[0]
+        assert ms == 150, f"Expected 150ms timeout, got {ms}ms"
+
+        # Set upper to simulate content being present
+        adj.set_upper(800.0)
+
+        # 'changed' never fires — invoke the timeout callback directly
+        result = callback()
+
+        assert result == GLib.SOURCE_REMOVE, (
+            f"Expected SOURCE_REMOVE, got {result}"
+        )
+        assert adj.set_value_calls == [800.0], (
+            f"Expected set_value(800.0) from timeout, got {adj.set_value_calls}"
+        )
+
+    def test_schedule_scroll_disconnects_changed_handler_after_fire(
+        self, real_feed_tab, monkeypatch
+    ):
+        """One-shot verification: after 'changed' fires, the handler must be
+        disconnected. A second emit of 'changed' must NOT trigger another scroll.
+        """
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import GLib
+
+        # Monkeypatch timeout_add and source_remove to avoid real GLib timers
+        monkeypatch.setattr(GLib, "timeout_add", lambda ms, cb: 99)
+        monkeypatch.setattr(GLib, "source_remove", lambda sid: None)
+
+        tab = real_feed_tab
+        adj = tab._feed_scroll.get_vadjustment()
+
+        tab.schedule_scroll_to_bottom()
+
+        # First emit — should scroll
+        adj.set_upper(1000.0)
+        adj.emit_changed()
+        assert len(adj.set_value_calls) == 1, (
+            f"Expected 1 set_value after first 'changed', got {len(adj.set_value_calls)}"
+        )
+
+        # Second emit — should NOT scroll (handler was disconnected)
+        adj.set_upper(2000.0)
+        adj.emit_changed()
+        assert len(adj.set_value_calls) == 1, (
+            f"Expected still 1 set_value after second 'changed', got {len(adj.set_value_calls)}"
+        )
+
+    def test_schedule_scroll_disarms_timeout_after_changed_fires(
+        self, real_feed_tab, monkeypatch
+    ):
+        """4D-3 cleanup-race regression test.
+
+        When 'changed' fires (success path), the timeout must be disarmed via
+        GLib.source_remove. This prevents the timeout from firing 150ms later
+        and re-scrolling the feed if the user has already scrolled away.
+
+        Without the 4D-3 fix, the success path did NOT call source_remove —
+        the timeout fired unconditionally and could re-scroll.
+        """
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import GLib
+
+        captured_timeouts = []
+        removed_sources = []
+
+        def fake_timeout_add(ms, callback):
+            source_id = 77
+            captured_timeouts.append((source_id, ms, callback))
+            return source_id
+
+        monkeypatch.setattr(GLib, "timeout_add", fake_timeout_add)
+        monkeypatch.setattr(
+            GLib,
+            "source_remove",
+            lambda sid: removed_sources.append(sid),
+        )
+
+        tab = real_feed_tab
+        adj = tab._feed_scroll.get_vadjustment()
+
+        tab.schedule_scroll_to_bottom()
+
+        assert len(captured_timeouts) == 1
+        timeout_source_id, _, timeout_callback = captured_timeouts[0]
+
+        # Verify _scroll_timeout_id was set
+        assert tab._scroll_timeout_id == timeout_source_id, (
+            f"Expected _scroll_timeout_id={timeout_source_id}, "
+            f"got {tab._scroll_timeout_id}"
+        )
+
+        # 'changed' fires — success path should disarm the timeout
+        adj.set_upper(1000.0)
+        adj.emit_changed()
+
+        # Timeout must have been disarmed via source_remove
+        assert timeout_source_id in removed_sources, (
+            f"Expected source_remove({timeout_source_id}), "
+            f"got removed_sources={removed_sources}"
+        )
+        assert tab._scroll_timeout_id is None, (
+            f"Expected _scroll_timeout_id=None after 'changed', "
+            f"got {tab._scroll_timeout_id}"
+        )
+
+        # Invoke the timeout callback manually — it should NOT scroll again
+        # because _scroll_handler_id is None (already cleared by success path)
+        adj.set_upper(5000.0)  # different value to detect re-scroll
+        result = timeout_callback()
+
+        # set_value_calls should still be [1000.0] from the 'changed' path
+        assert adj.set_value_calls == [1000.0], (
+            f"Timeout re-scrolled after disarm! set_value_calls={adj.set_value_calls}"
+        )
+
+    def test_schedule_scroll_handles_disconnect_exception(
+        self, real_feed_tab, monkeypatch
+    ):
+        """Defensive cleanup test: if disconnect() raises during the 'changed'
+        handler (e.g., adjustment disposed during teardown), the handler must
+        not propagate the exception and must still clean up state.
+
+        This documents the try/except behavior in the production code.
+        """
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import GLib
+
+        monkeypatch.setattr(GLib, "timeout_add", lambda ms, cb: 88)
+        monkeypatch.setattr(GLib, "source_remove", lambda sid: None)
+
+        tab = real_feed_tab
+        adj = tab._feed_scroll.get_vadjustment()
+
+        # Make disconnect raise
+        original_disconnect = adj.disconnect
+        adj.disconnect = lambda hid: (_ for _ in ()).throw(
+            RuntimeError("simulated dispose")
+        )
+
+        tab.schedule_scroll_to_bottom()
+
+        # 'changed' fires — disconnect will raise, but the try/except must catch it
+        adj.set_upper(1000.0)
+        adj.emit_changed()  # must not propagate
+
+        # set_value must still have been called (scroll happened before disconnect)
+        assert 1000.0 in adj.set_value_calls, (
+            f"Expected set_value(1000.0) despite disconnect exception, "
+            f"got {adj.set_value_calls}"
+        )
+
+        # Restore disconnect for cleanup
+        adj.disconnect = original_disconnect
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  TestClearWidgetStateRecursive — Phase 4D-2
+#  Tests _clear_widget_state_recursive on real Gtk.Box/Button/Label trees.
+#  Verifies the recursive walk clears PRELIGHT/ACTIVE/SELECTED on self +
+#  all descendants.
+# ═══════════════════════════════════════════════════════════════════
+
+class TestClearWidgetStateRecursive:
+    """
+    Phase 4D-2: Test _clear_widget_state_recursive against real GTK4 widgets.
+
+    Uses Gtk.Box + Gtk.Button + Gtk.Label trees because these are the exact
+    widget types used in feed cards.
+    """
+
+    def test_clear_widget_state_visits_self_and_all_descendants(self):
+        """Build a real widget tree: Box → [Button(label=A, child=Label), Button(label=B)].
+        Set PRELIGHT on box + both buttons + label. Call _clear_widget_state_recursive.
+        Assert PRELIGHT is cleared on all 4 widgets.
+        """
+        from ui.views.feed_tab import FeedTab
+        from gi.repository import Gtk
+
+        # Build tree
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        btn_a = Gtk.Button(label="A")
+        lbl = Gtk.Label(label="nested")
+        btn_a.set_child(lbl)  # btn_a has a child Label
+        btn_b = Gtk.Button(label="B")
+        outer.append(btn_a)
+        outer.append(btn_b)
+
+        # Set PRELIGHT on all 4 widgets
+        outer.set_state_flags(Gtk.StateFlags.PRELIGHT, False)
+        btn_a.set_state_flags(Gtk.StateFlags.PRELIGHT, False)
+        btn_b.set_state_flags(Gtk.StateFlags.PRELIGHT, False)
+        lbl.set_state_flags(Gtk.StateFlags.PRELIGHT, False)
+
+        # Verify PRELIGHT is set before clearing
+        assert bool(outer.get_state_flags() & Gtk.StateFlags.PRELIGHT)
+        assert bool(btn_a.get_state_flags() & Gtk.StateFlags.PRELIGHT)
+        assert bool(btn_b.get_state_flags() & Gtk.StateFlags.PRELIGHT)
+        assert bool(lbl.get_state_flags() & Gtk.StateFlags.PRELIGHT)
+
+        # Call the method via a FeedTab instance (it's a method on FeedTab)
+        # But we don't need the full FeedTab — we can call the unbound method
+        # Actually, _clear_widget_state_recursive uses self only for dispatch,
+        # not for any instance state. But it's a method, so we need an instance.
+        # Create a minimal FeedTab.
+        tab = FeedTab()
+        tab._clear_widget_state_recursive(outer)
+
+        # Assert PRELIGHT is cleared on all 4 widgets
+        assert not bool(outer.get_state_flags() & Gtk.StateFlags.PRELIGHT), (
+            f"outer still has PRELIGHT: {outer.get_state_flags()}"
+        )
+        assert not bool(btn_a.get_state_flags() & Gtk.StateFlags.PRELIGHT), (
+            f"btn_a still has PRELIGHT: {btn_a.get_state_flags()}"
+        )
+        assert not bool(btn_b.get_state_flags() & Gtk.StateFlags.PRELIGHT), (
+            f"btn_b still has PRELIGHT: {btn_b.get_state_flags()}"
+        )
+        assert not bool(lbl.get_state_flags() & Gtk.StateFlags.PRELIGHT), (
+            f"lbl still has PRELIGHT: {lbl.get_state_flags()}"
+        )
+
+    def test_clear_widget_state_handles_widget_without_state_safely(self):
+        """Call _clear_widget_state_recursive on a fresh Gtk.Box that has never
+        had any state flags set. Must not raise.
+        """
+        from ui.views.feed_tab import FeedTab
+        from gi.repository import Gtk
+
+        box = Gtk.Box()  # never had flags set
+
+        # Verify it starts clean (only DIR_LTR is default)
+        flags_before = box.get_state_flags()
+        assert not bool(flags_before & Gtk.StateFlags.PRELIGHT)
+        assert not bool(flags_before & Gtk.StateFlags.ACTIVE)
+        assert not bool(flags_before & Gtk.StateFlags.SELECTED)
+
+        tab = FeedTab()
+        # Must not raise
+        tab._clear_widget_state_recursive(box)
+
+        # Still clean
+        flags_after = box.get_state_flags()
+        assert not bool(flags_after & Gtk.StateFlags.PRELIGHT)
+        assert not bool(flags_after & Gtk.StateFlags.ACTIVE)
+        assert not bool(flags_after & Gtk.StateFlags.SELECTED)
+
+    def test_clear_widget_state_handles_unset_exception_gracefully(self):
+        """If unset_state_flags raises on a widget, the recursion must continue
+        to siblings and children. This documents the try/except in the production
+        code.
+
+        We build a real tree and monkey-patch unset_state_flags on ONE widget
+        to raise. Then verify its child and sibling are still processed.
+        """
+        from ui.views.feed_tab import FeedTab
+        from gi.repository import Gtk
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        btn_problem = Gtk.Button(label="problem")
+        lbl_inside_problem = Gtk.Label(label="inside")
+        btn_problem.set_child(lbl_inside_problem)
+        btn_ok = Gtk.Button(label="ok")
+        outer.append(btn_problem)
+        outer.append(btn_ok)
+
+        # Set PRELIGHT on all
+        outer.set_state_flags(Gtk.StateFlags.PRELIGHT, False)
+        btn_problem.set_state_flags(Gtk.StateFlags.PRELIGHT, False)
+        lbl_inside_problem.set_state_flags(Gtk.StateFlags.PRELIGHT, False)
+        btn_ok.set_state_flags(Gtk.StateFlags.PRELIGHT, False)
+
+        # Monkey-patch unset_state_flags on btn_problem to raise
+        original_unset = btn_problem.unset_state_flags
+
+        def raising_unset(flags):
+            raise RuntimeError("simulated widget disposal")
+
+        btn_problem.unset_state_flags = raising_unset
+
+        tab = FeedTab()
+        # Must not propagate the exception
+        tab._clear_widget_state_recursive(outer)
+
+        # btn_problem: exception was caught, but PRELIGHT might still be set
+        # because unset_state_flags raised. That's acceptable — the production
+        # code uses try/except Exception: pass.
+        # Restore original to verify
+        btn_problem.unset_state_flags = original_unset
+        # btn_problem may still have PRELIGHT (the exception prevented clearing)
+        # This is documented behavior — the recursive walker continues despite errors.
+
+        # CRITICAL assertions: sibling and child must be cleared
+        assert not bool(btn_ok.get_state_flags() & Gtk.StateFlags.PRELIGHT), (
+            f"btn_ok should have been cleared but still has PRELIGHT: "
+            f"{btn_ok.get_state_flags()}"
+        )
+        assert not bool(lbl_inside_problem.get_state_flags() & Gtk.StateFlags.PRELIGHT), (
+            f"lbl_inside_problem should have been cleared (recursion continued "
+            f"past the exception) but still has PRELIGHT: "
+            f"{lbl_inside_problem.get_state_flags()}"
+        )
+        assert not bool(outer.get_state_flags() & Gtk.StateFlags.PRELIGHT), (
+            f"outer should have been cleared but still has PRELIGHT: "
+            f"{outer.get_state_flags()}"
+        )
