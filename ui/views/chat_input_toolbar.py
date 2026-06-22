@@ -69,6 +69,9 @@ class ChatInputToolbar(Gtk.Box):
         self._on_replace_all: callable | None = None
         self._on_spell_toggle: callable | None = None
 
+        # Track active suggestion popover to prevent leaks on repeated calls
+        self._suggestion_popover: Gtk.Popover | None = None
+
         # ── Build main toolbar row ─────────────────────────────────────────
         main_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         main_row.set_halign(Gtk.Align.FILL)
@@ -251,8 +254,21 @@ class ChatInputToolbar(Gtk.Box):
         *pointing_to* is an optional (x, y, width, height) tuple in parent_widget
         coordinates; the popover arrow will point at this rectangle.
         """
+        # Dismiss any existing suggestion popover before creating a new one
+        # to prevent leaks on repeated right-clicks.
+        if self._suggestion_popover is not None:
+            prev = self._suggestion_popover
+            self._suggestion_popover = None
+            try:
+                prev.popdown()
+            except Exception:
+                pass
+            if prev.get_parent() is not None:
+                prev.unparent()
+
         popover = Gtk.Popover()
         popover.set_autohide(True)
+        self._suggestion_popover = popover
         if parent_widget is not None:
             popover.set_parent(parent_widget)
             if pointing_to is not None:
@@ -281,7 +297,12 @@ class ChatInputToolbar(Gtk.Box):
                 vbox.append(btn)
 
         popover.set_child(vbox)
-        popover.connect("closed", lambda *_: popover.unparent())
+        def _on_suggestion_closed(p, *_):
+            if p.get_parent() is not None:
+                p.unparent()
+            if self._suggestion_popover is p:
+                self._suggestion_popover = None
+        popover.connect("closed", _on_suggestion_closed)
         # Only popup if we're inside a toplevel window; otherwise just build the
         # popover (sufficient for testing the widget structure).
         #
