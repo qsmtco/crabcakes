@@ -239,15 +239,21 @@ class ChatInputToolbar(Gtk.Box):
             f"</span>"
         )
 
-    def show_suggestions_menu(self, suggestions: list[str], callback: callable):
+    def show_suggestions_menu(self, suggestions: list[str], callback: callable, parent_widget=None):
         """Show a popover with spelling suggestions for the right-clicked word.
 
         *suggestions* is a list of replacement strings.
         *callback* is called with the selected suggestion text when the user clicks one.
+        *parent_widget* is the widget to anchor the popover to (typically the text
+        view that received the right-click). If None, defaults to the spell-check
+        button for backward compatibility.
         """
         popover = Gtk.Popover()
         popover.set_autohide(True)
-        popover.set_parent(self._spell_btn)
+        if parent_widget is not None:
+            popover.set_parent(parent_widget)
+        else:
+            popover.set_parent(self._spell_btn)
 
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         vbox.set_spacing(2)
@@ -268,6 +274,7 @@ class ChatInputToolbar(Gtk.Box):
                 vbox.append(btn)
 
         popover.set_child(vbox)
+        popover.connect("closed", lambda *_: popover.unparent())
         # Only popup if we're inside a toplevel window; otherwise just build the
         # popover (sufficient for testing the widget structure).
         if self.get_root() is not None:

@@ -134,12 +134,19 @@ class MainContent(Gtk.Box):
         self._user_input.set_top_margin(6)
         self._user_input.set_bottom_margin(6)
         self._user_input.add_css_class("input-bubble")
+        # Right-click controller for spell-check suggestions.
+        # Pattern from left_panel.py:756-758 (prompt row right-click).
+        right_click = Gtk.GestureClick()
+        right_click.set_button(Gdk.BUTTON_SECONDARY)
+        right_click.connect("pressed", self._on_input_right_click_internal)
+        self._user_input.add_controller(right_click)
         input_scroll.set_child(self._user_input)
 
         # Buffer-changed signal — let subscribers react to typing/edits.
         # Mirrors the pattern used by project_settings / feed_bar in this class.
         buf = self._user_input.get_buffer()
         self._on_buffer_changed: callable | None = None
+        self._on_input_right_click: callable | None = None
         buf.connect("changed", self._on_input_buffer_changed)
 
         # Button bar — right-justified buttons below the input
@@ -227,6 +234,21 @@ class MainContent(Gtk.Box):
         is in __init__; this is the indirection layer."""
         if self._on_buffer_changed is not None:
             self._on_buffer_changed(buf)
+
+    def set_on_input_right_click(self, cb: callable) -> None:
+        """Register callback for right-click on input TextView.
+
+        cb(n_press, x, y) — called on right-click. The callback is responsible
+        for checking if the word at (x, y) is misspelled and showing a popover.
+        """
+        self._on_input_right_click = cb
+
+    def _on_input_right_click_internal(self, gesture, n_press, x, y) -> None:
+        """Internal: forward right-click to the registered callback."""
+        if n_press != 1:
+            return
+        if self._on_input_right_click is not None:
+            self._on_input_right_click(n_press, x, y)
 
     def set_on_project_settings_update(self, cb):
         """Set callback for project settings updates. cb(project_name, member_count)."""
