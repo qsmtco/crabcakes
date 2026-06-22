@@ -709,7 +709,13 @@ class TestTranslateCoordinatesWarning:
                     ):
                         closure_src = ast.get_source_segment(source, child)
                         dedented = textwrap.dedent(closure_src)
-                        ns: dict = {}
+                        # The closure references `logger` (module-level) and
+                        # `self` (free variable from the enclosing _build
+                        # method). Inject both so exec'd code can resolve them.
+                        import logging
+                        ns: dict = {
+                            "logger": logging.getLogger("ui.window"),
+                        }
                         exec(compile(dedented, "ui/window.py", "exec"), ns)
                         return ns["_on_input_right_click"]
         raise RuntimeError(
