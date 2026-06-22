@@ -68,6 +68,7 @@ class ChatInputToolbar(Gtk.Box):
         self._on_replace: callable | None = None
         self._on_replace_all: callable | None = None
         self._on_spell_toggle: callable | None = None
+        self._on_select_all: callable | None = None
 
         # Track active suggestion popover to prevent leaks on repeated calls
         self._suggestion_popover: Gtk.Popover | None = None
@@ -131,6 +132,12 @@ class ChatInputToolbar(Gtk.Box):
         self._spell_btn = spell_btn
         main_row.append(spell_btn)
 
+        # Select All button
+        select_all_btn = _icon_button("edit-select-all-symbolic", "Select All  (Ctrl+A)")
+        select_all_btn.connect("clicked", self._on_select_all_clicked)
+        self._select_all_btn = select_all_btn
+        main_row.append(select_all_btn)
+
         # Spacer
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
@@ -183,6 +190,9 @@ class ChatInputToolbar(Gtk.Box):
 
     def set_on_spell_toggle(self, cb: callable) -> None:
         self._on_spell_toggle = cb
+
+    def set_on_select_all(self, cb: callable) -> None:
+        self._on_select_all = cb
 
     # -------------------------------------------------------------------------
     # Public update methods (called by window.py / handler)
@@ -638,6 +648,10 @@ class ChatInputToolbar(Gtk.Box):
         self.hide_find_bar()
         if self._on_find:
             self._on_find("")  # clear
+
+    def _on_select_all_clicked(self, *args):
+        if self._on_select_all:
+            self._on_select_all()
 
     def _on_spell_toggled(self, _btn, spell_btn):
         if self._on_spell_toggle:

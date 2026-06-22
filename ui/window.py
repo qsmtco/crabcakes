@@ -318,6 +318,7 @@ class MainWindow(Gtk.ApplicationWindow):
         input_toolbar.set_on_find_prev(self._input_toolbar_handler.find_prev)
         input_toolbar.set_on_replace(self._input_toolbar_handler.replace_current)
         input_toolbar.set_on_replace_all(self._input_toolbar_handler.replace_all)
+        input_toolbar.set_on_select_all(self._on_select_all)
         # Wire input buffer's 'changed' signal to handler + count update.
         # The previous set_on_buffer_changed(...) was a no-op storage call
         # (chat_input_toolbar.set_on_buffer_changed just stores the cb).
@@ -366,14 +367,17 @@ class MainWindow(Gtk.ApplicationWindow):
             # The popup itself is deferred via GLib.idle_add inside
             # show_suggestions_menu to avoid conflicting with the
             # GestureClick's implicit GDK grab.
-            ok, wx, wy = text_view.translate_coordinates(self, int(x), int(y))
-            if not ok:
+            # GTK4: translate_coordinates returns (x, y) directly (no ok flag).
+            # Returns None if widgets aren't in the same tree.
+            coords = text_view.translate_coordinates(self, int(x), int(y))
+            if coords is None:
                 logger.warning(
                     "translate_coordinates failed for right-click at (%d, %d) — "
                     "text_view and window not in same toplevel",
                     int(x), int(y),
                 )
                 return
+            wx, wy = coords
             self._main_content.toolbar.show_suggestions_menu(
                 suggestions, _apply_suggestion,
                 parent_widget=self,
@@ -739,6 +743,14 @@ class MainWindow(Gtk.ApplicationWindow):
         return False
 
     # ── Prompt callback ─────────────────────────────────────────────────────
+
+    def _on_select_all(self):
+        """Select all text in the input TextView."""
+        buf = self._main_content.user_input.get_buffer()
+        # select_range(insert, selection_bound) — place cursor at end so
+        # Shift+click extends naturally from the end of the selection.
+        buf.select_range(buf.get_end_iter(), buf.get_start_iter())
+        self._main_content.user_input.grab_focus()
 
     def _on_prompt_selected(self, content):
         """Insert prompt content into the user input TextView at cursor position."""

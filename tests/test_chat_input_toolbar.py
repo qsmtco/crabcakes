@@ -674,7 +674,7 @@ class TestPopoverCodePaths:
 class TestTranslateCoordinatesWarning:
     """BUG #3 (adversarial audit): the right-click spell-suggestion handler
     in ui/window.py previously had a silent `return` when
-    `text_view.translate_coordinates` returned `ok=False`. The fix adds a
+    `text_view.translate_coordinates` returned `None` (GTK4 API). The fix adds a
     `logger.warning` so the failure becomes a visible diagnostic. These
     tests verify the warning is logged.
 
@@ -756,7 +756,7 @@ class TestTranslateCoordinatesWarning:
         text_view.get_iter_at_location.return_value = (True, iter_at_pos)
         text_view.get_buffer.return_value = buf
         text_view.translate_coordinates.return_value = (
-            (False, 0, 0) if not translate_ok else (True, 50, 75)
+            None if not translate_ok else (50.0, 75.0)
         )
 
         # toolbar (won't be called when translate fails, but must exist)
@@ -775,7 +775,7 @@ class TestTranslateCoordinatesWarning:
         return self_mock, text_view, toolbar
 
     def test_translate_coordinates_failure_logs_warning(self, caplog):
-        """When translate_coordinates returns ok=False, the closure must
+        """When translate_coordinates returns None (GTK4 failure), the closure must
         log a warning (instead of silently returning).
 
         Failure-case: if the `logger.warning(...)` call is removed from
@@ -1128,3 +1128,43 @@ class TestPhase8WordCountLabel:
         label = toolbar._count_label.get_label()
         assert "6 words" in label, f"expected '6 words' in label, got: {label!r}"
         assert "0 words" not in label, f"label still shows zero: {label!r}"
+
+
+class TestSelectAllButton:
+    """Tests for the Select All toolbar button (Bug #4: feature addition).
+
+    Covers:
+    - Button exists with correct tooltip
+    - set_on_select_all stores callback
+    - Click fires the callback
+    - Click without callback does not crash (sad path)
+    """
+
+    def test_select_all_button_exists_with_tooltip(self):
+        """The toolbar has a Select All button with the correct tooltip."""
+        toolbar = ChatInputToolbar()
+        btn = toolbar._select_all_btn
+        assert btn is not None
+        assert "Select All" in btn.get_tooltip_text()
+        assert "Ctrl+A" in btn.get_tooltip_text()
+
+    def test_set_on_select_all_stores_callback(self):
+        """set_on_select_all stores the callback for later invocation."""
+        toolbar = ChatInputToolbar()
+        cb = MagicMock()
+        toolbar.set_on_select_all(cb)
+        assert toolbar._on_select_all is cb
+
+    def test_select_all_click_fires_callback(self):
+        """Clicking the Select All button invokes the registered callback."""
+        toolbar = ChatInputToolbar()
+        calls = []
+        toolbar.set_on_select_all(lambda: calls.append(True))
+        toolbar._on_select_all_clicked()
+        assert calls == [True]
+
+    def test_select_all_click_without_callback_does_not_crash(self):
+        """Clicking Select All with no callback set is a no-op, not a crash."""
+        toolbar = ChatInputToolbar()
+        # No set_on_select_all call — _on_select_all is None
+        toolbar._on_select_all_clicked()  # should not raise
