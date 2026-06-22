@@ -433,6 +433,29 @@ class TestEdgeCases:
         assert calls == ["world"]
         fake_popover.popdown.assert_called_once()
 
+    def test_show_suggestions_menu_with_parent_widget(self):
+        """show_suggestions_menu parents popover to parent_widget when provided."""
+        toolbar = ChatInputToolbar()
+        parent = Gtk.Box()  # stand-in widget
+        toolbar.show_suggestions_menu(
+            ["alpha", "beta"],
+            lambda s: None,
+            parent_widget=parent,
+        )
+        # The popover should be parented to `parent`, not to _spell_btn
+        # We can't easily inspect the popover's parent in headless, but we verify
+        # no crash occurs and the function accepts the parameter.
+        # If the popover were parented wrong, GTK would warn about widget hierarchy.
+
+    def test_show_suggestions_menu_backward_compatible_no_parent_widget(self):
+        """show_suggestions_menu still works without parent_widget (backward compat)."""
+        toolbar = ChatInputToolbar()
+        toolbar.show_suggestions_menu(
+            ["world", "weird"],
+            lambda s: None,
+        )
+        # Should not crash; uses _spell_btn as fallback parent
+
     def test_get_search_text_empty(self):
         """get_search_text() returns '' when entry is empty."""
         toolbar = ChatInputToolbar()

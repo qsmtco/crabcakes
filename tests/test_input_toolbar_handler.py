@@ -148,6 +148,43 @@ class TestGetSuggestionsAtIter:
         assert result == []
 
 
+class TestReplaceWordAtIter:
+    """Tests for replace_word_at_iter — the right-click 'replace misspelled word' action."""
+
+    def test_replace_word_at_iter_replaces_misspelled_word(self):
+        """replace_word_at_iter deletes the word at the iter and inserts replacement."""
+        from ui.handlers.input_toolbar_handler import InputToolbarHandler
+        handler = InputToolbarHandler(main_content=MagicMock())
+        buf = MagicMock()
+        text_iter = MagicMock()
+        text_iter.copy.return_value = text_iter
+        text_iter.inside_word.return_value = True
+        # backward_word_start and forward_word_end are in-place mutations
+        buf.delete.return_value = None
+        buf.insert.return_value = None
+        handler._mc.user_input.get_buffer.return_value = buf
+        handler._spell_enabled = False  # don't re-run spell check in unit test
+        handler.replace_word_at_iter(text_iter, "corrected")
+        # Verify word boundaries were found, delete + insert called
+        assert text_iter.backward_word_start.called
+        assert text_iter.forward_word_end.called
+        assert buf.delete.called
+        buf.insert.assert_called_once_with(text_iter, "corrected")
+
+    def test_replace_word_at_iter_noop_if_not_in_word(self):
+        """replace_word_at_iter returns without modifying buffer if iter is not inside a word."""
+        from ui.handlers.input_toolbar_handler import InputToolbarHandler
+        handler = InputToolbarHandler(main_content=MagicMock())
+        buf = MagicMock()
+        text_iter = MagicMock()
+        text_iter.copy.return_value = text_iter
+        text_iter.inside_word.return_value = False
+        handler._mc.user_input.get_buffer.return_value = buf
+        handler.replace_word_at_iter(text_iter, "corrected")
+        assert not buf.delete.called
+        assert not buf.insert.called
+
+
 # ---------------------------------------------------------------------------
 # Find / replace tests
 # ---------------------------------------------------------------------------
