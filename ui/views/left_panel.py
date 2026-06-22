@@ -888,6 +888,7 @@ class LeftPanel(Gtk.Box):
         copy_path_row = Gtk.ListBoxRow()
         copy_path_row.set_activatable(True)
         copy_path_row.set_selectable(False)
+        copy_path_row._action = "copy_path"
         copy_path_label = Gtk.Label(label="Copy path", xalign=0)
         copy_path_label.set_margin_top(4)
         copy_path_label.set_margin_bottom(4)
@@ -900,6 +901,7 @@ class LeftPanel(Gtk.Box):
         copy_content_row = Gtk.ListBoxRow()
         copy_content_row.set_activatable(True)
         copy_content_row.set_selectable(False)
+        copy_content_row._action = "copy_prompt"
         copy_content_label = Gtk.Label(label="Copy prompt", xalign=0)
         copy_content_label.set_margin_top(4)
         copy_content_label.set_margin_bottom(4)
@@ -911,6 +913,7 @@ class LeftPanel(Gtk.Box):
         list_box.connect("row-activated", self._on_prompt_menu_row_activated, popover, row)
         vbox.append(list_box)
         popover.set_child(vbox)
+        popover.connect("closed", lambda *_: popover.unparent())
         popover.popup()
 
     def _on_prompt_menu_row_activated(self, _lb, menu_row, popover, source_row) -> None:
@@ -918,16 +921,21 @@ class LeftPanel(Gtk.Box):
         One of "Copy path" / "Copy prompt" was clicked. Dispatch and dismiss the popover.
 
         The source_row is the original prompt row (carries _filepath and _prompt_content).
-        We identify the action by reading the child label text.
+        We identify the action by reading the row's _action attribute (set at row build time),
+        NOT by parsing the label text. This is robust to i18n: the displayed label can be
+        translated without breaking dispatch.
         """
-        label_widget = menu_row.get_child()
-        action = label_widget.get_text() if label_widget is not None else ""
         popover.popdown()
-        popover.unparent()
-        if action == "Copy path":
+        # Popover.unparent() also fires via the "closed" signal handler connected in
+        # _on_prompt_row_right_click. The popdown() call schedules the close, so the
+        # unparent happens shortly after. No need to call it explicitly here.
+        action = getattr(menu_row, "_action", None)
+        if action == "copy_path":
             self._on_copy_prompt_path(source_row)
-        elif action == "Copy prompt":
+        elif action == "copy_prompt":
             self._on_copy_prompt_content(source_row)
+        # Unknown action → no-op. Defensive: if a future menu row is added without
+        # _action, the click is silently ignored rather than crashing.
 
     def _on_copy_prompt_path(self, row) -> None:
         """Copy the absolute path of the right-clicked prompt's file to the clipboard."""
