@@ -668,6 +668,198 @@ class TestPopoverCodePaths:
             )
 
 
+# ── Bug fix regression tests (BUG #3: silent translate_coordinates failure) ──
+
+
+class TestTranslateCoordinatesWarning:
+    """BUG #3 (adversarial audit): the right-click spell-suggestion handler
+    in ui/window.py previously had a silent `return` when
+    `text_view.translate_coordinates` returned `ok=False`. The fix adds a
+    `logger.warning` so the failure becomes a visible diagnostic. These
+    tests verify the warning is logged.
+
+    The closure `_on_input_right_click` is defined as a local function
+    inside `MainWindow._build()` and is not directly importable. We
+    extract its source via `ast.get_source_segment` and `exec` it in a
+    controlled namespace of MagicMock objects. This means any change to
+    the production closure source is automatically tested — the test
+    re-parses the source on every run.
+    """
+
+    @staticmethod
+    def _load_right_click_closure():
+        """Extract and exec the _on_input_right_click closure from ui/window.py.
+
+        Returns the closure as a callable. The closure references `self`
+        as a free variable; callers must inject it into the namespace
+        under the name `self` before invoking.
+        """
+        import ast
+        import textwrap
+
+        with open("ui/window.py") as f:
+            source = f.read()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_build":
+                for child in ast.walk(node):
+                    if (
+                        isinstance(child, ast.FunctionDef)
+                        and child.name == "_on_input_right_click"
+                    ):
+                        closure_src = ast.get_source_segment(source, child)
+                        dedented = textwrap.dedent(closure_src)
+                        ns: dict = {}
+                        exec(compile(dedented, "ui/window.py", "exec"), ns)
+                        return ns["_on_input_right_click"]
+        raise RuntimeError(
+            "Could not find _on_input_right_click closure in ui/window.py"
+        )
+
+    @staticmethod
+    def _build_mocks(translate_ok: bool = False):
+        """Build a controlled namespace of MagicMock objects that let the
+        closure reach the `translate_coordinates` call. All early-return
+        guards (spell disabled, get_iter_at_location failed, no spell tag,
+        word not misspelled) are bypassed so we exercise the translate path.
+        """
+        from unittest.mock import MagicMock
+
+        # Handler
+        handler = MagicMock()
+        handler._spell_enabled = True
+        handler.get_suggestions_at_iter.return_value = ["foo", "bar"]
+
+        # iter at position — has the spell tag
+        iter_at_pos = MagicMock()
+        iter_at_pos.has_tag.return_value = True
+
+        # spell tag (non-None, so the spell-tag lookup guard passes)
+        spell_tag = MagicMock()
+
+        # tag table
+        tag_table = MagicMock()
+        tag_table.lookup.return_value = spell_tag
+
+        # buffer
+        buf = MagicMock()
+        buf.get_tag_table.return_value = tag_table
+
+        # text view — translate_coordinates is the function under test
+        text_view = MagicMock()
+        text_view.get_iter_at_location.return_value = (True, iter_at_pos)
+        text_view.get_buffer.return_value = buf
+        text_view.translate_coordinates.return_value = (
+            (False, 0, 0) if not translate_ok else (True, 50, 75)
+        )
+
+        # toolbar (won't be called when translate fails, but must exist)
+        toolbar = MagicMock()
+
+        # main content
+        main_content = MagicMock()
+        main_content.user_input = text_view
+        main_content.toolbar = toolbar
+
+        # self
+        self_mock = MagicMock()
+        self_mock._input_toolbar_handler = handler
+        self_mock._main_content = main_content
+
+        return self_mock, text_view, toolbar
+
+    def test_translate_coordinates_failure_logs_warning(self, caplog):
+        """When translate_coordinates returns ok=False, the closure must
+        log a warning (instead of silently returning).
+
+        Failure-case: if the `logger.warning(...)` call is removed from
+        `ui/window.py`, this test FAILS because no warning record is
+        captured by `caplog`.
+        """
+        import logging
+
+        closure = self._load_right_click_closure()
+        self_mock, text_view, toolbar = self._build_mocks(translate_ok=False)
+
+        # Inject `self` into the closure's globals
+        closure.__globals__["self"] = self_mock
+
+        with caplog.at_level(logging.WARNING, logger="ui.window"):
+            closure(1, 100, 200)  # n_press=1, x=100, y=200
+
+        # The warning must be logged via the ui.window logger
+        warning_records = [
+            r for r in caplog.records
+            if r.levelno == logging.WARNING and r.name == "ui.window"
+        ]
+        assert len(warning_records) == 1, (
+            f"expected exactly 1 warning from ui.window, got {len(warning_records)}: "
+            f"{[(r.name, r.levelname, r.getMessage()) for r in warning_records]}"
+        )
+        msg = warning_records[0].getMessage()
+        assert "translate_coordinates" in msg, (
+            f"warning message must contain 'translate_coordinates', got: {msg!r}"
+        )
+        # The x, y coordinates must appear in the message for debugging
+        assert "100" in msg and "200" in msg, (
+            f"warning message must include the click coordinates (100, 200), got: {msg!r}"
+        )
+
+    def test_translate_coordinates_failure_does_not_show_popover(
+        self, caplog
+    ):
+        """When translate_coordinates fails, the closure must NOT call
+        `show_suggestions_menu` — the early return behavior is preserved.
+
+        This is a regression guard: the fix adds logging but must NOT
+        change the control flow. If someone accidentally removes the
+        `return` after the new logger.warning, this test catches it.
+        """
+        import logging
+
+        closure = self._load_right_click_closure()
+        self_mock, text_view, toolbar = self._build_mocks(translate_ok=False)
+        closure.__globals__["self"] = self_mock
+
+        with caplog.at_level(logging.WARNING, logger="ui.window"):
+            closure(1, 100, 200)
+
+        assert not toolbar.show_suggestions_menu.called, (
+            "show_suggestions_menu must NOT be called when translate_coordinates fails"
+        )
+
+    def test_translate_coordinates_success_does_not_log_warning(
+        self, caplog
+    ):
+        """When translate_coordinates succeeds, no warning is logged.
+
+        This guards against an over-zealous fix that warns on every
+        right-click (e.g., moved the logger.warning outside the
+        `if not ok:` block).
+        """
+        import logging
+
+        closure = self._load_right_click_closure()
+        self_mock, text_view, toolbar = self._build_mocks(translate_ok=True)
+        closure.__globals__["self"] = self_mock
+
+        with caplog.at_level(logging.WARNING, logger="ui.window"):
+            closure(1, 100, 200)
+
+        warning_records = [
+            r for r in caplog.records
+            if r.levelno == logging.WARNING and r.name == "ui.window"
+        ]
+        assert len(warning_records) == 0, (
+            f"no warning expected on success path, got: "
+            f"{[(r.name, r.levelname, r.getMessage()) for r in warning_records]}"
+        )
+        # Sanity: the popover should be shown in the success path
+        assert toolbar.show_suggestions_menu.called, (
+            "show_suggestions_menu must be called when translate_coordinates succeeds"
+        )
+
+
 class TestBug10GetToplevel:
     """BUG #10: _get_toplevel() must not call Gtk.get_major_client() (GTK3-only)."""
 

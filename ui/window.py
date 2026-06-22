@@ -368,7 +368,12 @@ class MainWindow(Gtk.ApplicationWindow):
             # GestureClick's implicit GDK grab.
             ok, wx, wy = text_view.translate_coordinates(self, int(x), int(y))
             if not ok:
-                return  # widgets not in the same toplevel (shouldn't happen)
+                logger.warning(
+                    "translate_coordinates failed for right-click at (%d, %d) — "
+                    "text_view and window not in same toplevel",
+                    int(x), int(y),
+                )
+                return
             self._main_content.toolbar.show_suggestions_menu(
                 suggestions, _apply_suggestion,
                 parent_widget=self,
