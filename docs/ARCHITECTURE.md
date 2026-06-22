@@ -3577,6 +3577,7 @@ tests/                           # 61 files (57 test + 4 support)
     ├── test_syntax_highlight.py
     ├── test_tasks.py
     └── test_tools.py             # ~334 lines
+```
 
 **Test count:** 84 test files (snapshot as of 2026-05-31 was 61; grew by 23 files in June 2026 with the KB, providers, settings, and wizard features). For the current collected-test count and pass/fail status, run `pytest --co -q` and `pytest -q`. The explicit test-file enumeration in §13 is illustrative, not exhaustive — new tests are added with the features they cover and may not be retroactively enumerated.
 
