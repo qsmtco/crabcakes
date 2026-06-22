@@ -787,7 +787,7 @@ class TestTranslateCoordinatesWarning:
         closure = self._load_right_click_closure()
         self_mock, text_view, toolbar = self._build_mocks(translate_ok=False)
 
-        # Inject `self` into the closure's globals
+        # Inject `self` into the closure's globals (it's a free variable)
         closure.__globals__["self"] = self_mock
 
         with caplog.at_level(logging.WARNING, logger="ui.window"):
