@@ -332,6 +332,40 @@ class MainWindow(Gtk.ApplicationWindow):
 
         self._main_content.set_on_buffer_changed(_on_input_buffer_changed)
 
+        # Right-click spell-check suggestions on the input TextView.
+        # Wires: MainContent GestureClick → InputToolbarHandler → ChatInputToolbar popover.
+        def _on_input_right_click(n_press, x, y):
+            """Right-click on input TextView — show spell suggestions if word is misspelled."""
+            handler = self._input_toolbar_handler
+            if not handler._spell_enabled:
+                return
+            text_view = self._main_content.user_input
+            # Convert (x, y) to a TextIter
+            result, iter_at_pos = text_view.get_iter_at_location(int(x), int(y))
+            # GTK4 TextView.get_iter_at_location returns (bool success, TextIter)
+            if not result:
+                return
+            # Check if the iter has the spell-error tag
+            buf = text_view.get_buffer()
+            tag_table = buf.get_tag_table()
+            spell_tag = tag_table.lookup("spell-error")
+            if spell_tag is None:
+                return  # spell check never ran (no tag created yet)
+            if not iter_at_pos.has_tag(spell_tag):
+                return  # word is not misspelled — no popover
+            # Fetch suggestions and show popover
+            suggestions = handler.get_suggestions_at_iter(iter_at_pos)
+            def _apply_suggestion(suggestion):
+                # Re-derive the iter at the same offset (the original iter may be stale)
+                offset = iter_at_pos.get_offset()
+                fresh_iter = buf.get_iter_at_offset(offset)
+                handler.replace_word_at_iter(fresh_iter, suggestion)
+            self._main_content.toolbar.show_suggestions_menu(
+                suggestions, _apply_suggestion, parent_widget=text_view
+            )
+
+        self._main_content.set_on_input_right_click(_on_input_right_click)
+
         # Project handler — owns active project state + agent-to-project routing (Phase 3)
         from ui.handlers.project_handler import ProjectHandler
         self._projects = __import__("utils.projects", fromlist=["projects"])
