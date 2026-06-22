@@ -136,7 +136,7 @@ crabcakes/
 │       ├── diff_card.py         # Diff card widget factories — build_file_diff_card, build_diff_summary_card (Phase 7)
 │       ├── review_bar.py        # ReviewBar widget — review mode dropdown + action buttons (Phase 7)
 │       ├── file_tree.py        # FileTree — Gtk.TreeView directory browser
-│       ├── left_panel.py       # LeftPanel — PAP notebook (Prompts/Agents/Projects)
+│       ├── left_panel.py         # ~974 lines — LeftPanel (Prompts/Agents/Projects notebook + right-click copy menu)
 │       ├── left_progress.py    # Stub — progress indicator placeholder
 │       ├── main_content.py     # MainContent — chat notebook + input + button bar
 │       ├── session_menu.py     # Right-click session switcher popover
@@ -423,7 +423,7 @@ self._agent_to_project = AgentRoutingTable()  # shared with ProjectHandler (writ
 
 **Responsibility:** Three-tab notebook: Prompts, Agents, Projects.
 
-**Prompts tab:** PromptsHandler-backed list with search, favorites, and rich metadata rows. Star/favorite persisted to `~/.config/crabcakes/favorites.json`. Double-click or `+` button calls `on_prompt_loaded(filepath, name, content)`, which loads content into chat input. Search filters by name (case-insensitive). Favorites sort to top.
+**Prompts tab:** PromptsHandler-backed list with search, favorites, and rich metadata rows. Star/favorite persisted to `~/.config/crabcakes/favorites.json`. Double-click or `+` button calls `on_prompt_loaded(filepath, name, content)`, which loads content into chat input. Search filters by name (case-insensitive). Favorites sort to top. Right-click on a prompt row opens a 2-item popover menu ("Copy path" / "Copy prompt"); the selection is copied to the system clipboard via `Gdk.Display.get_clipboard()` and a transient "Copied path" / "Copied prompt" confirmation appears in the tab header for 2.5s (auto-cleared via `GLib.timeout_add`).
 
 **Agents tab:** Initially empty placeholder. After `set_agents()` is called, builds avatar cards (colored circle + initials + name + +/− toggle button). Double-click calls `on_agent_selected(session_key, name)`. CSS for agent rows is scoped to `left_panel`. When a project is open, the toggle button is visible — `+` adds the agent to the project, `−` removes them. Toggle button uses `.agent-add-btn` (green) or `.agent-remove-btn` (red) CSS classes.
 
@@ -440,6 +440,36 @@ panel.set_on_project_opened(cb)               # fires when project tab opens
 panel.refresh_agents_with_project(name)      # rebuilds agents list with +/− buttons
 panel.set_toggle_agent_callback(cb)            # wires +/− toggle to ProjectHandler.toggle_agent()
 ```
+
+### 3.7a Prompts Tab Right-Click Copy Menu
+
+**Responsibility:** View-layer (LeftPanel) feature. Right-click on a prompt row → 2-item popover (Copy path / Copy prompt) → clipboard write → transient status feedback.
+
+**Architecture boundary (per §3.13):** All GTK/widget code lives in `left_panel.py` (view owner). `PromptsHandler` (data owner) is unchanged. No GTK imports in `prompts_handler.py`. The view consumes `prompt['filepath']` and `prompt['content']` from the handler's scan output and stashes them as row attributes (`_filepath`, `_prompt_content`) at build time.
+
+**Wiring:**
+- `LeftPanel._build_prompt_row()` attaches a `Gtk.GestureClick` controller with `button=Gdk.BUTTON_SECONDARY` to every prompt row. The `pressed` signal connects to `_on_prompt_row_right_click`.
+- `_on_prompt_row_right_click(ctrl, n_press, x, y, row)` filters out multi-press (`n_press != 1`) and rows without `_filepath`, then constructs a `Gtk.Popover` with a 2-row `Gtk.ListBox`. Popover parent is the source row.
+- `_on_prompt_menu_row_activated(_lb, menu_row, popover, source_row)` reads the child label text to dispatch "Copy path" or "Copy prompt", then `popdown()` + `unparent()`s the popover.
+- `_on_copy_prompt_path(row)` and `_on_copy_prompt_content(row)` read `row._filepath` / `row._prompt_content` and call the local `_copy_text_to_clipboard()` helper.
+- `_copy_text_to_clipboard(text)` uses `Gdk.Display.get_default().get_clipboard().set(text)` — no-op when display is unavailable (headless test env).
+- `_show_prompt_copy_status(message)` writes the message into the status label appended to the Prompts tab header, then schedules a 2.5s `GLib.timeout_add` to clear it. Pending timeout is cancelled before a new one is scheduled.
+
+**Status label location:** The transient status label (`_prompt_copy_status_label`) is appended to the Prompts tab header `[title, search, status_label]` and right-aligned via `set_xalign(1.0)`. Styled with `.dim-label` CSS class.
+
+**Test coverage:** `tests/test_left_panel.py` — 8 tests in `TestPromptRowRightClick`:
+- `test_prompt_row_has_filepath_and_content_attrs` — row attributes set from prompt dict
+- `test_copy_path_calls_clipboard_with_filepath` — clipboard called with filepath
+- `test_copy_prompt_calls_clipboard_with_content` — clipboard called with content
+- `test_copy_path_skips_when_filepath_missing` — defensive skip
+- `test_copy_prompt_skips_when_content_missing` — defensive skip
+- `test_copy_status_label_shows_and_clears` — label set + closure clears it
+- `test_right_click_handler_ignores_multipress` — n_press != 1 skipped
+- `test_prompt_row_has_right_click_gesture_attached` — **regression-proof**: FAILS if `add_controller` is removed from `_build_prompt_row`
+
+**Known follow-ups (not blocking):**
+- Popover leak on ESC / click-outside dismissal (the `row-activated` path always `unparent()`s, but other dismiss paths don't). Fix: wire `popover.connect("closed", lambda *_: popover.unparent())`.
+- Label-text dispatch ("Copy path" / "Copy prompt") would silently no-op on localized strings. Future: store an action key on each row instead of parsing label text.
 
 ### 3.8 `ui/views/file_tree.py` — FileTree Widget
 
@@ -2486,7 +2516,14 @@ class FeedTab(Gtk.Box):
     def scroll_to_bottom() -> None
         # Unconditional — used on project open to jump to newest
     def smart_scroll_to_bottom() -> None
-        # Phase 4: only scrolls when user is within 80px of bottom
+        # Phase 4: only scrolls when user is within 80px of bottom (synchronous)
+    def schedule_scroll_to_bottom() -> None
+        # Deferred unconditional scroll — waits for vadjustment 'changed' signal
+        # so the scroll target reflects post-layout content height
+    def schedule_smart_scroll_to_bottom() -> None
+        # Phase 4 deferred: proximity check (stale upper) + deferred scroll
+        # Combines smart_scroll_to_bottom's proximity check with schedule_scroll_to_bottom's
+        # deferred signal approach to avoid the stale-upper bug when appending cards
     def update_batch_bar(pending_count: int) -> None
         # Phase 5: shows/hides batch accept bar based on pending file-change cards
     def set_batch_accept_callback(callback: Callable[[], None]) -> None
@@ -3034,6 +3071,7 @@ pytest              # auto-discovers tests/ via pytest.ini
 - `tests/test_architecture.py` — AST guard: handler isolation, models/gateway layer separation, public API existence
 - `tests/test_favorites.py` — favorites persistence: missing file, empty list, round-trip, JSON corruption
 - `tests/test_prompts_handler.py` — PromptsHandler: search/filter, favorites sort, last-used timestamps
+- `tests/test_left_panel.py` — LeftPanel: right-click copy menu (gesture wiring, clipboard, status label), 8 tests
 - `tests/test_agent_list_handler.py` — AgentListHandler: initials, colors, sorting, callbacks
 - `tests/test_agents.py` — AgentManager: edge cases, unknown inputs, clear/reregister
 - `tests/test_chat_handler.py` — ChatHandler: send, fan-out, routing, tab switching
@@ -3409,7 +3447,7 @@ crabcakes/
 │       ├── feed_tab.py           # ~167 lines — FeedTab — project feed card container (view only)
 │       ├── feedbar.py            # ~124 lines — FeedBar + progress bar (Phase 6)
 │       ├── file_tree.py          # ~439 lines — FileTree (TreeView directory browser)
-│       ├── left_panel.py         # ~838 lines — LeftPanel (Prompts/Agents/Projects notebook)
+│       ├── left_panel.py         # ~974 lines — LeftPanel (Prompts/Agents/Projects notebook + right-click copy menu)
 │       ├── left_progress.py      # 0 lines — stub placeholder
 │       ├── main_content.py       # ~857 lines — MainContent (tabs + input + review bar integration)
 │       ├── review_bar.py         # ~166 lines — ReviewBar widget: dropdown + action buttons (Phase 7)
@@ -3516,6 +3554,7 @@ tests/                           # 61 files (57 test + 4 support)
     ├── test_git_ops.py
     ├── test_icons.py
     ├── test_improve.py
+    ├── test_left_panel.py
     ├── test_markdown.py
     ├── test_mcp_client.py        # ~304 lines
     ├── test_mcp_config.py        # ~216 lines
