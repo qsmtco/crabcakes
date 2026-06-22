@@ -239,19 +239,26 @@ class ChatInputToolbar(Gtk.Box):
             f"</span>"
         )
 
-    def show_suggestions_menu(self, suggestions: list[str], callback: callable, parent_widget=None):
+    def show_suggestions_menu(self, suggestions: list[str], callback: callable, parent_widget=None, pointing_to=None):
         """Show a popover with spelling suggestions for the right-clicked word.
 
         *suggestions* is a list of replacement strings.
         *callback* is called with the selected suggestion text when the user clicks one.
-        *parent_widget* is the widget to anchor the popover to (typically the text
-        view that received the right-click). If None, defaults to the spell-check
+        *parent_widget* is the widget to anchor the popover to (must be a
+        top-level or near-top-level widget; widgets inside ScrolledWindow
+        cause GDK grabbing-popup warnings). If None, defaults to the spell-check
         button for backward compatibility.
+        *pointing_to* is an optional (x, y, width, height) tuple in parent_widget
+        coordinates; the popover arrow will point at this rectangle.
         """
         popover = Gtk.Popover()
         popover.set_autohide(True)
         if parent_widget is not None:
             popover.set_parent(parent_widget)
+            if pointing_to is not None:
+                rect = Gdk.Rectangle()
+                rect.x, rect.y, rect.width, rect.height = pointing_to
+                popover.set_pointing_to(rect)
         else:
             popover.set_parent(self._spell_btn)
 
@@ -277,8 +284,22 @@ class ChatInputToolbar(Gtk.Box):
         popover.connect("closed", lambda *_: popover.unparent())
         # Only popup if we're inside a toplevel window; otherwise just build the
         # popover (sufficient for testing the widget structure).
+        #
+        # When parent_widget is set (right-click path), the popover is created
+        # during a GestureClick::pressed handler that holds an implicit GDK
+        # grab. Calling popup() while that grab is active triggers
+        # "Tried to map a grabbing popup with a non-top most parent" warnings
+        # on Wayland and leaves the popover grab in a broken state that
+        # freezes the UI. Deferring popup() to the next idle cycle lets the
+        # gesture handler return and release its grab first.
         if self.get_root() is not None:
-            popover.popup()
+            if parent_widget is not None:
+                def _deferred_popup(p=popover):
+                    p.popup()
+                    return False  # don't repeat
+                GLib.idle_add(_deferred_popup)
+            else:
+                popover.popup()
 
     def _on_suggestion_clicked(self, btn: Gtk.Button, suggestion: str, callback: callable, popover: Gtk.Popover):
         popover.popdown()

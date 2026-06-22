@@ -360,8 +360,19 @@ class MainWindow(Gtk.ApplicationWindow):
                 offset = iter_at_pos.get_offset()
                 fresh_iter = buf.get_iter_at_offset(offset)
                 handler.replace_word_at_iter(fresh_iter, suggestion)
+            # Parent the popover to the MainWindow (top-level widget).
+            # Use set_pointing_to with the click position translated to
+            # window coordinates so the popover appears at the word.
+            # The popup itself is deferred via GLib.idle_add inside
+            # show_suggestions_menu to avoid conflicting with the
+            # GestureClick's implicit GDK grab.
+            ok, wx, wy = text_view.translate_coordinates(self, int(x), int(y))
+            if not ok:
+                return  # widgets not in the same toplevel (shouldn't happen)
             self._main_content.toolbar.show_suggestions_menu(
-                suggestions, _apply_suggestion, parent_widget=text_view
+                suggestions, _apply_suggestion,
+                parent_widget=self,
+                pointing_to=(int(wx), int(wy), 1, 1),
             )
 
         self._main_content.set_on_input_right_click(_on_input_right_click)
