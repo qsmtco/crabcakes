@@ -29,7 +29,7 @@ import gi
 logger = logging.getLogger(__name__)
 # Require GTK 4.0 — must be called before importing Gtk
 gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk, Gdk
+from gi.repository import Gtk, Gdk, Gio
 
 # Import UI components
 from ui.toolbar import Toolbar
@@ -334,16 +334,18 @@ class MainWindow(Gtk.ApplicationWindow):
         self._main_content.set_on_buffer_changed(_on_input_buffer_changed)
 
         # Right-click spell-check suggestions on the input TextView.
-        # Wires: MainContent GestureClick → InputToolbarHandler → ChatInputToolbar popover.
-        def _on_input_right_click(n_press, x, y):
-            """Right-click on input TextView — show spell suggestions if word is misspelled."""
+        # Uses Gtk.TextView.set_extra_menu() — the GTK4-native context menu.
+        # The TextView handles showing the menu; we just populate it.
+        # This avoids the GestureClick grab conflicts with manual popovers
+        # that caused UI freezes on Wayland.
+        def _on_input_right_click(n_press, x, y, menu: Gio.Menu, action_group: Gio.SimpleActionGroup):
+            """Right-click on input TextView — populate extra menu with spell suggestions."""
             handler = self._input_toolbar_handler
             if not handler.is_spell_enabled():
                 return
             text_view = self._main_content.user_input
-            # Convert (x, y) to a TextIter
+            # Move cursor to click position so the menu appears in context
             result, iter_at_pos = text_view.get_iter_at_location(int(x), int(y))
-            # GTK4 TextView.get_iter_at_location returns (bool success, TextIter)
             if not result:
                 return
             # Check if the iter has the spell-error tag
@@ -353,48 +355,44 @@ class MainWindow(Gtk.ApplicationWindow):
             if spell_tag is None:
                 return  # spell check never ran (no tag created yet)
             if not iter_at_pos.has_tag(spell_tag):
-                return  # word is not misspelled — no popover
-            # Fetch suggestions and show popover
+                return  # word is not misspelled — no suggestions
+            # Fetch suggestions
             suggestions = handler.get_suggestions_at_iter(iter_at_pos)
-            # STALE-1 fix: capture the clicked word's text at right-click time.
-            # The buffer may change between the right-click and the suggestion
-            # click (user may type, paste, etc.). Using the offset alone can
-            # then point to a different word than the one originally right-clicked.
-            # Capture the word text now and verify it's still at that offset
-            # at suggestion-click time.
+            # STALE-1 fix: capture clicked word text for later verification
             clicked_word = handler.get_word_at_iter(iter_at_pos)
-            def _apply_suggestion(suggestion):
-                offset = iter_at_pos.get_offset()
-                fresh_iter = buf.get_iter_at_offset(offset)
-                # Verify the word at this offset is still the one we right-clicked.
-                if not fresh_iter.inside_word():
-                    logger.warning(
-                        "spell-suggestion: clicked word no longer at offset %d "
-                        "(buffer changed between right-click and suggestion click); "
-                        "ignoring suggestion %r",
-                        offset, suggestion,
-                    )
-                    return
-                current_word = handler.get_word_at_iter(fresh_iter)
-                if current_word.lower() != clicked_word.lower():
-                    logger.warning(
-                        "spell-suggestion: word at offset %d changed from %r to %r; "
-                        "ignoring suggestion %r to avoid wrong replacement",
-                        offset, clicked_word, current_word, suggestion,
-                    )
-                    return
-                handler.replace_word_at_iter(fresh_iter, suggestion)
-            # Parent the popover to the TextView (the widget with the gesture).
-            # On Wayland, the popover must be parented to the widget that holds
-            # the GestureClick grab. Parenting to the window instead triggers
-            # "Tried to map a grabbing popup with a non-top-most parent" and
-            # freezes the UI. The gesture coords (x, y) are already relative
-            # to the TextView, so no coordinate translation is needed.
-            self._main_content.toolbar.show_suggestions_menu(
-                suggestions, _apply_suggestion,
-                parent_widget=text_view,
-                pointing_to=(int(x), int(y), 1, 1),
-            )
+            offset = iter_at_pos.get_offset()
+
+            # Build suggestion menu items with Gio actions
+            suggestion_section = Gio.Menu()
+            if not suggestions:
+                suggestion_section.append("(no suggestions)", None)
+            else:
+                for i, suggestion in enumerate(suggestions):
+                    action_name = f"suggest_{i}"
+                    # Create a parameterless action for this suggestion
+                    def _make_apply(sugg=suggestion, off=offset, word=clicked_word):
+                        def _apply(_action, _param):
+                            fresh_iter = buf.get_iter_at_offset(off)
+                            if not fresh_iter.inside_word():
+                                logger.warning(
+                                    "spell-suggestion: clicked word no longer at offset %d; ignoring",
+                                    off,
+                                )
+                                return
+                            current_word = handler.get_word_at_iter(fresh_iter)
+                            if current_word.lower() != word.lower():
+                                logger.warning(
+                                    "spell-suggestion: word at offset %d changed from %r to %r; ignoring",
+                                    off, word, current_word,
+                                )
+                                return
+                            handler.replace_word_at_iter(fresh_iter, sugg)
+                        return _apply
+                    action = Gio.SimpleAction.new(action_name, None)
+                    action.connect("activate", _make_apply())
+                    action_group.add_action(action)
+                    suggestion_section.append(suggestion, f"spell.{action_name}")
+            menu.append_section(None, suggestion_section)
 
         self._main_content.set_on_input_right_click(_on_input_right_click)
 

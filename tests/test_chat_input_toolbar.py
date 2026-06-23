@@ -706,8 +706,12 @@ class TestTranslateCoordinatesWarning:
                         # `self` (free variable from the enclosing _build
                         # method). Inject both so exec'd code can resolve them.
                         import logging
+                        import gi as _gi
+                        _gi.require_version('Gtk', '4.0')
+                        from gi.repository import Gio
                         ns: dict = {
                             "logger": logging.getLogger("ui.window"),
+                            "Gio": Gio,
                         }
                         exec(compile(dedented, "ui/window.py", "exec"), ns)
                         return ns["_on_input_right_click"]
@@ -717,12 +721,16 @@ class TestTranslateCoordinatesWarning:
 
     @staticmethod
     def _build_mocks(translate_ok: bool = False):
-        """Build a controlled namespace of MagicMock objects that let the
-        closure reach the `translate_coordinates` call. All early-return
-        guards (spell disabled, get_iter_at_location failed, no spell tag,
-        word not misspelled) are bypassed so we exercise the translate path.
+        """Build a controlled namespace of MagicMock objects for the closure.
+
+        Returns (self_mock, text_view, toolbar, menu, action_group).
+        The menu and action_group are real Gio objects so the closure can
+        populate them.
         """
         from unittest.mock import MagicMock
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import Gio
 
         # Handler
         handler = MagicMock()
@@ -733,8 +741,9 @@ class TestTranslateCoordinatesWarning:
         # iter at position — has the spell tag
         iter_at_pos = MagicMock()
         iter_at_pos.has_tag.return_value = True
+        iter_at_pos.get_offset.return_value = 5
 
-        # spell tag (non-None, so the spell-tag lookup guard passes)
+        # spell tag (non-None)
         spell_tag = MagicMock()
 
         # tag table
@@ -745,15 +754,12 @@ class TestTranslateCoordinatesWarning:
         buf = MagicMock()
         buf.get_tag_table.return_value = tag_table
 
-        # text view — translate_coordinates is the function under test
+        # text view
         text_view = MagicMock()
         text_view.get_iter_at_location.return_value = (True, iter_at_pos)
         text_view.get_buffer.return_value = buf
-        text_view.translate_coordinates.return_value = (
-            None if not translate_ok else (50.0, 75.0)
-        )
 
-        # toolbar (won't be called when translate fails, but must exist)
+        # toolbar (no longer used for spell suggestions, kept for compat)
         toolbar = MagicMock()
 
         # main content
@@ -766,87 +772,63 @@ class TestTranslateCoordinatesWarning:
         self_mock._input_toolbar_handler = handler
         self_mock._main_content = main_content
 
-        return self_mock, text_view, toolbar
+        # Real Gio objects for the closure to populate
+        menu = Gio.Menu()
+        action_group = Gio.SimpleActionGroup()
 
-    def test_gesture_coords_passed_directly_as_pointing_to(self):
-        """The right-click closure passes gesture (x, y) directly to
-        show_suggestions_menu as pointing_to coords, without calling
-        translate_coordinates. The gesture coords are already relative
-        to the TextView (the gesture widget), so no translation is needed.
+        return self_mock, text_view, toolbar, menu, action_group
 
-        Failure-case: if someone re-adds translate_coordinates, the test
-        breaks because translate_coordinates is never called.
+    def test_populates_extra_menu_with_suggestions(self):
+        """The right-click closure populates the Gio.Menu with suggestion items.
+
+        Instead of creating a manual popover, the closure now uses the
+        GTK4-native set_extra_menu approach. The menu must contain the
+        suggestions from the handler.
         """
         closure = self._load_right_click_closure()
-        self_mock, text_view, toolbar = self._build_mocks(translate_ok=False)
+        self_mock, text_view, toolbar, menu, action_group = self._build_mocks()
         closure.__globals__["self"] = self_mock
 
-        closure(1, 100, 200)  # n_press=1, x=100, y=200
+        closure(1, 100, 200, menu, action_group)
 
-        # show_suggestions_menu must have been called
-        assert toolbar.show_suggestions_menu.called, (
-            "show_suggestions_menu was not called"
+        # The handler must have been asked for suggestions
+        self_mock._input_toolbar_handler.get_suggestions_at_iter.assert_called_once()
+        # The menu must have at least one item (the suggestion section)
+        assert menu.get_n_items() > 0, (
+            "Gio.Menu was not populated with suggestion items"
         )
-        # The pointing_to arg must be the raw gesture coords (100, 200)
-        call_kwargs = toolbar.show_suggestions_menu.call_args
-        pointing_to = call_kwargs[1].get("pointing_to") or call_kwargs[0][2]
-        assert pointing_to[0] == 100 and pointing_to[1] == 200, (
-            f"pointing_to coords should be (100, 200), got {pointing_to}"
-        )
-        # translate_coordinates must NOT have been called
-        assert not text_view.translate_coordinates.called, (
-            "translate_coordinates should not be called — gesture coords are "
-            "already TextView-relative"
+        # The action group must have actions for each suggestion
+        action_names = action_group.list_actions()
+        assert len(action_names) == 2, (
+            f"expected 2 suggestion actions (foo, bar), got {len(action_names)}: {action_names}"
         )
 
-    def test_parent_widget_is_text_view(self):
-        """The popover must be parented to the TextView (the gesture widget),
-        not to the MainWindow. Parenting to the wrong widget triggers
-        the Wayland 'grabbing popup with non-top-most parent' freeze.
-        """
+    def test_no_menu_population_when_spell_disabled(self):
+        """When spell check is disabled, the menu must not be populated."""
         closure = self._load_right_click_closure()
-        self_mock, text_view, toolbar = self._build_mocks(translate_ok=True)
+        self_mock, text_view, toolbar, menu, action_group = self._build_mocks()
+        self_mock._input_toolbar_handler.is_spell_enabled.return_value = False
         closure.__globals__["self"] = self_mock
 
-        closure(1, 100, 200)
+        closure(1, 100, 200, menu, action_group)
 
-        call_kwargs = toolbar.show_suggestions_menu.call_args
-        parent_widget = call_kwargs[1].get("parent_widget")
-        assert parent_widget is text_view, (
-            "parent_widget must be the TextView (gesture widget), not the MainWindow — "
-            "parenting to the window causes Wayland grabbing-popup freeze"
+        assert menu.get_n_items() == 0, (
+            "Menu should not be populated when spell check is disabled"
         )
+        assert len(action_group.list_actions()) == 0
 
-    def test_translate_coordinates_success_does_not_log_warning(
-        self, caplog
-    ):
-        """When translate_coordinates succeeds, no warning is logged.
-
-        This guards against an over-zealous fix that warns on every
-        right-click (e.g., moved the logger.warning outside the
-        `if not ok:` block).
-        """
-        import logging
-
+    def test_no_menu_population_when_word_not_misspelled(self):
+        """When the clicked word is not misspelled, the menu is empty."""
         closure = self._load_right_click_closure()
-        self_mock, text_view, toolbar = self._build_mocks(translate_ok=True)
+        self_mock, text_view, toolbar, menu, action_group = self._build_mocks()
+        # Make iter_at_pos NOT have the spell tag
+        iter_at_pos = self_mock._main_content.user_input.get_iter_at_location.return_value[1]
+        iter_at_pos.has_tag.return_value = False
         closure.__globals__["self"] = self_mock
 
-        with caplog.at_level(logging.WARNING, logger="ui.window"):
-            closure(1, 100, 200)
+        closure(1, 100, 200, menu, action_group)
 
-        warning_records = [
-            r for r in caplog.records
-            if r.levelno == logging.WARNING and r.name == "ui.window"
-        ]
-        assert len(warning_records) == 0, (
-            f"no warning expected on success path, got: "
-            f"{[(r.name, r.levelname, r.getMessage()) for r in warning_records]}"
-        )
-        # Sanity: the popover should be shown in the success path
-        assert toolbar.show_suggestions_menu.called, (
-            "show_suggestions_menu must be called when translate_coordinates succeeds"
-        )
+        assert menu.get_n_items() == 0
 
 
 class TestBug10GetToplevel:
@@ -1183,8 +1165,12 @@ class TestStale1WordChangeDetected:
                         closure_src = ast.get_source_segment(source, child)
                         dedented = textwrap.dedent(closure_src)
                         import logging
+                        import gi as _gi2
+                        _gi2.require_version('Gtk', '4.0')
+                        from gi.repository import Gio as Gio2
                         ns: dict = {
                             "logger": logging.getLogger("ui.window"),
+                            "Gio": Gio2,
                         }
                         exec(compile(dedented, "ui/window.py", "exec"), ns)
                         return ns["_on_input_right_click"]
@@ -1202,6 +1188,9 @@ class TestStale1WordChangeDetected:
                           returns a different word the second time.
         """
         from unittest.mock import MagicMock
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import Gio
 
         handler = MagicMock()
         handler.is_spell_enabled.return_value = True
@@ -1231,7 +1220,6 @@ class TestStale1WordChangeDetected:
         text_view = MagicMock()
         text_view.get_iter_at_location.return_value = (True, iter_at_pos)
         text_view.get_buffer.return_value = buf
-        text_view.translate_coordinates.return_value = (50.0, 75.0)
 
         toolbar = MagicMock()
 
@@ -1243,24 +1231,29 @@ class TestStale1WordChangeDetected:
         self_mock._input_toolbar_handler = handler
         self_mock._main_content = main_content
 
-        return self_mock, handler, toolbar
+        menu = Gio.Menu()
+        action_group = Gio.SimpleActionGroup()
+
+        return self_mock, handler, toolbar, menu, action_group
 
     def test_suggestion_applied_when_word_unchanged(self):
         """When the buffer hasn't changed, the suggestion is applied normally."""
         closure = self._load_right_click_closure()
-        self_mock, handler, toolbar = self._build_stale1_mocks(word_changed=False)
+        self_mock, handler, toolbar, menu, action_group = self._build_stale1_mocks(word_changed=False)
         closure.__globals__["self"] = self_mock
 
-        # Invoke the right-click closure
-        closure(1, 100, 200)
+        # Populate the menu and register actions
+        closure(1, 100, 200, menu, action_group)
 
-        # The _apply_suggestion callback should have been passed to show_suggestions_menu
-        assert toolbar.show_suggestions_menu.called
-        args = toolbar.show_suggestions_menu.call_args
-        apply_cb = args[0][1]  # second positional arg
+        # The action group must have at least one action (the suggestion)
+        action_names = action_group.list_actions()
+        assert len(action_names) == 1, (
+            f"expected 1 suggestion action, got {action_names}"
+        )
 
-        # Invoke the apply callback
-        apply_cb("world")
+        # Trigger the action (simulates clicking the menu item)
+        action = action_group.lookup_action(action_names[0])
+        action.activate(None)
 
         # replace_word_at_iter should have been called
         handler.replace_word_at_iter.assert_called_once()
@@ -1270,19 +1263,19 @@ class TestStale1WordChangeDetected:
         import logging
 
         closure = self._load_right_click_closure()
-        self_mock, handler, toolbar = self._build_stale1_mocks(word_changed=True)
+        self_mock, handler, toolbar, menu, action_group = self._build_stale1_mocks(word_changed=True)
         closure.__globals__["self"] = self_mock
 
-        # Invoke the right-click closure
-        closure(1, 100, 200)
+        # Populate the menu and register actions
+        closure(1, 100, 200, menu, action_group)
 
-        # Extract the _apply_suggestion callback
-        assert toolbar.show_suggestions_menu.called
-        args = toolbar.show_suggestions_menu.call_args
-        apply_cb = args[0][1]
+        action_names = action_group.list_actions()
+        assert len(action_names) == 1
 
         with caplog.at_level(logging.WARNING, logger="ui.window"):
-            apply_cb("world")
+            # Trigger the suggestion action
+            action = action_group.lookup_action(action_names[0])
+            action.activate(None)
 
         # replace_word_at_iter should NOT have been called
         handler.replace_word_at_iter.assert_not_called()

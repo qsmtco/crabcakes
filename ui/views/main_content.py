@@ -5,7 +5,7 @@
 
 import gi
 gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk, GLib, Gio
 import logging
 from typing import Callable
 
@@ -134,8 +134,19 @@ class MainContent(Gtk.Box):
         self._user_input.set_top_margin(6)
         self._user_input.set_bottom_margin(6)
         self._user_input.add_css_class("input-bubble")
-        # Right-click controller for spell-check suggestions.
-        # Pattern from left_panel.py:756-758 (prompt row right-click).
+        # Spell-check context menu via Gtk.TextView.set_extra_menu().
+        # This is the GTK4-native way to add items to the TextView's built-in
+        # right-click menu. It avoids the GestureClick grab conflicts that
+        # cause "Tried to map a grabbing popup with a non-top-most parent"
+        # and UI freezes on Wayland.
+        # Pattern from pygtkspellcheck library.
+        self._spell_extra_menu = Gio.Menu()
+        self._user_input.set_extra_menu(self._spell_extra_menu)
+        # Action group for spell suggestion actions
+        self._spell_action_group = Gio.SimpleActionGroup()
+        self._user_input.insert_action_group("spell", self._spell_action_group)
+        # Right-click handler: move cursor to click position and rebuild menu.
+        # The TextView itself handles showing the menu — no manual popover.
         right_click = Gtk.GestureClick()
         right_click.set_button(Gdk.BUTTON_SECONDARY)
         right_click.connect("pressed", self._on_input_right_click_internal)
@@ -238,17 +249,28 @@ class MainContent(Gtk.Box):
     def set_on_input_right_click(self, cb: callable) -> None:
         """Register callback for right-click on input TextView.
 
-        cb(n_press, x, y) — called on right-click. The callback is responsible
-        for checking if the word at (x, y) is misspelled and showing a popover.
+        cb(n_press, x, y, menu: Gio.Menu, action_group: Gio.SimpleActionGroup)
+        — called on right-click. The callback should populate the menu with
+        spell-check suggestion items and add corresponding actions to the
+        action group. The TextView handles showing the menu itself.
         """
         self._on_input_right_click = cb
 
     def _on_input_right_click_internal(self, gesture, n_press, x, y) -> None:
-        """Internal: forward right-click to the registered callback."""
+        """Internal: rebuild spell-check extra menu based on the word at (x, y).
+
+        The TextView handles showing the menu itself — we just populate it.
+        """
         if n_press != 1:
             return
+        # Clear the menu and action group from the previous right-click
+        self._spell_extra_menu.remove_all()
+        # Remove all previous spell suggestion actions
+        for action in self._spell_action_group.list_actions():
+            self._spell_action_group.remove_action(action)
+        # Build new menu if we have a callback that returns suggestion data
         if self._on_input_right_click is not None:
-            self._on_input_right_click(n_press, x, y)
+            self._on_input_right_click(n_press, x, y, self._spell_extra_menu, self._spell_action_group)
 
     def set_on_project_settings_update(self, cb):
         """Set callback for project settings updates. cb(project_name, member_count)."""
