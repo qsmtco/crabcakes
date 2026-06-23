@@ -431,8 +431,8 @@ self._agent_to_project = AgentRoutingTable()  # shared with ProjectHandler (writ
 ```python
 class InputToolbarHandler:
     # File I/O
-    def load_file(self) -> None
-    def save_to_file(self) -> None
+    def load_file(self, file_path: str) -> bool
+    def save_to_file(self, file_path: str) -> bool
 
     # Spell check
     def toggle_spell_check(self) -> bool     # returns new state
@@ -443,15 +443,15 @@ class InputToolbarHandler:
     def replace_word_at_iter(text_iter, replacement: str) -> None
 
     # Find / replace
-    def find(search_text: str) -> tuple[int, int]    # (current_idx, total)
+    def find(self, search_text: str) -> tuple[int, int]    # (current_idx, total)
     def find_next(self) -> tuple[int, int]
     def find_prev(self) -> tuple[int, int]
-    def replace_current(replacement: str) -> bool
-    def replace_all(replacement: str) -> int          # returns count
-    def get_find_match_count(self) -> int
+    def replace_current(self, replacement: str) -> tuple[int, int]   # (current_idx, total)
+    def replace_all(self, replacement: str) -> int          # returns count
 
     # Word count
     def get_word_count(self) -> tuple[int, int, int]  # (words, chars, lines)
+    def compute_count(self) -> tuple[int, int, int]   # public alias for get_word_count
 ```
 
 **Rules:**
