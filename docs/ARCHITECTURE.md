@@ -951,15 +951,28 @@ def improve_prompt(raw_text, callback, GLib=None)
 
 ### 3.18 `models/colors.py` — Color Palette
 
-**Responsibility:** Agent and project color assignment via round-robin.
+**Responsibility:** Agent and project color assignment via round-robin, plus stable per-role color lookup for special agents.
 
 **Public API:**
 ```python
-AGENT_COLORS: list[str]  # 10-color palette
-next_agent_color() -> str
-next_project_color() -> str  # same palette, separate counter — used by ProjectListHandler
-reset_color_indices()
+AGENT_COLORS: list[str]                           # 10-color palette
+next_agent_color() -> str                         # round-robin for live agents; advances _agent_color_next
+next_project_color() -> str                       # same palette, separate counter — used by ProjectListHandler
+color_for_special_agent(role: str) -> str        # stable per-role cache; NEVER re-assigns once set
+reset_color_indices()                             # resets _agent_color_next and _project_color_next to 0
+                                                  # NOTE: does NOT reset _SPECIAL_AGENT_COLORS — that cache
+                                                  # survives gateway reconnects by design (SPEC-agent-color-stability)
 ```
+
+**Module-level state:**
+- `_agent_color_next: int` — shared round-robin counter, advanced by both `next_agent_color()` and `color_for_special_agent()`. This means the palette is shared between live agents and special agents: if 3 special agents exist, the first live agent gets index 3 (`#f43f5e`). This is intentional — both populations should draw from the same color pool without colliding.
+- `_project_color_next: int` — separate counter for `next_project_color()`.
+- `_SPECIAL_AGENT_COLORS: dict[str, str]` — stable cache keyed by role string; populated on first `color_for_special_agent(role)` call. Survives `reload_registry()` (in `agent/special_agents.py`) and `reset_color_indices()` (this module). Designed for the AgentListHandler.get_agent_color(name) → display_name → role → color lookup chain.
+
+**Cross-module call sites:**
+- `agent/special_agents.py` — no longer imports from `models/colors` (Phase 4 of SPEC-agent-color-stability removed the dependency). The `color` field was deleted from `SpecialAgentDef`.
+- `models/agents.py:35` — `AgentManager._assign_color()` calls `next_agent_color()` for live-agent registration. Cache `AgentManager._agent_colors` (per-name dict) survives `clear()` by design.
+- `ui/handlers/agent_list_handler.py:59-83` — `get_agent_color(name)` calls `color_for_special_agent(role)` inside the method body (deferred import) to avoid circular dependency with `agent/special_agents`.
 
 ### 3.19 `ui/handlers/project_handler.py` — Project Handler (Phase 3)
 

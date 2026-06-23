@@ -32,7 +32,6 @@ class SpecialAgentDef:
     display_name: str             # e.g. "Coder"
     role: str                     # e.g. "coder" — matches prompts/system/{role}.md
     emoji: str                    # e.g. "🛠️"
-    color: str                    # hex color from AGENT_COLORS
     tools: list[str]              # tool names this agent can use
     can_write: bool               # whether write_file is in the default tool set
     llm_name: str | None = None   # per-agent provider card name (None → global default)
@@ -59,32 +58,6 @@ class SpecialAgentDef:
 
 
 
-# ── Color assignment ─────────────────────────────────────────────────────────
-
-# Round-robin color palette for agent avatars.
-_AGENT_COLORS = [
-    "#6366f1",  # indigo
-    "#f43f5e",  # rose
-    "#10b981",  # emerald
-    "#f59e0b",  # amber
-    "#8b5cf6",  # violet
-    "#06b6d4",  # cyan
-    "#ec4899",  # pink
-    "#14b8a6",  # teal
-    "#ef4444",  # red
-    "#84cc16",  # lime
-]
-_color_index = 0
-
-
-def _next_color() -> str:
-    """Return the next color in the round-robin palette."""
-    global _color_index
-    color = _AGENT_COLORS[_color_index % len(_AGENT_COLORS)]
-    _color_index += 1
-    return color
-
-
 # ── Agent registry ───────────────────────────────────────────────────────────
 
 # Lazy-loaded from YAML/JSON config files. None means "not yet loaded".
@@ -103,7 +76,6 @@ def _load_registry() -> dict[str, SpecialAgentDef]:
         name = agent_def.get("name", "Agent")
         session_key = f"special:{role}"
         tools = agent_def.get("tools", [])
-        color = _next_color()
 
         # BUG #30: Coerce mcp_servers to list if YAML gave a string
         raw_mcp = agent_def.get("mcp_servers", [])
@@ -117,7 +89,6 @@ def _load_registry() -> dict[str, SpecialAgentDef]:
             display_name=name,
             role=role,
             emoji=agent_def.get("emoji", "🤖"),
-            color=color,
             tools=tools,
             can_write="write_file" in tools or "edit_file" in tools,
             llm_name=agent_def.get("llm_name"),
@@ -149,9 +120,8 @@ def reload_registry() -> None:
 
     Call after creating/editing/deleting agent definitions.
     """
-    global SPECIAL_AGENTS, _color_index
+    global SPECIAL_AGENTS
     SPECIAL_AGENTS = None
-    _color_index = 0
     _ensure_loaded()
 
 

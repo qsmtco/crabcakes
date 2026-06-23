@@ -26,10 +26,43 @@ def next_agent_color() -> str:
 
 
 def reset_color_indices() -> None:
-    """Reset both agent and project round-robin counters. Call on gateway reconnect."""
+    """Reset both agent and project round-robin counters. Call on gateway reconnect.
+
+    Does NOT reset _SPECIAL_AGENT_COLORS — special-agent role colors are
+    stable for the process lifetime so that YAML reloads do not drift them.
+    """
     global _agent_color_next, _project_color_next
     _agent_color_next = 0
     _project_color_next = 0
+
+
+# ── Stable per-role colors for special agents ───────────────────────────────
+# Unlike _agent_color_next, this cache is keyed by role and never advances
+# past initial assignment. Survives reload_registry() and reset_color_indices()
+# within a single process lifetime. The first call for a given role assigns
+# from AGENT_COLORS in round-robin order (using the live-agent counter);
+# subsequent calls return the cached color.
+_SPECIAL_AGENT_COLORS: dict[str, str] = {}
+
+
+def color_for_special_agent(role: str) -> str:
+    """Return a stable hex color for a special agent role.
+
+    First call for a given role assigns from AGENT_COLORS round-robin.
+    Subsequent calls (including after reload_registry()) return the same
+    color. Empty role returns the deterministic default "#6366f1".
+    Unknown roles behave identically to known ones — the cache is created
+    on first call and never invalidated.
+    """
+    global _agent_color_next
+    if not role:
+        return "#6366f1"
+    if role in _SPECIAL_AGENT_COLORS:
+        return _SPECIAL_AGENT_COLORS[role]
+    color = AGENT_COLORS[_agent_color_next % len(AGENT_COLORS)]
+    _agent_color_next += 1
+    _SPECIAL_AGENT_COLORS[role] = color
+    return color
 
 
 # ── Project color palette (same colors, separate counter) ────────────────────

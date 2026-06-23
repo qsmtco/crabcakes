@@ -8,6 +8,11 @@ from .agents import AgentManager
 from .colors import (
     next_agent_color,
     reset_color_indices,
+    # NOTE: `color_for_special_agent` is intentionally NOT re-exported here.
+    # It is an internal lookup keyed by special-agent role, called only via
+    # deferred import from `ui/handlers/agent_list_handler.py`. External
+    # callers (other handlers, tests) should use `next_agent_color()` for
+    # round-robin assignment instead. See ARCHITECTURE.md §3.18.
 )
 from .command import Command, CommandResult, CommandRegistry
 from .routing import AgentRoutingTable

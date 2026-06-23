@@ -115,7 +115,6 @@ class TestYAMLLoading(TestState):
             display_name="Test",
             role="tester",
             emoji="🧪",
-            color="#123456",
             tools=["read_file"],
             can_write=False,
             mcp_servers=["memory"],

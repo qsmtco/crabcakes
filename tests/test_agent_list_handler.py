@@ -54,9 +54,13 @@ class TestGetAgentColor:
         assert color.startswith("#")
 
     def test_fallback_when_no_agent_mgr(self):
+        """Without agent_mgr and without special-agent match, returns deterministic default."""
         h = AgentListHandler()
-        color = h.get_agent_color("Unknown")
+        color = h.get_agent_color("DefinitelyNotARealAgent")
         assert color.startswith("#")
+        # Without a matching special agent, the handler returns the deterministic
+        # default — same as the old fallback, but stable across calls.
+        assert color == h.get_agent_color("DefinitelyNotARealAgent")
 
 
 class TestGetSortedAgents:
@@ -104,3 +108,65 @@ class TestCallbacks:
         h.set_agent_mgr(agent_mgr)
         names = [n for _, n, _, _ in h.get_sorted_agents()]
         assert "Qat" in names
+
+
+class TestColorStability:
+    def test_get_agent_color_stable_across_calls(self):
+        """Same name → same color across repeated calls (no agent_mgr, special-agent path)."""
+        from unittest.mock import patch
+        from agent.special_agents import SpecialAgentDef
+        h = AgentListHandler()  # no agent_mgr
+        mock_def = SpecialAgentDef(
+            conv_id_prefix="special:mocktest",
+            display_name="MockTest",
+            role="mocktest",
+            emoji="🧪",
+            tools=["read_file"],
+            can_write=False,
+        )
+        with patch("agent.special_agents.get_special_agents", return_value=[mock_def]):
+            colors = [h.get_agent_color("MockTest") for _ in range(5)]
+            assert len(set(colors)) == 1, f"Colors drifted: {colors}"
+
+    def test_get_agent_color_uses_deterministic_default_for_unknown(self):
+        """Unknown name returns '#6366f1' without advancing any counter."""
+        from unittest.mock import patch
+        h = AgentListHandler()
+        with patch("agent.special_agents.get_special_agents", return_value=[]):
+            c1 = h.get_agent_color("Unknown")
+            c2 = h.get_agent_color("Unknown")
+            assert c1 == "#6366f1"
+            assert c1 == c2
+
+    def test_get_agent_color_falls_through_when_agent_mgr_returns_falsy(self):
+        """agent_mgr is set but get_color(name) returns falsy → falls through to special-agent path.
+
+        This covers the live-agent path returning None or empty string, which should
+        NOT prevent the special-agent lookup from running. Without this test, a
+        regression that returns a falsy-but-truthy value from agent_mgr.get_color()
+        (e.g. False, "", 0) would silently skip the special-agent lookup.
+        """
+        from unittest.mock import patch, MagicMock
+        from agent.special_agents import SpecialAgentDef
+        # Construct an agent_mgr-like object whose get_color() returns falsy.
+        mgr = MagicMock()
+        mgr.get_color.return_value = None
+        h = AgentListHandler(agent_mgr=mgr)
+        mock_def = SpecialAgentDef(
+            conv_id_prefix="special:fallthrough",
+            display_name="FallThrough",
+            role="fallthrough_role",
+            emoji="🧪",
+            tools=["read_file"],
+            can_write=False,
+        )
+        with patch("agent.special_agents.get_special_agents", return_value=[mock_def]):
+            c1 = h.get_agent_color("FallThrough")
+            c2 = h.get_agent_color("FallThrough")
+            assert c1.startswith("#")
+            assert c1 == c2  # stable across calls — falls through to special-agent cache
+            # Falsy cases that must also fall through
+            for falsy_value in (None, "", 0, False):
+                mgr.get_color.return_value = falsy_value
+                c = h.get_agent_color("FallThrough")
+                assert c == c1, f"get_color({falsy_value!r}) should fall through, got {c!r}"

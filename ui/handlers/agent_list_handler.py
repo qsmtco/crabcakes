@@ -59,15 +59,34 @@ class AgentListHandler:
     def get_agent_color(self, name: str) -> str:
         """
         Get hex color for an agent name.
-        Uses AgentManager's color if available, falls back to round-robin.
+
+        Priority:
+          1. Live agent registered in AgentManager (gateway path).
+          2. Special agent role lookup — returns the same color across reloads.
+          3. Deterministic default "#6366f1" — never advances a counter.
+
+        The special-agent path looks up the role from the registry by display
+        name. Unknown names return the deterministic default without calling
+        any counter-advancing function.
         """
         if self._agent_mgr is not None:
             color = self._agent_mgr.get_color(name)
             if color:
                 return color
-        # Fallback: no agent_mgr, use default palette
-        from models.colors import next_agent_color
-        return next_agent_color()
+        # Special agent path — find the role for this display name.
+        # NOTE: The `display_name == name` comparison is case-sensitive and
+        # exact-match. Renaming a special agent's `name:` in its YAML will
+        # cause the lookup to miss → the handler returns the deterministic
+        # default "#6366f1" instead of the cached color. This is by design
+        # (cache is keyed by role, not display_name), but worth noting for
+        # operators editing ~/.config/crabcakes/agents/*.yaml.
+        from agent.special_agents import get_special_agents
+        from models.colors import color_for_special_agent
+        for agent_def in get_special_agents():
+            if agent_def.display_name == name:
+                return color_for_special_agent(agent_def.role)
+        # Unknown name — deterministic default, no counter advance
+        return "#6366f1"
 
     def get_sorted_agents(self, project_members=None) -> list[tuple[str, str, bool, int]]:
         """

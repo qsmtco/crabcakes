@@ -31,7 +31,6 @@ class TestSpecialAgentDef:
             display_name="Test",
             role="test",
             emoji="🔬",
-            color="#ff0000",
             tools=["read_file"],
             can_write=False,
         )
@@ -44,7 +43,6 @@ class TestSpecialAgentDef:
             display_name="Custom",
             role="custom",
             emoji="🤖",
-            color="#00ff00",
             tools=["read_file", "write_file"],
             can_write=True,
             llm_name="minimax",
@@ -61,7 +59,6 @@ class TestGetSelfImprovementConfig:
             display_name="Writer",
             role="writer",
             emoji="✏️",
-            color="#000",
             tools=["read_file", "write_file"],
             can_write=True,
         )
@@ -75,7 +72,6 @@ class TestGetSelfImprovementConfig:
             display_name="Reader",
             role="reader",
             emoji="📖",
-            color="#000",
             tools=["read_file"],
             can_write=False,
         )
@@ -88,7 +84,6 @@ class TestGetSelfImprovementConfig:
             display_name="Override",
             role="override",
             emoji="🔧",
-            color="#000",
             tools=["read_file", "write_file"],
             can_write=True,
             self_improvement={"enforcement": False, "dream_consolidation": True},
@@ -187,3 +182,66 @@ class TestRegistry:
         # Should reload same agents
         assert len(agents1) == len(agents2)
         assert [a.display_name for a in agents1] == [a.display_name for a in agents2]
+
+
+class TestSpecialAgentColorStability:
+    """Tests for models/colors.color_for_special_agent() — the stable
+    per-role color cache introduced in Phase 1 of SPEC-AGENT-COLOR-STABILITY.
+
+    These tests verify:
+      - Same role returns the same color across reload_registry() calls.
+      - Empty role returns the deterministic default.
+      - Gateway reconnect (reset_color_indices) does not reset special-agent
+        colors.
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset_color_cache(self):
+        """Reset the module-level _SPECIAL_AGENT_COLORS cache and the
+        _agent_color_next counter before each test in this class, so test
+        order does not affect results."""
+        from models.colors import _SPECIAL_AGENT_COLORS, _agent_color_next
+        _SPECIAL_AGENT_COLORS.clear()
+        # Save and restore _agent_color_next so other tests aren't disturbed.
+        import models.colors as colors_mod
+        saved_next = colors_mod._agent_color_next
+        colors_mod._agent_color_next = 0
+        yield
+        _SPECIAL_AGENT_COLORS.clear()
+        colors_mod._agent_color_next = saved_next
+
+    def test_color_stable_across_reload(self):
+        """Reload registry; same roles get the same color."""
+        from models.colors import color_for_special_agent
+        reload_registry()
+        first_colors = {a.role: color_for_special_agent(a.role) for a in get_special_agents()}
+        reload_registry()
+        second_colors = {a.role: color_for_special_agent(a.role) for a in get_special_agents()}
+        assert first_colors == second_colors
+        # At least one role should be assigned a real color
+        assert all(c.startswith("#") for c in first_colors.values())
+        # At least one role must have been assigned (sanity check that
+        # the YAML registry is not empty).
+        assert len(first_colors) >= 1
+
+    def test_color_deterministic_for_empty_role(self):
+        """Empty role returns the deterministic default without touching the cache."""
+        from models.colors import color_for_special_agent, _SPECIAL_AGENT_COLORS
+        assert color_for_special_agent("") == "#6366f1"
+        assert color_for_special_agent("") == "#6366f1"  # idempotent
+        # Empty role must NOT pollute the cache
+        assert "" not in _SPECIAL_AGENT_COLORS
+
+    def test_color_persists_across_reset_color_indices(self):
+        """Gateway reconnect (reset_color_indices) does not reset special-agent colors."""
+        from models.colors import color_for_special_agent, reset_color_indices
+        # First call assigns from palette
+        c1 = color_for_special_agent("test_role_x")
+        # Simulate gateway reconnect
+        reset_color_indices()
+        # Same role returns the same color
+        c2 = color_for_special_agent("test_role_x")
+        assert c1 == c2
+        # Color is a real palette entry, not the empty-role default
+        assert c1.startswith("#")
+        assert len(c1) == 7  # "#RRGGBB"

@@ -34,7 +34,6 @@ class TestEnforcementGating:
             display_name="Test",
             role="test",
             emoji="🔬",
-            color="#000",
             tools=["read_file", "write_file"],
             can_write=True,
             self_improvement={"enforcement": False},
@@ -64,7 +63,6 @@ class TestEnforcementGating:
             display_name="Test",
             role="test",
             emoji="🔬",
-            color="#000",
             tools=["read_file"],
             can_write=False,
         )
