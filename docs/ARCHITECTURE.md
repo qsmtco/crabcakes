@@ -419,6 +419,48 @@ self._agent_to_project = AgentRoutingTable()  # shared with ProjectHandler (writ
 **Phase 1 (ChatHandler) extracted:** `_on_send`, `_on_send_clicked`, `_switch_to_session_tab`, and chat.final routing are now in `ui/handlers/chat_handler.py`.
 **Phase 5 extracted:** `_on_audit_report_card` (FeedHandler.add_audit_report_card), `_on_agent_saved`/`_on_agent_deleted` (AgentRuntimeHandler.reload_agents_and_mcp), `_confirm_delete_agent` (AgentBuilderHandler.delete_agent_with_confirmation), `_register_stub_commands` (CommandHandler auto-registration).
 
+**Right-click spell suggestions:** The `_on_input_right_click` closure (defined in `MainWindow._build()`) consumes `InputToolbarHandler.is_spell_enabled()` (FRAGILE-1) and `get_word_at_iter()` (STALE-1) from `InputToolbarHandler`. The closure captures the clicked word's text at right-click time and verifies it at suggestion-click time to avoid replacing a different word if the buffer changed in between. See `SPEC-SPELL-POPOVER-FOLLOWUP.md` for details.
+
+### 3.6a `ui/handlers/input_toolbar_handler.py` — Input Toolbar Handler
+
+**Responsibility:** All input toolbar logic — find/replace, spell check, file I/O, word count. Pure data layer; imports no `Gtk.*` widget types in module scope. GTK types are accessed only via `self._mc.user_input.get_buffer()` which returns `Gtk.TextBuffer` (the established pattern).
+
+**Owns:** Spell check state (`_spell_enabled`), find/replace state, debounced spell-check timer, spell-error TextTag.
+
+**Public API:**
+```python
+class InputToolbarHandler:
+    # File I/O
+    def load_file(self) -> None
+    def save_to_file(self) -> None
+
+    # Spell check
+    def toggle_spell_check(self) -> bool     # returns new state
+    def is_spell_enabled(self) -> bool       # public read-only accessor
+    def on_buffer_changed(self) -> None      # called by view on buffer change
+    def get_suggestions_at_iter(text_iter) -> list[str]
+    def get_word_at_iter(text_iter) -> str    # returns "" if not in a word; preserves case
+    def replace_word_at_iter(text_iter, replacement: str) -> None
+
+    # Find / replace
+    def find(search_text: str) -> tuple[int, int]    # (current_idx, total)
+    def find_next(self) -> tuple[int, int]
+    def find_prev(self) -> tuple[int, int]
+    def replace_current(replacement: str) -> bool
+    def replace_all(replacement: str) -> int          # returns count
+    def get_find_match_count(self) -> int
+
+    # Word count
+    def get_word_count(self) -> tuple[int, int, int]  # (words, chars, lines)
+```
+
+**Rules:**
+- Imports NO `Gtk.*` widget types at module scope. The single lazy import of `Pango`/`Gdk` inside `_apply_spell_tags` is for RGBA/tag property access, not widget construction.
+- All GTK dispatch via `GLib.idle_add()` (uses `self._GLib` injected at construction).
+- Public read-only accessors (`is_spell_enabled`, `get_word_count`, etc.) for view-layer consumption.
+- Private fields prefixed with `_` and never accessed from outside the handler.
+- `get_word_at_iter` includes a fix for the GTK `backward_word_start()` position-dependent bug (when iter is on the first char of a word, `backward_word_start()` can jump to the previous word; the method scans for intervening whitespace and corrects).
+
 ### 3.7 `ui/views/left_panel.py` — Left Sidebar
 
 **Responsibility:** Three-tab notebook: Prompts, Agents, Projects.
@@ -2547,21 +2589,9 @@ class FeedTab(Gtk.Box):
 
 ### 3.36 `ui/handlers/input_toolbar_handler.py` — Input Toolbar Handler
 
+**See §3.6a for the authoritative public API and rules.**
+
 **Responsibility:** Owns all input toolbar logic — find/replace, spell check, file I/O, word count. Does NOT import GTK. All GTK dispatch via `GLib.idle_add()`. Pattern copied from `MediaHandler`.
-
-**Owns:** Find bar state (current query, match count, replace text), spell check state (current misspelled word, suggestion popover).
-
-**Public API:**
-```python
-class InputToolbarHandler:
-    def __init__(GLib, on_show_spell_suggestions, on_replace_word)
-    def find_next(text: str) -> int
-    def find_prev() -> int
-    def replace_current() -> None
-    def replace_all() -> None
-    def get_word_count() -> int
-    def check_spell_at_position(text: str, pos: int) -> list[str]
-```
 
 **Thread safety:** All GTK operations via `GLib.idle_add()`. Spell check runs synchronously on the main thread (Enchant is fast).
 

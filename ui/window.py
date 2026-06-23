@@ -338,7 +338,7 @@ class MainWindow(Gtk.ApplicationWindow):
         def _on_input_right_click(n_press, x, y):
             """Right-click on input TextView — show spell suggestions if word is misspelled."""
             handler = self._input_toolbar_handler
-            if not handler._spell_enabled:
+            if not handler.is_spell_enabled():
                 return
             text_view = self._main_content.user_input
             # Convert (x, y) to a TextIter
@@ -356,10 +356,33 @@ class MainWindow(Gtk.ApplicationWindow):
                 return  # word is not misspelled — no popover
             # Fetch suggestions and show popover
             suggestions = handler.get_suggestions_at_iter(iter_at_pos)
+            # STALE-1 fix: capture the clicked word's text at right-click time.
+            # The buffer may change between the right-click and the suggestion
+            # click (user may type, paste, etc.). Using the offset alone can
+            # then point to a different word than the one originally right-clicked.
+            # Capture the word text now and verify it's still at that offset
+            # at suggestion-click time.
+            clicked_word = handler.get_word_at_iter(iter_at_pos)
             def _apply_suggestion(suggestion):
-                # Re-derive the iter at the same offset (the original iter may be stale)
                 offset = iter_at_pos.get_offset()
                 fresh_iter = buf.get_iter_at_offset(offset)
+                # Verify the word at this offset is still the one we right-clicked.
+                if not fresh_iter.inside_word():
+                    logger.warning(
+                        "spell-suggestion: clicked word no longer at offset %d "
+                        "(buffer changed between right-click and suggestion click); "
+                        "ignoring suggestion %r",
+                        offset, suggestion,
+                    )
+                    return
+                current_word = handler.get_word_at_iter(fresh_iter)
+                if current_word.lower() != clicked_word.lower():
+                    logger.warning(
+                        "spell-suggestion: word at offset %d changed from %r to %r; "
+                        "ignoring suggestion %r to avoid wrong replacement",
+                        offset, clicked_word, current_word, suggestion,
+                    )
+                    return
                 handler.replace_word_at_iter(fresh_iter, suggestion)
             # Parent the popover to the MainWindow (top-level widget).
             # Use set_pointing_to with the click position translated to

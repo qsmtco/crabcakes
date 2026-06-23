@@ -85,14 +85,141 @@ class TestToggleSpellCheck:
         """First toggle returns True (spell check enabled)."""
         result = handler.toggle_spell_check()
         assert result is True
-        assert handler._spell_enabled is True
+        assert handler.is_spell_enabled() is True
 
     def test_toggle_spell_check_off(self, handler):
         """Second toggle returns False (spell check disabled)."""
         handler.toggle_spell_check()  # on
         result = handler.toggle_spell_check()  # off
         assert result is False
-        assert handler._spell_enabled is False
+        assert handler.is_spell_enabled() is False
+
+
+class TestIsSpellEnabled:
+    """Tests for is_spell_enabled() — public read-only accessor (FRAGILE-1)."""
+
+    def test_is_spell_enabled_initially_false(self, handler):
+        """is_spell_enabled() returns False after construction."""
+        assert handler.is_spell_enabled() is False
+
+    def test_is_spell_enabled_true_after_toggle_on(self, handler):
+        """is_spell_enabled() returns True after toggle_spell_check()."""
+        handler.toggle_spell_check()  # enable
+        assert handler.is_spell_enabled() is True
+
+    def test_is_spell_enabled_false_after_toggle_off(self, handler):
+        """is_spell_enabled() returns False after two toggles (on → off)."""
+        handler.toggle_spell_check()  # enable
+        handler.toggle_spell_check()  # disable
+        assert handler.is_spell_enabled() is False
+
+
+class TestGetWordAtIter:
+    """Tests for get_word_at_iter() — word extraction with backward_word_start fix."""
+
+    def test_get_word_at_iter_returns_word(self, handler):
+        """Iter inside a word returns the word text."""
+        text_iter = MagicMock()
+        text_iter.get_offset.return_value = 7  # second char of 'wrld'
+        text_iter.inside_word.return_value = True
+
+        word_start = MagicMock()
+        word_start.get_offset.return_value = 6
+        word_start.inside_word.return_value = True
+        word_end = MagicMock()
+
+        probe = MagicMock()
+        probe.get_offset.side_effect = [6, 7]  # enters loop once, exits
+        probe.inside_word.return_value = True
+        probe.get_char.return_value = "w"
+        word_start.copy.return_value = probe
+
+        text_iter.copy.side_effect = [word_start, word_end]
+
+        mock_buf = MagicMock()
+        mock_buf.get_text.return_value = "wrld"
+        text_iter.get_buffer.return_value = mock_buf
+
+        result = handler.get_word_at_iter(text_iter)
+        assert result == "wrld"
+
+    def test_get_word_at_iter_empty_when_not_in_word(self, handler):
+        """Iter on whitespace returns empty string."""
+        text_iter = MagicMock()
+        not_in_word = MagicMock()
+        not_in_word.inside_word.return_value = False
+        text_iter.copy.side_effect = [not_in_word, MagicMock()]
+
+        result = handler.get_word_at_iter(text_iter)
+        assert result == ""
+
+    def test_get_word_at_iter_preserves_case(self, handler):
+        """Iter inside 'Wrld' returns 'Wrld', not 'wrld'."""
+        text_iter = MagicMock()
+        text_iter.get_offset.return_value = 7
+        text_iter.inside_word.return_value = True
+
+        word_start = MagicMock()
+        word_start.get_offset.return_value = 6
+        word_start.inside_word.return_value = True
+        word_end = MagicMock()
+
+        probe = MagicMock()
+        probe.get_offset.side_effect = [6, 7]
+        probe.inside_word.return_value = True
+        probe.get_char.return_value = "W"
+        word_start.copy.return_value = probe
+
+        text_iter.copy.side_effect = [word_start, word_end]
+
+        mock_buf = MagicMock()
+        mock_buf.get_text.return_value = "Wrld"
+        text_iter.get_buffer.return_value = mock_buf
+
+        result = handler.get_word_at_iter(text_iter)
+        assert result == "Wrld"  # case preserved
+
+    def test_get_word_at_iter_first_char_regression(self, handler):
+        """Iter on FIRST char of a word returns the correct word.
+
+        Regression test for backward_word_start() bug: when iter is on
+        the first char, backward_word_start() jumps to the PREVIOUS word.
+        The fix detects whitespace between word_start and text_iter and
+        uses text_iter as the start instead.
+        """
+        text_iter = MagicMock()
+        text_iter.get_offset.return_value = 6  # first char of 'wrld'
+        text_iter.inside_word.return_value = True
+
+        # Simulate backward_word_start() overshooting to offset 0 (start of 'hello')
+        word_start = MagicMock()
+        word_start.get_offset.return_value = 0  # overshot!
+        word_start.inside_word.return_value = True
+        word_end = MagicMock()
+
+        # Probe scans from offset 0 toward offset 6.
+        # At offset 0: inside_word=True → skip (it's in 'hello')
+        # At offset 1: inside_word=True → skip
+        # ...
+        # At offset 5: inside_word=False, get_char=' ' → whitespace!
+        #   → set word_start = text_iter, break
+        probe = MagicMock()
+        probe.get_offset.side_effect = [0, 1, 2, 3, 4, 5]
+        # inside_word: True for 0-4 (in 'hello'), False at 5 (space)
+        probe.inside_word.side_effect = [True, True, True, True, True, False]
+        probe.get_char.return_value = " "  # space at offset 5
+        word_start.copy.return_value = probe
+
+        # text_iter.copy() called twice initially (word_start, word_end),
+        # then once more when the fix sets word_start = text_iter.copy()
+        text_iter.copy.side_effect = [word_start, word_end, MagicMock()]
+
+        mock_buf = MagicMock()
+        mock_buf.get_text.return_value = "wrld"
+        text_iter.get_buffer.return_value = mock_buf
+
+        result = handler.get_word_at_iter(text_iter)
+        assert result == "wrld"  # NOT 'hello' or 'hello wrld'
 
 
 class TestBufferChanged:
@@ -117,13 +244,32 @@ class TestGetSuggestionsAtIter:
         """Returns suggestions for the word at the given TextIter."""
         # Build a mock TextIter that is inside the word "wrld"
         text_iter = MagicMock()
-        word_start = MagicMock()
-        word_end = MagicMock()
-        text_iter.copy.side_effect = [word_start, word_end]
+        text_iter.get_offset.return_value = 7  # inside the word, not first char
         text_iter.inside_word.return_value = True
 
-        # word_start.backward_word_start() → no-op
-        # word_end.forward_word_end() → no-op
+        # word_start = text_iter.copy() → has backward_word_start
+        word_start = MagicMock()
+        word_start.get_offset.return_value = 6  # start of 'wrld'
+        word_start.inside_word.return_value = True
+
+        # word_end = text_iter.copy() → has forward_word_end
+        word_end = MagicMock()
+
+        # probe = word_start.copy() — offset 6 == text_iter offset 7-1,
+        # but loop condition is probe.get_offset() < text_iter.get_offset()
+        # so probe at 6 < 7 is True → enters loop body once.
+        # probe.inside_word()=True → condition fails, probe.forward_char()
+        # Now probe.get_offset() needs to return >= 7 to exit loop.
+        probe = MagicMock()
+        probe.get_offset.side_effect = [6, 7]  # first pass: 6 < 7; after forward_char: 7, not < 7 → exit
+        probe.inside_word.return_value = True
+        probe.get_char.return_value = "w"  # non-space
+
+        word_start.copy.return_value = probe
+
+        # text_iter.copy() called twice: word_start, word_end
+        text_iter.copy.side_effect = [word_start, word_end]
+
         # buf.get_text(word_start, word_end, True) → "wrld"
         mock_buf = MagicMock()
         mock_buf.get_text.return_value = "wrld"
@@ -141,8 +287,9 @@ class TestGetSuggestionsAtIter:
     def test_get_suggestions_at_iter_not_in_word(self, handler):
         """Returns [] when iter is not inside a word."""
         text_iter = MagicMock()
-        text_iter.copy.side_effect = [MagicMock(), MagicMock()]
-        text_iter.inside_word.return_value = False
+        not_in_word = MagicMock()
+        not_in_word.inside_word.return_value = False
+        text_iter.copy.side_effect = [not_in_word, MagicMock()]
 
         result = handler.get_suggestions_at_iter(text_iter)
         assert result == []
@@ -157,19 +304,32 @@ class TestReplaceWordAtIter:
         handler = InputToolbarHandler(main_content=MagicMock())
         buf = MagicMock()
         text_iter = MagicMock()
-        text_iter.copy.return_value = text_iter
+        text_iter.get_offset.return_value = 7
         text_iter.inside_word.return_value = True
-        # backward_word_start and forward_word_end are in-place mutations
+
+        word_start = MagicMock()
+        word_start.get_offset.return_value = 6
+        word_start.inside_word.return_value = True
+        word_end = MagicMock()
+
+        probe = MagicMock()
+        probe.get_offset.side_effect = [6, 7]  # enters loop once, then exits
+        probe.inside_word.return_value = True
+        probe.get_char.return_value = "w"
+        word_start.copy.return_value = probe
+
+        text_iter.copy.side_effect = [word_start, word_end]
+
         buf.delete.return_value = None
         buf.insert.return_value = None
         handler._mc.user_input.get_buffer.return_value = buf
         handler._spell_enabled = False  # don't re-run spell check in unit test
         handler.replace_word_at_iter(text_iter, "corrected")
         # Verify word boundaries were found, delete + insert called
-        assert text_iter.backward_word_start.called
-        assert text_iter.forward_word_end.called
+        assert word_start.backward_word_start.called
+        assert word_end.forward_word_end.called
         assert buf.delete.called
-        buf.insert.assert_called_once_with(text_iter, "corrected")
+        buf.insert.assert_called_once_with(word_start, "corrected")
 
     def test_replace_word_at_iter_noop_if_not_in_word(self):
         """replace_word_at_iter returns without modifying buffer if iter is not inside a word."""

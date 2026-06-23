@@ -60,6 +60,21 @@ class InputToolbarHandler:
             self._clear_spell_tags()
         return self._spell_enabled
 
+    def is_spell_enabled(self) -> bool:
+        """Return True if spell check is currently enabled.
+
+        Public read-only accessor for the spell-check state. Used by
+        the right-click gesture handler in ``ui/window.py`` to
+        short-circuit when spell check is off (avoids the buffer
+        lookup overhead).
+
+        Returns:
+            bool: True if ``toggle_spell_check()`` was last called to
+                  enable spell check, False otherwise (including the
+                  initial state).
+        """
+        return self._spell_enabled
+
     def on_buffer_changed(self):
         """Called when input buffer text changes. Debounces spell check at 300 ms."""
         if not self._spell_enabled:
@@ -74,21 +89,49 @@ class InputToolbarHandler:
         else:
             self._run_spell_check()
 
+    def get_word_at_iter(self, text_iter) -> str:
+        """Return the word at the given TextIter, or "" if not in a word.
+
+        Called from the right-click handler in ``ui/window.py`` to
+        capture the clicked word's text for later verification at
+        suggestion-click time.
+
+        Args:
+            text_iter:  Gtk.TextIter — any iter inside the word to fetch.
+
+        Returns:
+            str: The word text (preserving case), or "" if the iter
+                 is not inside a word (whitespace, punctuation).
+        """
+        word_start = text_iter.copy()
+        word_end = text_iter.copy()
+        if not word_start.inside_word():
+            return ""
+        word_start.backward_word_start()
+        word_end.forward_word_end()
+        # Fix for backward_word_start() position-dependent bug:
+        # When text_iter is on the first char of a word,
+        # backward_word_start() can jump to the PREVIOUS word.
+        # Verify no whitespace between word_start and text_iter; if
+        # there is, use text_iter as the start.
+        probe = word_start.copy()
+        while probe.get_offset() < text_iter.get_offset():
+            if not probe.inside_word() and probe.get_char().isspace():
+                # There's whitespace between word_start and text_iter
+                # → backward_word_start overshot; use text_iter position
+                word_start = text_iter.copy()
+                break
+            probe.forward_char()
+        buf = text_iter.get_buffer()
+        return buf.get_text(word_start, word_end, True)
+
     def get_suggestions_at_iter(self, text_iter) -> list[str]:
         """Get spell suggestions for the word at the given TextIter.
 
         Called from the view's right-click handler.
         Returns list of suggestion strings (max 8).
         """
-        # Find word boundaries around the iter position
-        word_start = text_iter.copy()
-        word_end = text_iter.copy()
-        if not word_start.inside_word():
-            return []
-        word_start.backward_word_start()
-        word_end.forward_word_end()
-        buf = text_iter.get_buffer()
-        word = buf.get_text(word_start, word_end, True)
+        word = self.get_word_at_iter(text_iter)
         if not word:
             return []
         from utils.spellcheck import get_suggestions
@@ -112,6 +155,13 @@ class InputToolbarHandler:
             return
         word_start.backward_word_start()
         word_end.forward_word_end()
+        # Same backward_word_start() fix as get_word_at_iter:
+        probe = word_start.copy()
+        while probe.get_offset() < text_iter.get_offset():
+            if not probe.inside_word() and probe.get_char().isspace():
+                word_start = text_iter.copy()
+                break
+            probe.forward_char()
         buf = self._mc.user_input.get_buffer()
         buf.delete(word_start, word_end)
         buf.insert(word_start, replacement)

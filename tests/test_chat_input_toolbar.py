@@ -733,8 +733,9 @@ class TestTranslateCoordinatesWarning:
 
         # Handler
         handler = MagicMock()
-        handler._spell_enabled = True
+        handler.is_spell_enabled.return_value = True
         handler.get_suggestions_at_iter.return_value = ["foo", "bar"]
+        handler.get_word_at_iter.return_value = "wrld"
 
         # iter at position — has the spell tag
         iter_at_pos = MagicMock()
@@ -1168,3 +1169,147 @@ class TestSelectAllButton:
         toolbar = ChatInputToolbar()
         # No set_on_select_all call — _on_select_all is None
         toolbar._on_select_all_clicked()  # should not raise
+
+
+class TestStale1WordChangeDetected:
+    """Tests for STALE-1 fix: verify clicked word before replacement.
+
+    The right-click closure captures the clicked word's text at right-click
+    time. When the user clicks a suggestion, the closure re-derives the word
+    at the same offset and verifies it matches. If the buffer changed between
+    right-click and suggestion click (user typed text), the replacement is
+    silently skipped with a logged warning.
+
+    Uses the same AST-extraction pattern as TestTranslateCoordinatesWarning.
+    """
+
+    @staticmethod
+    def _load_right_click_closure():
+        """Extract the _on_input_right_click closure from window.py via AST."""
+        import ast
+        import textwrap
+        with open("ui/window.py") as f:
+            source = f.read()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_build":
+                for child in ast.walk(node):
+                    if (
+                        isinstance(child, ast.FunctionDef)
+                        and child.name == "_on_input_right_click"
+                    ):
+                        closure_src = ast.get_source_segment(source, child)
+                        dedented = textwrap.dedent(closure_src)
+                        import logging
+                        ns: dict = {
+                            "logger": logging.getLogger("ui.window"),
+                        }
+                        exec(compile(dedented, "ui/window.py", "exec"), ns)
+                        return ns["_on_input_right_click"]
+        raise RuntimeError(
+            "Could not find _on_input_right_click closure in ui/window.py"
+        )
+
+    @staticmethod
+    def _build_stale1_mocks(word_changed: bool = False):
+        """Build mocks for the STALE-1 test.
+
+        Args:
+            word_changed: If True, simulate that the buffer changed between
+                          right-click and suggestion click. get_word_at_iter
+                          returns a different word the second time.
+        """
+        from unittest.mock import MagicMock
+
+        handler = MagicMock()
+        handler.is_spell_enabled.return_value = True
+        handler.get_suggestions_at_iter.return_value = ["world"]
+
+        # clicked_word at right-click time is "wrld"
+        # current_word at suggestion-click time is "wrld" (same) or "hello" (changed)
+        if word_changed:
+            handler.get_word_at_iter.side_effect = ["wrld", "hello"]
+        else:
+            handler.get_word_at_iter.return_value = "wrld"
+
+        iter_at_pos = MagicMock()
+        iter_at_pos.has_tag.return_value = True
+        iter_at_pos.get_offset.return_value = 6
+
+        spell_tag = MagicMock()
+        tag_table = MagicMock()
+        tag_table.lookup.return_value = spell_tag
+
+        buf = MagicMock()
+        buf.get_tag_table.return_value = tag_table
+        fresh_iter = MagicMock()
+        fresh_iter.inside_word.return_value = True
+        buf.get_iter_at_offset.return_value = fresh_iter
+
+        text_view = MagicMock()
+        text_view.get_iter_at_location.return_value = (True, iter_at_pos)
+        text_view.get_buffer.return_value = buf
+        text_view.translate_coordinates.return_value = (50.0, 75.0)
+
+        toolbar = MagicMock()
+
+        main_content = MagicMock()
+        main_content.user_input = text_view
+        main_content.toolbar = toolbar
+
+        self_mock = MagicMock()
+        self_mock._input_toolbar_handler = handler
+        self_mock._main_content = main_content
+
+        return self_mock, handler, toolbar
+
+    def test_suggestion_applied_when_word_unchanged(self):
+        """When the buffer hasn't changed, the suggestion is applied normally."""
+        closure = self._load_right_click_closure()
+        self_mock, handler, toolbar = self._build_stale1_mocks(word_changed=False)
+        closure.__globals__["self"] = self_mock
+
+        # Invoke the right-click closure
+        closure(1, 100, 200)
+
+        # The _apply_suggestion callback should have been passed to show_suggestions_menu
+        assert toolbar.show_suggestions_menu.called
+        args = toolbar.show_suggestions_menu.call_args
+        apply_cb = args[0][1]  # second positional arg
+
+        # Invoke the apply callback
+        apply_cb("world")
+
+        # replace_word_at_iter should have been called
+        handler.replace_word_at_iter.assert_called_once()
+
+    def test_suggestion_skipped_when_word_changed(self, caplog):
+        """When the buffer changed, the replacement is skipped with a warning."""
+        import logging
+
+        closure = self._load_right_click_closure()
+        self_mock, handler, toolbar = self._build_stale1_mocks(word_changed=True)
+        closure.__globals__["self"] = self_mock
+
+        # Invoke the right-click closure
+        closure(1, 100, 200)
+
+        # Extract the _apply_suggestion callback
+        assert toolbar.show_suggestions_menu.called
+        args = toolbar.show_suggestions_menu.call_args
+        apply_cb = args[0][1]
+
+        with caplog.at_level(logging.WARNING, logger="ui.window"):
+            apply_cb("world")
+
+        # replace_word_at_iter should NOT have been called
+        handler.replace_word_at_iter.assert_not_called()
+
+        # A warning should have been logged
+        warning_records = [
+            r for r in caplog.records
+            if r.levelno == logging.WARNING and r.name == "ui.window"
+        ]
+        assert len(warning_records) == 1
+        msg = warning_records[0].getMessage()
+        assert "changed" in msg.lower() or "ignoring" in msg.lower()
