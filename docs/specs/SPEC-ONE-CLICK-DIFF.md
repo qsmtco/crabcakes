@@ -10,6 +10,7 @@
 > **Revision history:**
 > - 2026-06-22 v1: Initial draft
 > - 2026-06-22 v2: Revised after adversarial review (`docs/proposals/REVIEW-ONE-CLICK-DIFF.md`). All 15 HIGH, 25 MEDIUM, and 19 LOW items addressed. Line numbers re-verified against source. Time estimates corrected. Phase order restructured.
+> - 2026-06-22 v3: ARCHITECTURE.md §9.1 audit fix. Removed `_DIFF_VIEWER_CSS` constant, `_ensure_css()` function, and `_CSS_REGISTERED` flag from `diff_viewer.py` spec — all CSS now lives solely in `ui/styles.py` as mandated by §9.1. H11 and L17 re-resolved at the architecture level.
 
 > Architecture compliance (ARCHITECTURE.md): `ui/views/diff_viewer.py` is a pure view — widgets only, no business logic. `ui/handlers/review_handler.py` owns revert logic with git calls on background threads. `utils/git_ops.py` owns all git operations, returning `GitResult`. `ui/views/diff_card.py` owns diff rendering (shared via extracted `render_diff_hunks()`). `ui/views/main_content.py` owns diff viewer slot management via insert/remove pattern (mirrors `set_review_bar()`). `ui/window.py` wires callbacks — no logic. All CSS in `ui/styles.py`. All GTK dispatch via `GLib.idle_add()`. Follows §3.6 (window wires), §3.9 (main_content is a view), §3.11 (utils have no GTK), §13.4 (callbacks as communication).
 
@@ -347,48 +348,35 @@ from ui.views.diff_card import render_diff_hunks, get_lang_from_path
 **H2 fix:** Imports `get_lang_from_path` (public), not `_get_lang_from_path` (private).
 **L2 note:** `FileDiff` is imported for type hints in method signatures.
 
-#### 2.3b CSS provider registration (H11 fix)
+#### 2.3b CSS — no provider in this file (ARCHITECTURE.md §9.1 compliance)
 
-CSS is registered once at module import time, not per-instance:
+**All CSS lives in `ui/styles.py` — the single source of truth.**
 
-```python
-# ── CSS (registered once at module level) ────────────────────────────────────
-_CSS_REGISTERED = False
+`diff_viewer.py` does NOT define a `_DIFF_VIEWER_CSS` constant, does NOT call
+`Gtk.CssProvider().load_from_data()`, and does NOT register a CSS provider.
+The CSS classes used by DiffViewer (`.diff-viewer`, `.diff-viewer-header`,
+etc.) are added to `APP_CSS` in `ui/styles.py` (see §2.6) and registered
+globally at app startup by `apply_styles()`.
 
-def _ensure_css():
-    """Register diff viewer CSS. Safe to call multiple times."""
-    global _CSS_REGISTERED
-    if _CSS_REGISTERED:
-        return
-    provider = Gtk.CssProvider()
-    provider.load_from_data(_DIFF_VIEWER_CSS.encode("utf-8"))
-    Gtk.StyleContext.add_provider_for_display(
-        Gdk.Display.get_default(),
-        provider,
-        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
-    )
-    _CSS_REGISTERED = True
-```
+DiffViewer simply calls `self.add_css_class("diff-viewer")` and relies on
+the global provider. This follows ARCHITECTURE.md §9.1:
 
-**L17 fix:** Wrap `load_from_data` in try/except in case CSS is malformed during development:
+> *"All CSS for the application lives in **`ui/styles.py`**. No other file may define CSS."*
+> *"Inline `load_from_data()` in a view file" → anti-pattern (§9.5 table).*
 
-```python
-def _ensure_css():
-    global _CSS_REGISTERED
-    if _CSS_REGISTERED:
-        return
-    try:
-        provider = Gtk.CssProvider()
-        provider.load_from_data(_DIFF_VIEWER_CSS.encode("utf-8"))
-        Gtk.StyleContext.add_provider_for_display(
-            Gdk.Display.get_default(),
-            provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
-        )
-    except Exception as e:\n        import logging\n        logging.getLogger(__name__).warning("DiffViewer CSS failed: %s", e)
-    finally:
-        _CSS_REGISTERED = True
-```
+**No `_ensure_css()` function.** No `_CSS_REGISTERED` flag. No `_DIFF_VIEWER_CSS`
+constant. The `Gdk` import in §2.3a remains valid for other GTK4 patterns,
+but not for CSS provider registration.
+
+**H11 (resolved):** The original concern was CSS provider double-registration
+on repeated DiffViewer construction. By removing the per-module provider
+entirely and relying on the single global `apply_styles()` call in `main.py`,
+the issue is eliminated at the architecture level — there is no provider in
+this file to double-register.
+
+**L17 (resolved):** The try/except around `load_from_data` is no longer needed
+because `load_from_data` is not called in this file. CSS parse errors surface
+at app startup in `apply_styles()`, which is the appropriate place to handle them.
 
 #### 2.3c `DiffViewer` class
 
@@ -459,8 +447,7 @@ class DiffViewer(Gtk.Box):
         self._disposed = False
         self._current_request_id = 0
 
-        # CSS (registered once)
-        _ensure_css()
+        # CSS: classes defined in ui/styles.py, registered globally by apply_styles()
         self.add_css_class("diff-viewer")
 
         self._build_ui()
@@ -1004,7 +991,7 @@ Add to `APP_CSS` string (after existing diff card styles):
 
 **Verified:** Existing diff CSS classes in `APP_CSS`: `diff-card`, `diff-card-header`, `diff-card-body`, `diff-line-add`, `diff-line-remove`, `diff-line-context`, `diff-hunk-header`, `diff-line-number`, `diff-badge-*`, `diff-btn-*`. No naming collision. ✅
 
-**Note:** CSS is also embedded in `diff_viewer.py` as `_DIFF_VIEWER_CSS` and registered via `_ensure_css()` at module level. The duplication with `styles.py` is intentional: `styles.py` is the canonical source, `_DIFF_VIEWER_CSS` in `diff_viewer.py` is a self-contained copy for module independence. If they diverge, `styles.py` is authoritative.
+**ARCHITECTURE.md §9.1 compliance:** These CSS classes live ONLY in `ui/styles.py`. The `diff_viewer.py` file does NOT define its own CSS provider or CSS string. The global `apply_styles()` call in `main.py` registers all CSS at startup, including these classes. No duplication. No per-module provider.
 
 **Line count estimate:** ~40 lines CSS.
 
@@ -1179,7 +1166,7 @@ User clicks "Revert file to this version"
 
 6. **Create `ui/views/diff_viewer.py`** (§2.3)
    - Module imports (H1, H10)
-   - CSS registration (H11)
+   - No CSS provider — CSS lives in `ui/styles.py` per §9.1 (H11, L17)
    - `DiffViewer.__init__` with `super().__init__()` (H12), validation (H15), disposal flag (H3), request ID (H4)
    - Async load methods with race-condition guards (H4)
    - `_on_diff_loaded` with binary handling (H8), empty diff handling (M19)
@@ -1264,7 +1251,7 @@ User clicks "Revert file to this version"
 - [ ] No new Python packages required
 - [ ] Diff rendering uses single shared codepath (`render_diff_hunks()`)
 - [ ] No GTK warnings about disposed widgets during background thread completion (H3)
-- [ ] CSS provider registered once, not per-instance (H11)
+- [ ] No CSS provider in `diff_viewer.py` — all CSS in `ui/styles.py` per §9.1 (H11)
 
 ### Test Commands
 
@@ -1377,7 +1364,7 @@ def test_revert_file_to_sha_success(review_handler, temp_repo):
 | PM clicks same file twice | Old viewer disposed, new viewer created with fresh diff. | M20: `show_diff_viewer` calls `hide_diff_viewer` first |
 | Path escapes project root (symlink) | `_on_project_selected` returns early. | M11: `rel_path.startswith("..")` check |
 | `file_log` returns empty | History pane shows "No commit history for this file." | H13: empty entries → placeholder label |
-| CSS provider fails to load | Warning logged, viewer renders without custom styling. | L17: try/except in `_ensure_css()` |
+| CSS provider fails to load | Handled globally by `apply_styles()` in `main.py` at startup. | L17: no per-module CSS provider — CSS lives in `ui/styles.py` per §9.1 |
 | Commit message contains `\|` | Message parsed correctly. | L14: `\x1f` separator instead of `\|` |
 
 ---
@@ -1417,7 +1404,7 @@ After implementation, update these sections:
 | H8 | `render_diff_hunks` breaks binary file handling | §2.2b: Caller checks `is_binary` first; §2.3d: binary check in `_on_diff_loaded` |
 | H9 | Phase estimates 2–3× too low | §5: Estimates tripled, rationale provided |
 | H10 | Missing `GLib` import | §2.3a: `from gi.repository import Gtk, GLib, Gdk` |
-| H11 | CSS provider double-registration | §2.3b: `_CSS_REGISTERED` flag, module-level registration |
+| H11 | CSS provider double-registration | §2.3b: **Eliminated** — no per-module CSS provider. All CSS in `ui/styles.py`, registered once globally by `apply_styles()` (ARCHITECTURE.md §9.1) |
 | H12 | Missing `super().__init__()` | §2.3c: First line after validation |
 | H13 | Empty `file_log` result not handled | §2.3e: Empty entries → placeholder label |
 | H14 | Missing `set_hexpand/set_vexpand` | §2.3g: Both set on scrolled windows |
@@ -1473,7 +1460,7 @@ After implementation, update these sections:
 | L14 | Pipe in commit message | §2.1b: `\x1f` separator. §2.3e: split on `\x1f` |
 | L15 | Binary spec string | §7 edge case: "Binary file — not shown" |
 | L16 | Click-outside-to-dismiss | §2.3g: Close button added to header |
-| L17 | CSS error handling | §2.3b: try/except around `load_from_data` |
+| L17 | CSS error handling | §2.3b: **Resolved** — no `load_from_data` in `diff_viewer.py`. CSS errors surface at startup in `apply_styles()` |
 | L18 | `count=0` for file_log | §2.1b: Clamped to minimum 1 |
 | L19 | Stack page change wiring | §2.3g: `_history_toggle.connect("toggled", ...)` |
 
@@ -1494,7 +1481,7 @@ After implementation, update these sections:
    - ✅ All `git_ops` functions use `except Exception` → `_safe_error()`
    - ✅ `diff_file_against_working_tree` validates SHA via `_VALID_SHA_RE` before git call (H7)
    - ✅ `file_log` clamps count (M13)
-   - ✅ `_ensure_css` wrapped in try/except (L17)
+   - ✅ No per-module CSS provider — CSS lives in `ui/styles.py` per ARCHITECTURE.md §9.1 (L17 resolved)
    - ✅ `DiffViewer` background threads → idle_add callbacks check `_disposed` (H3) and `_current_request_id` (H4)
 
 3. **Did I verify key structures?**
