@@ -12,6 +12,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import gi
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gtk  # noqa: E402  (gi.require_version must run first)
+
 from ui.handlers.input_toolbar_handler import InputToolbarHandler
 
 
@@ -75,6 +79,30 @@ def handler_with_text():
     return InputToolbarHandler(main_content=mc, GLib_module=glib)
 
 
+def _make_handler_with_real_buffer(text: str) -> tuple[InputToolbarHandler, Gtk.TextBuffer]:
+    """Build a handler backed by a REAL Gtk.TextBuffer containing *text*.
+
+    The handler accesses the buffer via ``self._mc.user_input.get_buffer()``,
+    so we wire a MagicMock main_content to return a real TextBuffer.
+    Real GTK semantics for ``backward_word_start()`` / ``forward_word_end()`` /
+    ``inside_word()`` / ``get_text()`` are required to test
+    ``get_word_at_iter`` end-to-end — a mock buffer would defeat the test.
+    """
+    real_buf = Gtk.TextBuffer()
+    real_buf.set_text(text)
+    mc = MagicMock()
+    mc.user_input.get_buffer.return_value = real_buf
+    glib = make_mock_glib()
+    handler = InputToolbarHandler(main_content=mc, GLib_module=glib)
+    return handler, real_buf
+
+
+@pytest.fixture
+def real_buffer_handler():
+    """Handler + real Gtk.TextBuffer preloaded with 'hello wrld there'."""
+    return _make_handler_with_real_buffer("hello wrld there")
+
+
 # ---------------------------------------------------------------------------
 # Spell check tests
 # ---------------------------------------------------------------------------
@@ -115,36 +143,36 @@ class TestIsSpellEnabled:
 
 
 class TestGetWordAtIter:
-    """Tests for get_word_at_iter() — word extraction with backward_word_start fix."""
+    """Tests for get_word_at_iter() — word extraction with backward_word_start fix.
 
-    def test_get_word_at_iter_returns_word(self, handler):
-        """Iter inside a word returns the word text."""
-        text_iter = MagicMock()
-        text_iter.get_offset.return_value = 7  # second char of 'wrld'
-        text_iter.inside_word.return_value = True
+    These tests use a REAL Gtk.TextBuffer (via the ``real_buffer_handler``
+    fixture) instead of mocks, so that genuine GTK semantics for
+    ``backward_word_start()`` / ``forward_word_end()`` / ``inside_word()`` /
+    ``get_text()`` are exercised. A mock buffer that returns the expected
+    word from ``get_text()`` would defeat the regression tests for the
+    STALE-1 / first-char-regression fix.
+    """
 
-        word_start = MagicMock()
-        word_start.get_offset.return_value = 6
-        word_start.inside_word.return_value = True
-        word_end = MagicMock()
+    def test_get_word_at_iter_returns_word(self, real_buffer_handler):
+        """Iter inside a word returns the word text.
 
-        probe = MagicMock()
-        probe.get_offset.side_effect = [6, 7]  # enters loop once, exits
-        probe.inside_word.return_value = True
-        probe.get_char.return_value = "w"
-        word_start.copy.return_value = probe
-
-        text_iter.copy.side_effect = [word_start, word_end]
-
-        mock_buf = MagicMock()
-        mock_buf.get_text.return_value = "wrld"
-        text_iter.get_buffer.return_value = mock_buf
-
+        Buffer: 'hello wrld there' — 'wrld' spans offsets 6..9.
+        Iter at offset 8 (third char of 'wrld') returns 'wrld'.
+        """
+        handler, buf = real_buffer_handler
+        text_iter = buf.get_iter_at_offset(8)  # inside 'wrld'
         result = handler.get_word_at_iter(text_iter)
         assert result == "wrld"
 
     def test_get_word_at_iter_empty_when_not_in_word(self, handler):
-        """Iter on whitespace returns empty string."""
+        """Iter on whitespace returns empty string.
+
+        This test uses the mock fixture (handler with empty buffer text)
+        because it only exercises the early-return path: the iter's
+        ``inside_word()`` returns False, so no word-boundary work is done.
+        A real buffer is not required here — and adding one would obscure
+        the boundary case being tested.
+        """
         text_iter = MagicMock()
         not_in_word = MagicMock()
         not_in_word.inside_word.return_value = False
@@ -153,73 +181,52 @@ class TestGetWordAtIter:
         result = handler.get_word_at_iter(text_iter)
         assert result == ""
 
-    def test_get_word_at_iter_preserves_case(self, handler):
-        """Iter inside 'Wrld' returns 'Wrld', not 'wrld'."""
-        text_iter = MagicMock()
-        text_iter.get_offset.return_value = 7
-        text_iter.inside_word.return_value = True
+    def test_get_word_at_iter_preserves_case(self):
+        """Iter inside 'Wrld' returns 'Wrld', not 'wrld'.
 
-        word_start = MagicMock()
-        word_start.get_offset.return_value = 6
-        word_start.inside_word.return_value = True
-        word_end = MagicMock()
-
-        probe = MagicMock()
-        probe.get_offset.side_effect = [6, 7]
-        probe.inside_word.return_value = True
-        probe.get_char.return_value = "W"
-        word_start.copy.return_value = probe
-
-        text_iter.copy.side_effect = [word_start, word_end]
-
-        mock_buf = MagicMock()
-        mock_buf.get_text.return_value = "Wrld"
-        text_iter.get_buffer.return_value = mock_buf
-
+        Uses a real buffer with mixed-case content. The fix must not call
+        ``.lower()`` on the returned word — case is preserved exactly as
+        it appears in the buffer.
+        """
+        handler, buf = _make_handler_with_real_buffer("Hello Wrld There")
+        # 'Wrld' spans offsets 6..9. Iter at offset 8 (third char).
+        text_iter = buf.get_iter_at_offset(8)
         result = handler.get_word_at_iter(text_iter)
-        assert result == "Wrld"  # case preserved
+        assert result == "Wrld"  # mixed case preserved
 
-    def test_get_word_at_iter_first_char_regression(self, handler):
+    def test_get_word_at_iter_first_char_regression(self, real_buffer_handler):
         """Iter on FIRST char of a word returns the correct word.
 
-        Regression test for backward_word_start() bug: when iter is on
-        the first char, backward_word_start() jumps to the PREVIOUS word.
-        The fix detects whitespace between word_start and text_iter and
-        uses text_iter as the start instead.
+        Regression test for the GTK ``backward_word_start()`` bug: when the
+        iter is on the first char of a word, ``backward_word_start()``
+        overshoots to the START of the PREVIOUS word (offset 0 in this
+        buffer). The fix scans from ``word_start`` toward ``text_iter``,
+        detects the whitespace boundary at offset 5, and resets
+        ``word_start`` to ``text_iter``.
+
+        Without the fix, this test returns 'hello wrld' (or 'hello') and
+        fails the assertion.
         """
-        text_iter = MagicMock()
-        text_iter.get_offset.return_value = 6  # first char of 'wrld'
-        text_iter.inside_word.return_value = True
-
-        # Simulate backward_word_start() overshooting to offset 0 (start of 'hello')
-        word_start = MagicMock()
-        word_start.get_offset.return_value = 0  # overshot!
-        word_start.inside_word.return_value = True
-        word_end = MagicMock()
-
-        # Probe scans from offset 0 toward offset 6.
-        # At offset 0: inside_word=True → skip (it's in 'hello')
-        # At offset 1: inside_word=True → skip
-        # ...
-        # At offset 5: inside_word=False, get_char=' ' → whitespace!
-        #   → set word_start = text_iter, break
-        probe = MagicMock()
-        probe.get_offset.side_effect = [0, 1, 2, 3, 4, 5]
-        # inside_word: True for 0-4 (in 'hello'), False at 5 (space)
-        probe.inside_word.side_effect = [True, True, True, True, True, False]
-        probe.get_char.return_value = " "  # space at offset 5
-        word_start.copy.return_value = probe
-
-        # text_iter.copy() called twice initially (word_start, word_end),
-        # then once more when the fix sets word_start = text_iter.copy()
-        text_iter.copy.side_effect = [word_start, word_end, MagicMock()]
-
-        mock_buf = MagicMock()
-        mock_buf.get_text.return_value = "wrld"
-        text_iter.get_buffer.return_value = mock_buf
-
+        handler, buf = real_buffer_handler
+        # Buffer: 'hello wrld there' — 'wrld' starts at offset 6.
+        text_iter = buf.get_iter_at_offset(6)  # first char of 'wrld'
         result = handler.get_word_at_iter(text_iter)
-        assert result == "wrld"  # NOT 'hello' or 'hello wrld'
+        assert result == "wrld"  # NOT 'hello wrld' or 'hello'
+
+    def test_get_word_at_iter_handles_punctuation(self):
+        """Iter on a punctuation mark returns empty string.
+
+        Spec §6.2 acceptance: 'iter on a comma returns ""'. Punctuation
+        is not inside a word per Pango, so ``inside_word()`` returns False
+        and ``get_word_at_iter`` short-circuits to ''.
+        """
+        handler, buf = _make_handler_with_real_buffer("hello, world")
+        # ',' is at offset 5
+        text_iter = buf.get_iter_at_offset(5)
+        # Sanity check: the iter really is on the comma
+        assert text_iter.get_char() == ","
+        result = handler.get_word_at_iter(text_iter)
+        assert result == ""
 
 
 class TestBufferChanged:
