@@ -384,27 +384,16 @@ class MainWindow(Gtk.ApplicationWindow):
                     )
                     return
                 handler.replace_word_at_iter(fresh_iter, suggestion)
-            # Parent the popover to the MainWindow (top-level widget).
-            # Use set_pointing_to with the click position translated to
-            # window coordinates so the popover appears at the word.
-            # The popup itself is deferred via GLib.idle_add inside
-            # show_suggestions_menu to avoid conflicting with the
-            # GestureClick's implicit GDK grab.
-            # GTK4: translate_coordinates returns (x, y) directly (no ok flag).
-            # Returns None if widgets aren't in the same tree.
-            coords = text_view.translate_coordinates(self, int(x), int(y))
-            if coords is None:
-                logger.warning(
-                    "translate_coordinates failed for right-click at (%d, %d) — "
-                    "text_view and window not in same toplevel",
-                    int(x), int(y),
-                )
-                return
-            wx, wy = coords
+            # Parent the popover to the TextView (the widget with the gesture).
+            # On Wayland, the popover must be parented to the widget that holds
+            # the GestureClick grab. Parenting to the window instead triggers
+            # "Tried to map a grabbing popup with a non-top-most parent" and
+            # freezes the UI. The gesture coords (x, y) are already relative
+            # to the TextView, so no coordinate translation is needed.
             self._main_content.toolbar.show_suggestions_menu(
                 suggestions, _apply_suggestion,
-                parent_widget=self,
-                pointing_to=(int(wx), int(wy), 1, 1),
+                parent_widget=text_view,
+                pointing_to=(int(x), int(y), 1, 1),
             )
 
         self._main_content.set_on_input_right_click(_on_input_right_click)

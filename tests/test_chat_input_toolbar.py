@@ -577,13 +577,15 @@ class TestPopoverCodePaths:
             assert rect.width == 30
             assert rect.height == 40
 
-    def test_deferred_popup_via_glib_idle_add_when_parent_widget_set(self):
-        """Test 2: parent_widget set + get_root() != None → GLib.idle_add is
-        called and the captured callback invokes popover.popup().
+    def test_direct_popup_when_parent_widget_set(self):
+        """Test 2: parent_widget set + get_root() != None → popover.popup()
+        is called directly (no GLib.idle_add deferral).
 
-        Failure-case: if the `GLib.idle_add(_deferred_popup)` branch is
-        removed, the synchronous `popover.popup()` would run inside the
-        gesture handler, triggering the GDK grabbing-popup warning.
+        The previous deferred-popup approach (GLib.idle_add) was a broken
+        workaround for parenting the popover to the wrong widget. Now that
+        the popover is parented to the gesture's widget (the TextView),
+        popup() is called synchronously, matching the pattern in
+        left_panel.py's _show_local_agent_menu().
         """
         toolbar = ChatInputToolbar()
         parent = Gtk.Box()
@@ -595,22 +597,13 @@ class TestPopoverCodePaths:
                 lambda s: None,
                 parent_widget=parent,
             )
-            # The deferred path must have been taken
-            assert mock_idle.called, (
-                "GLib.idle_add was not called — deferred-popup path is dead"
-            )
-            # The direct popup must NOT have been called from inside the handler
-            assert not mock_popup.called, (
-                "popover.popup() was called synchronously inside the handler"
-            )
-            # The captured callback must call popover.popup() when invoked
-            callback = mock_idle.call_args[0][0]
-            # Verify the callback is callable
-            assert callable(callback)
-            # Invoke the callback (simulating GLib's idle loop)
-            callback()
+            # popup() must be called directly — no deferral
             assert mock_popup.called, (
-                "the deferred callback did not call popover.popup()"
+                "popover.popup() was not called when parent_widget is set"
+            )
+            # GLib.idle_add must NOT be called
+            assert not mock_idle.called, (
+                "GLib.idle_add was called — deferred popup is no longer used"
             )
 
     def test_direct_popup_when_no_parent_widget_and_root_exists(self):
@@ -775,64 +768,53 @@ class TestTranslateCoordinatesWarning:
 
         return self_mock, text_view, toolbar
 
-    def test_translate_coordinates_failure_logs_warning(self, caplog):
-        """When translate_coordinates returns None (GTK4 failure), the closure must
-        log a warning (instead of silently returning).
+    def test_gesture_coords_passed_directly_as_pointing_to(self):
+        """The right-click closure passes gesture (x, y) directly to
+        show_suggestions_menu as pointing_to coords, without calling
+        translate_coordinates. The gesture coords are already relative
+        to the TextView (the gesture widget), so no translation is needed.
 
-        Failure-case: if the `logger.warning(...)` call is removed from
-        `ui/window.py`, this test FAILS because no warning record is
-        captured by `caplog`.
+        Failure-case: if someone re-adds translate_coordinates, the test
+        breaks because translate_coordinates is never called.
         """
-        import logging
-
-        closure = self._load_right_click_closure()
-        self_mock, text_view, toolbar = self._build_mocks(translate_ok=False)
-
-        # Inject `self` into the closure's globals (it's a free variable)
-        closure.__globals__["self"] = self_mock
-
-        with caplog.at_level(logging.WARNING, logger="ui.window"):
-            closure(1, 100, 200)  # n_press=1, x=100, y=200
-
-        # The warning must be logged via the ui.window logger
-        warning_records = [
-            r for r in caplog.records
-            if r.levelno == logging.WARNING and r.name == "ui.window"
-        ]
-        assert len(warning_records) == 1, (
-            f"expected exactly 1 warning from ui.window, got {len(warning_records)}: "
-            f"{[(r.name, r.levelname, r.getMessage()) for r in warning_records]}"
-        )
-        msg = warning_records[0].getMessage()
-        assert "translate_coordinates" in msg, (
-            f"warning message must contain 'translate_coordinates', got: {msg!r}"
-        )
-        # The x, y coordinates must appear in the message for debugging
-        assert "100" in msg and "200" in msg, (
-            f"warning message must include the click coordinates (100, 200), got: {msg!r}"
-        )
-
-    def test_translate_coordinates_failure_does_not_show_popover(
-        self, caplog
-    ):
-        """When translate_coordinates fails, the closure must NOT call
-        `show_suggestions_menu` — the early return behavior is preserved.
-
-        This is a regression guard: the fix adds logging but must NOT
-        change the control flow. If someone accidentally removes the
-        `return` after the new logger.warning, this test catches it.
-        """
-        import logging
-
         closure = self._load_right_click_closure()
         self_mock, text_view, toolbar = self._build_mocks(translate_ok=False)
         closure.__globals__["self"] = self_mock
 
-        with caplog.at_level(logging.WARNING, logger="ui.window"):
-            closure(1, 100, 200)
+        closure(1, 100, 200)  # n_press=1, x=100, y=200
 
-        assert not toolbar.show_suggestions_menu.called, (
-            "show_suggestions_menu must NOT be called when translate_coordinates fails"
+        # show_suggestions_menu must have been called
+        assert toolbar.show_suggestions_menu.called, (
+            "show_suggestions_menu was not called"
+        )
+        # The pointing_to arg must be the raw gesture coords (100, 200)
+        call_kwargs = toolbar.show_suggestions_menu.call_args
+        pointing_to = call_kwargs[1].get("pointing_to") or call_kwargs[0][2]
+        assert pointing_to[0] == 100 and pointing_to[1] == 200, (
+            f"pointing_to coords should be (100, 200), got {pointing_to}"
+        )
+        # translate_coordinates must NOT have been called
+        assert not text_view.translate_coordinates.called, (
+            "translate_coordinates should not be called — gesture coords are "
+            "already TextView-relative"
+        )
+
+    def test_parent_widget_is_text_view(self):
+        """The popover must be parented to the TextView (the gesture widget),
+        not to the MainWindow. Parenting to the wrong widget triggers
+        the Wayland 'grabbing popup with non-top-most parent' freeze.
+        """
+        closure = self._load_right_click_closure()
+        self_mock, text_view, toolbar = self._build_mocks(translate_ok=True)
+        closure.__globals__["self"] = self_mock
+
+        closure(1, 100, 200)
+
+        call_kwargs = toolbar.show_suggestions_menu.call_args
+        parent_widget = call_kwargs[1].get("parent_widget")
+        assert parent_widget is text_view, (
+            "parent_widget must be the TextView (gesture widget), not the MainWindow — "
+            "parenting to the window causes Wayland grabbing-popup freeze"
         )
 
     def test_translate_coordinates_success_does_not_log_warning(

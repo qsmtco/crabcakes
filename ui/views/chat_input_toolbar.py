@@ -315,22 +315,8 @@ class ChatInputToolbar(Gtk.Box):
         popover.connect("closed", _on_suggestion_closed)
         # Only popup if we're inside a toplevel window; otherwise just build the
         # popover (sufficient for testing the widget structure).
-        #
-        # When parent_widget is set (right-click path), the popover is created
-        # during a GestureClick::pressed handler that holds an implicit GDK
-        # grab. Calling popup() while that grab is active triggers
-        # "Tried to map a grabbing popup with a non-top most parent" warnings
-        # on Wayland and leaves the popover grab in a broken state that
-        # freezes the UI. Deferring popup() to the next idle cycle lets the
-        # gesture handler return and release its grab first.
         if self.get_root() is not None:
-            if parent_widget is not None:
-                def _deferred_popup(p=popover):
-                    p.popup()
-                    return False  # don't repeat
-                GLib.idle_add(_deferred_popup)
-            else:
-                popover.popup()
+            popover.popup()
 
     def _on_suggestion_clicked(self, btn: Gtk.Button, suggestion: str, callback: callable, popover: Gtk.Popover):
         popover.popdown()
