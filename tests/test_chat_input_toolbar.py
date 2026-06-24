@@ -396,66 +396,6 @@ class TestEdgeCases:
             "set_keynav_wrapper is GTK3-only and must not be called in GTK4 views"
         )
 
-    def test_show_suggestions_menu_with_suggestions(self):
-        """show_suggestions_menu() builds a popover with suggestion buttons."""
-        toolbar = ChatInputToolbar()
-        calls = []
-        toolbar.show_suggestions_menu(
-            ["world", "weird", "wired"],
-            lambda s: calls.append(s),
-        )
-        # Popover is created and popup is called (we can't easily inspect
-        # the popover's children in headless, but we verify no crash)
-        assert calls == []
-
-    def test_show_suggestions_menu_empty_list(self):
-        """show_suggestions_menu() with no suggestions shows 'no suggestions' label."""
-        toolbar = ChatInputToolbar()
-        # Call with empty list — should show "(no suggestions)" label without crashing
-        toolbar.show_suggestions_menu([], lambda s: None)
-        assert True  # no crash
-
-    def test_show_suggestions_menu_callback_fires(self):
-        """Clicking a suggestion button fires the callback with the suggestion text."""
-        toolbar = ChatInputToolbar()
-        calls = []
-        toolbar.show_suggestions_menu(
-            ["world"],
-            lambda s: calls.append(s),
-        )
-        # Manually simulate what the button click handler does:
-        # _on_suggestion_clicked(btn, suggestion, callback, popover)
-        # We can't easily click the actual GTK button in headless, but we can
-        # call the internal handler directly to verify it works
-        fake_btn = MagicMock()
-        fake_popover = MagicMock()
-        toolbar._on_suggestion_clicked(fake_btn, "world", lambda s: calls.append(s), fake_popover)
-        assert calls == ["world"]
-        fake_popover.popdown.assert_called_once()
-
-    def test_show_suggestions_menu_with_parent_widget(self):
-        """show_suggestions_menu parents popover to parent_widget when provided."""
-        toolbar = ChatInputToolbar()
-        parent = Gtk.Box()  # stand-in widget
-        toolbar.show_suggestions_menu(
-            ["alpha", "beta"],
-            lambda s: None,
-            parent_widget=parent,
-        )
-        # The popover should be parented to `parent`, not to _spell_btn
-        # We can't easily inspect the popover's parent in headless, but we verify
-        # no crash occurs and the function accepts the parameter.
-        # If the popover were parented wrong, GTK would warn about widget hierarchy.
-
-    def test_show_suggestions_menu_backward_compatible_no_parent_widget(self):
-        """show_suggestions_menu still works without parent_widget (backward compat)."""
-        toolbar = ChatInputToolbar()
-        toolbar.show_suggestions_menu(
-            ["world", "weird"],
-            lambda s: None,
-        )
-        # Should not crash; uses _spell_btn as fallback parent
-
     def test_get_search_text_empty(self):
         """get_search_text() returns '' when entry is empty."""
         toolbar = ChatInputToolbar()
@@ -467,7 +407,7 @@ class TestEdgeCases:
         assert toolbar.get_replace_text() == ""
 
 
-# ── Bug fix regression tests (PHASE-3 supervisor audit, bugs #10–#14) ──
+# ── Bug fix regression tests (bugs #10–#14) ──
 
 
 class TestPopoverLeakGuard:

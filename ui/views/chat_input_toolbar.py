@@ -70,9 +70,6 @@ class ChatInputToolbar(Gtk.Box):
         self._on_spell_toggle: callable | None = None
         self._on_select_all: callable | None = None
 
-        # Track active suggestion popover to prevent leaks on repeated calls
-        self._suggestion_popover: Gtk.Popover | None = None
-
         # ── Build main toolbar row ─────────────────────────────────────────
         main_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         main_row.set_halign(Gtk.Align.FILL)
@@ -251,77 +248,6 @@ class ChatInputToolbar(Gtk.Box):
             f"{chars:,} chars"
             f"</span>"
         )
-
-    def show_suggestions_menu(self, suggestions: list[str], callback: callable, parent_widget=None, pointing_to=None):
-        """Show a popover with spelling suggestions for the right-clicked word.
-
-        *suggestions* is a list of replacement strings.
-        *callback* is called with the selected suggestion text when the user clicks one.
-        *parent_widget* is the widget to anchor the popover to (must be a
-        top-level or near-top-level widget; widgets inside ScrolledWindow
-        cause GDK grabbing-popup warnings). If None, defaults to the spell-check
-        button for backward compatibility.
-        *pointing_to* is an optional (x, y, width, height) tuple in parent_widget
-        coordinates; the popover arrow will point at this rectangle.
-        """
-        # Dismiss any existing suggestion popover before creating a new one
-        # to prevent leaks on repeated right-clicks.
-        if self._suggestion_popover is not None:
-            prev = self._suggestion_popover
-            self._suggestion_popover = None
-            try:
-                prev.popdown()
-            except Exception:
-                pass
-            if prev.get_parent() is not None:
-                prev.unparent()
-
-        popover = Gtk.Popover()
-        popover.set_autohide(True)
-        self._suggestion_popover = popover
-        if parent_widget is not None:
-            popover.set_parent(parent_widget)
-            if pointing_to is not None:
-                rect = Gdk.Rectangle()
-                rect.x, rect.y, rect.width, rect.height = pointing_to
-                popover.set_pointing_to(rect)
-        else:
-            popover.set_parent(self._spell_btn)
-
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        vbox.set_spacing(2)
-        vbox.set_margin_start(4)
-        vbox.set_margin_end(4)
-        vbox.set_margin_top(4)
-        vbox.set_margin_bottom(4)
-
-        if not suggestions:
-            lbl = Gtk.Label()
-            lbl.set_markup('<span foreground="#6b6b7a">(no suggestions)</span>')
-            vbox.append(lbl)
-        else:
-            for suggestion in suggestions:
-                btn = Gtk.Button(label=suggestion)
-                btn.add_css_class("flat")
-                btn.connect("clicked", self._on_suggestion_clicked, suggestion, callback, popover)
-                vbox.append(btn)
-
-        popover.set_child(vbox)
-        def _on_suggestion_closed(p, *_):
-            if p.get_parent() is not None:
-                p.unparent()
-            if self._suggestion_popover is p:
-                self._suggestion_popover = None
-        popover.connect("closed", _on_suggestion_closed)
-        # Only popup if we're inside a toplevel window; otherwise just build the
-        # popover (sufficient for testing the widget structure).
-        if self.get_root() is not None:
-            popover.popup()
-
-    def _on_suggestion_clicked(self, btn: Gtk.Button, suggestion: str, callback: callable, popover: Gtk.Popover):
-        popover.popdown()
-        if callback:
-            callback(suggestion)
 
     def get_search_text(self) -> str:
         """Return the current text in the find bar search entry."""
