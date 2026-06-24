@@ -971,67 +971,224 @@ class TestStreaming:
         rt.stop()
 
     def test_streaming_preserves_provider_tool_call_id(self):
-        """STREAM-ID-PRES regression: when the provider sends an `id` field in
-        the streaming tool_call delta, the runtime must round-trip that exact id
-        back to the API on the next turn (so the tool result message's
-        `tool_call_id` matches the assistant message's `tool_calls[i].id`).
-        Without the fix, the runtime synthesizes `f"call_{idx}"` and providers
-        like MiniMax reject the tool result with status_code=2013.
+        """STREAM-ID-PRES: provider-assigned tool_call id flows from raw SSE
+        bytes through the streamer, the accumulator, and the final response dict.
+
+        Regression: the old test (pre-2026-06-23) patched
+        _PROVIDER_STREAMERS["openai"] with a pre-built SSEEvent generator —
+        that bypassed _sse_lines → _parse_sse_line → _stream_openai_events
+        entirely, so the streamer layer was never tested.
+
+        This test feeds raw SSE bytes through the full pipeline (mocking only
+        _urlopen_with_ssl_retry so the streamer itself is exercised verbatim)
+        and asserts the id survives every layer. Without the STREAM-ID-PRES
+        fix, the streaming path synthesizes `f"call_{idx}"` and MiniMax/OpenAI
+        reject the next-turn request with status_code=2013.
+        See docs/bugs/BUG_REPORT-streaming-tool-call-id-loss.md.
         """
-        from agent.runtime import SSEEvent
+        from agent import runtime as rt_module
+        from agent.runtime import _stream_openai_events
 
-        # Real provider format: id assigned in first delta, subsequent deltas
-        # carry only arguments. Matches OpenAI, MiniMax, OpenRouter, ZAI.
-        PROVIDER_ID = "call_function_3679004591_1"
+        # Provider-shape raw SSE bytes — real id in first delta, argument
+        # fragments in subsequent deltas (OpenAI / MiniMax / OpenRouter / ZAI).
+        REAL_ID = "call_function_3679004591_1"
+        raw_sse = (
+            b'data: {"choices":[{"delta":{"tool_calls":['
+            b'{"index":0,"id":"' + REAL_ID.encode() + b'",'
+            b'"function":{"name":"read_file","arguments":""}}'
+            b']}}]}\n\n'
+            b'data: {"choices":[{"delta":{"tool_calls":['
+            b'{"index":0,"function":{"arguments":"{\\"path\\":\\"/tmp/foo.py\\"}"}}'
+            b']}}]}\n\n'
+            b'data: {"choices":[{"finish_reason":"tool_calls"}]}\n\n'
+            b'data: [DONE]\n\n'
+        )
 
-        def streamer_with_id(*a, **kw):
-            # First delta: name + id assigned (no arguments yet)
-            yield SSEEvent(type="tool_call_delta", data={
-                "index": 0, "name": "list_files", "arguments": "",
-                "id": PROVIDER_ID,
-            })
-            # Second delta: argument fragment only (no id, no name)
-            yield SSEEvent(type="tool_call_delta", data={
-                "index": 0, "name": "", "arguments": '{"path": "."}',
-                "id": "",
-            })
-            # Stream end
-            yield SSEEvent(type="done", data={})
+        # Fake response that yields line-bytes — must be a class so Python
+        # can look up __iter__ on the _FakeResp type.
+        class _FakeResp:
+            def __init__(self, buf):
+                self._buf = buf
+            def __iter__(self):
+                return iter(self._buf.splitlines(keepends=True))
 
-        rt = AgentRuntime(_make_cfg())
+        def _make_fake_urlopen(buf):
+            """Return a context-manager that provides a fake response."""
+            class _Ctx:
+                def __enter__(self_ctx):
+                    return _FakeResp(buf)
+                def __exit__(self_ctx, *a):
+                    pass
+            return _Ctx()
+
+        # Phase 1: Feed raw SSE bytes through the real _stream_openai_events
+        # and verify the SSEEvent stream carries the id forward.
+        with unittest.mock.patch.object(
+            rt_module, "_urlopen_with_ssl_retry",
+            lambda req, timeout: _make_fake_urlopen(raw_sse),
+        ):
+            events = list(_stream_openai_events(
+                base_url="https://api.openai.com/v1",
+                api_key="***",
+                model="openai/gpt-4o",
+                messages=[{"role": "user", "content": "read foo.py"}],
+                tools=None,
+                timeout=30.0,
+                x_title="",
+            ))
+        deltas = [ev for ev in events if ev.type == "tool_call_delta"]
+        assert deltas, "expected at least one tool_call_delta event"
+        assert deltas[0].data.get("id") == REAL_ID, (
+            f"streamer must forward provider-assigned id; got {deltas[0].data.get('id')!r}"
+        )
+
+        # Phase 2: Run the full _call_llm_streaming pipeline with the real
+        # streamer and assert the assembled response carries the real id.
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, delta: None)
         rt.start()
         sk = _uniq()
         rt.create_conversation("Coder", sk, "/tmp")
 
-        from agent import runtime as rt_module
-        orig = rt_module._PROVIDER_STREAMERS["openai"]
-        rt_module._PROVIDER_STREAMERS["openai"] = streamer_with_id
-        try:
-            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
-                # Mock tool execution so the loop completes with a final text turn
-                with unittest.mock.patch("agent.tools.execute_tool") as mock_exec:
-                    from agent.tools import ToolResult
-                    mock_exec.return_value = ToolResult(success=True, output="file1.txt\nfile2.txt", error="")
-                    rt._run_loop(sk, "list files")
-        finally:
-            rt_module._PROVIDER_STREAMERS["openai"] = orig
-
-        # Post-condition: the assistant message's tool_calls[0].call_id must
-        # equal the provider-assigned id (not the synthetic f"call_0" fallback).
-        conv = rt.get_conversation(sk)
-        tool_msgs = [m for m in conv.messages if m.is_tool_call]
-        assert len(tool_msgs) >= 1, (
-            f"Expected at least one assistant tool-call message, "
-            f"got roles: {[m.role.value for m in conv.messages]}"
-        )
-        tc = tool_msgs[-1].tool_calls[0]
-        assert tc.call_id == PROVIDER_ID, (
-            f"Provider tool_call id was lost during SSE assembly. "
-            f"Expected {PROVIDER_ID!r}, got {tc.call_id!r}. "
-            f"This is the BUG from BUG_REPORT-streaming-tool-call-id-loss.md — "
-            f"the runtime synthesized a fake id instead of preserving the real one."
-        )
+        with unittest.mock.patch.object(
+            rt_module, "_urlopen_with_ssl_retry",
+            lambda req, timeout: _make_fake_urlopen(raw_sse),
+        ):
+            response = rt._call_llm_streaming(
+                session_key=sk,
+                base_url="https://api.openai.com/v1",
+                api_key="***",
+                model="openai/gpt-4o",
+                caller_key="openai",
+                messages=[{"role": "user", "content": "read foo.py"}],
+                tools=None,
+                timeout=30.0,
+            )
+        rt._cleanup_tool_history(sk)
         rt.stop()
+
+        tool_calls = response["choices"][0]["message"]["tool_calls"]
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["id"] == REAL_ID, (
+            f"final tool_call id must be the provider-assigned one; "
+            f"got {tool_calls[0]['id']!r}"
+        )
+        assert tool_calls[0]["function"]["name"] == "read_file"
+        assert tool_calls[0]["function"]["arguments"] == '{"path":"/tmp/foo.py"}'
+
+        # Phase 3: Round-trip check — feed the response back into
+        # _extract_tool_calls (the path used by _run_loop on the next turn).
+        call_id, tool_name, args = _extract_tool_calls(response, "openai")[0]
+        assert call_id == REAL_ID, (
+            f"_extract_tool_calls must surface the real id; got {call_id!r}"
+        )
+        assert tool_name == "read_file"
+
+    def test_anthropic_content_block_start_preserves_tool_use_id(self):
+        """STREAM-ID-PRES (BUG #4): _stream_anthropic_events must forward the
+        tool_use.id from the content_block_start event through to the SSE event
+        stream, so the accumulator captures the provider-assigned id before
+        the first content_block_delta arrives.
+
+        Anthropic's protocol differs from OpenAI/MiniMax: the id arrives in
+        content_block_start (not in content_block_delta). Without this handler,
+        the first-write-wins accumulator never sees an id and falls back to
+        synthetic `call_{idx}`.
+        """
+        from agent import runtime as rt_module
+        from agent.runtime import _stream_anthropic_events
+
+        ANTHROPIC_ID = "toolu_01A09qGhdummyExample"
+        raw_sse = (
+            b'event: content_block_start\n'
+            b'data: {"type":"content_block_start","index":0,"content_block":'
+            b'{"type":"tool_use","id":"' + ANTHROPIC_ID.encode() + b'"}}\n\n'
+            b'event: content_block_delta\n'
+            b'data: {"type":"content_block_delta","index":0,"delta":'
+            b'{"type":"tool_use_delta","name":"read_file","input":""}}\n\n'
+            b'event: content_block_delta\n'
+            b'data: {"type":"content_block_delta","index":0,"delta":'
+            b'{"type":"tool_use_delta","input":"{\\"path\\":\\"/tmp/bar.py\\"}"}}\n\n'
+            b'event: message_stop\n'
+            b'data: {"type":"message_stop"}\n\n'
+        )
+
+        class _FakeResp:
+            def __init__(self, buf):
+                self._buf = buf
+            def __iter__(self):
+                return iter(self._buf.splitlines(keepends=True))
+
+        def _make_fake_urlopen(buf):
+            class _Ctx:
+                def __enter__(self_ctx):
+                    return _FakeResp(buf)
+                def __exit__(self_ctx, *a):
+                    pass
+            return _Ctx()
+
+        # Phase 1: Verify the streamer forwards the id.
+        with unittest.mock.patch.object(
+            rt_module, "_urlopen_with_ssl_retry",
+            lambda req, timeout: _make_fake_urlopen(raw_sse),
+        ):
+            events = list(_stream_anthropic_events(
+                base_url="https://api.anthropic.com/v1",
+                api_key="***",
+                model="claude-3-5-sonnet",
+                messages=[{"role": "user", "content": "read bar.py"}],
+                tools=None,
+                timeout=30.0,
+                x_title="",
+            ))
+        deltas = [ev for ev in events if ev.type == "tool_call_delta"]
+        assert deltas, "expected at least one tool_call_delta event"
+        # First delta must carry the id from content_block_start.
+        assert deltas[0].data.get("id") == ANTHROPIC_ID, (
+            f"Anthropic content_block_start id not forwarded; "
+            f"got {deltas[0].data.get('id')!r}"
+        )
+
+        # Phase 2: Run the full pipeline.
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, delta: None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        with unittest.mock.patch.object(
+            rt_module, "_urlopen_with_ssl_retry",
+            lambda req, timeout: _make_fake_urlopen(raw_sse),
+        ):
+            response = rt._call_llm_streaming(
+                session_key=sk,
+                base_url="https://api.anthropic.com/v1",
+                api_key="***",
+                model="claude-3-5-sonnet",
+                caller_key="anthropic",
+                messages=[{"role": "user", "content": "read bar.py"}],
+                tools=None,
+                timeout=30.0,
+            )
+        rt._cleanup_tool_history(sk)
+        rt.stop()
+
+        tool_calls = response["choices"][0]["message"]["tool_calls"]
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["id"] == ANTHROPIC_ID, (
+            f"final tool_call id must be Anthropic's tool_use.id; "
+            f"got {tool_calls[0]['id']!r}"
+        )
+        assert tool_calls[0]["function"]["name"] == "read_file"
+        assert tool_calls[0]["function"]["arguments"] == '{"path":"/tmp/bar.py"}'
+
+        # Phase 3: Round-trip check — _extract_tool_calls must surface the
+        # real id. The response is always in normalized OpenAI format regardless
+        # of the actual provider, because _call_llm_streaming normalizes all
+        # streaming responses to a uniform format.
+        call_id, tool_name, args = _extract_tool_calls(response, "openai")[0]
+        assert call_id == ANTHROPIC_ID, (
+            f"_extract_tool_calls must surface Anthropic's id; got {call_id!r}"
+        )
+        assert tool_name == "read_file"
 
 
 
