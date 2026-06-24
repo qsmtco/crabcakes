@@ -70,11 +70,24 @@ class TestSessionKeyValidation:
             _resolve_session_workspace("/proj", "..")
 
     def test_valid_session_key_ok(self):
-        """Valid [a-zA-Z0-9._-]+ session_key works without error."""
+        """Valid [a-zA-Z0-9._:-]+ session_key works without error."""
         project = tempfile.mkdtemp()
         # These must not raise
         ws = _resolve_session_workspace(project, "valid-sess_123.abc")
         assert ws.endswith("valid-sess_123.abc")
+
+    def test_special_agent_colon_key_ok(self):
+        """Session keys with colons (e.g. 'special:coder') must work.
+
+        The colon is sanitized to '-' in the filesystem path but the
+        session_key passes validation.
+        """
+        project = tempfile.mkdtemp()
+        ws = _resolve_session_workspace(project, "special:coder")
+        # Colon is sanitized for filesystem safety
+        assert ws.endswith("special-coder")
+        assert ":" not in ws.split(".crabcakes")[-1]  # no colon in the relative path portion
+        assert os.path.isdir(ws)
 
 
 # ═══════════════════════════════════════════════════════════════════

@@ -1120,7 +1120,9 @@ def _resolve_session_workspace(project_path: str | None, session_key: str) -> st
     Args:
         project_path: The project directory (must not be empty).
         session_key: Must be non-empty, whitespace-free, and contain only
-            [a-zA-Z0-9._-]. Path separators and ".." are rejected.
+            [a-zA-Z0-9._:-]. Path separators and ".." are rejected.
+            Colons (e.g. "special:coder") are allowed and sanitized for
+            filesystem safety.
 
     Returns:
         Absolute path to the session's scratch workspace directory.
@@ -1135,9 +1137,11 @@ def _resolve_session_workspace(project_path: str | None, session_key: str) -> st
         raise ValueError(f"LOW-2: session_key must be non-empty and contain no whitespace: {session_key!r}")
     if ".." in session_key:
         raise ValueError(f"LOW-2: session_key must not contain '..': {session_key!r}")
-    if not re.fullmatch(r"[a-zA-Z0-9._-]+", session_key):
-        raise ValueError(f"LOW-2: session_key must match [a-zA-Z0-9._-]+, got: {session_key!r}")
-    workspace = os.path.join(project_path, ".crabcakes", "tmp", session_key)
+    if not re.fullmatch(r"[a-zA-Z0-9._:-]+", session_key):
+        raise ValueError(f"LOW-2: session_key must match [a-zA-Z0-9._:-]+, got: {session_key!r}")
+    # Sanitize colon for filesystem safety (e.g. "special:coder" → "special-coder")
+    fs_safe_key = session_key.replace(":", "-")
+    workspace = os.path.join(project_path, ".crabcakes", "tmp", fs_safe_key)
     os.makedirs(workspace, mode=0o700, exist_ok=True)
     return workspace
 
