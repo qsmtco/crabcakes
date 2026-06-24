@@ -528,13 +528,9 @@ def _stream_openai_events(
                 if "function" in tcd:
                     fname = tcd["function"].get("name") or ""
                     fargs = tcd["function"].get("arguments", "") or ""
-                    # STREAM-ID-PRES: surface the provider-assigned tool_call id
-                    # so the accumulator preserves it through to the round-trip
-                    # request. OpenAI/MiniMax/OpenRouter/ZAI all set this in
-                    # the first delta for a tool call; empty string when absent.
+                    # STREAM-ID-PRES REGRESSION CHECK (deliberately removed id yield)
                     yield SSEEvent(type="tool_call_delta", data={
                         "index": idx, "name": fname, "arguments": fargs,
-                        "id": tcd.get("id", "") or "",
                     })
             # OpenAI-compatible providers emit a usage chunk at the end of the stream,
             # typically in a frame with empty choices. Capture and forward it.
