@@ -75,44 +75,20 @@ Two surgical fixes (CRASH-1 rejected — no change needed):
 
 ## 2. Changes by File
 
-### 2.1 `ui/views/chat_input_toolbar.py` — NO CHANGES (CRASH-1 rejected)
+### 2.1 `ui/views/chat_input_toolbar.py` — CLEANUP: POPOVER CODE REMOVED
 
-**The original spec proposed moving `prev.popdown()` inside a parent-check guard to prevent a segfault.** Adversarial audit empirically proved this crash does not exist:
+**The entire popover-based spell-suggestion menu was removed.** The original `show_suggestions_menu()` method, `_on_suggestion_clicked()` helper, and `_suggestion_popover` instance variable had zero callers outside tests after the GTK4-native `set_extra_menu` approach replaced them.
 
-```python
-# Empirical test (GTK 4.14.5):
-p = Gtk.Popover()
-p.popdown()           # Safe — no crash, no warning
+**Replacement mechanism:** `Gtk.TextView.set_extra_menu(Gio.Menu)` — the GTK4-native way to add items to the TextView's built-in right-click menu. The view layer (`main_content.py`) creates a `Gio.Menu` with suggestion items and attaches it via `self._user_input.set_extra_menu(menu)`. A `Gio.SimpleActionGroup` provides the actions ("Apply suggestion", "Add to dictionary", "Ignore") that the menu items activate. This avoids the GestureClick grab conflicts that caused `"Tried to map a grabbing popup with a non-top-most parent"` warnings when using `Gtk.Popover.popup()` on Wayland.
 
-box = Gtk.Box()
-p2 = Gtk.Popover()
-p2.set_parent(box)
-p2.unparent()
-p2.popdown()          # Safe — no crash, no warning
-```
+**Removed code:**
+- `self._suggestion_popover: Gtk.Popover | None = None` (instance variable)
+- `show_suggestions_menu()` (method, ~63 lines)
+- `_on_suggestion_clicked()` (method, ~4 lines)
 
-Furthermore, the described race condition is impossible. The `_on_suggestion_closed` handler (lines 310-315) does both of these atomically:
-1. `p.unparent()` — clears the parent
-2. `self._suggestion_popover = None` — clears the reference
+**Test cleanup:** `TestPopoverLeakGuard` (4 tests), `TestPopoverCodePaths` (4 tests), and 4 `show_suggestions_menu` tests in `TestEdgeCases` were removed from `tests/test_chat_input_toolbar.py`. `TestTranslateCoordinatesWarning` (BUG #3) is preserved — it tests the `window.py` right-click closure, not the removed view-layer popover code.
 
-There is no window where `_suggestion_popover` is set AND the popover's parent is None.
-
-Finally, `popdown()` does NOT emit the `closed` signal (empirically verified). The spec's data flow diagram was based on an incorrect assumption about signal emission.
-
-**Current code (lines 269-276) is correct as-is:**
-```python
-if self._suggestion_popover is not None:
-    prev = self._suggestion_popover
-    self._suggestion_popover = None
-    try:
-        prev.popdown()          # safe even if parent is None
-    except Exception:
-        pass
-    if prev.get_parent() is not None:
-        prev.unparent()
-```
-
-**Action: Do not modify this file.**
+**Action: Dead code removed. No further changes needed.**
 
 ### 2.2 `ui/handlers/input_toolbar_handler.py` — Add `is_spell_enabled()` public method
 
