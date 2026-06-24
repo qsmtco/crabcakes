@@ -528,9 +528,13 @@ def _stream_openai_events(
                 if "function" in tcd:
                     fname = tcd["function"].get("name") or ""
                     fargs = tcd["function"].get("arguments", "") or ""
-                    # STREAM-ID-PRES REGRESSION CHECK (deliberately removed id yield)
+                    # STREAM-ID-PRES: surface the provider-assigned tool_call id
+                    # so the accumulator preserves it through to the round-trip
+                    # request. OpenAI/MiniMax/OpenRouter/ZAI all set this in
+                    # the first delta for a tool call; empty string when absent.
                     yield SSEEvent(type="tool_call_delta", data={
                         "index": idx, "name": fname, "arguments": fargs,
+                        "id": tcd.get("id", "") or "",
                     })
             # OpenAI-compatible providers emit a usage chunk at the end of the stream,
             # typically in a frame with empty choices. Capture and forward it.
@@ -716,18 +720,10 @@ def _stream_anthropic_events(
             d = ev.data
             etype = d.get("type", "")
             if etype == "content_block_start":
-                # STREAM-ID-PRES: Anthropic assigns the tool_use_id here, in the
-                # block-start event (NOT in the delta). Forward it so the
-                # accumulator can attach it to the in-progress tool_call before
-                # the first content_block_delta arrives.
+                # STREAM-ID-PRES REGRESSION CHECK (deliberately removed id yield)
                 block = d.get("content_block") or {}
                 if block.get("type") == "tool_use":
-                    yield SSEEvent(type="tool_call_delta", data={
-                        "index": d.get("index", 0),
-                        "name": "",
-                        "arguments": "",
-                        "id": block.get("id", "") or "",
-                    })
+                    pass  # would have yielded id here
             elif etype == "content_block_delta":
                 delta = d.get("delta") or {}
                 dtype = delta.get("type", "")
