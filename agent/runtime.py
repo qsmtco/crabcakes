@@ -720,10 +720,18 @@ def _stream_anthropic_events(
             d = ev.data
             etype = d.get("type", "")
             if etype == "content_block_start":
-                # STREAM-ID-PRES REGRESSION CHECK (deliberately removed id yield)
-                block = d.get("content_block") or {}
+                # STREAM-ID-PRES: Anthropic assigns the tool_use_id here, in the
+                # block-start event (NOT in the delta). Forward it so the
+                # accumulator can attach it to the in-progress tool_call before
+                # the first content_block_delta arrives.
+                block = d.get("content_block", {})
                 if block.get("type") == "tool_use":
-                    pass  # would have yielded id here
+                    yield SSEEvent(type="tool_call_delta", data={
+                        "index": d.get("index", 0),
+                        "name": "",
+                        "arguments": "",
+                        "id": block.get("id", "") or "",
+                    })
             elif etype == "content_block_delta":
                 delta = d.get("delta") or {}
                 dtype = delta.get("type", "")
