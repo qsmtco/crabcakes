@@ -970,6 +970,69 @@ class TestStreaming:
         assert len(assistant_msgs) >= 1, f"Expected assistant message, got: {[m.role.value for m in conv.messages]}"
         rt.stop()
 
+    def test_streaming_preserves_provider_tool_call_id(self):
+        """STREAM-ID-PRES regression: when the provider sends an `id` field in
+        the streaming tool_call delta, the runtime must round-trip that exact id
+        back to the API on the next turn (so the tool result message's
+        `tool_call_id` matches the assistant message's `tool_calls[i].id`).
+        Without the fix, the runtime synthesizes `f"call_{idx}"` and providers
+        like MiniMax reject the tool result with status_code=2013.
+        """
+        from agent.runtime import SSEEvent
+
+        # Real provider format: id assigned in first delta, subsequent deltas
+        # carry only arguments. Matches OpenAI, MiniMax, OpenRouter, ZAI.
+        PROVIDER_ID = "call_function_3679004591_1"
+
+        def streamer_with_id(*a, **kw):
+            # First delta: name + id assigned (no arguments yet)
+            yield SSEEvent(type="tool_call_delta", data={
+                "index": 0, "name": "list_files", "arguments": "",
+                "id": PROVIDER_ID,
+            })
+            # Second delta: argument fragment only (no id, no name)
+            yield SSEEvent(type="tool_call_delta", data={
+                "index": 0, "name": "", "arguments": '{"path": "."}',
+                "id": "",
+            })
+            # Stream end
+            yield SSEEvent(type="done", data={})
+
+        rt = AgentRuntime(_make_cfg())
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        from agent import runtime as rt_module
+        orig = rt_module._PROVIDER_STREAMERS["openai"]
+        rt_module._PROVIDER_STREAMERS["openai"] = streamer_with_id
+        try:
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+                # Mock tool execution so the loop completes with a final text turn
+                with unittest.mock.patch("agent.tools.execute_tool") as mock_exec:
+                    from agent.tools import ToolResult
+                    mock_exec.return_value = ToolResult(success=True, output="file1.txt\nfile2.txt", error="")
+                    rt._run_loop(sk, "list files")
+        finally:
+            rt_module._PROVIDER_STREAMERS["openai"] = orig
+
+        # Post-condition: the assistant message's tool_calls[0].call_id must
+        # equal the provider-assigned id (not the synthetic f"call_0" fallback).
+        conv = rt.get_conversation(sk)
+        tool_msgs = [m for m in conv.messages if m.is_tool_call]
+        assert len(tool_msgs) >= 1, (
+            f"Expected at least one assistant tool-call message, "
+            f"got roles: {[m.role.value for m in conv.messages]}"
+        )
+        tc = tool_msgs[-1].tool_calls[0]
+        assert tc.call_id == PROVIDER_ID, (
+            f"Provider tool_call id was lost during SSE assembly. "
+            f"Expected {PROVIDER_ID!r}, got {tc.call_id!r}. "
+            f"This is the BUG from BUG_REPORT-streaming-tool-call-id-loss.md — "
+            f"the runtime synthesized a fake id instead of preserving the real one."
+        )
+        rt.stop()
+
 
 
 class TestStreamingSignature:
