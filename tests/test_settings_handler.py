@@ -202,6 +202,78 @@ class TestTestProvider:
         # After successful test, status should be True
         assert True in statuses
 
+    def test_preserves_caller_on_success(self, tmp_config_dir, monkeypatch):
+        """Regression: test_provider's success-path must not strip the caller field.
+        Without the fix, _worker rebuilds ProviderConfig without caller=, silently
+        dropping it on save and breaking subsequent runtime calls.
+        """
+        from ui.handlers import settings_handler as sh
+        monkeypatch.setattr(sh, "test_connection", lambda **kw:
+            TestResult(ok=True, latency_ms=42, error=None, model_used=kw["model"]))
+
+        callback = threading.Event()
+        h = SettingsHandler()
+        # caller="minimax" is set explicitly (not auto-detected from default_model).
+        p = _make_provider("p", caller="minimax")
+        h.add_or_update(p)
+        h.test_provider(p, lambda r: callback.set())
+        assert callback.wait(timeout=2.0), "test_provider callback never fired"
+
+        providers = h.list_providers()
+        assert providers[0].caller == "minimax", (
+            f"test_provider stripped caller on success; got {providers[0].caller!r}"
+        )
+        # Verify the success path also ran (last_verified_at is set)
+        assert providers[0].last_verified_at is not None
+
+    def test_preserves_caller_on_failure(self, tmp_config_dir, monkeypatch):
+        """Regression: test_provider's failure-path must not strip the caller field.
+        Both success and failure branches rebuild ProviderConfig — both must preserve caller.
+        """
+        from ui.handlers import settings_handler as sh
+        monkeypatch.setattr(sh, "test_connection", lambda **kw:
+            TestResult(ok=False, latency_ms=10, error="401 unauthorized", model_used=kw["model"]))
+
+        callback = threading.Event()
+        h = SettingsHandler()
+        p = _make_provider("p", caller="minimax")
+        h.add_or_update(p)
+        h.test_provider(p, lambda r: callback.set())
+        assert callback.wait(timeout=2.0), "test_provider callback never fired"
+
+        providers = h.list_providers()
+        assert providers[0].caller == "minimax", (
+            f"test_provider stripped caller on failure; got {providers[0].caller!r}"
+        )
+        assert providers[0].last_error == "401 unauthorized"
+
+    def test_auto_detects_caller_from_model_prefix(self, tmp_config_dir, monkeypatch):
+        """Self-heal: when caller is empty and default_model has a slash,
+        the worker auto-fills caller from the prefix. This lets broken YAML
+        entries (post-regression state) recover on next Test Connection.
+        """
+        from ui.handlers import settings_handler as sh
+        monkeypatch.setattr(sh, "test_connection", lambda **kw:
+            TestResult(ok=True, latency_ms=1, error=None, model_used=kw["model"]))
+
+        callback = threading.Event()
+        h = SettingsHandler()
+        # Note: caller defaults to "" (ProviderConfig default). Mimics a broken YAML entry.
+        p = _make_provider("minimax-M3")  # default_model = "minimax-M3/model-v1"
+        h.add_or_update(p)
+        # Sanity: add_or_update's auto-detect should already have set caller.
+        assert h.list_providers()[0].caller == "minimax-M3"
+
+        # Now simulate the broken-state scenario: caller explicitly empty.
+        broken = _make_provider("minimax-M3", caller="")
+        h.test_provider(broken, lambda r: callback.set())
+        assert callback.wait(timeout=2.0), "test_provider callback never fired"
+
+        providers = h.list_providers()
+        assert providers[0].caller == "minimax-M3", (
+            f"test_provider did not auto-detect caller; got {providers[0].caller!r}"
+        )
+
 
 class TestStatusHasVerified:
     def test_false_when_no_providers(self, tmp_config_dir):

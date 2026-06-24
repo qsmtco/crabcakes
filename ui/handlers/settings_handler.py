@@ -132,6 +132,12 @@ class SettingsHandler:
         Always fires on_status_changed after.
         """
         def _worker():
+            # PHASE-10: auto-detect caller from default_model prefix when not set.
+            # Mirrors add_or_update (lines 93-95); lets us self-heal providers whose
+            # YAML entry has an empty/absent caller (the post-regression state).
+            if not provider.caller and provider.default_model and "/" in provider.default_model:
+                provider.caller = provider.default_model.split("/")[0]
+
             try:
                 result = test_connection(
                     base_url=provider.base_url,
@@ -158,6 +164,7 @@ class SettingsHandler:
                             base_url=p.base_url,
                             api_key=p.api_key,
                             default_model=p.default_model,
+                            caller=p.caller,                # PRESERVE — was missing, caused regression
                             enabled=p.enabled,
                             supports_tools=p.supports_tools,
                             supports_streaming=p.supports_streaming,
@@ -171,6 +178,7 @@ class SettingsHandler:
                             base_url=p.base_url,
                             api_key=p.api_key,
                             default_model=p.default_model,
+                            caller=p.caller,                # PRESERVE — was missing, caused regression
                             enabled=p.enabled,
                             supports_tools=p.supports_tools,
                             supports_streaming=p.supports_streaming,
