@@ -528,8 +528,13 @@ def _stream_openai_events(
                 if "function" in tcd:
                     fname = tcd["function"].get("name") or ""
                     fargs = tcd["function"].get("arguments", "") or ""
+                    # STREAM-ID-PRES: surface the provider-assigned tool_call id
+                    # so the accumulator preserves it through to the round-trip
+                    # request. OpenAI/MiniMax/OpenRouter/ZAI all set this in
+                    # the first delta for a tool call; empty string when absent.
                     yield SSEEvent(type="tool_call_delta", data={
-                        "index": idx, "name": fname, "arguments": fargs
+                        "index": idx, "name": fname, "arguments": fargs,
+                        "id": tcd.get("id", "") or "",
                     })
             # OpenAI-compatible providers emit a usage chunk at the end of the stream,
             # typically in a frame with empty choices. Capture and forward it.
@@ -609,8 +614,10 @@ def _stream_minimax_events(
                         if "function" in tcd:
                             fname = tcd["function"].get("name") or ""
                             fargs = tcd["function"].get("arguments", "") or ""
+                            # STREAM-ID-PRES: see _stream_openai_events
                             yield SSEEvent(type="tool_call_delta", data={
-                                "index": idx, "name": fname, "arguments": fargs
+                                "index": idx, "name": fname, "arguments": fargs,
+                                "id": tcd.get("id", "") or "",
                             })
                     finish_reason = d.get("choices", [{}])[0].get("finish_reason")
                     if finish_reason in ("stop", "tool_calls", "length"):
@@ -641,8 +648,10 @@ def _stream_minimax_events(
                 if "function" in tcd:
                     fname = tcd["function"].get("name") or ""
                     fargs = tcd["function"].get("arguments", "") or ""
+                    # STREAM-ID-PRES: see _stream_openai_events
                     yield SSEEvent(type="tool_call_delta", data={
-                        "index": idx, "name": fname, "arguments": fargs
+                        "index": idx, "name": fname, "arguments": fargs,
+                        "id": tcd.get("id", "") or "",
                     })
             # MiniMax signals stream end via finish_reason, not [DONE]
             finish_reason = d.get("choices", [{}])[0].get("finish_reason")
@@ -710,7 +719,20 @@ def _stream_anthropic_events(
                 continue
             d = ev.data
             etype = d.get("type", "")
-            if etype == "content_block_delta":
+            if etype == "content_block_start":
+                # STREAM-ID-PRES: Anthropic assigns the tool_use_id here, in the
+                # block-start event (NOT in the delta). Forward it so the
+                # accumulator can attach it to the in-progress tool_call before
+                # the first content_block_delta arrives.
+                block = d.get("content_block", {})
+                if block.get("type") == "tool_use":
+                    yield SSEEvent(type="tool_call_delta", data={
+                        "index": d.get("index", 0),
+                        "name": "",
+                        "arguments": "",
+                        "id": block.get("id", "") or "",
+                    })
+            elif etype == "content_block_delta":
                 delta = d.get("delta", {})
                 dtype = delta.get("type", "")
                 if dtype == "text_delta":
@@ -719,8 +741,11 @@ def _stream_anthropic_events(
                     idx = d.get("index", 0)
                     fname = delta.get("name") or ""
                     fargs = delta.get("input", "") or ""
+                    # STREAM-ID-PRES: forward the id if Anthropic ever does send
+                    # one in the delta (it shouldn't, but stay defensive).
                     yield SSEEvent(type="tool_call_delta", data={
-                        "index": idx, "name": fname, "arguments": fargs
+                        "index": idx, "name": fname, "arguments": fargs,
+                        "id": "",
                     })
             elif etype == "message_delta":
                 # Anthropic emits usage in message_delta events at the end of the stream.
@@ -2060,14 +2085,19 @@ class AgentRuntime:
             elif ev.type == "tool_call_delta":
                 # PHASE-11.5: default to 0 if streamer omits 'index' (e.g. Anthropic
                 # single-tool responses). Without this, the runtime crashes mid-stream.
+                # STREAM-ID-PRES: capture provider-assigned id from first delta;
+                # subsequent deltas (which carry argument fragments) do not overwrite.
                 idx = ev.data.get("index", 0)
                 if idx not in tool_calls_partial:
-                    tool_calls_partial[idx] = {"name": "", "arguments": ""}
+                    tool_calls_partial[idx] = {"name": "", "arguments": "", "id": ""}
                 tc = tool_calls_partial[idx]
-                if ev.data["name"]:
+                if ev.data.get("name"):
                     tc["name"] = ev.data["name"]
-                if ev.data["arguments"]:
+                if ev.data.get("arguments"):
                     tc["arguments"] += ev.data["arguments"]
+                incoming_id = ev.data.get("id") or ""
+                if incoming_id and not tc["id"]:
+                    tc["id"] = incoming_id
 
             elif ev.type == "usage":
                 # Provider sent a usage chunk (e.g., OpenAI's "final" frame).
@@ -2078,13 +2108,15 @@ class AgentRuntime:
                     captured_usage = usage_data
 
             elif ev.type == "done":
-                # Build final tool_calls list from accumulated partials
+                # Build final tool_calls list from accumulated partials.
+                # STREAM-ID-PRES: use the provider-assigned id captured during
+                # SSE assembly; fall back to synthetic only if absent.
                 tool_calls = []
                 for idx in sorted(tool_calls_partial.keys()):
                     tc = tool_calls_partial[idx]
                     if tc["name"]:
                         tool_calls.append({
-                            "id": f"call_{idx}",
+                            "id": tc["id"] or f"call_{idx}",
                             "function": {
                                 "name": tc["name"],
                                 "arguments": tc["arguments"]
@@ -2099,12 +2131,13 @@ class AgentRuntime:
                 }
 
         # Fallback — stream ended without explicit done event (e.g. provider doesn't send [DONE])
+        # STREAM-ID-PRES: same id-preservation logic as the done-event path.
         tool_calls = []
         for idx in sorted(tool_calls_partial.keys()):
             tc = tool_calls_partial[idx]
             if tc["name"]:
                 tool_calls.append({
-                    "id": f"call_{idx}",
+                    "id": tc["id"] or f"call_{idx}",
                     "function": {
                         "name": tc["name"],
                         "arguments": tc["arguments"]
