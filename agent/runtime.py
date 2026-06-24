@@ -724,7 +724,7 @@ def _stream_anthropic_events(
                 # block-start event (NOT in the delta). Forward it so the
                 # accumulator can attach it to the in-progress tool_call before
                 # the first content_block_delta arrives.
-                block = d.get("content_block", {})
+                block = d.get("content_block") or {}
                 if block.get("type") == "tool_use":
                     yield SSEEvent(type="tool_call_delta", data={
                         "index": d.get("index", 0),
@@ -733,7 +733,7 @@ def _stream_anthropic_events(
                         "id": block.get("id", "") or "",
                     })
             elif etype == "content_block_delta":
-                delta = d.get("delta", {})
+                delta = d.get("delta") or {}
                 dtype = delta.get("type", "")
                 if dtype == "text_delta":
                     yield SSEEvent(type="text_delta", data={"content": delta.get("text", "")})
