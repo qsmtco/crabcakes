@@ -140,7 +140,7 @@ crabcakes/
 │       ├── left_progress.py    # Stub — progress indicator placeholder
 │       ├── main_content.py     # MainContent — chat notebook + input + button bar
 │       ├── session_menu.py     # Right-click session switcher popover
-│       ├── chat_input_toolbar.py # ~549 lines — ChatInputToolbar — find/replace bar + spell check popover (view only)
+│       ├── chat_input_toolbar.py # ~480 lines — ChatInputToolbar — find/replace bar + spell check toggle (view only)
 │       ├── feed_tab.py          # ~167 lines — FeedTab — project feed card container (view only)
 │       └── agent_builder.py     # AgentBuilderDialog — modal dialog for creating/editing agents
 │       └── auxilium_wizard.py  # Auxilium first-run wizard view (Tier 1, D7)
@@ -2518,7 +2518,7 @@ def get_suggestions(word: str) -> list[str]
 def is_available() -> bool
 ```
 
-**Used by:** `ui/handlers/input_toolbar_handler.py` (spell check logic), `ui/views/chat_input_toolbar.py` (spell check popover)
+**Used by:** `ui/handlers/input_toolbar_handler.py` (spell check logic)
 
 ---
 
@@ -2543,17 +2543,20 @@ def get_workflow_content(project_path: str) -> str
 
 ### 3.34 `ui/views/chat_input_toolbar.py` — Chat Input Toolbar (View)
 
-**Responsibility:** Compact toolbar for the chat input area — find/replace bar and spell check popover. Pure view — widgets only, no business logic. All logic lives in `InputToolbarHandler`.
+**Responsibility:** Compact toolbar for the chat input area — find/replace bar and spell check toggle button. Pure view — widgets only, no business logic. All logic lives in `InputToolbarHandler`.
 
 **Public API:**
 ```python
 class ChatInputToolbar(Gtk.Box):
     def __init__(self, on_find_changed=None, on_find_next=None, on_find_prev=None,
-                 on_replace=None, on_replace_all=None, on_spell_suggestion=None)
+                 on_replace=None, on_replace_all=None, on_spell_toggled=None)
     def show_find_bar(self) -> None
     def hide_find_bar(self) -> None
     def get_find_text(self) -> str
-    def set_find_text(self, text: str) -> None
+    def get_search_text(self) -> str
+    def get_replace_text(self) -> str
+    def update_match_count(self, current: int, total: int) -> None
+    def set_spell_active(self, active: bool) -> None
 ```
 
 ---
@@ -3484,7 +3487,7 @@ crabcakes/
 │       ├── activity_drawer.py     # NEW (SPEC-activity-drawer) — collapsible activity event panel
 │       ├── agent_builder.py      # AgentBuilderDialog — modal dialog for creating/editing agents
 │       ├── chat_bubble.py        # ~1015 lines — build_role_bubble() factory (Phase 1 + 2 block-level)
-│       ├── chat_input_toolbar.py # ~549 lines — ChatInputToolbar — find/replace bar + spell check popover (view only)
+│       ├── chat_input_toolbar.py # ~480 lines — ChatInputToolbar — find/replace bar + spell check toggle (view only)
 │       ├── diff_card.py          # ~356 lines — build_file_diff_card(), build_diff_summary_card() (Phase 7)
 │       ├── feed_card.py          # ~581 lines — feed_card widget factory (Phase 5)
 │       ├── feed_tab.py           # ~167 lines — FeedTab — project feed card container (view only)
