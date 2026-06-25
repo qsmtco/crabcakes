@@ -7,7 +7,7 @@ Run from the project root:
 
 
 def main() -> None:
-    print("hello world")
+    print("hello cruel world")
 
 
 if __name__ == "__main__":
