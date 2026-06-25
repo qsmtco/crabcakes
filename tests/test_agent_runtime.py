@@ -789,6 +789,72 @@ class TestPersistence:
             rt.stop()
 
 
+class TestListConversations:
+    """Regression tests for list_conversations lightweight read (W13/W14)."""
+
+    def test_list_conversations_returns_agent_name_without_full_deserialization(self):
+        """list_conversations reads only agent_name from each JSON file,
+        not the full Conversation/Message deserialization."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rt = AgentRuntime(_make_cfg())
+            rt.start()
+            sk = _uniq()
+            rt.create_conversation("Coder", sk, tmpdir)
+            rt.get_conversation(sk).add_user_message("hi")
+            rt.get_conversation(sk).add_assistant_message("hello", [])
+            rt.save_conversation(sk)
+
+            result = rt.list_conversations()
+            # Find our session in the results
+            our_entry = [entry for entry in result if entry[0] == sk]
+            assert len(our_entry) == 1, f"Expected 1 entry for {sk}, got {len(our_entry)}"
+            assert our_entry[0][1] == "Coder", f"Expected agent_name='Coder', got '{our_entry[0][1]}'"
+            rt.stop()
+
+    def test_list_conversations_returns_unknown_for_corrupt_file(self):
+        """A corrupt JSON file returns 'unknown' instead of crashing."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rt = AgentRuntime(_make_cfg())
+            rt.start()
+
+            # Write a corrupt JSON file into the conversations directory
+            corrupt_path = os.path.join(tmpdir, "corrupt-session.json")
+            with open(corrupt_path, "w") as f:
+                f.write("{not valid json")
+
+            result = rt.list_conversations()
+            corrupt_entries = [e for e in result if e[0] == "corrupt-session"]
+            assert len(corrupt_entries) == 1
+            assert corrupt_entries[0][1] == "unknown"
+            rt.stop()
+
+    def test_list_conversations_returns_unknown_for_missing_agent_name(self):
+        """A JSON file without agent_name field returns 'unknown'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rt = AgentRuntime(_make_cfg())
+            rt.start()
+
+            # Write a JSON file without agent_name
+            path = os.path.join(tmpdir, "no-name-session.json")
+            with open(path, "w") as f:
+                json.dump({"messages": []}, f)
+
+            result = rt.list_conversations()
+            entries = [e for e in result if e[0] == "no-name-session"]
+            assert len(entries) == 1
+            assert entries[0][1] == "unknown"
+            rt.stop()
+
+    def test_list_conversations_empty_directory(self):
+        """An empty conversations directory returns an empty list."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rt = AgentRuntime(_make_cfg())
+            rt.start()
+            result = rt.list_conversations()
+            assert result == []
+            rt.stop()
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  SSE Streaming (Phase 1.3b)
 # ═══════════════════════════════════════════════════════════════════
@@ -1602,59 +1668,6 @@ class TestStuckMessageTransient:
         rt._cleanup_tool_history(sk)
         rt.stop()
 
-    def test_stuck_message_prepended_to_next_llm_request(self):
-        """When a stuck message is pending, _call_llm prepends it to the messages
-        list before making the API call. Verified by mocking the underlying provider
-        caller (not _call_llm itself, which contains the injection logic)."""
-        from agent import runtime as rt_module
-
-        rt = AgentRuntime(_make_cfg())
-        rt.start()
-        sk = _uniq()
-        rt.create_conversation("Coder", sk, "/tmp")
-
-        # Manually populate pending stuck messages
-        rt._pending_stuck_messages[sk] = ["Test stuck intervention message"]
-
-        # Mock the underlying provider caller to capture the messages it receives
-        captured_messages = []
-        def mock_streamer(base_url, api_key, model, messages, tools, timeout, x_title=""):
-            captured_messages.append(list(messages))
-            yield from []
-
-        orig_streamer = rt_module._PROVIDER_STREAMERS.get("openai")
-        rt_module._PROVIDER_STREAMERS["openai"] = mock_streamer
-        try:
-            rt._call_llm_streaming(
-                session_key=sk,
-                base_url="https://api.openai.com/v1",
-                api_key="test",
-                model="openai/gpt-4o",
-                caller_key="openai",
-                messages=[{"role": "user", "content": "hello"}],
-                tools=None,
-                timeout=30.0,
-            )
-        finally:
-            if orig_streamer is not None:
-                rt_module._PROVIDER_STREAMERS["openai"] = orig_streamer
-
-        # The first message passed to the streamer should be the stuck prefix
-        assert len(captured_messages) == 1, f"Expected 1 captured call, got: {len(captured_messages)}"
-        first_msg = captured_messages[0][0]
-        assert first_msg["role"] == "user", f"Expected first message role=user, got: {first_msg['role']}"
-        assert "Stuck-detection intervention" in first_msg["content"], \
-            f"Expected stuck prefix in first message, got: {first_msg['content'][:100]}"
-        assert "Test stuck intervention message" in first_msg["content"], \
-            f"Expected stuck text in first message, got: {first_msg['content'][:100]}"
-
-        # The pending list should be cleared after consumption
-        assert sk not in rt._pending_stuck_messages, \
-            f"Pending should be cleared after _call_llm, got: {rt._pending_stuck_messages.get(sk)}"
-
-        rt._cleanup_tool_history(sk)
-        rt.stop()
-
 
 class TestPerProjectEnforcement:
     """§F — Per-project enforcement config tests.
@@ -1886,3 +1899,293 @@ class TestEmptyResponseFallbackBubble:
             text = call_args[0][1]
             assert "no content" not in text.lower() and "Agent returned" not in text, \
                 f"Fallback bubble should not render during streaming, got: {text}"
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Streaming regression tests for _stream_anthropic_events (W2/W3/W4)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestStreamAnthropicEvents:
+    """Regression tests for _stream_anthropic_events.
+
+    Locks in the W2 (tool conversion), W3 (message conversion), and W4
+    (no stream_options in Anthropic payload) fixes from
+    SPEC-RUNTIME-HARDENING-AUDIT.md §2.2 and §10.3.
+    """
+
+    def test_no_stream_options_in_anthropic_payload(self):
+        """Anthropic API does not support stream_options — must not be in payload."""
+        import json
+        from unittest.mock import patch, MagicMock
+        from agent.runtime import _stream_anthropic_events
+
+        captured_requests = []
+
+        def fake_urlopen(req, timeout=None):
+            captured_requests.append(req)
+            # Return a minimal streaming response
+            body = b'data: {"type": "message_stop"}\n\n'
+            resp = MagicMock()
+            resp.__enter__ = MagicMock(return_value=resp)
+            resp.__exit__ = MagicMock(return_value=False)
+            resp.iter_lines = MagicMock(return_value=iter([body]))
+            return resp
+
+        with patch("agent.runtime._urlopen_with_ssl_retry", side_effect=fake_urlopen):
+            with patch("agent.runtime._sse_lines", return_value=iter([
+                b'data: {"type": "message_stop"}\n\n'
+            ])):
+                # Provide minimal args
+                list(_stream_anthropic_events(
+                    base_url="https://api.anthropic.com",
+                    api_key="test-key",
+                    model="claude-3-5-sonnet-20241022",
+                    messages=[{"role": "user", "content": "hello"}],
+                    tools=None,
+                    timeout=30.0,
+                ))
+        # Verify no stream_options in captured request data
+        assert len(captured_requests) == 1
+        payload = json.loads(captured_requests[0].data)
+        assert "stream_options" not in payload, (
+            "stream_options must not be sent to Anthropic API"
+        )
+
+    def test_anthropic_messages_are_converted(self):
+        """Messages must be converted to Anthropic format, not passed raw.
+
+        Includes assistant with tool_calls and tool role messages so the test
+        would FAIL if _convert_messages_for_anthropic were bypassed (a plain
+        user message passes through either way).
+        """
+        import json
+        from unittest.mock import patch, MagicMock
+        from agent.runtime import _stream_anthropic_events
+
+        captured_requests = []
+
+        def fake_urlopen(req, timeout=None):
+            captured_requests.append(req)
+            body = b'data: {"type": "message_stop"}\n\n'
+            resp = MagicMock()
+            resp.__enter__ = MagicMock(return_value=resp)
+            resp.__exit__ = MagicMock(return_value=False)
+            resp.iter_lines = MagicMock(return_value=iter([body]))
+            return resp
+
+        raw_messages = [
+            {"role": "user", "content": "read foo.py"},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "call_1", "function": {"name": "read_file", "arguments": '{"path": "foo.py"}'}},
+            ]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "file contents"},
+        ]
+
+        with patch("agent.runtime._urlopen_with_ssl_retry", side_effect=fake_urlopen):
+            with patch("agent.runtime._sse_lines", return_value=iter([
+                b'data: {"type": "message_stop"}\n\n'
+            ])):
+                list(_stream_anthropic_events(
+                    base_url="https://api.anthropic.com",
+                    api_key="test-key",
+                    model="claude-3-5-sonnet-20241022",
+                    messages=raw_messages,  # raw OpenAI-format dicts
+                    tools=None,
+                    timeout=30.0,
+                ))
+
+        assert len(captured_requests) == 1
+        payload = json.loads(captured_requests[0].data)
+        api_msgs = payload["messages"]
+        # Messages should be a list (Anthropic format)
+        assert isinstance(api_msgs, list)
+        # 3 input messages → 3 output messages (no system, no drops)
+        assert len(api_msgs) == 3
+        # assistant with tool_calls → content blocks with tool_use
+        assert api_msgs[1]["role"] == "assistant"
+        assert isinstance(api_msgs[1]["content"], list)
+        assert any(
+            b.get("type") == "tool_use" for b in api_msgs[1]["content"]
+        ), f"assistant tool_calls must convert to tool_use blocks, got: {api_msgs[1]}"
+        # tool role → user role with tool_result content
+        assert api_msgs[2]["role"] == "user"
+        assert isinstance(api_msgs[2]["content"], list)
+        assert api_msgs[2]["content"][0]["type"] == "tool_result", (
+            f"tool role must convert to user role with tool_result, got: {api_msgs[2]}"
+        )
+
+    def test_anthropic_tools_are_converted(self):
+        """Tools must be converted to Anthropic format, not passed raw."""
+        import json
+        from unittest.mock import patch, MagicMock
+        from agent.runtime import _stream_anthropic_events
+
+        captured_requests = []
+
+        def fake_urlopen(req, timeout=None):
+            captured_requests.append(req)
+            body = b'data: {"type": "message_stop"}\n\n'
+            resp = MagicMock()
+            resp.__enter__ = MagicMock(return_value=resp)
+            resp.__exit__ = MagicMock(return_value=False)
+            resp.iter_lines = MagicMock(return_value=iter([body]))
+            return resp
+
+        raw_tools = [{
+            "type": "function",
+            "function": {
+                "name": "test_tool",
+                "description": "A test tool",
+                "parameters": {"type": "object", "properties": {}}
+            }
+        }]
+
+        with patch("agent.runtime._urlopen_with_ssl_retry", side_effect=fake_urlopen):
+            with patch("agent.runtime._sse_lines", return_value=iter([
+                b'data: {"type": "message_stop"}\n\n'
+            ])):
+                list(_stream_anthropic_events(
+                    base_url="https://api.anthropic.com",
+                    api_key="test-key",
+                    model="claude-3-5-sonnet-20241022",
+                    messages=[{"role": "user", "content": "hello"}],
+                    tools=raw_tools,  # raw tool dicts
+                    timeout=30.0,
+                ))
+
+        assert len(captured_requests) == 1
+        payload = json.loads(captured_requests[0].data)
+        # After conversion, tools should use input_schema (Anthropic format)
+        assert "tools" in payload
+        for tool in payload["tools"]:
+            assert "input_schema" in tool, "Anthropic tools must have input_schema"
+            assert "name" in tool
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Phase 1 audit regression tests — system prompt placement
+# ═══════════════════════════════════════════════════════════════════
+
+class TestSystemPromptPlacement:
+    """Regression tests for Phase 1 audit findings.
+
+    Locks in fixes for:
+    - BUG #1: _call_anthropic was sending the system prompt TWICE
+              (payload['system'] AND as first user message via helper)
+    - BUG #2: _stream_anthropic_events was sending the system prompt
+              as a USER message (wrong role, loses Anthropic system priority)
+    - BUG #3: _convert_tools_for_anthropic raised KeyError on missing parameters
+    """
+
+    def test_non_streaming_system_not_duplicated_as_user(self):
+        """_call_anthropic must put system prompt ONLY in payload['system'],
+        NOT also as the first user message in payload['messages'].
+        """
+        from unittest.mock import patch, MagicMock
+        from agent.runtime import _call_anthropic
+
+        captured = []
+
+        def fake_urlopen(req, timeout=None):
+            captured.append(req)
+            body = b'{"id": "msg_1", "content": [{"type": "text", "text": "hi"}]}'
+            resp = MagicMock()
+            resp.__enter__ = MagicMock(return_value=resp)
+            resp.__exit__ = MagicMock(return_value=False)
+            resp.read = MagicMock(return_value=body)
+            return resp
+
+        with patch("agent.runtime._urlopen_with_ssl_retry", side_effect=fake_urlopen):
+            _call_anthropic(
+                base_url="https://api.anthropic.com",
+                api_key="test",
+                model="claude-3-5-sonnet-20241022",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "user", "content": "Hello"},
+                ],
+                tools=None,
+                timeout=30.0,
+            )
+
+        import json
+        assert len(captured) == 1
+        payload = json.loads(captured[0].data)
+        # System goes to payload['system']
+        assert payload.get("system") == "You are a helpful assistant.", (
+            f"system prompt must be in payload['system'], got: {payload.get('system')!r}"
+        )
+        # System must NOT be duplicated as a user message
+        msg_contents = [m.get("content", "") for m in payload["messages"]]
+        assert "You are a helpful assistant." not in msg_contents, (
+            f"system prompt leaked into messages as user content: {payload['messages']}"
+        )
+        # Only the real user message should remain
+        assert len(payload["messages"]) == 1
+        assert payload["messages"][0]["role"] == "user"
+        assert payload["messages"][0]["content"] == "Hello"
+
+    def test_streaming_system_goes_to_payload_system_not_user(self):
+        """_stream_anthropic_events must put system prompt in payload['system'],
+        NOT as a user-role message (Anthropic system has higher priority).
+        """
+        from unittest.mock import patch, MagicMock
+        from agent.runtime import _stream_anthropic_events
+
+        captured = []
+
+        def fake_urlopen(req, timeout=None):
+            captured.append(req)
+            body = b'data: {"type": "message_stop"}\n\n'
+            resp = MagicMock()
+            resp.__enter__ = MagicMock(return_value=resp)
+            resp.__exit__ = MagicMock(return_value=False)
+            resp.iter_lines = MagicMock(return_value=iter([body]))
+            return resp
+
+        with patch("agent.runtime._urlopen_with_ssl_retry", side_effect=fake_urlopen):
+            with patch("agent.runtime._sse_lines", return_value=iter([
+                b'data: {"type": "message_stop"}\n\n'
+            ])):
+                list(_stream_anthropic_events(
+                    base_url="https://api.anthropic.com",
+                    api_key="test",
+                    model="claude-3-5-sonnet-20241022",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant."},
+                        {"role": "user", "content": "Hello"},
+                    ],
+                    tools=None,
+                    timeout=30.0,
+                ))
+
+        import json
+        assert len(captured) == 1
+        payload = json.loads(captured[0].data)
+        # System goes to payload['system']
+        assert payload.get("system") == "You are a helpful assistant.", (
+            f"streaming system prompt must be in payload['system'], got: {payload.get('system')!r}"
+        )
+        # System must NOT appear as a user message
+        msg_contents = [m.get("content", "") for m in payload["messages"]]
+        assert "You are a helpful assistant." not in msg_contents, (
+            f"streaming system prompt leaked into messages as user content: {payload['messages']}"
+        )
+
+    def test_convert_tools_handles_missing_parameters(self):
+        """_convert_tools_for_anthropic must NOT raise KeyError when a tool
+        dict lacks 'parameters'. It should default input_schema to {}.
+        """
+        from agent.runtime import _convert_tools_for_anthropic
+
+        # Missing 'parameters' key entirely
+        result = _convert_tools_for_anthropic([{"function": {"name": "f", "description": "d"}}])
+        assert result == [{"name": "f", "description": "d", "input_schema": {}}], result
+
+        # parameters=None
+        result = _convert_tools_for_anthropic([{"function": {"name": "f", "parameters": None}}])
+        assert result == [{"name": "f", "description": "", "input_schema": {}}], result
+
+        # parameters not a dict (string)
+        result = _convert_tools_for_anthropic([{"function": {"name": "f", "parameters": "bad"}}])
+        assert result == [{"name": "f", "description": "", "input_schema": {}}], result

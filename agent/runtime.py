@@ -22,8 +22,7 @@ import re
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, TypedDict
+from typing import TYPE_CHECKING, Any, Callable, Iterator, TypedDict
 
 if TYPE_CHECKING:
     from models.conversation import Conversation
@@ -200,8 +199,6 @@ def _call_openai(
     x_title: str = "",
 ) -> dict:
     """Call OpenAI Chat Completions API (also used by OpenRouter, ZAI)."""
-    import urllib.request
-
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
     payload = {
         "model": _model_id(model),
@@ -245,8 +242,6 @@ def _call_minimax(
     x_title: str = "",
 ) -> dict:
     """Call MiniMax ChatCompletion v2 API."""
-    import urllib.request
-
     endpoint = f"{base_url.rstrip('/')}/text/chatcompletion_v2"
     payload = {
         "model": _model_id(model),
@@ -285,31 +280,26 @@ def _call_minimax(
         ) from e
 
 
-def _call_anthropic(
-    base_url: str,
-    api_key: str,
-    model: str,
-    messages: list[dict],
-    tools: list[dict] | None,
-    timeout: float,
-    x_title: str = "",
-) -> dict:
-    """Call Anthropic Messages API."""
-    import urllib.request
+def _convert_messages_for_anthropic(messages: list[dict]) -> list[dict]:
+    """Convert OpenAI-format message dicts → Anthropic message format.
 
-    endpoint = f"{base_url.rstrip('/')}/messages"
-    # Anthropic uses a different message format — convert OpenAI tool format
-    # tool_calls: "content": [{"type": "tool_use", ...}] + tool_results: role: "user" / "content": [{"type": "tool_result", ...}]
-    system_msg = None
-    api_messages = []
+    Handles:
+    - system: stripped, returned as user role with text content
+    - assistant with tool_calls: converted to Anthropic content blocks
+    - tool: converted to Anthropic tool_result blocks
+    - all others: passed through as-is
+    """
+    api_messages: list[dict] = []
     for msg in messages:
-        if msg["role"] == "system":
-            system_msg = msg["content"]
-        elif msg["role"] == "assistant" and msg.get("tool_calls"):
-            # Convert OpenAI tool_calls to Anthropic content blocks
-            content = []
+        role = msg.get("role", "")
+        if role == "system":
+            content_text = msg.get("content", "")
+            if content_text:
+                api_messages.append({"role": "user", "content": content_text})
+        elif role == "assistant" and msg.get("tool_calls"):
+            content_blocks: list[dict] = []
             if msg.get("content"):
-                content.append({"type": "text", "text": msg["content"]})
+                content_blocks.append({"type": "text", "text": msg["content"]})
             for tc in msg["tool_calls"]:
                 args_str = tc["function"]["arguments"]
                 if isinstance(args_str, str):
@@ -317,15 +307,14 @@ def _call_anthropic(
                         args_str = json.loads(args_str)
                     except Exception:
                         pass
-                content.append({
+                content_blocks.append({
                     "type": "tool_use",
                     "id": tc["id"],
                     "name": tc["function"]["name"],
                     "input": args_str,
                 })
-            api_messages.append({"role": "assistant", "content": content})
-        elif msg["role"] == "tool":
-            # Convert OpenAI tool result to Anthropic format
+            api_messages.append({"role": "assistant", "content": content_blocks})
+        elif role == "tool":
             api_messages.append({
                 "role": "user",
                 "content": [{
@@ -336,6 +325,62 @@ def _call_anthropic(
             })
         else:
             api_messages.append(msg)
+    return api_messages
+
+
+def _convert_tools_for_anthropic(tools: list[dict]) -> list[dict]:
+    """Convert OpenAI-format tool dicts → Anthropic tool schema.
+
+    Input:  [{"function": {"name", "description", "parameters"}}}]
+    Output: [{"name", "description", "input_schema"}]
+
+    Defensive: defaults missing 'description' to '' and missing/'None'
+    'parameters' to {} so malformed upstream tool dicts don't crash
+    with KeyError. Anthropic accepts input_schema={} (no required params).
+    """
+    result: list[dict] = []
+    for t in tools:
+        fn = t.get("function") or {}
+        params = fn.get("parameters")
+        if not isinstance(params, dict):
+            params = {}
+        entry: dict[str, object] = {
+            "name": fn.get("name", ""),
+            "description": fn.get("description", ""),
+            "input_schema": params,
+        }
+        result.append(entry)
+    return result
+
+
+def _call_anthropic(
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict],
+    tools: list[dict] | None,
+    timeout: float,
+    x_title: str = "",
+) -> dict:
+    """Call Anthropic Messages API."""
+    endpoint = f"{base_url.rstrip('/')}/messages"
+    # Extract system prompt and STRIP system-role messages from the messages
+    # list before passing to the helper. The Anthropic API expects the system
+    # prompt in payload['system'] (NOT as a user-role message), and the helper
+    # would otherwise convert the system message into a user message, causing
+    # the system prompt to be sent TWICE (once as system, once as first user).
+    # PHASE-1 AUDIT BUG #1 fix.
+    system_msg: str | None = None
+    non_system_messages: list[dict] = []
+    for msg in messages:
+        if msg.get("role") == "system":
+            if system_msg is None:
+                content = msg.get("content", "")
+                system_msg = content if isinstance(content, str) else ""
+        else:
+            non_system_messages.append(msg)
+    # Convert messages and tools using shared helpers
+    api_messages = _convert_messages_for_anthropic(non_system_messages)
 
     payload: dict[str, Any] = {
         "model": _model_id(model),
@@ -345,16 +390,7 @@ def _call_anthropic(
     if system_msg:
         payload["system"] = system_msg
     if tools:
-        # Convert OpenAI tool format to Anthropic tool format (Bug #9 fix)
-        anthropic_tools = [
-            {
-                "name": t["function"]["name"],
-                "description": t["function"].get("description", ""),
-                "input_schema": t["function"]["parameters"],
-            }
-            for t in tools
-        ]
-        payload["tools"] = anthropic_tools
+        payload["tools"] = _convert_tools_for_anthropic(tools)
 
     body = json.dumps(payload).encode()
     req = urllib.request.Request(
@@ -409,7 +445,7 @@ SSEEvent = namedtuple("SSEEvent", ["type", "data"])
 # Types: 'text_delta', 'tool_call_delta', 'tool_call_done', 'done'
 
 
-def _sse_lines(resp) -> list[bytes]:
+def _sse_lines(resp) -> Iterator[bytes]:
     """Read all SSE lines from an HTTP response. Handles chunked transfer encoding."""
     # Read line-by-line (not byte-by-byte) — avoids 100-1000x syscall overhead
     for line in resp:
@@ -433,6 +469,36 @@ def _parse_sse_line(line: bytes) -> SSEEvent | None:
         return SSEEvent(type="raw", data=json.loads(data.decode("utf-8")))
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
+
+
+def _parse_sse_delta(d: dict) -> list[SSEEvent]:
+    """Extract text_delta and tool_call_delta events from an SSE delta dict.
+
+    Shared by _stream_openai_events and _stream_minimax_events.
+    The dict is the parsed JSON of an SSE `data:` line whose type is "raw"
+    (i.e., it has a `choices` field with a delta).
+
+    finish_reason / usage handling is NOT included — each caller processes
+    those inline because OpenAI and MiniMax emit them differently
+    (OpenAI: usage in a trailing chunk with empty choices; MiniMax: usage
+    inline alongside finish_reason).
+    """
+    events: list[SSEEvent] = []
+    delta = d.get("choices", [{}])[0].get("delta", {})
+    content = delta.get("content")
+    if content is not None:
+        events.append(SSEEvent(type="text_delta", data={"content": content}))
+    tc_delta = delta.get("tool_calls", [])
+    for tcd in tc_delta:
+        idx = tcd.get("index", 0)
+        if "function" in tcd:
+            fname = tcd["function"].get("name") or ""
+            fargs = tcd["function"].get("arguments", "") or ""
+            events.append(SSEEvent(type="tool_call_delta", data={
+                "index": idx, "name": fname, "arguments": fargs,
+                "id": tcd.get("id", "") or "",
+            }))
+    return events
 
 
 # Transient SSL/network errors that warrant a retry.
@@ -485,7 +551,6 @@ def _stream_openai_events(
         "model": _model_id(model),
         "messages": messages,
         "stream": True,
-        "stream_options": {"include_usage": True},
     }
     if tools:
         payload["tools"] = tools
@@ -516,26 +581,9 @@ def _stream_openai_events(
             if ev.type != "raw":
                 continue
             d = ev.data
-            delta = d.get("choices", [{}])[0].get("delta", {})
-            # Text content delta (guard against null content from OpenRouter)
-            content = delta.get("content")
-            if content is not None:
-                yield SSEEvent(type="text_delta", data={"content": content})
-            # Tool call deltas
-            tc_delta = delta.get("tool_calls", [])
-            for tcd in tc_delta:
-                idx = tcd.get("index", 0)
-                if "function" in tcd:
-                    fname = tcd["function"].get("name") or ""
-                    fargs = tcd["function"].get("arguments", "") or ""
-                    # STREAM-ID-PRES: surface the provider-assigned tool_call id
-                    # so the accumulator preserves it through to the round-trip
-                    # request. OpenAI/MiniMax/OpenRouter/ZAI all set this in
-                    # the first delta for a tool call; empty string when absent.
-                    yield SSEEvent(type="tool_call_delta", data={
-                        "index": idx, "name": fname, "arguments": fargs,
-                        "id": tcd.get("id", "") or "",
-                    })
+            # W11: text + tool_call deltas are shared with _stream_minimax_events
+            for out_ev in _parse_sse_delta(d):
+                yield out_ev
             # OpenAI-compatible providers emit a usage chunk at the end of the stream,
             # typically in a frame with empty choices. Capture and forward it.
             # See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.1.1 (BUG #3 fix).
@@ -559,7 +607,6 @@ def _stream_minimax_events(
         "model": _model_id(model),
         "messages": messages,
         "stream": True,
-        "stream_options": {"include_usage": True},
     }
     if tools:
         payload["tools"] = tools
@@ -604,21 +651,9 @@ def _stream_minimax_events(
                     return
                 if ev.type == "raw":
                     d = ev.data
-                    delta = d.get("choices", [{}])[0].get("delta", {})
-                    content = delta.get("content")
-                    if content is not None:
-                        yield SSEEvent(type="text_delta", data={"content": content})
-                    tc_delta = delta.get("tool_calls", [])
-                    for tcd in tc_delta:
-                        idx = tcd.get("index", 0)
-                        if "function" in tcd:
-                            fname = tcd["function"].get("name") or ""
-                            fargs = tcd["function"].get("arguments", "") or ""
-                            # STREAM-ID-PRES: see _stream_openai_events
-                            yield SSEEvent(type="tool_call_delta", data={
-                                "index": idx, "name": fname, "arguments": fargs,
-                                "id": tcd.get("id", "") or "",
-                            })
+                    # W11: text + tool_call deltas are shared with _stream_openai_events
+                    for out_ev in _parse_sse_delta(d):
+                        yield out_ev
                     finish_reason = d.get("choices", [{}])[0].get("finish_reason")
                     if finish_reason in ("stop", "tool_calls", "length"):
                         # Phase CB-3: capture usage before signaling done.
@@ -638,21 +673,9 @@ def _stream_minimax_events(
             if ev.type != "raw":
                 continue
             d = ev.data
-            delta = d.get("choices", [{}])[0].get("delta", {})
-            content = delta.get("content")
-            if content is not None:
-                yield SSEEvent(type="text_delta", data={"content": content})
-            tc_delta = delta.get("tool_calls", [])
-            for tcd in tc_delta:
-                idx = tcd.get("index", 0)
-                if "function" in tcd:
-                    fname = tcd["function"].get("name") or ""
-                    fargs = tcd["function"].get("arguments", "") or ""
-                    # STREAM-ID-PRES: see _stream_openai_events
-                    yield SSEEvent(type="tool_call_delta", data={
-                        "index": idx, "name": fname, "arguments": fargs,
-                        "id": tcd.get("id", "") or "",
-                    })
+            # W11: text + tool_call deltas are shared with _stream_openai_events
+            for out_ev in _parse_sse_delta(d):
+                yield out_ev
             # MiniMax signals stream end via finish_reason, not [DONE]
             finish_reason = d.get("choices", [{}])[0].get("finish_reason")
             if finish_reason in ("stop", "tool_calls", "length"):
@@ -675,26 +698,34 @@ def _stream_anthropic_events(
 ):
     """Yield SSE events from Anthropic Messages streaming API."""
     endpoint = f"{base_url.rstrip('/')}/messages"
-    # Strip system message and extract api_messages format
-    system_msg = None
-    api_messages = []
+    # Extract system prompt and STRIP system-role messages before passing to
+    # the helper. The Anthropic API expects the system prompt in
+    # payload['system'] (NOT as a user-role message). The helper would
+    # otherwise convert the system message into a user message, causing the
+    # system prompt to be sent with the wrong role (losing system priority).
+    # PHASE-1 AUDIT BUG #2 fix — matches the non-streaming _call_anthropic.
+    system_msg: str | None = None
+    non_system_messages: list[dict] = []
     for msg in messages:
-        if msg["role"] == "system":
-            system_msg = msg["content"]
+        if msg.get("role") == "system":
+            if system_msg is None:
+                content = msg.get("content", "")
+                system_msg = content if isinstance(content, str) else ""
         else:
-            api_messages.append(msg)
+            non_system_messages.append(msg)
+    # Use shared conversion helpers (same as non-streaming _call_anthropic)
+    api_messages = _convert_messages_for_anthropic(non_system_messages)
 
     payload: dict[str, Any] = {
         "model": _model_id(model),
         "messages": api_messages,
         "max_tokens": 4096,
         "stream": True,
-        "stream_options": {"include_usage": True},
     }
     if system_msg:
         payload["system"] = system_msg
     if tools:
-        payload["tools"] = tools
+        payload["tools"] = _convert_tools_for_anthropic(tools)
 
     body = json.dumps(payload).encode()
     req = urllib.request.Request(
@@ -1712,7 +1743,7 @@ class AgentRuntime:
 
                 # Tool calls — execute each
                 logger.debug("[tool-loop] sk=%s executing %d tool calls", session_key, len(tool_calls_raw))
-                from models.conversation import ToolCall, ToolCallStatus
+                from models.conversation import ToolCall
                 from agent.tools import execute_tool
 
                 # Create assistant message once, attach all tool calls — fixes data corruption
@@ -1769,7 +1800,6 @@ class AgentRuntime:
                     tc.mark_executing()
 
                     # Execute tool
-                    from agent.tools import execute_tool
                     logger.debug("[tool-loop] sk=%s executing tool: %s args_keys=%s",
                                  session_key, tool_name, list(args.keys()))
                     # Bypass exec_command's internal approval check — the runtime already
@@ -1783,13 +1813,10 @@ class AgentRuntime:
                     per_call_cb = (lambda *a: True) if bypass_approval else None
                     # LOW-2: resolve workspace before use; raises ValueError if project_path is empty
                     workspace = _resolve_session_workspace(conv.project_path, session_key)
-                    try:
-                        # project_path = sandbox base (file tools resolve relative paths here)
-                        # scratch_dir = per-session workspace for exec_command cwd
-                        result = execute_tool(tool_name, args, conv.project_path, session_key,
-                                              approval_callback=per_call_cb, scratch_dir=workspace)
-                    finally:
-                        pass
+                    # project_path = sandbox base (file tools resolve relative paths here)
+                    # scratch_dir = per-session workspace for exec_command cwd
+                    result = execute_tool(tool_name, args, conv.project_path, session_key,
+                                          approval_callback=per_call_cb, scratch_dir=workspace)
                     logger.debug("[tool-loop] sk=%s tool %s result: success=%s output_len=%d",
                                  session_key, tool_name, result.success, len(result.output or ""))
 
@@ -2048,21 +2075,6 @@ class AgentRuntime:
         Returns:
             Assembled response dict compatible with _extract_tool_calls / _extract_text_content.
         """
-        # Phase CB-3: prepend pending stuck messages as transient prefixes.
-        # (Same fix as _call_llm; streaming path needs it too.)
-        # See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.3 (BUG #4 fix).
-        pending = self._pending_stuck_messages.pop(session_key, [])
-        if pending:
-            stuck_prefix = {
-                "role": "user",
-                "content": (
-                    "[Stuck-detection intervention — please consider a different approach]\n\n"
-                    + "\n\n---\n\n".join(pending)
-                ),
-            }
-            messages = [stuck_prefix] + messages
-            logger.debug("[stuck-injection] sk=%s (streaming): prepended %d stuck message(s)", session_key, len(pending))
-
         # PHASE-11: caller_key is resolved by _call_llm before calling this method
         # (explicit caller > default_model prefix > model prefix). Symmetric with
         # the non-streaming path.
@@ -2265,12 +2277,17 @@ class AgentRuntime:
         result = []
         for fname in files:
             sk = fname[:-5]  # strip .json
-            result2 = _load_conversation_from_disk(sk)
-            if result2:
-                _, meta = result2
-                result.append((sk, meta.get("agent_name", "unknown")))
-            else:
-                result.append((sk, "unknown"))
+            # W13: lightweight read — only extract agent_name, skip full
+            # Conversation/Message deserialization + api_key re-resolution.
+            agent_name = "unknown"
+            try:
+                path = os.path.join(d, fname)
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+                agent_name = data.get("agent_name", "unknown")
+            except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+                pass
+            result.append((sk, agent_name))
         return result
 
     def approve_exec(self, session_key: str, tool_name: str, args: dict, approved: bool) -> None:
