@@ -790,35 +790,60 @@ class TestPersistence:
 
 
 class TestListConversations:
-    """Regression tests for list_conversations lightweight read (W13/W14)."""
+    """Regression tests for list_conversations lightweight read (W13/W14).
+
+    Uses XDG_CONFIG_HOME isolation so list_conversations reads from a
+    dedicated temporary conversations directory, not the user's real one.
+    """
+
+    def _isolated_runtime(self, tmpdir):
+        """Create an AgentRuntime with XDG_CONFIG_HOME pointing at tmpdir.
+
+        Returns (rt, old_xdg) — caller must restore env in test cleanup.
+        We do NOT auto-restore because list_conversations() calls
+        _conversations_dir() lazily on each invocation.
+        """
+        old_xdg = os.environ.get("XDG_CONFIG_HOME")
+        os.environ["XDG_CONFIG_HOME"] = tmpdir
+        rt = AgentRuntime(_make_cfg())
+        rt.start()
+        return rt, old_xdg
+
+    @staticmethod
+    def _restore_xdg(old_xdg):
+        if old_xdg is None:
+            os.environ.pop("XDG_CONFIG_HOME", None)
+        else:
+            os.environ["XDG_CONFIG_HOME"] = old_xdg
 
     def test_list_conversations_returns_agent_name_without_full_deserialization(self):
         """list_conversations reads only agent_name from each JSON file,
         not the full Conversation/Message deserialization."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            rt = AgentRuntime(_make_cfg())
-            rt.start()
+            rt, old_xdg = self._isolated_runtime(tmpdir)
             sk = _uniq()
             rt.create_conversation("Coder", sk, tmpdir)
-            rt.get_conversation(sk).add_user_message("hi")
-            rt.get_conversation(sk).add_assistant_message("hello", [])
+            conv = rt.get_conversation(sk)
+            conv.add_user_message("hi")
+            conv.add_assistant_message("hello", [])
             rt.save_conversation(sk)
 
             result = rt.list_conversations()
-            # Find our session in the results
             our_entry = [entry for entry in result if entry[0] == sk]
             assert len(our_entry) == 1, f"Expected 1 entry for {sk}, got {len(our_entry)}"
             assert our_entry[0][1] == "Coder", f"Expected agent_name='Coder', got '{our_entry[0][1]}'"
             rt.stop()
+            self._restore_xdg(old_xdg)
 
     def test_list_conversations_returns_unknown_for_corrupt_file(self):
         """A corrupt JSON file returns 'unknown' instead of crashing."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            rt = AgentRuntime(_make_cfg())
-            rt.start()
+            rt, old_xdg = self._isolated_runtime(tmpdir)
 
-            # Write a corrupt JSON file into the conversations directory
-            corrupt_path = os.path.join(tmpdir, "corrupt-session.json")
+            # _conversations_dir() lives at <XDG>/crabcakes/conversations
+            conv_dir = os.path.join(tmpdir, "crabcakes", "conversations")
+            os.makedirs(conv_dir, exist_ok=True)
+            corrupt_path = os.path.join(conv_dir, "corrupt-session.json")
             with open(corrupt_path, "w") as f:
                 f.write("{not valid json")
 
@@ -827,15 +852,16 @@ class TestListConversations:
             assert len(corrupt_entries) == 1
             assert corrupt_entries[0][1] == "unknown"
             rt.stop()
+            self._restore_xdg(old_xdg)
 
     def test_list_conversations_returns_unknown_for_missing_agent_name(self):
         """A JSON file without agent_name field returns 'unknown'."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            rt = AgentRuntime(_make_cfg())
-            rt.start()
+            rt, old_xdg = self._isolated_runtime(tmpdir)
 
-            # Write a JSON file without agent_name
-            path = os.path.join(tmpdir, "no-name-session.json")
+            conv_dir = os.path.join(tmpdir, "crabcakes", "conversations")
+            os.makedirs(conv_dir, exist_ok=True)
+            path = os.path.join(conv_dir, "no-name-session.json")
             with open(path, "w") as f:
                 json.dump({"messages": []}, f)
 
@@ -844,15 +870,16 @@ class TestListConversations:
             assert len(entries) == 1
             assert entries[0][1] == "unknown"
             rt.stop()
+            self._restore_xdg(old_xdg)
 
     def test_list_conversations_empty_directory(self):
         """An empty conversations directory returns an empty list."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            rt = AgentRuntime(_make_cfg())
-            rt.start()
+            rt, old_xdg = self._isolated_runtime(tmpdir)
             result = rt.list_conversations()
             assert result == []
             rt.stop()
+            self._restore_xdg(old_xdg)
 
 
 # ═══════════════════════════════════════════════════════════════════

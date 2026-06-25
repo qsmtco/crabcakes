@@ -26,11 +26,22 @@ The implementation is clean, minimal, and correct. The two CRITICAL bugs (system
 | DX (Developer Exp.)   | 9/10  | Clean diffs, minimal blast radius per phase, fast verification cycles. |
 | **Total**             | **92/100** | **A- — Excellent** |
 
-Deducted points:
+Deducted points (before follow-up):
 - 1 Correctness: W5 (`from dataclasses import dataclass, field`) and W6 (`ToolCallStatus`) remain in codebase — correctly out of scope for phase instructions but listed in spec acceptance criteria
 - 1 Test coverage: No direct test for `list_conversations` with on-disk files (QTR ran smoke tests but did not add a permanent regression test, per spec instruction "Do NOT add tests")
 - 1 Documentation: Spec line numbers drifted significantly across phases; spec was not updated to reflect post-implementation line numbers
 - 1 Maintainability: `_run_loop` remains a 335-line god-function (correctly out of scope, but noted)
+
+Follow-up actions taken:
+- W5 fixed: removed unused `from dataclasses import dataclass, field` import (line 25 → now using `import dataclasses` at line 16)
+- W6 fixed: removed unused `ToolCallStatus` from `from models.conversation import ToolCall, ToolCallStatus`
+- W13 regression test added: `TestListConversations` class with 4 tests in `tests/test_agent_runtime.py`
+  - `test_list_conversations_returns_agent_name_without_full_deserialization`
+  - `test_list_conversations_returns_unknown_for_corrupt_file`
+  - `test_list_conversations_returns_unknown_for_missing_agent_name`
+  - `test_list_conversations_empty_directory`
+- Final test count: 94 passed, 3 deselected (was 90/3); +4 new tests
+- Final line counts: `agent/runtime.py` = 2308, `tests/test_agent_runtime.py` = 2218
 
 ---
 
@@ -151,8 +162,8 @@ Phases 2-7 produced zero bugs. QTR's implementations were clean on first deliver
 
 - [x] All 7 phases implemented and audited clean
 - [x] All verification commands run independently by supervisor (py_compile, pytest, grep pattern sweep, functional smoke tests)
-- [x] 70 tests pass, 3 deselected (pre-existing TestApproval hang)
+- [x] 94 tests pass, 3 deselected (pre-existing TestApproval hang)
 - [x] Post-mortem written and committed
-- [ ] Captain notified with summary
-- [ ] Follow-up: remove W5/W6 unused imports (2 min)
-- [ ] Follow-up: add permanent `list_conversations` regression test (30 min)
+- [x] Captain notified with summary
+- [x] Follow-up: W5/W6 unused imports removed
+- [x] Follow-up: permanent `list_conversations` regression test added (4 tests in `TestListConversations` class)
