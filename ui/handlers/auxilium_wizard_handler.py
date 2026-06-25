@@ -357,7 +357,7 @@ class AuxiliumWizardHandler:
         Build a ProviderConfig based on the wizard choice.
         Verified against models/providers.py ProviderConfig dataclass.
         """
-        from models.providers import ProviderConfig
+        from models.providers import ProviderConfig, CALLER_DEFAULT_MAX_TOKENS
 
         if choice == "openrouter_free":
             return ProviderConfig(
@@ -369,6 +369,9 @@ class AuxiliumWizardHandler:
                 supports_tools=True,
                 supports_streaming=True,
                 max_tokens=128_000,
+                # BUG #7 fix: stamp the wizard's deliberate 128K choice so
+                # Test Connection doesn't treat it as the sentinel default.
+                default_max_tokens=CALLER_DEFAULT_MAX_TOKENS["openrouter"],
             )
 
         elif choice == "ollama":
@@ -381,6 +384,10 @@ class AuxiliumWizardHandler:
                 supports_tools=True,
                 supports_streaming=True,
                 max_tokens=32_000,
+                # Ollama has no /v1/models; stamp default so the sentinel
+                # check (p.max_tokens == 128_000) doesn't accidentally overwrite
+                # the wizard's 32K choice.
+                default_max_tokens=CALLER_DEFAULT_MAX_TOKENS["openai"],
             )
 
         elif choice == "bring_your_own":
@@ -426,6 +433,9 @@ class AuxiliumWizardHandler:
                 supports_tools=True,
                 supports_streaming=True,
                 max_tokens=128_000,
+                # BUG #7 fix: stamp the caller-specific default so Test
+                # Connection doesn't overwrite the wizard's deliberate choice.
+                default_max_tokens=CALLER_DEFAULT_MAX_TOKENS.get(caller, 128_000),
             )
 
         # Should never reach here — validated in set_provider_choice

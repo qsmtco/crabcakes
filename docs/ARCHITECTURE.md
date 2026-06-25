@@ -593,6 +593,65 @@ toggle_favorite(filepath) -> bool   # True if now favorited
 | `STTEngine` class | `stt.py` | Push-to-talk STT via faster-whisper — arecord → PCM buffer → faster-whisper (tiny.en model) → stop_async callback |
 | `show_session_menu(parent, agent_name, sessions, on_select)` | `session_menu.py` | GTK popover menu listing sessions; clicking fires `on_select(session_key)` |
 
+### 3.11a `utils/provider_test.py` — LLM Provider Connectivity Probe + Context Window Discovery
+
+**Responsibility:** Test that an LLM provider is reachable and authenticated; optionally discover the model's context window. Used by Settings dialog "Test Connection" button and the auxilium wizard.
+
+**Owns:** `_OPENAI_COMPATIBLE` set (`{"openai", "openrouter", "zai", "minimax"}`), `_NoAuthRedirectHandler` (strips `Authorization` header on cross-host redirect — prevents leaking keys to a different origin), `_CALLER_DEFAULT_MAX_TOKENS` static lookup table (per-caller fallback context window when probe fails), and the HTTP request lifecycle.
+
+**Public API:**
+
+```python
+@dataclass
+class TestResult:
+    ok: bool
+    latency_ms: int
+    error: str | None
+    model_used: str | None
+    context_window: int | None  # discovered from /v1/models probe, or None
+
+def test_connection(
+    base_url: str,
+    api_key: str,
+    model: str,
+    caller: str | None = None,  # optional, e.g. "minimax" for body-level error decoding
+    timeout_seconds: int = 30,
+) -> TestResult: ...
+```
+
+**Lifecycle of a Test Connection:**
+
+1. **POST chat completion.** Builds an `urllib.request.Request` with `Authorization: Bearer <api_key>`. Uses a *local* `OpenerDirector` (built via `urllib.request.build_opener(_NoAuthRedirectHandler)`) so the redirect handler applies to BOTH the POST and the /v1/models GET probe. The previous global `install_opener` mutation was fixed (see `docs/research/ADVERSARIAL-AUDIT-SPEC-MODEL-CAPACITY-DISCOVERY.md` BUG #1).
+2. **MiniMax body-level error decode.** For `caller == "minimax"`, HTTP 200 can still mean failure — the body has `base_resp.status_code != 0`. Decoded and surfaced as `TestResult.ok = False`.
+3. **/v1/models probe (best-effort).** Only runs for callers in `_OPENAI_COMPATIBLE` (skipped for Anthropic). Sends `GET <base_url>/models` with the same auth header. Tries BOTH the full model string AND the bare (prefix-stripped) form against each model's `id` field (OpenRouter keeps `id="openai/gpt-4o"`; OpenAI direct strips to `id="gpt-4o"`).
+4. **Field-name fallback chain.** `("context_window", "max_context_length", "context_length", "max_tokens", "max_model_len")` — first match wins. Non-int values (e.g. `None` or string) are skipped.
+5. **All probe failures are non-fatal.** Probe is best-effort; on any error (`URLError`, `HTTPError`, `TimeoutError`, JSON decode, etc.) `context_window` stays `None` and `TestResult.ok` stays `True` (the chat POST succeeded).
+
+**Caller-default fallback table (`_CALLER_DEFAULT_MAX_TOKENS`):**
+
+| Caller | Default context window | Verified against |
+|--------|-----------------------|-------------------|
+| `openai` | 128_000 | gpt-4o, gpt-4-turbo published limits |
+| `anthropic` | 200_000 | claude-3+, claude-4 published limits |
+| `minimax` | 1_048_576 | MiniMax-M2.7, MiniMax-M3 docs |
+| `openrouter` | 128_000 | most providers; outliers discoverable via /v1/models |
+| `zai` | 128_000 | GLM-4.5+, glm-5 series |
+| (unknown) | 128_000 | global safe default |
+
+**Threading:** None inside `test_connection` itself. The settings handler (`ui/handlers/settings_handler.py::test_provider`) wraps the call in a `threading.Thread` and dispatches the result via `GLib.idle_add`. The dialog's `_on_test_result` runs on the GTK main thread.
+
+**Spec:** `docs/specs/SPEC-MODEL-CAPACITY-DISCOVERY.md`. **Audit:** `docs/research/ADVERSARIAL-AUDIT-SPEC-MODEL-CAPACITY-DISCOVERY.md`.
+
+### 3.11b `models/providers.py` — Per-Provider Context Window Resolution
+
+**Resolution chain in `agent/runtime.py::_compute_model_max`:**
+
+1. `provider_cfg.max_tokens` if `> 0` (explicit user set, wizard default, or successful probe pre-fill)
+2. `caller_default_max_tokens(provider_cfg.caller)` (per-caller static fallback table — ensures MiniMax-M3 actually uses 1M context, not 128K)
+3. `FALLBACK = 128_000` (global safe default for unknown callers)
+
+The `default_max_tokens` field on `ProviderConfig` records the *configured intent* (set by auxilium wizard from `CALLER_DEFAULT_MAX_TOKENS`); it's used as a sentinel marker so Test Connection's pre-fill logic doesn't overwrite a wizard's deliberate choice. See audit BUG #7.
+
 ### 3.12 `ui/handlers/agent_list_handler.py` — Agent List Handler (Agent Cards)
 
 **Responsibility:** Agent card rendering data — initials, colors, sorting. Does NOT build widgets (view does).

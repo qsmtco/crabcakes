@@ -426,3 +426,229 @@ class TestUnknownProvider:
                 api_key="sk-test",
                 model="unknown-vendor/foo",
             )
+
+
+# ── TestGlobalStateRegression ─────────────────────────────────────────────
+# BUG #1 regression: _do_request used to call urllib.request.install_opener()
+# without restoring the previous value, leaking _NoAuthRedirectHandler into
+# every subsequent urlopen() in the process (agent/runtime.py,
+# agent/kb_server.py, etc.). This test confirms the fix.
+
+
+class TestGlobalStateRegression:
+    def test_install_opener_is_restored_after_success(self):
+        """After test_connection succeeds, urllib.request._opener is restored."""
+        import urllib.request
+        body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+        with patch("utils.provider_test.urllib.request.urlopen", return_value=_mock_response(body)):
+            # Save the opener before
+            before = urllib.request._opener
+            test_connection(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-test",
+                model="openai/gpt-4",
+            )
+            after = urllib.request._opener
+        assert before == after, (
+            f"urllib.request._opener was mutated: {before!r} -> {after!r}. "
+            f"This is BUG #1 — _do_request leaks the redirect handler into "
+            f"every other module in the same process."
+        )
+
+    def test_install_opener_is_restored_after_failure(self):
+        """Even when test_connection fails, urllib.request._opener is restored."""
+        import urllib.request
+        err = _http_error(401, "Unauthorized", "bad key")
+        with patch("utils.provider_test.urllib.request.urlopen", side_effect=err):
+            before = urllib.request._opener
+            test_connection(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-bad",
+                model="openai/gpt-4",
+            )
+            after = urllib.request._opener
+        assert before == after, "urllib.request._opener was mutated on failure path"
+
+    def test_install_opener_is_restored_after_exception(self):
+        """Even when test_connection raises (e.g. TimeoutError), opener is restored."""
+        import urllib.request
+        with patch("utils.provider_test.urllib.request.urlopen", side_effect=TimeoutError("nope")):
+            before = urllib.request._opener
+            test_connection(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-test",
+                model="openai/gpt-4",
+            )
+            after = urllib.request._opener
+        assert before == after, "urllib.request._opener was mutated on exception path"
+
+
+# ── TestModelIdMatching ───────────────────────────────────────────────────
+# BUG #2 regression: the probe used to do `model_id = model.split("/", 1)[-1]`
+# which never matched OpenRouter's prefixed `id` field (e.g. "openai/gpt-4o").
+# The fix tries BOTH the full and stripped forms.
+
+
+class TestModelIdMatching:
+    def test_openrouter_prefixed_id_matches_full_model_string(self):
+        """OpenRouter returns id='openai/gpt-4o'; crabcakes model='openai/gpt-4o'.
+        The probe must match the FULL string, not the stripped form."""
+        chat_body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+        models_body = json.dumps({
+            "data": [{"id": "openai/gpt-4o", "context_length": 128_000}],
+        }).encode()
+        chat_resp = _mock_response(chat_body)
+        models_resp = _mock_response(models_body)
+        with patch("utils.provider_test.urllib.request.urlopen",
+                   side_effect=[chat_resp, models_resp]):
+            result = test_connection(
+                base_url="https://openrouter.ai/api/v1",
+                api_key="sk-test",
+                model="openai/gpt-4o",
+            )
+        assert result.ok is True
+        assert result.context_window == 128_000
+
+    def test_openai_direct_strips_prefix_matches_bare_id(self):
+        """OpenAI direct returns id='gpt-4o' (no prefix); crabcakes model='openai/gpt-4o'.
+        The probe must match the BARE (stripped) form."""
+        chat_body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+        models_body = json.dumps({
+            "data": [{"id": "gpt-4o", "context_window": 128_000}],
+        }).encode()
+        chat_resp = _mock_response(chat_body)
+        models_resp = _mock_response(models_body)
+        with patch("utils.provider_test.urllib.request.urlopen",
+                   side_effect=[chat_resp, models_resp]):
+            result = test_connection(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-test",
+                model="openai/gpt-4o",
+            )
+        assert result.ok is True
+        assert result.context_window == 128_000
+
+    def test_model_with_no_slash_matches_directly(self):
+        """Model without prefix (e.g. 'MiniMax-M2.7') should match as-is."""
+        chat_body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+        models_body = json.dumps({
+            "data": [{"id": "MiniMax-M2.7", "context_window": 1_048_576}],
+        }).encode()
+        chat_resp = _mock_response(chat_body)
+        models_resp = _mock_response(models_body)
+        with patch("utils.provider_test.urllib.request.urlopen",
+                   side_effect=[chat_resp, models_resp]):
+            result = test_connection(
+                base_url="https://api.minimax.io/v1",
+                api_key="sk-test",
+                model="MiniMax-M2.7",
+                caller="minimax",
+            )
+        assert result.ok is True
+        assert result.context_window == 1_048_576
+
+
+# ── TestProbeFieldNames ──────────────────────────────────────────────────
+# BUG #8 regression: the previous tests only covered context_window and
+# max_context_length. The probe also checks context_length, max_tokens, and
+# max_model_len — but none of those had tests. This class covers them.
+
+
+class TestProbeFieldNames:
+    def test_probe_discovers_context_length(self):
+        """OpenRouter-style: 'context_length' field at the model-object level."""
+        chat_body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+        models_body = json.dumps({
+            "data": [{"id": "gpt-4o", "context_length": 200_000}],
+        }).encode()
+        chat_resp = _mock_response(chat_body)
+        models_resp = _mock_response(models_body)
+        with patch("utils.provider_test.urllib.request.urlopen",
+                   side_effect=[chat_resp, models_resp]):
+            result = test_connection(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-test",
+                model="openai/gpt-4o",
+            )
+        assert result.context_window == 200_000
+
+    def test_probe_discovers_max_tokens(self):
+        """vLLM-style: 'max_tokens' field — must NOT be confused with the
+        request body's max_tokens parameter (we only check the response field)."""
+        chat_body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+        models_body = json.dumps({
+            "data": [{"id": "gpt-4o", "max_tokens": 32_000}],
+        }).encode()
+        chat_resp = _mock_response(chat_body)
+        models_resp = _mock_response(models_body)
+        with patch("utils.provider_test.urllib.request.urlopen",
+                   side_effect=[chat_resp, models_resp]):
+            result = test_connection(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-test",
+                model="openai/gpt-4o",
+            )
+        assert result.context_window == 32_000
+
+    def test_probe_discovers_max_model_len(self):
+        """vLLM-served models: 'max_model_len' field."""
+        chat_body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+        models_body = json.dumps({
+            "data": [{"id": "gpt-4o", "max_model_len": 8192}],
+        }).encode()
+        chat_resp = _mock_response(chat_body)
+        models_resp = _mock_response(models_body)
+        with patch("utils.provider_test.urllib.request.urlopen",
+                   side_effect=[chat_resp, models_resp]):
+            result = test_connection(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-test",
+                model="openai/gpt-4o",
+            )
+        assert result.context_window == 8192
+
+    def test_probe_field_priority_context_window_first(self):
+        """When multiple fields exist, context_window wins (priority order)."""
+        chat_body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+        models_body = json.dumps({
+            "data": [{
+                "id": "gpt-4o",
+                "context_window": 100_000,
+                "context_length": 200_000,
+                "max_tokens": 300_000,
+            }],
+        }).encode()
+        chat_resp = _mock_response(chat_body)
+        models_resp = _mock_response(models_body)
+        with patch("utils.provider_test.urllib.request.urlopen",
+                   side_effect=[chat_resp, models_resp]):
+            result = test_connection(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-test",
+                model="openai/gpt-4o",
+            )
+        assert result.context_window == 100_000
+
+
+# ── TestProbeAnthropicSkipped ──────────────────────────────────────────────
+# BUG #10 regression: probe used to run for Anthropic too, wasting a request.
+
+
+class TestProbeAnthropicSkipped:
+    def test_anthropic_does_not_call_models_endpoint(self):
+        """Anthropic has no /v1/models; the probe must not be attempted."""
+        from unittest.mock import call
+        chat_body = json.dumps({"content": [{"type": "text", "text": "hi"}]}).encode()
+        with patch("utils.provider_test.urllib.request.urlopen",
+                   return_value=_mock_response(chat_body)) as mock_urlopen:
+            result = test_connection(
+                base_url="https://api.anthropic.com",
+                api_key="sk-ant-xxx",
+                model="anthropic/claude-sonnet-4-20250514",
+            )
+        assert result.ok is True
+        # Only ONE call (the POST) — no GET /v1/models probe
+        assert mock_urlopen.call_count == 1, (
+            f"Expected 1 call (POST), got {mock_urlopen.call_count}. "
+            f"Anthropic probe should be skipped (BUG #10)."
+        )

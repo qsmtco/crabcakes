@@ -139,3 +139,99 @@ def test_view_current_step_property():
         )
         assert w.current_step == "install_check"
         w.cleanup()
+
+
+# ── Test 8: _build_provider_config sets default_max_tokens (BUG #7) ───────────
+# The wizard's _build_provider_config() used to set max_tokens=128_000 (the
+# sentinel) without setting default_max_tokens. Test Connection's pre-fill
+# logic treats max_tokens=128_000 as "user hasn't customized" and overwrites
+# it. The fix stamps default_max_tokens from CALLER_DEFAULT_MAX_TOKENS so the
+# sentinel check (p.max_tokens == 128_000) doesn't fire on wizard defaults.
+
+def test_build_provider_config_openrouter_sets_default_max_tokens():
+    """openrouter wizard choice must stamp default_max_tokens=128_000
+    (matching CALLER_DEFAULT_MAX_TOKENS['openrouter'])."""
+    from ui.handlers.auxilium_wizard_handler import AuxiliumWizardHandler
+    from models.providers import CALLER_DEFAULT_MAX_TOKENS
+
+    with tempfile.TemporaryDirectory() as tmp:
+        h = AuxiliumWizardHandler(
+            config_dir=Path(tmp),
+            on_complete=lambda: None,
+            on_error=lambda msg: None,
+        )
+        pc = h._build_provider_config(
+            choice="openrouter_free",
+            provider="openrouter",
+            model="openrouter/free",
+            api_key="***",
+        )
+        assert pc.default_max_tokens == CALLER_DEFAULT_MAX_TOKENS["openrouter"], (
+            f"BUG #7: default_max_tokens must be stamped from caller table, "
+            f"got {pc.default_max_tokens!r}"
+        )
+        assert pc.max_tokens == 128_000  # sentinel preserved by design
+
+
+def test_build_provider_config_ollama_sets_default_max_tokens():
+    """ollama wizard choice must stamp default_max_tokens=128_000 (openai caller)."""
+    from ui.handlers.auxilium_wizard_handler import AuxiliumWizardHandler
+    from models.providers import CALLER_DEFAULT_MAX_TOKENS
+
+    with tempfile.TemporaryDirectory() as tmp:
+        h = AuxiliumWizardHandler(
+            config_dir=Path(tmp),
+            on_complete=lambda: None,
+            on_error=lambda msg: None,
+        )
+        pc = h._build_provider_config(
+            choice="ollama",
+            provider="ollama",
+            model="llama3.2:7b",
+            api_key="***",
+        )
+        assert pc.default_max_tokens == CALLER_DEFAULT_MAX_TOKENS["openai"]
+
+
+def test_build_provider_config_bring_your_own_minimax_sets_default_max_tokens():
+    """bring_your_own with MiniMax must stamp default_max_tokens=1_048_576."""
+    from ui.handlers.auxilium_wizard_handler import AuxiliumWizardHandler
+    from models.providers import CALLER_DEFAULT_MAX_TOKENS
+
+    with tempfile.TemporaryDirectory() as tmp:
+        h = AuxiliumWizardHandler(
+            config_dir=Path(tmp),
+            on_complete=lambda: None,
+            on_error=lambda msg: None,
+        )
+        pc = h._build_provider_config(
+            choice="bring_your_own",
+            provider="minimax",
+            model="MiniMax-M3",
+            api_key="***",
+        )
+        assert pc.default_max_tokens == CALLER_DEFAULT_MAX_TOKENS["minimax"], (
+            "BUG #7: minimax BYOK must stamp default_max_tokens=1_048_576"
+        )
+        assert pc.caller == "minimax"
+
+
+def test_build_provider_config_bring_your_own_anthropic_sets_default_max_tokens():
+    """bring_your_own with Anthropic must stamp default_max_tokens=200_000."""
+    from ui.handlers.auxilium_wizard_handler import AuxiliumWizardHandler
+    from models.providers import CALLER_DEFAULT_MAX_TOKENS
+
+    with tempfile.TemporaryDirectory() as tmp:
+        h = AuxiliumWizardHandler(
+            config_dir=Path(tmp),
+            on_complete=lambda: None,
+            on_error=lambda msg: None,
+        )
+        pc = h._build_provider_config(
+            choice="bring_your_own",
+            provider="anthropic",
+            model="claude-sonnet-4-20250514",
+            api_key="***",
+        )
+        assert pc.default_max_tokens == CALLER_DEFAULT_MAX_TOKENS["anthropic"]
+        assert pc.caller == "anthropic"

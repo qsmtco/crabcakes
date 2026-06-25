@@ -250,15 +250,61 @@ class _ProviderCard:
         if result.ok:
             self._set_status(f"✅ {result.latency_ms}ms", ok=True)
             # Pre-fill context window if discovered and user hasn't customized.
-            # Sentinel: 128_000 matches the dataclass default.
-            if result.context_window and (self._provider.max_tokens == 128_000):
+            # Sentinel matches settings_handler: max_tokens == 128_000 AND
+            # default_max_tokens == 0 (no wizard stamp). If the wizard
+            # stamped default_max_tokens, the value is intentional and we
+            # leave it alone (audit BUG #7).
+            new_max_tokens = self._provider.max_tokens
+            user_has_customized = (
+                self._provider.max_tokens != 128_000
+                or (self._provider.default_max_tokens or 0) > 0
+            )
+            if result.context_window and not user_has_customized:
                 self._max_tokens_spin.set_value(result.context_window)
+                new_max_tokens = result.context_window
                 self._status_label.set_text(
                     f"✅ {result.latency_ms}ms · context: {result.context_window:,}"
                 )
+            # BUG #6 + #9 fix: update self._provider to reflect what the
+            # handler has now written to disk. Without this, _is_dirty() stays
+            # True forever (spin != p.max_tokens), and the next refresh shows
+            # a stale "Untested" label. Use a fresh ISO timestamp since the
+            # test succeeded just now — the handler's exact timestamp will be
+            # reconciled on the next refresh_providers() call.
+            from datetime import datetime, timezone
+            self._provider = ProviderConfig(
+                name=self._provider.name,
+                base_url=self._provider.base_url,
+                api_key=self._provider.api_key,
+                default_model=self._provider.default_model,
+                caller=self._provider.caller,
+                enabled=self._provider.enabled,
+                supports_tools=self._provider.supports_tools,
+                supports_streaming=self._provider.supports_streaming,
+                max_tokens=new_max_tokens,
+                default_max_tokens=self._provider.default_max_tokens,
+                last_verified_at=datetime.now(timezone.utc).isoformat(),
+                last_error=None,
+            )
         else:
             error_msg = result.error or "unknown error"
             self._set_status(f"❌ {error_msg}", fail=True)
+            # Stamp the error on the in-memory provider too so refresh doesn't
+            # revert to "Untested".
+            self._provider = ProviderConfig(
+                name=self._provider.name,
+                base_url=self._provider.base_url,
+                api_key=self._provider.api_key,
+                default_model=self._provider.default_model,
+                caller=self._provider.caller,
+                enabled=self._provider.enabled,
+                supports_tools=self._provider.supports_tools,
+                supports_streaming=self._provider.supports_streaming,
+                max_tokens=self._provider.max_tokens,
+                default_max_tokens=self._provider.default_max_tokens,
+                last_verified_at=self._provider.last_verified_at,
+                last_error=error_msg,
+            )
 
     def _set_status(self, text: str, *, ok: bool = False, fail: bool = False) -> None:
         self._status_label.set_text(text)

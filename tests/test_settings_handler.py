@@ -369,3 +369,43 @@ class TestTestProviderPrefillsMaxTokens:
 
         providers = load_providers()
         assert providers[0].max_tokens == 200_000  # unchanged
+
+    # BUG #7 regression: when auxilium wizard sets default_max_tokens=N AND
+    # max_tokens == N (the sentinel value), Test Connection's pre-fill check
+    # `p.max_tokens == 128_000` must NOT overwrite — because default_max_tokens
+    # is non-zero, indicating a deliberate wizard-set choice.
+
+    def test_wizard_default_max_tokens_protects_against_overwrite(self, tmp_config_dir, monkeypatch):
+        """BUG #7: provider with default_max_tokens != 0 must NOT be overwritten
+        by Test Connection pre-fill even when max_tokens == 128_000 sentinel."""
+        from models.providers import ProviderConfig
+        from ui.handlers import settings_handler as sh
+        monkeypatch.setattr(sh, "test_connection", lambda **kw:
+            TestResult(ok=True, latency_ms=200, error=None,
+                       model_used=kw["model"], context_window=1_000_000))
+
+        callback = threading.Event()
+        h = SettingsHandler()
+        # Simulate auxilium wizard output for openrouter: sentinel max_tokens=128K
+        # but default_max_tokens=128_000 (the wizard stamped it)
+        wizard_provider = ProviderConfig(
+            name="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            api_key="***",
+            default_model="openrouter/free",
+            caller="openrouter",
+            max_tokens=128_000,
+            default_max_tokens=128_000,  # wizard stamped this
+        )
+        h.add_or_update(wizard_provider)
+
+        h.test_provider(wizard_provider, lambda r: callback.set())
+        assert callback.wait(timeout=2.0)
+
+        providers = load_providers()
+        # max_tokens must remain 128_000 (the wizard's deliberate choice).
+        # Before the BUG #7 fix, the pre-fill check would have overwritten
+        # to 1_000_000.
+        assert providers[0].max_tokens == 128_000, (
+            f"BUG #7: wizard default was overwritten: max_tokens={providers[0].max_tokens}"
+        )

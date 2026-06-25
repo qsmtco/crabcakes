@@ -160,10 +160,21 @@ class SettingsHandler:
                 if p.name == provider.name:
                     if result.ok:
                         # Pre-fill max_tokens from /v1/models probe ONLY if
-                        # user hasn't customized (sentinel: 128_000 = default).
+                        # user hasn't customized. Sentinel conditions:
+                        #   (a) max_tokens == 128_000 (dataclass default) AND
+                        #       default_max_tokens == 0 (no wizard stamp).
+                        # The wizard stamps default_max_tokens with the
+                        # caller-specific value to mark "this is intentional",
+                        # so we treat (default_max_tokens > 0) as a deliberate
+                        # wizard-set choice that must not be overwritten even
+                        # when max_tokens happens to equal 128K — audit BUG #7.
+                        user_has_customized = (
+                            p.max_tokens != 128_000
+                            or (p.default_max_tokens or 0) > 0
+                        )
                         new_max_tokens = (
                             result.context_window
-                            if result.context_window and p.max_tokens == 128_000
+                            if (result.context_window and not user_has_customized)
                             else p.max_tokens
                         )
                         providers[i] = ProviderConfig(
@@ -176,6 +187,7 @@ class SettingsHandler:
                             supports_tools=p.supports_tools,
                             supports_streaming=p.supports_streaming,
                             max_tokens=new_max_tokens,
+                            default_max_tokens=p.default_max_tokens,
                             last_verified_at=datetime.now(timezone.utc).isoformat(),
                             last_error=None,
                         )
@@ -190,6 +202,7 @@ class SettingsHandler:
                             supports_tools=p.supports_tools,
                             supports_streaming=p.supports_streaming,
                             max_tokens=p.max_tokens,
+                            default_max_tokens=p.default_max_tokens,
                             last_verified_at=p.last_verified_at,
                             last_error=result.error or "unknown",
                         )

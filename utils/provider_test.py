@@ -190,11 +190,17 @@ def _do_request(
     start = time.monotonic()
     req = urllib.request.Request(endpoint, data=body, headers=headers, method="POST")
 
+    # MED-5: Custom redirect handler strips Authorization on cross-host redirect.
+    # We install a custom opener globally so that BOTH the POST and the
+    # /v1/models GET probe use it. The previous implementation forgot to
+    # restore the module-global urllib.request._opener, leaking the redirect
+    # handler into every subsequent urlopen() call in the process (audit BUG #1).
+    # We now save the previous value and restore it in finally — the mutation
+    # is bounded to the duration of this request.
+    _saved_opener = urllib.request._opener
+    _opener = urllib.request.build_opener(_NoAuthRedirectHandler)
+    urllib.request.install_opener(_opener)
     try:
-        # MED-5: Use custom redirect handler that strips Authorization on cross-host redirect
-        # Install opener globally so that urllib.request.urlopen uses it (testable mock boundary)
-        _opener = urllib.request.build_opener(_NoAuthRedirectHandler)
-        urllib.request.install_opener(_opener)
         with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
             raw = resp.read()
             elapsed_ms = int((time.monotonic() - start) * 1000)
@@ -227,18 +233,28 @@ def _do_request(
             # If the successful POST happened, try to discover the model's
             # context window from the OpenAI-compatible /v1/models endpoint.
             # Failures here are non-fatal — many providers don't expose this.
+            #
+            # BUG #10: Only probe for OpenAI-compatible callers. Anthropic
+            # does not expose /v1/models; the request would always fail.
+            # BUG #2: Try BOTH the full model string AND the stripped version
+            # (OpenRouter keeps vendor prefix in id; OpenAI strips it).
             context_window: int | None = None
-            if base_url and api_key:
+            if base_url and api_key and provider in _OPENAI_COMPATIBLE:
                 try:
                     models_url = base_url.rstrip("/") + "/models"
                     models_req = urllib.request.Request(models_url, method="GET")
                     models_req.add_header("Authorization", f"Bearer {api_key}")
                     with urllib.request.urlopen(models_req, timeout=10) as mresp:
                         models_body = json.loads(mresp.read().decode("utf-8"))
-                    # OpenAI shape: {"data": [{"id": "model-id", "context_window": N}, ...]}
-                    model_id = model.split("/", 1)[-1]  # strip "provider/" prefix
+                    # Try matching both the full model string and the bare
+                    # (provider-prefix-stripped) variant. Some providers keep
+                    # the prefix (OpenRouter: id="openai/gpt-4o"); others strip
+                    # it (OpenAI direct: id="gpt-4o").
+                    model_id_full = model
+                    model_id_bare = model.split("/", 1)[-1]
                     for model_obj in models_body.get("data", []):
-                        if model_obj.get("id") == model_id:
+                        obj_id = model_obj.get("id", "")
+                        if obj_id == model_id_full or obj_id == model_id_bare:
                             for field in ("context_window", "max_context_length",
                                           "context_length", "max_tokens",
                                           "max_model_len"):
@@ -281,3 +297,11 @@ def _do_request(
             error=_safe_error(e),
             model_used=model,
         )
+    finally:
+        # Restore module-global urllib state to what it was before this call.
+        # Critical: urllib.request.install_opener() mutates urllib.request._opener
+        # for the entire process — without this restore, our _NoAuthRedirectHandler
+        # would leak into every subsequent urlopen() in agent/runtime.py,
+        # agent/kb_server.py, and tests/generate_synthetic_conversations.py
+        # (audit BUG #1).
+        urllib.request._opener = _saved_opener

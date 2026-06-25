@@ -1470,14 +1470,17 @@ class AgentRuntime:
 
         Resolution order:
           1. conv.model's provider's max_tokens in self._config.providers (when > 0)
-          2. 128_000 fallback (matches the §4.15 default; same constant used
-             by the old inline calculation at the former lines 1198-1201)
+          2. caller_default_max_tokens(provider.caller) — per-caller static fallback
+             (e.g. MiniMax = 1_048_576, Anthropic = 200_000)
+          3. 128_000 global fallback (matches the §4.15 default)
 
         Returns 128_000 when:
           - conv.model is None and self._config.default_provider is not configured
-          - the resolved provider config has max_tokens <= 0 or None
+          - the resolved provider config has max_tokens <= 0 or None AND the
+            caller is not in CALLER_DEFAULT_MAX_TOKENS
           - any exception during provider lookup
         """
+        from models.providers import caller_default_max_tokens
         FALLBACK = 128_000
         try:
             provider_name = (
@@ -1490,9 +1493,14 @@ class AgentRuntime:
             provider_cfg = self._config.providers.get(provider_name)
             if provider_cfg is None:
                 return FALLBACK
-            if not getattr(provider_cfg, "max_tokens", None):
-                return FALLBACK
-            return int(provider_cfg.max_tokens)
+            max_tokens = getattr(provider_cfg, "max_tokens", None)
+            if max_tokens and int(max_tokens) > 0:
+                return int(max_tokens)
+            # BUG #3 fix: use caller-specific default before falling back to 128K.
+            # The provider config exists but its max_tokens is unset — use the
+            # per-caller static table to avoid wasting 87% of MiniMax-M3's
+            # 1M context window (or 50% of Claude's 200K).
+            return caller_default_max_tokens(getattr(provider_cfg, "caller", ""))
         except Exception:
             logger.exception("[model-max] failed to resolve provider max_tokens; using fallback")
             return FALLBACK

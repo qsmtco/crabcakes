@@ -518,6 +518,131 @@ class TestComputeModelMax:
         assert rt._compute_model_max(conv) == 200_000
         rt.stop()
 
+    # BUG #3 regression tests: when max_tokens is unset/zero AND the caller
+    # is recognized, fall back to caller_default_max_tokens() instead of 128K.
+    # Before the fix, MiniMax-M3 (1M context) and Claude (200K) both defaulted
+    # to 128K — wasting 87% / 36% of the model's context window.
+
+    def test_minimax_zero_max_tokens_falls_back_to_caller_default(self):
+        """When provider.max_tokens=0 and caller='minimax', returns 1_048_576
+        (NOT 128K). This is the headline BUG #3 fix."""
+        from agent.config import AgentConfig, LLMProviderConfig
+        cfg = AgentConfig(
+            providers={
+                "minimax": LLMProviderConfig(
+                    name="minimax",
+                    base_url="https://api.minimax.io/v1",
+                    api_key="test",
+                    default_model="MiniMax-M3",
+                    caller="minimax",
+                    max_tokens=0,
+                )
+            },
+            default_provider="minimax",
+            default_model="minimax/MiniMax-M3",
+            max_tool_iterations=5,
+            tool_timeout_seconds=30,
+            auto_save_conversations=False,
+        )
+        rt = AgentRuntime(cfg)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        conv = rt.get_conversation(sk)
+        conv.model = "minimax/MiniMax-M3"
+        assert rt._compute_model_max(conv) == 1_048_576, (
+            "BUG #3: MiniMax-M3 has 1M context but default falls back to 128K. "
+            "Caller-specific default must be used."
+        )
+        rt.stop()
+
+    def test_anthropic_zero_max_tokens_falls_back_to_caller_default(self):
+        """When provider.max_tokens=0 and caller='anthropic', returns 200_000."""
+        from agent.config import AgentConfig, LLMProviderConfig
+        cfg = AgentConfig(
+            providers={
+                "anthropic": LLMProviderConfig(
+                    name="anthropic",
+                    base_url="https://api.anthropic.com",
+                    api_key="test",
+                    default_model="claude-sonnet-4-20250514",
+                    caller="anthropic",
+                    max_tokens=0,
+                )
+            },
+            default_provider="anthropic",
+            default_model="anthropic/claude-sonnet-4-20250514",
+            max_tool_iterations=5,
+            tool_timeout_seconds=30,
+            auto_save_conversations=False,
+        )
+        rt = AgentRuntime(cfg)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        conv = rt.get_conversation(sk)
+        conv.model = "anthropic/claude-sonnet-4-20250514"
+        assert rt._compute_model_max(conv) == 200_000
+        rt.stop()
+
+    def test_unknown_caller_falls_back_to_global_128k(self):
+        """When caller is empty/unknown, fall back to 128K global default."""
+        from agent.config import AgentConfig, LLMProviderConfig
+        cfg = AgentConfig(
+            providers={
+                "openai": LLMProviderConfig(
+                    name="openai",
+                    base_url="https://api.openai.com/v1",
+                    api_key="test",
+                    default_model="gpt-4o",
+                    caller="unknown_caller_xyz",  # not in CALLER_DEFAULT_MAX_TOKENS
+                    max_tokens=0,
+                )
+            },
+            default_provider="openai",
+            default_model="openai/gpt-4o",
+            max_tool_iterations=5,
+            tool_timeout_seconds=30,
+            auto_save_conversations=False,
+        )
+        rt = AgentRuntime(cfg)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        conv = rt.get_conversation(sk)
+        conv.model = "openai/gpt-4o"
+        assert rt._compute_model_max(conv) == 128_000
+        rt.stop()
+
+    def test_max_tokens_set_wins_over_caller_default(self):
+        """When provider.max_tokens > 0, caller default is ignored."""
+        from agent.config import AgentConfig, LLMProviderConfig
+        cfg = AgentConfig(
+            providers={
+                "minimax": LLMProviderConfig(
+                    name="minimax",
+                    base_url="https://api.minimax.io/v1",
+                    api_key="test",
+                    default_model="MiniMax-M3",
+                    caller="minimax",
+                    max_tokens=64_000,  # user explicitly set 64K
+                )
+            },
+            default_provider="minimax",
+            default_model="minimax/MiniMax-M3",
+            max_tool_iterations=5,
+            tool_timeout_seconds=30,
+            auto_save_conversations=False,
+        )
+        rt = AgentRuntime(cfg)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        conv = rt.get_conversation(sk)
+        conv.model = "minimax/MiniMax-M3"
+        assert rt._compute_model_max(conv) == 64_000
+        rt.stop()
+
 
 # ═══════════════════════════════════════════════════════════════════
 #  Context-bloat fix — _run_loop trims conversation (BUG #1 Phase CB-1)
