@@ -15,12 +15,13 @@
 
 > **Verification date:** 2026-06-25. All line numbers verified against commit `0fb5536` (current HEAD). Re-verify after any future refactors of these files. **Implementation rule:** always anchor on function names; line numbers are pointers, not contracts.
 
-- **Read `models/conversation.py` (503 lines):** `Conversation.trim_to_token_limit(self, max_tokens: int) -> None` at line 365. Outer loop guard: `while self.get_token_estimate() > max_tokens and len(self.messages) > 4`. Backwards loop removes TOOL_RESULT + ASSISTANT-with-tool_calls pairs (CB-6 aware). Fallback: `self.messages.pop(0)` when `len > tail_preserve (4)`. Summary injection at lines 443-457: fires when `messages_removed > 0 and len(self.messages) >= 4`. Budget guard at line 451: `if current_tokens + summary_tokens > max_tokens: return` (silent skip). `_last_exchange_summary()` at line 458: returns a formatted string of user message previews from `self.messages[:-4]`. Returns `""` when `len <= 4`. No exceptions raised — all paths are safe returns.
-  - `Message` dataclass (line 116): `role: MessageRole`, `content: str`, `tool_calls: list[ToolCall]`, `tool_call_id: str | None`, `timestamp: datetime`, `tokens_used: int`, `is_summary: bool = False`.
+- **Read `models/conversation.py` (503 lines):** `Conversation.trim_to_token_limit(self, max_tokens: int) -> None` at line 365. Outer loop guard: `while self.get_token_estimate() > max_tokens and len(self.messages) > 4`. Backwards loop removes TOOL_RESULT + ASSISTANT-with-tool_calls pairs (CB-6 aware). Fallback: `self.messages.pop(0)` when `len > tail_preserve (4)`. Summary injection at lines 443-458: fires when `messages_removed > 0 and len(self.messages) >= 4`. Budget guard at line 451: `if current_tokens + summary_tokens > max_tokens: return` (silent skip). `_last_exchange_summary()` at line 458: returns a formatted string of user message previews from `self.messages[:-4]`. Returns `""` when `len <= 4`. No exceptions raised — all paths are safe returns.
+  - `ToolCall` dataclass at line 90: `call_id: str` (line 92), `tool_name: str` (line 93).
+  - `Message` dataclass (line 115): `role: MessageRole` (line 117), `content: str` (line 119), `tool_calls: list[ToolCall]` (line 120), `tool_call_id: str | None` (line 121), `timestamp: datetime` (line 122), `tokens_used: int` (line 123), `is_summary: bool = False` (line 124).
   - `MessageRole` enum: `SYSTEM`, `USER`, `ASSISTANT`, `TOOL_RESULT`.
   - `Conversation` dataclass (line 138).
-  - `Conversation._token_estimate_cache: tuple | None` at line 166 — invalidated by setting to `None` in `add_user_message` (line 175), `add_assistant_message` (line 191), `add_tool_result` (line 200), and at the start of `trim_to_token_limit` (line 372).
-  - `get_token_estimate()` at line 271 — uses tiktoken when available, falls back to `chars // 4`. Caches tiktoken result keyed on `(len(messages), hash(system_prompt))`.
+  - `Conversation._token_estimate_cache: tuple | None` at line 166 — invalidated by setting to `None` in `add_user_message` (line 172), `add_assistant_message` (line 185), `add_tool_result` (line 197), and at the start of `trim_to_token_limit` (line 385).
+  - `get_token_estimate()` at line 283 — uses tiktoken when available, falls back to `chars // 4`. Caches tiktoken result keyed on `(len(messages), hash(system_prompt))`.
   - No custom exception classes. No `raise` statements except `raise KeyError("empty model name")` inside `_tiktoken_encoding_for()` (caught internally).
 
 - **Read `agent/runtime.py` (2316 lines):** `_compute_model_max(self, conv) -> int` at line 1468. Resolution: `conv.model.split("/")[0]` → provider name → `self._config.providers[provider_name].max_tokens` → `caller_default_max_tokens(provider.caller)` → `128_000` fallback. Returns `int`, never raises (all paths wrapped in `try/except`).
@@ -39,10 +40,10 @@
 - **Read `agent/context.py` (541 lines):** `build_system_prompt()` at line 485 calls `compose_system_prompt()` from `utils.prompt_loader` (line 521). Passes `model_max_tokens` through. No changes needed for P1-P6. P7 modifies `prompt_loader.py` only.
 
 - **Read `utils/prompt_loader.py` (477 lines):** `compose_system_prompt()` at line 146. Calls `_apply_system_prompt_budget()` at line 365. `_apply_system_prompt_budget(template_result, file_context_section, model_max_tokens)` at line 365 (function body starts here). Budget computation at line 392: `budget_tokens = int(model_max_tokens * SYSTEM_PROMPT_BUDGET_FRACTION)` where `SYSTEM_PROMPT_BUDGET_FRACTION = 0.15` (line 352). `DEFAULT_SYSTEM_PROMPT_BUDGET_CHARS = 16_000 * 4 = 64_000` at line 349. `budget_chars = budget_tokens * 4`. Template size = `len(template_result)`. Available for file context = `budget_chars - len(template_result)`.
-  - `_truncate_file_context_smart()` at line 410 — splits on `## ` headers, preserves core files (`README.md`, `AGENTS.md`, `CONVENTIONS.md`, `ARCHITECTURE.md`).
+  - `_truncate_file_context_smart()` at line 415 — splits on `## ` headers, preserves core files (`README.md`, `AGENTS.md`, `CONVENTIONS.md`, `ARCHITECTURE.md`).
   - No custom exceptions. No `raise` statements.
 
-- **Read `agent/config.py`:** `LLMProviderConfig` dataclass at line 29 — fields: `name` (line 30), `base_url` (31), `api_key` (32), `default_model` (33), `caller` (34), `supports_tools` (35), `supports_streaming` (36), `max_tokens: int = 128_000` (line 38), `enabled` (39), `last_verified_at` (40), `last_error` (41). `AgentConfig` at line 70 — `providers: dict[str, LLMProviderConfig]` at line 71. `_to_llm_provider(p) -> LLMProviderConfig` at line 131 (explicit field-by-field copy from `models.providers.ProviderConfig`).
+- **Read `agent/config.py`:** `LLMProviderConfig` dataclass at line 29 — fields: `name` (line 30), `base_url` (31), `api_key` (32), `default_model` (33), `caller` (34), `supports_tools` (35), `supports_streaming` (36), `max_tokens: int = 128_000` (line 38), `enabled` (39), `last_verified_at` (40), `last_error` (41). `AgentConfig` at line 69 — `providers: dict[str, LLMProviderConfig]` at line 71. `_to_llm_provider(p) -> LLMProviderConfig` at line 131 (explicit field-by-field copy from `models.providers.ProviderConfig`).
 
 - **Read `models/providers.py`:** `CALLER_DEFAULT_MAX_TOKENS` dict at line 21: `openai: 128_000`, `anthropic: 200_000`, `minimax: 1_048_576`, `openrouter: 128_000`, `zai: 128_000`. `caller_default_max_tokens(caller: str) -> int` at line 30. `ProviderConfig` dataclass at line 39 — has `max_tokens` and `default_max_tokens` but **no `compaction_threshold` field** (will be added per §2.3.2).
 
@@ -88,6 +89,7 @@ Seven changes in two batches:
 | `utils/providers_store.py` — `_to_dict` / `_from_dict` round-trip the new field | Repo map / PageRank ranking |
 | `tests/test_conversation.py` — new test classes | |
 | `tests/test_runtime_compaction.py` — new test file | |
+| `tests/test_prompt_loader_budget.py` — new test file | |
 | `ARCHITECTURE.md` — section updates | |
 
 ### 1.4 Architecture Principles That Apply
@@ -337,7 +339,7 @@ def trim_to_token_limit(
     # §4.10: Summary injection (unchanged from current, except for P6 retry loop).
     messages_removed = messages_count_before - len(self.messages)
     if messages_removed > 0 and len(self.messages) >= min_messages:
-        summary = self._last_exchange_summary()
+        summary = self._last_exchange_summary(max_tokens=max_tokens, keep_first=keep_first)
         if summary:
             # Use tiktoken for accurate summary_tokens (matches get_token_estimate).
             # Fall back to chars // 4 heuristic when tiktoken unavailable.
@@ -495,13 +497,13 @@ def prune_tool_outputs(self, target_tokens: int, protect_turns: int = 2) -> int:
 ```
 
 **Verification of field access:**
-- `msg.content` — exists on `Message` dataclass (line 110: `content: str`).
-- `msg.tool_call_id` — exists on `Message` dataclass (line 112: `tool_call_id: str | None`).
-- `msg.role` — exists on `Message` dataclass (line 109: `role: MessageRole`).
-- `parent.tool_calls` — exists on `Message` dataclass (line 111: `tool_calls: list[ToolCall]`).
-- `tc.call_id` — exists on `ToolCall` dataclass (line 95: `call_id: str`).
-- `tc.tool_name` — exists on `ToolCall` dataclass (line 96: `tool_name: str`).
-- `msg.tokens_used` — exists on `Message` dataclass (line 114: `tokens_used: int`).
+- `msg.content` — exists on `Message` dataclass (line 119: `content: str`).
+- `msg.tool_call_id` — exists on `Message` dataclass (line 121: `tool_call_id: str | None`).
+- `msg.role` — exists on `Message` dataclass (line 117: `role: MessageRole`).
+- `parent.tool_calls` — exists on `Message` dataclass (line 120: `tool_calls: list[ToolCall]`).
+- `tc.call_id` — exists on `ToolCall` dataclass (line 92: `call_id: str`).
+- `tc.tool_name` — exists on `ToolCall` dataclass (line 93: `tool_name: str`).
+- `msg.tokens_used` — exists on `Message` dataclass (line 123: `tokens_used: int`).
 
 **Note on mutation:** We mutate `msg.content` in-place on the existing `Message` object. This is safe because `Message` is a `@dataclass` (mutable by default). The `Conversation.messages` list still references the same `Message` object — no list mutation needed.
 
@@ -609,7 +611,7 @@ def _find_split_index(self, budget_tokens: int, keep_first: int = 2) -> int:
 The current `_last_exchange_summary()` (line 458) collects user messages from `self.messages[:-4]`. The P5 enhancement computes a smarter split index using `_find_split_index()` and summarizes the head based on that. **The split-index path is the new default behavior**, not a deferred Batch B enhancement.
 
 ```python
-def _last_exchange_summary(self) -> str:
+def _last_exchange_summary(self, *, max_tokens: int = 0, keep_first: int = 2) -> str:
     """Generate a summary of the oldest trimmed user messages.
 
     Called after trim_to_token_limit removes old exchanges.
@@ -621,6 +623,13 @@ def _last_exchange_summary(self) -> str:
     lands on an assistant message boundary (role-anchored) and respects
     CB-6 (no orphan TOOL_RESULTs).
 
+    Keyword Args:
+        max_tokens: The token budget from the trim context. Passed to
+            _find_split_index() as the budget for head/tail splitting.
+            When 0 (default), falls back to get_token_estimate() as a proxy.
+        keep_first: The keep_first value from the calling trim_to_token_limit().
+            Ensures the split index respects the same head protection.
+
     Returns empty string when the conversation is too short to summarize
     meaningfully or when no user messages remain to capture.
     """
@@ -628,16 +637,14 @@ def _last_exchange_summary(self) -> str:
         return ""
 
     tail_preserve = 4
-    keep_first = 2  # default; could be passed as param if needed
 
     if len(self.messages) <= tail_preserve:
         return ""
 
     # P5: Compute a smarter split index using _find_split_index().
-    # The budget is the soft ceiling from the trim context (we don't have
-    # direct access here, so we use get_token_estimate() as a proxy for the
-    # current budget — this means we split when the conversation is "full").
-    budget_tokens = self.get_token_estimate()
+    # Use the trim budget (max_tokens) when available for accurate splitting.
+    # Fall back to current token estimate when called without a budget.
+    budget_tokens = max_tokens if max_tokens > 0 else self.get_token_estimate()
     split = self._find_split_index(budget_tokens, keep_first=keep_first)
 
     # Defensive: ensure split is at least keep_first and at most
@@ -663,7 +670,7 @@ def _last_exchange_summary(self) -> str:
     return "\n".join(summary_lines)
 ```
 
-**Note:** This version **always** uses `_find_split_index()`. There is no `split_index=None` backward-compatible path — the behavior is uniformly improved. The old `self.messages[:-4]` slice is replaced by the smarter split.
+**Note:** This version **always** uses `_find_split_index()`. There is no `split_index=None` backward-compatible path — the behavior is uniformly improved. The old `self.messages[:-4]` slice is replaced by the smarter split. The method accepts `max_tokens` and `keep_first` as keyword-only arguments, passed through from `trim_to_token_limit()` to ensure the split uses the actual trim budget (not a proxy) and respects the caller's `keep_first` setting.
 
 **Wiring confirmed:** `_find_split_index()` is now called from `_last_exchange_summary()`, which is called from `trim_to_token_limit()` (line 337). This is not dead code.
 
@@ -681,8 +688,8 @@ def _last_exchange_summary(self) -> str:
 | `_fit_summary()` | New | P6 | +20 |
 | `prune_tool_outputs()` | New | P4 | +45 |
 | `_find_split_index()` | New | P5 | +40 |
-| `_last_exchange_summary()` | Modified | P5 | +10 (replaces ~5) |
-| **Total** | | | **~90 net new lines** |
+| `_last_exchange_summary()` | Modified | P5 | +15 (replaces ~5) |
+| **Total** | | | **~95 net new lines** |
 
 **No new imports.** All new code uses existing `MessageRole`, `Message`, `ToolCall`, `Conversation` classes already defined in the module.
 
@@ -1042,11 +1049,11 @@ class TestKeepFirst:
             c.add_assistant_message("y" * 200, [])
         c.trim_to_token_limit(max_tokens=100, keep_first=0)
         # Strict assertion: with keep_first=0 and aggressive trim, the original
-        # task MUST be removed (not "may be removed", as the previous weak
-        # `or len(c.messages) <= 4` allowed).
-        assert c.messages[0].content != "ORIGINAL TASK", (
+        # task MUST be removed entirely — not just moved from index 0.
+        original_messages = [m for m in c.messages if "ORIGINAL TASK" in m.content]
+        assert len(original_messages) == 0, (
             f"keep_first=0 should allow trimming the original task; "
-            f"got messages[0].content={c.messages[0].content[:50]!r}"
+            f"found {len(original_messages)} message(s) containing 'ORIGINAL TASK'"
         )
         assert len(c.messages) < 11, (
             f"trim should reduce message count below pre-trim length; "
@@ -1488,8 +1495,8 @@ User types message
               → [scan non-protected first, then protected]
               → [prefer CB-6 pairs, fallback to oldest]
             → [remove candidate (CB-6 pair aware)]
-          → [if messages removed AND len >= 4]
-            → summary = _last_exchange_summary()
+          → [if messages removed AND len >= min_messages]
+            → summary = _last_exchange_summary(max_tokens=soft, keep_first=keep_first)
             → if current_tokens + summary_tokens > soft:
               → summary = _fit_summary(summary, soft, current_tokens)  [NEW P6]
                 → [try 5 iterations at 80% scale]
@@ -1514,16 +1521,18 @@ User types message
 
 | File | Change Type | Lines Changed | Risk |
 |------|-------------|---------------|------|
-| `models/conversation.py` | Modified + new methods | +90 net new | MEDIUM |
+| `models/conversation.py` | Modified + new methods | +95 net new | MEDIUM |
 | `agent/runtime.py` | Modified + 1 new method | +35 net new | LOW |
-| `agent/config.py` | 1 new field | +1 | LOW |
-| `utils/prompt_loader.py` | Modified (budget arithmetic) | +6 net new | LOW |
+| `agent/config.py` | 1 new field + 1 copy line | +2 | LOW |
+| `models/providers.py` | 1 new field | +1 | LOW |
+| `utils/providers_store.py` | 2 lines (_to_dict + _from_dict) | +2 | LOW |
+| `utils/prompt_loader.py` | Modified (budget arithmetic) | +10 net new | LOW |
 | `tests/test_conversation.py` | 6 new test classes | +200 | LOW |
 | `tests/test_runtime_compaction.py` | New file | +60 | LOW |
 | `tests/test_prompt_loader_budget.py` | New file (or add to existing) | +40 | LOW |
 | `ARCHITECTURE.md` | Section updates | +50 documentation | LOW |
 
-**Total: ~480 lines added/modified across 7 files.**
+**Total: ~495 lines added/modified across 9 files.**
 
 ---
 
@@ -1696,6 +1705,8 @@ def test_fallback_does_not_remove_most_recent(self):
 - [ ] `_fit_summary()` returns None when there's zero space.
 - [ ] `_select_prune_candidate()` prefers non-summary messages over summary messages.
 - [ ] `_find_split_index()` lands on an assistant message boundary.
+- [ ] `_last_exchange_summary()` accepts `max_tokens` and `keep_first` keyword args from `trim_to_token_limit()`.
+- [ ] `_last_exchange_summary()` uses the actual trim budget for splitting, not a `get_token_estimate()` proxy.
 - [ ] `_apply_system_prompt_budget()` uses dynamic fraction based on template size.
 - [ ] Budget fraction never exceeds 0.25.
 - [ ] Budget fraction never goes below 0.15.
@@ -1769,7 +1780,7 @@ def _fit_summary(self, summary: str, max_tokens: int, current_tokens: int) -> st
 
 **Update description:**
 - "Token estimation (Phase CB-4)" → add "(Phase CM-P1: trim now fires at 80% of context window via runtime `_compute_compaction_threshold`)"
-- "§4.10 (Summary on trim)" → add "(Phase CM-P6: summary fitting retries with geometric scaling instead of silent skip)"
+- "§4.10 (Summary on trim)" → add "(Phase CM-P5: summary now uses `_find_split_index()` for role-anchored head/tail splitting. Phase CM-P6: summary fitting retries with geometric scaling instead of silent skip. The method accepts `max_tokens` and `keep_first` from the trim context.)"
 
 ### §3.21m (`agent/runtime.py`)
 
@@ -1823,9 +1834,9 @@ The following files were considered but decided against modification (or receive
 
 **Date:** 2026-06-25
 **Author:** Qaster (supervisor)
-**Audit source:** Adversarial audit at `docs/specs/SPEC-CONTEXT-MANAGEMENT-ROADMAP.audit.md` (QTR, 2026-06-25)
+**Audit source:** Adversarial review of original spec draft (QTR, 2026-06-25, in-session — not persisted to file)
 
-This revision incorporates fixes for 25 audit findings (1 CRITICAL, 3 HIGH, 9 MEDIUM, 12 LOW/INFO). Each finding is addressed in the spec body and reflected in this self-audit.
+This revision incorporates fixes for 25 issues (1 CRITICAL, 3 HIGH, 9 MEDIUM, 12 LOW/INFO) identified during an adversarial review of the original spec draft. Each finding is addressed in the spec body and reflected in this self-audit.
 
 ### 1. Does every code sample actually work against the current codebase?
 
@@ -1871,7 +1882,9 @@ This revision incorporates fixes for 25 audit findings (1 CRITICAL, 3 HIGH, 9 ME
 
 **`_last_exchange_summary()`** modified (in `models/conversation.py`):
 - **NEW:** Always uses `_find_split_index()` instead of the naive `self.messages[:-4]` slice ✓
-- Computes `budget_tokens = self.get_token_estimate()` to feed `_find_split_index()` ✓
+- **NEW:** Accepts `max_tokens` and `keep_first` keyword-only args from `trim_to_token_limit()` ✓
+- Uses the actual trim budget (`max_tokens`) for `_find_split_index()`, not a `get_token_estimate()` proxy ✓
+- `keep_first` is passed through, not hardcoded to 2 ✓
 - Existing formatting logic preserved ✓
 
 **Tool loop change** (in `agent/runtime.py`):
@@ -1955,9 +1968,11 @@ Files the proposal asks to change:
 ```
 [x] models/conversation.py — TrimPolicy dataclass, modified trim_to_token_limit(),
     new _select_prune_candidate(), new _fit_summary(), new prune_tool_outputs(),
-    new _find_split_index(), modified _last_exchange_summary()
+    new _find_split_index(), modified _last_exchange_summary(max_tokens, keep_first)
 [x] agent/runtime.py — new _compute_compaction_threshold(), modified tool loop (lines 1616-1620)
-[x] agent/config.py — new compaction_threshold field on LLMProviderConfig
+[x] agent/config.py — new compaction_threshold field on LLMProviderConfig + _to_llm_provider copy
+[x] models/providers.py — new compaction_threshold field on ProviderConfig (YAML persistence)
+[x] utils/providers_store.py — _to_dict and _from_dict round-trip the new field
 [x] utils/prompt_loader.py — modified _apply_system_prompt_budget() budget arithmetic
 [x] tests/test_conversation.py — 6 new test classes (17 tests)
 [x] tests/test_runtime_compaction.py — new file (3 tests)
