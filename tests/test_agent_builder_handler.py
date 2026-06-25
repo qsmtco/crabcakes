@@ -63,6 +63,7 @@ class TestSaveValidation:
             "prompts": ["system/coder.md"],
             "tools": ["read_file", "list_files"],
             "llm_name": "local-kb",
+            "fallback_provider": "openrouter",
         }
         ok, errors = h.save(agent)
         assert ok
@@ -75,6 +76,18 @@ class TestSaveValidation:
         assert not ok
         assert len(errors) > 0
 
+    def test_save_rejects_missing_fallback(self, handler, tmp_agents_dir):
+        """Every agent must have a fallback_provider configured."""
+        h, _, _ = handler
+        ok, errors = h.save({
+            "name": "NoFallback",
+            "prompts": ["system/coder.md"],
+            "tools": ["read_file"],
+            "llm_name": "local-kb",
+        })
+        assert not ok
+        assert any("fallback_provider" in e for e in errors)
+
     def test_save_fires_callback(self, handler, tmp_agents_dir):
         h, saved, _ = handler
         h.save({
@@ -82,6 +95,7 @@ class TestSaveValidation:
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
             "llm_name": "local-kb",
+            "fallback_provider": "openrouter",
             "api_key": "sk-test-123",
         })
         assert saved == ["CallbackTest"]
@@ -95,6 +109,7 @@ class TestLoadForEdit:
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
             "llm_name": "local-kb",
+            "fallback_provider": "openrouter",
             "api_key": "sk-test-edit",
         })
         loaded = h.load_for_edit("Editable")
@@ -114,6 +129,7 @@ class TestDelete:
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
             "llm_name": "local-kb",
+            "fallback_provider": "openrouter",
             "api_key": "sk-test-del",
         })
         assert h.delete("Deletable") is True
@@ -130,6 +146,7 @@ class TestDelete:
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
             "llm_name": "local-kb",
+            "fallback_provider": "openrouter",
             "api_key": "sk-test-del2",
         })
         h.delete("ToDelete")

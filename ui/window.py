@@ -909,14 +909,17 @@ class MainWindow(Gtk.ApplicationWindow):
             if agent_def is None:
                 logger.warning("Agent not found for editing: %s", edit_name)
                 return
+            is_edit = True
         else:
             # New agent — use template with sensible defaults
             agent_def = self._agent_builder_handler.create_new()
+            is_edit = False
 
         self._builder_dialog = AgentBuilderDialog(
             self,
             handler=self._agent_builder_handler,
             agent_def=agent_def,
+            is_edit=is_edit,
             on_save=lambda values: self._on_builder_save(values),
             on_cancel=lambda: self._on_builder_cancel(),
         )

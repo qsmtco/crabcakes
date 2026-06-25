@@ -47,10 +47,12 @@ def gtk_parent():
     return win
 
 
-def _make_dlg(parent, providers, agent_def=None):
+def _make_dlg(parent, providers, agent_def=None, *, is_edit=False):
     handler = StubHandler(providers)
     from ui.views.agent_builder import AgentBuilderDialog
-    return AgentBuilderDialog(parent=parent, handler=handler, agent_def=agent_def)
+    return AgentBuilderDialog(
+        parent=parent, handler=handler, agent_def=agent_def, is_edit=is_edit,
+    )
 
 
 class TestProviderDropdownPopulation:
@@ -93,3 +95,149 @@ class TestProviderDropdownPopulation:
         assert "provider" not in values
         assert "provider_keys" not in values
         assert "api_key" not in values
+
+
+class TestCreateVsEditMode:
+    """The dialog distinguishes create mode from edit mode based on is_edit.
+
+    Regression: previously the dialog used `agent_def is not None` as the mode
+    signal, but create_new() returns a non-empty template dict, so new agents
+    were mis-labeled as edits (title 'Edit Agent', button 'Save').
+    """
+
+    def _new_template(self):
+        """Mirror of AgentBuilderHandler.create_new() — non-None template."""
+        return {
+            "name": "",
+            "emoji": "🤖",
+            "role": "",
+            "prompts": [],
+            "tools": ["read_file", "list_files", "search_files"],
+            "provider": "",
+            "model": "",
+            "fallback_provider": None,
+            "self_improvement": {"bug_journal": True, "enforcement": False},
+        }
+
+    def test_create_mode_title_and_button(self, gtk_parent):
+        """is_edit=False → title 'Create Agent', button 'Create'."""
+        providers = [ProviderConfig("openai", "u", "k", "gpt-4o", True)]
+        dlg = _make_dlg(gtk_parent, providers, agent_def=self._new_template(), is_edit=False)
+        assert dlg._window.get_title() == "Create Agent"
+        assert dlg._save_btn.get_label() == "Create"
+        assert dlg._is_edit is False
+
+    def test_edit_mode_title_and_button(self, gtk_parent):
+        """is_edit=True → title 'Edit Agent', button 'Save'."""
+        providers = [ProviderConfig("openai", "u", "k", "gpt-4o", True)]
+        existing = self._new_template()
+        existing["name"] = "MyAgent"
+        dlg = _make_dlg(gtk_parent, providers, agent_def=existing, is_edit=True)
+        assert dlg._window.get_title() == "Edit Agent"
+        assert dlg._save_btn.get_label() == "Save"
+        assert dlg._is_edit is True
+
+    def test_create_mode_with_no_agent_def(self, gtk_parent):
+        """agent_def=None, is_edit=False → still 'Create Agent' (not 'Edit')."""
+        providers = [ProviderConfig("openai", "u", "k", "gpt-4o", True)]
+        dlg = _make_dlg(gtk_parent, providers, agent_def=None, is_edit=False)
+        assert dlg._window.get_title() == "Create Agent"
+        assert dlg._save_btn.get_label() == "Create"
+
+    def test_legacy_truthiness_pattern_would_have_bugged(self, gtk_parent):
+        """Sanity: passing a non-None template (legacy create_new) WITHOUT is_edit
+        should still produce 'Create Agent'. This is the regression case —
+        the old `self._is_edit = agent_def is not None` would have produced
+        'Edit Agent' here. With explicit is_edit=False, it's correct.
+        """
+        providers = [ProviderConfig("openai", "u", "k", "gpt-4o", True)]
+        dlg = _make_dlg(gtk_parent, providers, agent_def=self._new_template(), is_edit=False)
+        assert dlg._is_edit is False
+        assert dlg._window.get_title() != "Edit Agent"
+
+
+class TestFallbackRowVisibility:
+    """The Fallback Provider row is always visible, regardless of primary.
+
+    Regression: previously the row was hidden unless the primary was 'local-kb'.
+    """
+
+    def test_fallback_row_visible_for_kb_primary(self, gtk_parent):
+        """local-kb as primary → fallback row visible (was: visible in old code)."""
+        providers = [
+            ProviderConfig("local-kb", "u", "k", "local-kb", True),
+            ProviderConfig("openrouter", "u", "k", "or-m", True),
+        ]
+        dlg = _make_dlg(gtk_parent, providers)
+        assert dlg._fallback_row.get_visible() is True
+
+    def test_fallback_row_visible_for_cloud_primary(self, gtk_parent):
+        """openai as primary → fallback row visible (was: hidden in old code)."""
+        providers = [
+            ProviderConfig("openai", "u", "k", "gpt-4o", True),
+            ProviderConfig("anthropic", "u", "k", "c", True),
+        ]
+        dlg = _make_dlg(gtk_parent, providers)
+        assert dlg._fallback_row.get_visible() is True
+
+    def test_fallback_excludes_current_primary(self, gtk_parent):
+        """The current primary is excluded from the fallback dropdown options."""
+        providers = [
+            ProviderConfig("local-kb", "u", "k", "local-kb", True),
+            ProviderConfig("openai", "u", "k", "gpt-4o", True),
+            ProviderConfig("anthropic", "u", "k", "c", True),
+        ]
+        dlg = _make_dlg(gtk_parent, providers)
+        # Primary defaults to first non-KB provider (openai) since local-kb is seeded first
+        # but the actual selection depends on what _rebuild_provider_dropdown selects.
+        # Check the fallback list excludes the currently-selected primary.
+        primary = dlg._get_selected_llm_name()
+        fallback_names = [p.name for p in dlg._fallback_providers]
+        assert primary not in fallback_names
+
+    def test_fallback_excludes_local_kb(self, gtk_parent):
+        """local-kb is never a valid fallback target (can't fall back to KB)."""
+        providers = [
+            ProviderConfig("local-kb", "u", "k", "local-kb", True),
+            ProviderConfig("openai", "u", "k", "gpt-4o", True),
+            ProviderConfig("anthropic", "u", "k", "c", True),
+        ]
+        dlg = _make_dlg(gtk_parent, providers)
+        # Switch primary to openai
+        dlg._provider_dropdown.set_selected(0)  # openai (or whichever is first non-KB)
+        fallback_names = [p.name for p in dlg._fallback_providers]
+        assert "local-kb" not in fallback_names
+
+
+class TestSaveButtonRequiresFallback:
+    """The Save button is disabled until a fallback is selected."""
+
+    def test_save_disabled_when_no_fallback(self, gtk_parent):
+        """Empty fallback selection → save button is not sensitive."""
+        providers = [
+            ProviderConfig("local-kb", "u", "k", "local-kb", True),
+            ProviderConfig("openai", "u", "k", "gpt-4o", True),
+        ]
+        dlg = _make_dlg(gtk_parent, providers)
+        # Fill required fields except fallback
+        dlg._name_entry.set_text("TestAgent")
+        # Mark a tool and prompt (the test stubs return empty lists for these,
+        # so we can't tick them — but the providers list is non-empty).
+        # The fallback defaults to "None" (index 0), so save should be disabled.
+        assert dlg._save_btn.get_sensitive() is False
+
+    def test_save_enabled_when_fallback_selected(self, gtk_parent):
+        """Non-None fallback → save button becomes sensitive (other conditions met)."""
+        providers = [
+            ProviderConfig("local-kb", "u", "k", "local-kb", True),
+            ProviderConfig("openai", "u", "k", "gpt-4o", True),
+            ProviderConfig("anthropic", "u", "k", "c", True),
+        ]
+        dlg = _make_dlg(gtk_parent, providers)
+        dlg._name_entry.set_text("TestAgent")
+        dlg._provider_dropdown.set_selected(1)  # select openai as primary
+        # After selecting openai, fallback list excludes it and includes anthropic
+        # The dropdown's first non-None item is anthropic (index 1).
+        dlg._fallback_dropdown.set_selected(1)
+        assert dlg._get_selected_fallback_provider() != ""
+

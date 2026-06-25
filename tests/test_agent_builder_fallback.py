@@ -88,7 +88,11 @@ class TestYamlRoundTrip:
         assert loaded.get("fallback_provider") == "openrouter"
 
     def test_save_load_without_fallback_fields(self, temp_config_dir):
-        """Agent YAML without fallback fields loads with None defaults."""
+        """Agent YAMLs without fallback_provider are skipped at load time.
+
+        Every agent must have a fallback. load_agent_defs() filters out
+        invalid defs; load_agent_def() returns None for them.
+        """
         agent_def = {
             "name": "SimpleAgent",
             "emoji": "🤖",
@@ -102,11 +106,14 @@ class TestYamlRoundTrip:
         save_agent_def(agent_def)
 
         loaded = load_agent_def("SimpleAgent")
-        assert loaded is not None
-        assert loaded.get("fallback_provider") is None
+        assert loaded is None  # filtered out — missing fallback_provider
 
     def test_save_load_fallback_none(self, temp_config_dir):
-        """Explicitly None fallback_provider is saved and loaded correctly."""
+        """Explicitly None fallback_provider is filtered at load time.
+
+        A literal null/None is treated the same as a missing field — both
+        are invalid under the "all agents must have a fallback" contract.
+        """
         agent_def = {
             "name": "KBOnly",
             "emoji": "🤖",
@@ -121,8 +128,7 @@ class TestYamlRoundTrip:
         save_agent_def(agent_def)
 
         loaded = load_agent_def("KBOnly")
-        assert loaded is not None
-        assert loaded.get("fallback_provider") is None
+        assert loaded is None  # filtered out — fallback_provider is None
 
     def test_save_does_not_emit_fallback_model(self, temp_config_dir):
         """save_agent_def() never writes fallback_model to the YAML file."""

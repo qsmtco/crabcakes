@@ -396,6 +396,15 @@ def _ensure_auxilium_uses_kb() -> None:
         # Remove stale provider/model fields that conflict
         agent_def.pop("provider", None)
         agent_def.pop("model", None)
+        # LOW-11: also ensure a fallback is set so validation passes. Prefer a
+        # real cloud provider the user has configured; fall back to openrouter
+        # as a sensible default for fresh installs.
+        if not agent_def.get("fallback_provider"):
+            real_fallbacks = [p.name for p in providers if p.name != "local-kb"]
+            if real_fallbacks:
+                agent_def["fallback_provider"] = real_fallbacks[0]
+            else:
+                agent_def["fallback_provider"] = "openrouter"
         save_agent_def(agent_def)
         _logger.info("ensure_kb_provider: set Auxilium agent to use local-kb provider")
     except Exception as e:

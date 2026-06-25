@@ -143,6 +143,7 @@ class TestYAMLLoading(TestState):
             "tools": ["read_file"],
             "provider": "openai",
             "llm_name": "local-kb",
+            "fallback_provider": "openrouter",  # LOW-11: every agent needs a fallback
             "mcp_servers": "memory",  # String, not list
         }
         agent_file.write_text(json.dumps(agent_dict))

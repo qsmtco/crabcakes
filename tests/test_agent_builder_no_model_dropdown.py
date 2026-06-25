@@ -50,10 +50,12 @@ def gtk_parent():
     return win
 
 
-def _make_dlg(parent, providers):
+def _make_dlg(parent, providers, *, agent_def=None, is_edit=False):
     handler = StubHandler(providers)
     from ui.views.agent_builder import AgentBuilderDialog
-    return AgentBuilderDialog(parent=parent, handler=handler)
+    return AgentBuilderDialog(
+        parent=parent, handler=handler, agent_def=agent_def, is_edit=is_edit,
+    )
 
 
 class TestNoModelDropdown:
@@ -93,7 +95,7 @@ class TestNoApiKeyField:
 
 
 class TestSaveButtonEnablesWithoutApiKey:
-    """Save enables when name + prompts + tools + provider are set (no API key)."""
+    """Save enables when name + prompts + tools + provider + fallback are set (no API key)."""
 
     def test_save_disabled_when_only_name_set(self, gtk_parent):
         providers = [ProviderConfig("openai", "u", "k", "gpt-4o", True)]
@@ -103,10 +105,15 @@ class TestSaveButtonEnablesWithoutApiKey:
         assert dlg._save_btn.get_sensitive() is False
 
     def test_save_enabled_when_all_required_fields_set(self, gtk_parent):
-        """name + prompts + tools + provider → Save sensitive, no API key entered."""
-        providers = [ProviderConfig("openai", "u", "k", "gpt-4o", True)]
+        """name + prompts + tools + provider + fallback → Save sensitive, no API key entered."""
+        providers = [
+            ProviderConfig("openai", "u", "k", "gpt-4o", True),
+            ProviderConfig("openrouter", "u", "k", "auto", True),
+        ]
         dlg = _make_dlg(gtk_parent, providers)
         dlg._name_entry.set_text("agent")
+        # Select primary provider (index 0 = openai)
+        dlg._provider_dropdown.set_selected(0)
         # Simulate user checking a prompt
         if dlg._prompt_checks:
             first_prompt = list(dlg._prompt_checks.values())[0]
@@ -115,5 +122,9 @@ class TestSaveButtonEnablesWithoutApiKey:
         if dlg._tool_checks:
             first_tool = list(dlg._tool_checks.values())[0]
             first_tool.set_active(True)
+        # Selecting primary provider populates the fallback dropdown;
+        # pick the second entry (the only fallback candidate since KB is excluded).
+        if len(dlg._fallback_providers) >= 1:
+            dlg._fallback_dropdown.set_selected(1)
         dlg._update_save_button()
         assert dlg._save_btn.get_sensitive() is True

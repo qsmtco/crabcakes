@@ -4,6 +4,8 @@
 # Tests the YAML-loaded registry, self-improvement config resolution,
 # and backward compatibility with programmatic SpecialAgentDef creation.
 
+import os
+
 import pytest
 
 from agent.special_agents import (
@@ -96,10 +98,28 @@ class TestGetSelfImprovementConfig:
 
 class TestRegistry:
     def test_loads_coder_and_debugger(self):
-        agents = get_special_agents()
-        names = [a.display_name for a in agents]
-        assert "Coder" in names
-        assert "Debugger" in names
+        """Coder and Debugger load from the default agents fixtures (mocked)."""
+        from unittest.mock import patch
+        # Use the project's own prompts/default_agents/ fixtures, patched to
+        # match the new "all agents need a fallback" contract.
+        defaults_dir = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "prompts", "default_agents",
+        )
+        coder_path = os.path.join(defaults_dir, "coder.yaml")
+        debugger_path = os.path.join(defaults_dir, "debugger.yaml")
+        # Read the project's fixtures directly; they already include fallback_provider.
+        import yaml as _yaml
+        with open(coder_path) as f:
+            coder = _yaml.safe_load(f)
+        with open(debugger_path) as f:
+            debugger = _yaml.safe_load(f)
+        with patch("utils.agent_defs.load_agent_defs", return_value=[coder, debugger]):
+            reload_registry()
+            agents = get_special_agents()
+            names = [a.display_name for a in agents]
+            assert "Coder" in names
+            assert "Debugger" in names
 
     def test_coder_has_write_tools(self):
         from unittest.mock import patch

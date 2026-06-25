@@ -4,6 +4,7 @@ name: Debugger
 emoji: "🐛"
 role: debugger
 llm_name: openai/gpt-4o  # placeholder; user configures their own in Settings → Providers
+fallback_provider: openrouter  # cloud fallback when OpenAI is unavailable
 prompts:
   - system/debugger.md
 tools:

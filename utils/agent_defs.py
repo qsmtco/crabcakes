@@ -234,7 +234,14 @@ def load_agent_defs() -> list[dict]:
         #     (BUG #30: single-string → list).  The validation error for non-list
         #     types is still filtered so the coercion can run.
         if agent_def.get("role") == "helper":
-            errors = [e for e in errors if "llm_name" not in e]
+            # Helper (Auxilium) is patched at startup by ensure_kb_provider
+            # (utils/providers_store.py) — which may set llm_name=local-kb AND
+            # inherit a fallback from the user's existing provider config. The
+            # helper exemption covers both fields so a fresh-install helper
+            # agent (which has no real provider yet) can still load. Once the
+            # user configures providers, _ensure_auxilium_uses_kb patches the
+            # agent to use a real provider.
+            errors = [e for e in errors if "llm_name" not in e and "fallback_provider" not in e]
         errors = [e for e in errors if not (
             e == "Field 'mcp_servers' must be a list" and
             agent_def.get("mcp_servers") is not None and
@@ -384,6 +391,8 @@ def validate_agent_def(agent_def: dict) -> list[str]:
         errors.append("Missing required field: tools (must be a non-empty list)")
     if not agent_def.get("llm_name"):
         errors.append("Missing required field: llm_name")
+    if not agent_def.get("fallback_provider"):
+        errors.append("Missing required field: fallback_provider (every agent must have a fallback)")
 
     # Type checks
     prompts = agent_def.get("prompts")

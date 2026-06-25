@@ -88,6 +88,7 @@ class TestSIOverridesPreserved:
             "prompts": ["system/coder.md"],
             "tools": ["read_file", "write_file"],
             "llm_name": "local-kb",
+            "fallback_provider": "openrouter",
             "api_key": "sk-test-si",
             "self_improvement": {
                 "bug_journal": True,
@@ -122,6 +123,7 @@ class TestRenameCleanup:
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
             "llm_name": "local-kb",
+            "fallback_provider": "openrouter",
             "api_key": "sk-test-ren",
         })
         assert ad.load_agent_def("Original") is not None
@@ -149,6 +151,7 @@ class TestRenameCleanup:
             "prompts": ["system/coder.md"],
             "tools": ["read_file"],
             "llm_name": "local-kb",
+            "fallback_provider": "openrouter",
             "api_key": "sk-test-stable",
         })
 
@@ -240,6 +243,7 @@ class TestNameCollision:
             "tools": ["read_file"],
             "prompts": ["system/coder.md"],
             "llm_name": "local-kb",
+            "fallback_provider": "openrouter",
         })
 
         errors = ad.validate_agent_def({
@@ -247,6 +251,7 @@ class TestNameCollision:
             "tools": ["read_file"],
             "prompts": ["system/coder.md"],
             "llm_name": "local-kb",
+            "fallback_provider": "openrouter",
         })
         assert any("collision" in e.lower() for e in errors)
 
@@ -257,6 +262,7 @@ class TestNameCollision:
             "tools": ["read_file"],
             "prompts": ["system/coder.md"],
             "llm_name": "local-kb",
+            "fallback_provider": "openrouter",
         })
 
         errors = ad.validate_agent_def({
@@ -264,5 +270,6 @@ class TestNameCollision:
             "tools": ["read_file"],
             "prompts": ["system/coder.md"],
             "llm_name": "local-kb",
+            "fallback_provider": "openrouter",
         })
         assert not any("collision" in e.lower() for e in errors)

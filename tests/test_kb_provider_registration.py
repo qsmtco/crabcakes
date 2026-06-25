@@ -114,7 +114,7 @@ class TestEnsureKbProvider:
         """Helper agent with empty llm_name → patched to use local-kb."""
         from utils.agent_defs import save_agent_def, load_agent_def_by_role
 
-        # Create helper agent with no provider
+        # Create helper agent with no provider (but with a fallback so it passes validation)
         save_agent_def({
             "name": "Auxilium",
             "emoji": "🦀",
@@ -122,6 +122,7 @@ class TestEnsureKbProvider:
             "prompts": ["system/auxilium.md"],
             "tools": ["read_file"],
             "llm_name": "",
+            "fallback_provider": "openrouter",
             "self_improvement": {},
         })
 
@@ -152,6 +153,7 @@ class TestEnsureKbProvider:
             "prompts": ["system/auxilium.md"],
             "tools": ["read_file"],
             "llm_name": "openrouter",
+            "fallback_provider": "openrouter",
             "self_improvement": {},
         })
 

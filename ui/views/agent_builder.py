@@ -22,13 +22,18 @@ from utils.mcp_config import load_mcp_servers, MCPConfigError
 class AgentBuilderDialog:
     """GTK4 dialog for creating/editing agent definitions.
 
-    If agent_def is provided, pre-fills the form for editing.
-    If None, shows an empty form for creating a new agent.
+    The mode (create vs. edit) is set explicitly via the `is_edit` parameter,
+    NOT inferred from the presence of `agent_def`. The handler's `create_new()`
+    returns a non-None template dict for new agents, so a truthiness check on
+    `agent_def` would incorrectly classify new agents as edits.
 
     Args:
         parent: Parent Gtk.Window for transient setting.
         handler: AgentBuilderHandler — provides tool/prompt/provider options.
-        agent_def: Optional existing agent dict to edit.
+        agent_def: Optional existing agent dict to pre-fill the form.
+            Pass None for new agents, the loaded dict for edits.
+        is_edit: True for edit mode (title="Edit Agent", button="Save");
+            False for create mode (title="Create Agent", button="Create").
         on_save: Callback with the form dict when user clicks Save.
         on_cancel: Callback when user clicks Cancel or closes window.
     """
@@ -39,13 +44,14 @@ class AgentBuilderDialog:
         *,
         handler,
         agent_def: dict | None = None,
+        is_edit: bool = False,
         on_save=None,
         on_cancel=None,
     ):
         self._handler = handler
         self._on_save = on_save
         self._on_cancel = on_cancel
-        self._is_edit = agent_def is not None
+        self._is_edit = is_edit
         self._original_si = {}  # preserved SI overrides from edit source
         self._tool_checks: dict[str, Gtk.CheckButton] = {}
         self._tool_count_label: Gtk.Label | None = None
@@ -110,7 +116,7 @@ class AgentBuilderDialog:
 
         form_box.append(provider_row)
 
-        # Fallback provider row (visible only when primary is local-kb)
+        # Fallback provider row (always visible — every agent needs a fallback)
         self._fallback_row = self._build_fallback_provider_row()
         form_box.append(self._fallback_row)
 
@@ -346,9 +352,11 @@ class AgentBuilderDialog:
     def _build_fallback_provider_row(self) -> Gtk.Box:
         """Build the fallback provider row.
 
-        Visible only when the primary provider is local-kb.
-        Includes a 'None' option (default). Model is resolved at runtime from
-        the selected provider's default_model — no sibling model dropdown.
+        Always visible — every agent must have a fallback provider configured.
+        Includes a 'None' option (which is invalid; the save button stays
+        disabled until a real provider is selected). Model is resolved at
+        runtime from the selected provider's default_model — no sibling
+        model dropdown.
         """
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         row.set_hexpand(True)
@@ -359,27 +367,39 @@ class AgentBuilderDialog:
         self._fallback_labeled = self._labeled_box("Fallback Provider", self._fallback_dropdown)
         row.append(self._fallback_labeled)
 
-        # Initially hidden
-        row.set_visible(False)
+        # Always visible — every agent must configure a fallback
+        row.set_visible(True)
 
         return row
 
     def _populate_fallback_provider_dropdown(self) -> None:
         """Populate the fallback provider dropdown from self._providers.
 
-        Includes a 'None' option at index 0. Excludes 'local-kb' (can't fall back to KB).
+        Includes a 'None' option at index 0 (invalid for save — the save button
+        stays disabled until a real provider is selected). Excludes the
+        currently-selected primary provider and 'local-kb' (can't fall back to KB).
         """
+        primary = self._get_selected_llm_name()
         names = ["None"]
         self._fallback_providers: list = []  # parallel list of ProviderConfig (index 0 = None sentinel)
         for p in self._providers:
             if p.name == "local-kb":
                 continue  # exclude KB as a fallback target
+            if p.name == primary:
+                continue  # exclude the current primary — can't fall back to itself
             names.append(p.name)
             self._fallback_providers.append(p)
 
         sl = Gtk.StringList.new(names)
         self._fallback_dropdown.set_model(sl)
-        self._fallback_dropdown.set_selected(0)  # default to None
+        # Try to preserve the previously-selected fallback if still in the list;
+        # otherwise default to "None" (which keeps the save button disabled).
+        prev = self._get_selected_fallback_provider()
+        if prev and prev in names:
+            idx = names.index(prev)
+            self._fallback_dropdown.set_selected(idx)
+        else:
+            self._fallback_dropdown.set_selected(0)  # default to None
 
     def _on_fallback_provider_changed(self, dropdown, _param) -> None:
         """When fallback provider changes, refresh save button state.
@@ -391,12 +411,12 @@ class AgentBuilderDialog:
         self._update_save_button()
 
     def _update_fallback_visibility(self) -> None:
-        """Show fallback row only when primary provider is local-kb."""
-        primary = self._get_selected_llm_name()
-        is_kb = primary == "local-kb"
-        self._fallback_row.set_visible(is_kb)
-        if is_kb:
-            self._populate_fallback_provider_dropdown()
+        """Repopulate the fallback provider dropdown whenever the primary changes.
+
+        The row is always visible; this just rebuilds the options to exclude
+        the new primary.
+        """
+        self._populate_fallback_provider_dropdown()
 
     def _get_selected_fallback_provider(self) -> str:
         """Return the selected fallback provider name, or '' for None."""
@@ -713,7 +733,7 @@ class AgentBuilderDialog:
     # ── Save button state ────────────────────────────────────────────
 
     def _update_save_button(self) -> None:
-        """Enable Save only when: name, prompts, tools, AND provider are set.
+        """Enable Save only when: name, prompts, tools, primary, AND fallback are set.
 
         This is widget state management (is the form complete?), NOT validation.
         Actual validation lives in validate_agent_def().
@@ -722,9 +742,10 @@ class AgentBuilderDialog:
         has_prompts = any(c.get_active() for c in self._prompt_checks.values())
         has_tools = any(c.get_active() for c in self._tool_checks.values())
         has_provider = bool(self._get_selected_llm_name())
+        has_fallback = bool(self._get_selected_fallback_provider())
 
         self._save_btn.set_sensitive(
-            has_name and has_prompts and has_tools and has_provider
+            has_name and has_prompts and has_tools and has_provider and has_fallback
         )
 
     # ── Actions ───────────────────────────────────────────────────────
