@@ -44,6 +44,7 @@ def _to_dict(p: ProviderConfig) -> dict[str, Any]:
         "supports_tools": p.supports_tools,
         "supports_streaming": p.supports_streaming,
         "max_tokens": p.max_tokens,
+        "default_max_tokens": p.default_max_tokens,
         "last_verified_at": p.last_verified_at,
         "last_error": p.last_error,
     }
@@ -61,6 +62,7 @@ def _from_dict(d: dict[str, Any]) -> ProviderConfig:
         supports_tools=d.get("supports_tools", True),
         supports_streaming=d.get("supports_streaming", True),
         max_tokens=d.get("max_tokens", 128_000),
+        default_max_tokens=d.get("default_max_tokens", 0),
         last_verified_at=d.get("last_verified_at"),
         last_error=d.get("last_error"),
     )

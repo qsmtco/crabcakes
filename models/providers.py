@@ -22,5 +22,6 @@ class ProviderConfig:
     supports_tools: bool = True
     supports_streaming: bool = True
     max_tokens: int = 128_000
+    default_max_tokens: int = 0
     last_verified_at: str | None = None
     last_error: str | None = None

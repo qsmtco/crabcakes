@@ -159,6 +159,13 @@ class SettingsHandler:
             for i, p in enumerate(providers):
                 if p.name == provider.name:
                     if result.ok:
+                        # Pre-fill max_tokens from /v1/models probe ONLY if
+                        # user hasn't customized (sentinel: 128_000 = default).
+                        new_max_tokens = (
+                            result.context_window
+                            if result.context_window and p.max_tokens == 128_000
+                            else p.max_tokens
+                        )
                         providers[i] = ProviderConfig(
                             name=p.name,
                             base_url=p.base_url,
@@ -168,7 +175,7 @@ class SettingsHandler:
                             enabled=p.enabled,
                             supports_tools=p.supports_tools,
                             supports_streaming=p.supports_streaming,
-                            max_tokens=p.max_tokens,
+                            max_tokens=new_max_tokens,
                             last_verified_at=datetime.now(timezone.utc).isoformat(),
                             last_error=None,
                         )

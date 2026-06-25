@@ -14,6 +14,7 @@ except (ImportError, ValueError):
 from models.providers import ProviderConfig
 from ui.handlers.settings_handler import SettingsHandler
 from ui.views.settings_dialog import SettingsDialog
+from utils.provider_test import TestResult
 
 
 pytestmark = pytest.mark.skipif(not GTK_AVAILABLE, reason="GTK not available")
@@ -240,3 +241,86 @@ class TestRefreshProvidersPreservesUnsavedEdits:
 
         # Clean card reflects the new data
         assert d._cards[0]._model_entry.get_text() == "updated-model"
+
+
+class TestMaxTokensSpinButton:
+    def test_spin_button_renders(self, tmp_config_dir):
+        """Every provider card has a Context Window spin button."""
+        h = SettingsHandler()
+        h.add_or_update(_make_provider("p1"))
+        d = SettingsDialog(parent=None, handler=h)
+        card = d._cards[0]
+        assert card._max_tokens_spin is not None
+
+    def test_spin_button_populated_from_provider(self, tmp_config_dir):
+        """Spin button shows the stored max_tokens value."""
+        h = SettingsHandler()
+        h.add_or_update(_make_provider("p1", max_tokens=200_000))
+        d = SettingsDialog(parent=None, handler=h)
+        assert d._cards[0]._max_tokens_spin.get_value() == 200_000
+
+    def test_collect_from_form_includes_max_tokens(self, tmp_config_dir):
+        """Save flow persists the spin button value to YAML."""
+        h = SettingsHandler()
+        d = SettingsDialog(parent=None, handler=h)
+        d._on_add_provider_clicked(None)
+        card = d._cards[-1]
+        card._name_entry.set_text("p1")
+        card._base_url_entry.set_text("https://x.example.com/v1")
+        card._api_key_entry.set_text("test-key")
+        card._model_entry.set_text("p1/model-v1")
+        card._max_tokens_spin.set_value(500_000)
+        card._on_save_clicked(None)
+        saved = h.list_providers()
+        assert saved[0].max_tokens == 500_000
+
+    def test_is_dirty_flips_when_spin_edited(self, tmp_config_dir):
+        """Editing the spin button makes the card dirty."""
+        h = SettingsHandler()
+        h.add_or_update(_make_provider("p1"))
+        d = SettingsDialog(parent=None, handler=h)
+        card = d._cards[0]
+        assert not card._is_dirty()
+        card._max_tokens_spin.set_value(200_000)
+        assert card._is_dirty()
+
+    def test_on_test_result_prefills_spin(self, tmp_config_dir):
+        """TestResult with context_window pre-fills spin when stored is default."""
+        h = SettingsHandler()
+        h.add_or_update(_make_provider("p1", max_tokens=128_000))
+        d = SettingsDialog(parent=None, handler=h)
+        card = d._cards[0]
+        result = TestResult(ok=True, latency_ms=200, error=None,
+                            model_used="p1/model-v1", context_window=1_000_000)
+        card._on_test_result(result)
+        assert card._max_tokens_spin.get_value() == 1_000_000
+
+    def test_on_test_result_does_not_overwrite_customized(self, tmp_config_dir):
+        """If user has customized max_tokens, Test Connection doesn't overwrite."""
+        h = SettingsHandler()
+        h.add_or_update(_make_provider("p1", max_tokens=500_000))
+        d = SettingsDialog(parent=None, handler=h)
+        card = d._cards[0]
+        result = TestResult(ok=True, latency_ms=200, error=None,
+                            model_used="p1/model-v1", context_window=1_000_000)
+        card._on_test_result(result)
+        assert card._max_tokens_spin.get_value() == 500_000
+
+    def test_on_test_result_no_prefill_when_context_window_none(self, tmp_config_dir):
+        """TestResult without context_window does not touch the spin button."""
+        h = SettingsHandler()
+        h.add_or_update(_make_provider("p1"))
+        d = SettingsDialog(parent=None, handler=h)
+        card = d._cards[0]
+        result = TestResult(ok=True, latency_ms=200, error=None,
+                            model_used="p1/model-v1", context_window=None)
+        card._on_test_result(result)
+        assert card._max_tokens_spin.get_value() == 128_000
+
+    def test_spin_button_does_not_affect_new_card_default(self, tmp_config_dir):
+        """A new (unsaved) card starts with the default 128_000."""
+        h = SettingsHandler()
+        d = SettingsDialog(parent=None, handler=h)
+        d._on_add_provider_clicked(None)
+        card = d._cards[-1]
+        assert card._max_tokens_spin.get_value() == 128_000

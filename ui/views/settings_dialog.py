@@ -96,6 +96,14 @@ class _ProviderCard:
         caller_row = self._labeled("Caller", self._caller_label)
         vbox.append(caller_row)
 
+        # Context window (max_tokens) — editable; pre-filled by Test Connection.
+        # Default 128_000 matches the dataclass default and runtime fallback.
+        self._max_tokens_spin = Gtk.SpinButton.new_with_range(1_000, 10_000_000, 1_000)
+        self._max_tokens_spin.set_value(self._provider.max_tokens or 128_000)
+        self._max_tokens_spin.set_hexpand(True)
+        max_tokens_row = self._labeled("Context Window", self._max_tokens_spin)
+        vbox.append(max_tokens_row)
+
         # Status label
         self._status_label = Gtk.Label(label="Untested")
         self._status_label.add_css_class("settings-status-untested")
@@ -144,6 +152,7 @@ class _ProviderCard:
         self._caller_label.set_text(
             f"  {p.caller}" if p.caller else "  (auto-detected on save)"
         )
+        self._max_tokens_spin.set_value(p.max_tokens or 128_000)
 
     def _is_dirty(self) -> bool:
         """True if any entry field differs from the stored provider values.
@@ -155,6 +164,7 @@ class _ProviderCard:
             or self._base_url_entry.get_text().strip() != (p.base_url or "")
             or self._model_entry.get_text().strip() != (p.default_model or "")
             or self._api_key_entry.get_text().strip() != (p.api_key or "")
+            or int(self._max_tokens_spin.get_value()) != (p.max_tokens or 128_000)
         )
 
     def _update_provider_ref(self, provider: ProviderConfig) -> None:
@@ -180,7 +190,7 @@ class _ProviderCard:
             enabled=existing.enabled if existing else True,
             supports_tools=existing.supports_tools if existing else True,
             supports_streaming=existing.supports_streaming if existing else True,
-            max_tokens=existing.max_tokens if existing else 128_000,
+            max_tokens=int(self._max_tokens_spin.get_value()),
             last_verified_at=existing.last_verified_at if existing else None,
             last_error=existing.last_error if existing else None,
         )
@@ -239,6 +249,13 @@ class _ProviderCard:
         """Called on the GTK main thread with the test result."""
         if result.ok:
             self._set_status(f"✅ {result.latency_ms}ms", ok=True)
+            # Pre-fill context window if discovered and user hasn't customized.
+            # Sentinel: 128_000 matches the dataclass default.
+            if result.context_window and (self._provider.max_tokens == 128_000):
+                self._max_tokens_spin.set_value(result.context_window)
+                self._status_label.set_text(
+                    f"✅ {result.latency_ms}ms · context: {result.context_window:,}"
+                )
         else:
             error_msg = result.error or "unknown error"
             self._set_status(f"❌ {error_msg}", fail=True)

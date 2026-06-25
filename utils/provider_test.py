@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -53,6 +54,7 @@ class TestResult:  # noqa: N801 — pytest safe: has __init__, won't be collecte
     latency_ms: int           # round-trip time; 0 on failure
     error: str | None         # provider's error message; None on success
     model_used: str           # the model string that was passed in
+    context_window: int | None = None  # context window in tokens, if discoverable via /v1/models
 
 
 def _model_id(model: str) -> str:
@@ -146,7 +148,8 @@ def _test_openai_compat(
         "Authorization": f"Bearer {api_key}",
     }
 
-    return _do_request(endpoint, body, headers, model, provider, timeout_seconds)
+    return _do_request(endpoint, body, headers, model, provider, timeout_seconds,
+                         base_url=base_url, api_key=api_key)
 
 
 def _test_anthropic(
@@ -180,6 +183,8 @@ def _do_request(
     model: str,
     provider: str,
     timeout_seconds: float,
+    base_url: str = "",
+    api_key: str = "",
 ) -> TestResult:
     """Execute the HTTP request and return a TestResult."""
     start = time.monotonic()
@@ -187,8 +192,10 @@ def _do_request(
 
     try:
         # MED-5: Use custom redirect handler that strips Authorization on cross-host redirect
+        # Install opener globally so that urllib.request.urlopen uses it (testable mock boundary)
         _opener = urllib.request.build_opener(_NoAuthRedirectHandler)
-        with _opener.open(req, timeout=timeout_seconds) as resp:
+        urllib.request.install_opener(_opener)
+        with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
             raw = resp.read()
             elapsed_ms = int((time.monotonic() - start) * 1000)
 
@@ -216,11 +223,40 @@ def _do_request(
                             model_used=model,
                         )
 
+            # ── Probe /v1/models for context window (best-effort) ────────
+            # If the successful POST happened, try to discover the model's
+            # context window from the OpenAI-compatible /v1/models endpoint.
+            # Failures here are non-fatal — many providers don't expose this.
+            context_window: int | None = None
+            if base_url and api_key:
+                try:
+                    models_url = base_url.rstrip("/") + "/models"
+                    models_req = urllib.request.Request(models_url, method="GET")
+                    models_req.add_header("Authorization", f"Bearer {api_key}")
+                    with urllib.request.urlopen(models_req, timeout=10) as mresp:
+                        models_body = json.loads(mresp.read().decode("utf-8"))
+                    # OpenAI shape: {"data": [{"id": "model-id", "context_window": N}, ...]}
+                    model_id = model.split("/", 1)[-1]  # strip "provider/" prefix
+                    for model_obj in models_body.get("data", []):
+                        if model_obj.get("id") == model_id:
+                            for field in ("context_window", "max_context_length",
+                                          "context_length", "max_tokens",
+                                          "max_model_len"):
+                                if field in model_obj and isinstance(model_obj[field], int):
+                                    context_window = int(model_obj[field])
+                                    break
+                            break
+                except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
+                        json.JSONDecodeError, KeyError, OSError, ValueError,
+                        socket.timeout):
+                    pass  # Non-fatal — leave context_window as None
+
             return TestResult(
                 ok=True,
                 latency_ms=elapsed_ms,
                 error=None,
                 model_used=model,
+                context_window=context_window,
             )
 
     except urllib.error.HTTPError as e:

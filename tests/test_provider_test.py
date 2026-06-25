@@ -72,13 +72,15 @@ class TestOpenAICompatible:
 
     def test_request_uses_correct_url(self):
         """Verify the URL is constructed with rstrip('/') — trailing slash stripped."""
-        captured_req = {}
+        captured_reqs = []
         body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
 
         def capture_urlopen(req, **kwargs):
-            captured_req["url"] = req.full_url
-            captured_req["data"] = req.data
-            captured_req["headers"] = dict(req.headers)
+            captured_reqs.append({
+                "url": req.full_url,
+                "data": req.data,
+                "headers": dict(req.headers),
+            })
             return _mock_response(body)
 
         with patch("utils.provider_test.urllib.request.urlopen", side_effect=capture_urlopen):
@@ -88,8 +90,8 @@ class TestOpenAICompatible:
                 model="openrouter/qwen/qwen3.7-max",
             )
 
-        # Trailing slash stripped, then /chat/completions appended
-        assert captured_req["url"] == "https://api.example.com/v1/chat/completions"
+        # First call is the POST to /chat/completions (trailing slash stripped)
+        assert captured_reqs[0]["url"] == "https://api.example.com/v1/chat/completions"
 
     def test_request_uses_correct_bearer_header(self):
         captured_headers = {}
@@ -106,6 +108,9 @@ class TestOpenAICompatible:
                 model="openrouter/qwen/qwen3.7-max",
             )
 
+        # First call is the POST — check Authorization header on the POST request
+        # The /v1/models probe also sends Authorization; last-write-wins is fine
+        # since both use the same key. The important check is that Bearer is present.
         assert captured_headers.get("Authorization") == "Bearer sk-xxx"
 
     def test_request_strips_provider_prefix_from_model(self):
@@ -227,6 +232,150 @@ class TestAnthropic:
 
         # urllib.request.Request normalizes headers to Title-Case
         assert any(k.lower() == "anthropic-version" and v == "2023-06-01" for k, v in captured_headers.items())
+
+
+# ── TestModelsEndpointProbe ──────────────────────────────────────────────
+
+
+class TestModelsEndpointProbe:
+    def test_models_endpoint_returns_context_window(self):
+        """Successful POST + GET /v1/models with matching model → context_window populated."""
+        chat_body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+        models_body = json.dumps({
+            "data": [
+                {"id": "gpt-4o", "context_window": 128_000},
+                {"id": "gpt-4o-mini", "context_window": 128_000},
+            ],
+        }).encode()
+
+        chat_resp = _mock_response(chat_body)
+        models_resp = _mock_response(models_body)
+        with patch("utils.provider_test.urllib.request.urlopen",
+                   side_effect=[chat_resp, models_resp]):
+            result = test_connection(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-test",
+                model="openai/gpt-4o",
+            )
+        assert result.ok is True
+        assert result.context_window == 128_000
+
+    def test_models_endpoint_404_is_non_fatal(self):
+        """Provider doesn't expose /v1/models → context_window is None, ok stays True."""
+        chat_body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+        chat_resp = _mock_response(chat_body)
+        err_404 = _http_error(404, "Not Found", "no /models here")
+        with patch("utils.provider_test.urllib.request.urlopen",
+                   side_effect=[chat_resp, err_404]):
+            result = test_connection(
+                base_url="https://api.minimax.example.com/v1",
+                api_key="sk-test",
+                model="minimax/MiniMax-M2.7",
+            )
+        assert result.ok is True
+        assert result.context_window is None
+
+    def test_models_endpoint_malformed_json_is_non_fatal(self):
+        """GET /v1/models returns invalid JSON → context_window is None, ok stays True."""
+        chat_body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+        chat_resp = _mock_response(chat_body)
+        bad_resp = _mock_response(b"not json")
+        with patch("utils.provider_test.urllib.request.urlopen",
+                   side_effect=[chat_resp, bad_resp]):
+            result = test_connection(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-test",
+                model="openai/gpt-4o",
+            )
+        assert result.ok is True
+        assert result.context_window is None
+
+    def test_models_endpoint_model_id_mismatch(self):
+        """GET returns models but the tested model isn't in the list → context_window is None."""
+        chat_body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+        models_body = json.dumps({
+            "data": [{"id": "different-model", "context_window": 4096}],
+        }).encode()
+        chat_resp = _mock_response(chat_body)
+        models_resp = _mock_response(models_body)
+        with patch("utils.provider_test.urllib.request.urlopen",
+                   side_effect=[chat_resp, models_resp]):
+            result = test_connection(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-test",
+                model="openai/gpt-4o",
+            )
+        assert result.ok is True
+        assert result.context_window is None
+
+    def test_models_endpoint_alternative_field_names(self):
+        """Context window discovered via alternative field names (max_context_length, etc.)."""
+        chat_body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+        models_body = json.dumps({
+            "data": [{"id": "gpt-4o", "max_context_length": 200_000}],
+        }).encode()
+        chat_resp = _mock_response(chat_body)
+        models_resp = _mock_response(models_body)
+        with patch("utils.provider_test.urllib.request.urlopen",
+                   side_effect=[chat_resp, models_resp]):
+            result = test_connection(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-test",
+                model="openai/gpt-4o",
+            )
+        assert result.ok is True
+        assert result.context_window == 200_000
+
+    def test_models_endpoint_empty_data_list(self):
+        """GET /v1/models returns empty data list → context_window is None."""
+        chat_body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+        models_body = json.dumps({"data": []}).encode()
+        chat_resp = _mock_response(chat_body)
+        models_resp = _mock_response(models_body)
+        with patch("utils.provider_test.urllib.request.urlopen",
+                   side_effect=[chat_resp, models_resp]):
+            result = test_connection(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-test",
+                model="openai/gpt-4o",
+            )
+        assert result.ok is True
+        assert result.context_window is None
+
+    def test_context_window_ignores_string_value(self):
+        """If /v1/models returns context_window as string (not int), it's ignored."""
+        chat_body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+        # Return context_window as a string — isinstance(str, int) is False
+        models_body = json.dumps({
+            "data": [{"id": "gpt-4o", "context_window": "128000"}],
+        }).encode()
+        chat_resp = _mock_response(chat_body)
+        models_resp = _mock_response(models_body)
+        with patch("utils.provider_test.urllib.request.urlopen",
+                   side_effect=[chat_resp, models_resp]):
+            result = test_connection(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-test",
+                model="openai/gpt-4o",
+            )
+        assert result.ok is True
+        assert result.context_window is None
+
+    def test_models_endpoint_no_data_key(self):
+        """GET /v1/models returns JSON without 'data' key → context_window is None."""
+        chat_body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+        models_body = json.dumps({"models": [{"id": "gpt-4o"}]}).encode()
+        chat_resp = _mock_response(chat_body)
+        models_resp = _mock_response(models_body)
+        with patch("utils.provider_test.urllib.request.urlopen",
+                   side_effect=[chat_resp, models_resp]):
+            result = test_connection(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-test",
+                model="openai/gpt-4o",
+            )
+        assert result.ok is True
+        assert result.context_window is None
 
 
 # ── TestNetworkErrors ─────────────────────────────────────────────────────
