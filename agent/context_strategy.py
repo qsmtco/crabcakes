@@ -17,6 +17,7 @@ from models.conversation import (
     Conversation,
     Message,
     MessageRole,
+    _tiktoken_encoding_for,
 )
 
 
@@ -39,7 +40,8 @@ class CompactionEvent:
         tokens_freed: tokens_before - tokens_after.
         summary_tokens_injected: tokens used by injected summary (0 if none).
         soft_ceiling: The soft_ceiling used for this cycle (in tokens).
-        hard_ceiling: The hard_ceiling used for this cycle (in tokens).
+        hard_ceiling: The hard_ceiling for this cycle (in tokens), or
+            None if the strategy doesn't know (runtime fills it in).
         provider: Provider name (e.g. "openai").
         model: Model id (e.g. "openai/gpt-4o").
     """
@@ -54,7 +56,7 @@ class CompactionEvent:
     tokens_freed: int
     summary_tokens_injected: int
     soft_ceiling: int
-    hard_ceiling: int
+    hard_ceiling: int | None
     provider: str
     model: str
 
@@ -88,12 +90,17 @@ class ContextStrategy(Protocol):
 
 
 class DefaultContextStrategy:
-    """Default compaction strategy. See SPEC-CONTEXT-MANAGEMENT-ROADMAP.md §0.
+    """Default 3-layer compaction strategy. See SPEC-CONTEXT-MANAGEMENT-ROADMAP.md §0.
 
-    Phase 1: mechanical extraction from ``Conversation``. No behavior changes.
-    The ``keep_first`` and ``protect_is_summary`` parameters are accepted but
-    NOT YET USED — defaults preserve the pre-extraction behavior. P2/P3
-    enforcement arrives in Phase 4.
+    Layers:
+        1. prune_tool_outputs — stubs old TOOL_RESULT content in-place.
+        2. trim loop — removes messages using _select_prune_candidate
+           (respects keep_first and protect_is_summary).
+        3. summary injection — inserts a compact summary of removed messages.
+
+    Parameters:
+        keep_first: Number of leading messages to protect from trimming (default 2).
+        protect_is_summary: Defer is_summary messages during trimming (default True).
     """
 
     def __init__(self) -> None:
@@ -197,7 +204,6 @@ class DefaultContextStrategy:
                 current_tokens = conv.get_token_estimate()
                 fitted = self._fit_summary(conv, summary, token_budget, current_tokens)
                 if fitted is not None:
-                    from models.conversation import _tiktoken_encoding_for
                     encoding = _tiktoken_encoding_for(conv.model)
                     if encoding is not None:
                         summary_tokens_injected = len(encoding.encode(fitted))
@@ -212,7 +218,7 @@ class DefaultContextStrategy:
                     conv.messages.insert(insert_at, summary_msg)
 
         # Invalidate cache and snapshot post-state for telemetry.
-        conv._token_estimate_cache = None
+        # Cache is invalidated inside the loop after each stub (line 335).
         tokens_after = conv.get_token_estimate()
 
         # ── Telemetry recording (§0.4) ───────────────────────────────────────
@@ -231,8 +237,7 @@ class DefaultContextStrategy:
             layer = 1
         if messages_count_before > len(conv.messages):
             layer = max(layer, 2)
-        if layer == 0:
-            layer = 2  # default: no compaction occurred, report as layer 2
+        # layer == 0 means no compaction occurred (no-op). Report honestly.
 
         self._last_result = CompactionEvent(
             turn=conv.step_count,
@@ -246,7 +251,7 @@ class DefaultContextStrategy:
             tokens_freed=tokens_before - tokens_after,
             summary_tokens_injected=summary_tokens_injected,
             soft_ceiling=token_budget,
-            hard_ceiling=0,  # not known at strategy level in Phase 1
+            hard_ceiling=None,  # not known at strategy level; runtime patches after compact()
             provider=provider,
             model=model_value,
         )
@@ -298,6 +303,15 @@ class DefaultContextStrategy:
         # Skip the protect_turns most recent tool results.
         prunable = tool_result_indices[protect_turns:]
 
+        # P5-BUG#3: surface that protect_turns exceeds available tool results.
+        if protect_turns > len(tool_result_indices) and tool_result_indices:
+            import logging
+            logging.getLogger(__name__).debug(
+                "prune_tool_outputs: protect_turns=%d > %d tool_results; "
+                "no messages will be pruned",
+                protect_turns, len(tool_result_indices),
+            )
+
         for idx in prunable:
             if conv.get_token_estimate() <= target_tokens:
                 break
@@ -306,27 +320,34 @@ class DefaultContextStrategy:
             if msg.content.startswith("[compacted \u2014"):
                 continue
             # Find the tool name from the parent ASSISTANT message's tool_calls.
-            tool_name = "tool"
-            if idx > 0:
-                parent = conv.messages[idx - 1]
-                if parent.role == MessageRole.ASSISTANT and parent.tool_calls:
-                    # Match by tool_call_id to find the specific tool name.
-                    for tc in parent.tool_calls:
-                        if tc.call_id == msg.tool_call_id:
-                            tool_name = tc.tool_name
-                            break
+            # Fast path: check immediate predecessor (the common case).
+            # Slow path: backward-walk for interleaved messages.
+            tool_name = "[unknown tool]"
+            if msg.tool_call_id and idx > 0:
+                for parent_idx in range(idx - 1, -1, -1):
+                    candidate = conv.messages[parent_idx]
+                    if (
+                        candidate.role == MessageRole.ASSISTANT
+                        and candidate.tool_calls
+                    ):
+                        for tc in candidate.tool_calls:
+                            if tc.call_id == msg.tool_call_id:
+                                tool_name = tc.tool_name
+                                break
+                        if tool_name != "[unknown tool]":
+                            break  # Found the parent; stop searching.
             original_len = len(msg.content)
-            msg.content = f"[compacted \u2014 {tool_name} output, {original_len} chars removed]"
-            msg.tokens_used = 0
+            stub = f"[compacted \u2014 {tool_name} output, {original_len} chars removed]"
+            msg.content = stub
+            # Record the stub's actual token footprint (not 0). Uses the same
+            # chars//4 heuristic as _find_split_index's fallback path.
+            msg.tokens_used = len(stub) // 4
             # CRITICAL: invalidate cache after each mutation. The cache key
             # (len(messages), hash(system_prompt)) is unchanged by content
             # mutation, so a stale cache would return pre-stub tokens.
             conv._token_estimate_cache = None
 
-        # Final invalidation for symmetry (also covers any external mutation
-        # paths that might have been added later). This is a no-op if the loop
-        # already invalidated, but cheap and defensive.
-        conv._token_estimate_cache = None
+        # Cache is invalidated inside the loop after each stub (line 335).
         tokens_after = conv.get_token_estimate()
         return tokens_before - tokens_after
 
@@ -382,7 +403,13 @@ class DefaultContextStrategy:
         # Phase 9 hardening: also search the keep_first region (protected head)
         # for the parent — if the parent is at index < keep_first, the TOOL_RESULT
         # must also be in the head to preserve CB-6 pairing.
+        # P9-BUG#2: Cap iterations to prevent O(N²) on consecutive orphans.
+        _cb6_cap = len(conv.messages)
+        _cb6_iters = 0
         while split < len(conv.messages):
+            _cb6_iters += 1
+            if _cb6_iters > _cb6_cap:
+                break
             msg_at_split = conv.messages[split]
             if msg_at_split.role == MessageRole.TOOL_RESULT:
                 if split > keep_first:
@@ -453,7 +480,6 @@ class DefaultContextStrategy:
             return None
 
         # Use tiktoken when available for accurate token counting.
-        from models.conversation import _tiktoken_encoding_for
         encoding = _tiktoken_encoding_for(conv.model)
 
         def _count_tokens(s: str) -> int:
@@ -461,13 +487,21 @@ class DefaultContextStrategy:
                 return len(encoding.encode(s))
             return len(s) // 4
 
-        # Try progressively smaller versions.
+        # Try progressively smaller versions. Truncate by token fraction
+        # (not character fraction) for accurate convergence under tiktoken.
         fitted = summary
         for _attempt in range(5):
             fitted_tokens = _count_tokens(fitted)
             if fitted_tokens <= available_tokens:
                 return fitted
-            fitted = fitted[:int(len(fitted) * 0.8)]
+            # Target 80% of current token count. Convert to char count
+            # using the same ratio if tiktoken is active, else use chars directly.
+            if encoding is not None and fitted_tokens > 0:
+                char_per_token = len(fitted) / fitted_tokens
+                target_tokens = int(fitted_tokens * 0.8)
+                fitted = fitted[:int(target_tokens * char_per_token)]
+            else:
+                fitted = fitted[:int(len(fitted) * 0.8)]
 
         # Final fallback: minimal stub.
         stub = "[Context reset — earlier conversation was too large to summarize]"
@@ -566,16 +600,25 @@ class DefaultContextStrategy:
 
         if token_budget > 0:
             # P5: smart split when a budget is provided (called from compact()).
-            split = self._find_split_index(conv, token_budget, keep_first=keep_first)
+            # P6-BUG#1: pass conv.get_token_estimate() (current size) not token_budget
+            # (target). token_budget is the POST-compaction target; passing it as
+            # the split budget causes half_budget=token_budget//2 which collapses
+            # to keep_first on small budgets → empty head → empty summary.
+            split = self._find_split_index(
+                conv, conv.get_token_estimate(), keep_first=keep_first
+            )
             split = max(keep_first, min(split, len(conv.messages) - tail_preserve))
         else:
             # Legacy shim compatibility: when called via _last_exchange_summary()
             # with no max_tokens, fall back to messages[:-tail_preserve]. The smart
-            # split uses token_budget to size the tail, but with no budget it would
-            # default to conv.get_token_estimate() — which makes split land at
-            # keep_first for small conversations (because all msgs fit in half).
-            # That breaks the Phase 1 tests that rely on messages[:-tail_preserve]
+            # split uses conv.get_token_estimate() to size the tail, but with small
+            # conversations (where all messages fit in half of total tokens),
+            # _find_split_index lands at keep_first — producing an empty head.
+            # That breaks the Phase 4 tests that rely on messages[:-tail_preserve]
             # semantics. Deviation from spec Step 3's literal fallback.
+            # P6-BUG#2: noted but NOT fixed in this phase — see Audit-Fix-15
+            # discussion. Keeping the deviation preserves test behavior; the
+            # CB-6 risk is documented in the audit report.
             split = len(conv.messages) - tail_preserve
 
         head_messages = conv.messages[:split]

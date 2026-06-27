@@ -174,8 +174,10 @@ def compose_system_prompt(
         tools: List of tool names (for agent runtime).
         review_mode: "off" | "review".
         model_max_tokens: Optional. When provided, the total system prompt
-            is budgeted to 15% of this value (with a 16K hard cap fallback
-            for unknown model sizes). File context is truncated to fit.
+            is budgeted to 15–25% of this value dynamically (Phase 7 / P7:
+            floor 15%, grows with template size, capped at 25%). A 16K
+            hard cap fallback applies for unknown model sizes.
+            File context is truncated to fit.
             When None, no budget is enforced (backward-compatible).
 
     Returns:
@@ -321,7 +323,9 @@ def compose_system_prompt(
 
     # §4.4a — Append file context if project active (outside templates — large dynamic content).
     # Phase CB-2: when model_max_tokens is provided, the total system prompt is
-    # budgeted to 15% of the context window (with a 16K hard cap fallback).
+    # budgeted to 15–25% of the context window dynamically (Phase 7 / P7:
+    # floor 15%, grows with template size, capped at 25%). A 16K hard cap
+    # fallback applies for unknown model sizes.
     # File context is truncated to fit, but core files are always preserved.
     if project_path:
         from agent.context import build_file_context_with_core_files
@@ -370,7 +374,8 @@ def _apply_system_prompt_budget(
     """Apply the file-context budget within the system prompt.
 
     Truncates the file context section to fit alongside the template result
-    within the budget (15% of model_max_tokens, or a 16K hard cap fallback).
+    within the budget (15–25% of model_max_tokens dynamically per Phase 7 / P7,
+    or a 16K hard cap fallback for unknown model sizes).
 
     Note (Phase CB-5): the budget caps the FILE CONTEXT portion only, not
     the total system prompt. If the template result alone exceeds the budget,
@@ -401,7 +406,7 @@ def _apply_system_prompt_budget(
         template_tokens = len(template_result) // 4
         template_fraction = template_tokens / model_max_tokens
         budget_fraction = min(0.25, max(SYSTEM_PROMPT_BUDGET_FRACTION, template_fraction))
-        budget_tokens = int(model_max_tokens * budget_fraction)
+        budget_tokens = max(1, int(model_max_tokens * budget_fraction))
         budget_chars = budget_tokens * 4
     else:
         budget_chars = DEFAULT_SYSTEM_PROMPT_BUDGET_CHARS

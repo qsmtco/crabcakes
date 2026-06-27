@@ -1203,7 +1203,9 @@ class AgentRuntime:
         on_token_breakdown: (session_key, breakdown_dict) — §4.15 per-turn token budget breakdown.
             The breakdown dict includes three additional keys when the context-bloat
             fix (BUG #1, Phase CB-1) has shipped:
-              - trimmed_this_turn (bool): True if messages were removed this iteration
+              - trimmed_this_turn (bool): True if compaction removed messages this iteration.
+                False on no-op iterations (where compact() was called but freed nothing).
+                When True, "compaction_event" dict is also included with details.
               - messages_remaining (int): post-trim message count
               - messages_removed_this_turn (int): number of messages removed (0 if none)
         on_error: (session_key, error_message) — error occurred.
@@ -1266,6 +1268,8 @@ class AgentRuntime:
         # session_key → list[dict{"tool", "args_hash", "iteration"}]
         self._tool_history: dict[str, list[dict]] = {}
         self._tool_history_lock = threading.Lock()
+        # Audit-Fix-8: Guard _compaction_events against concurrent append+truncate.
+        self._compaction_lock = threading.Lock()
 
         # MED-1: Per-instance approval callback (takes precedence over global)
         self._approval_callback: Callable[[str, str, dict], bool] | None = None
@@ -1524,20 +1528,18 @@ class AgentRuntime:
             return FALLBACK
 
     def _compute_compaction_threshold(self, conv: "Conversation") -> tuple[int, int]:
-        """Return (soft_ceiling, hard_ceiling) for the conversation's provider.
+        """Return (soft_ceiling, hard_ceiling) tuple for the conversation's provider.
 
         Resolution order for the threshold fraction:
           1. conv.model's provider's compaction_threshold (when set and in (0, 1])
           2. 0.80 default
 
-        Returns (int(128_000 * 0.80), 128_000) = (102_400, 128_000) when:
-          - conv.model is None and self._config.default_provider is not configured
-          - the resolved provider config has compaction_threshold <= 0 or > 1
-          - any exception during provider lookup
+        Returns:
+            tuple[int, int]: (soft_ceiling, hard_ceiling) where:
+                - soft_ceiling = int(hard_ceiling * threshold) — compaction trigger point
+                - hard_ceiling = _compute_model_max(conv) — provider's max_tokens or 128_000 fallback
 
-        The hard_ceiling comes from `_compute_model_max(conv)` — the resolved
-        provider's max_tokens, or 128_000 fallback. The soft_ceiling is
-        `int(hard_ceiling * threshold)` — the trigger point for compaction.
+        Fallback: (102_400, 128_000) when provider resolution fails.
         """
         DEFAULT_THRESHOLD = 0.80
         try:
@@ -1575,10 +1577,14 @@ class AgentRuntime:
         Derived from _compaction_events so existing read sites (breakdown
         callback) keep working without modification. Returns 0 when no
         layer==2 (trim) events have been recorded.
+
+        Audit-Fix-24: Acquire _compaction_lock before iterating to guard against
+        concurrent rebind via the append+truncate critical section.
         """
-        for ev in reversed(self._compaction_events):
-            if ev.layer == 2:  # P2/P3/P6 trim layer
-                return ev.messages_removed
+        with self._compaction_lock:
+            for ev in reversed(self._compaction_events):
+                if ev.layer == 2:  # P2/P3/P6 trim layer
+                    return ev.messages_removed
         return 0
 
     def _prepare_kb_synthesis(
@@ -1688,18 +1694,28 @@ class AgentRuntime:
                 # old conv.trim_to_token_limit() call. The delegation shim on
                 # Conversation remains for backward compat with tests.
                 #
-                # soft_ceiling = hard_ceiling * compaction_threshold
-                # (e.g. 128000 * 0.80 = 102400 — compact when usage exceeds 80%.)
+                # _compute_compaction_threshold returns (soft_ceiling, hard_ceiling)
+                # where soft_ceiling = int(hard_ceiling * threshold) and
+                # threshold defaults to 0.80 (configurable per-provider).
                 soft_ceiling, hard_ceiling = self._compute_compaction_threshold(conv)
                 model_max = hard_ceiling  # preserve for breakdown dispatch below
                 self._context_strategy.compact(conv, soft_ceiling)
                 # §2.8: Telemetry — read strategy.last_result, append to history.
-                if self._context_strategy.last_result is not None:
-                    self._compaction_events.append(self._context_strategy.last_result)
+                # Audit-Fix-7: Patch hard_ceiling — strategy doesn't know the real value
+                # (computed by _compute_compaction_threshold at the runtime level).
+                # Audit-Fix-8: Guard append+truncate with _compaction_lock.
+                # Audit-Fix-19: Only mark iteration as having compacted when messages or
+                # tokens were actually freed (filter out no-op compact() calls).
+                ev = self._context_strategy.last_result
+                if ev is not None and (ev.messages_removed > 0 or ev.tokens_freed > 0):
+                    if ev.hard_ceiling is None:
+                        ev.hard_ceiling = hard_ceiling
                     self._compaction_this_iteration = True
-                    # Cap history at 100 events (prevents unbounded growth).
-                    if len(self._compaction_events) > 100:
-                        self._compaction_events = self._compaction_events[-100:]
+                    with self._compaction_lock:
+                        self._compaction_events.append(ev)
+                        # Cap history at 100 events (prevents unbounded growth).
+                        if len(self._compaction_events) > 100:
+                            self._compaction_events = self._compaction_events[-100:]
                 else:
                     self._compaction_this_iteration = False
 
@@ -1751,18 +1767,21 @@ class AgentRuntime:
                         self._last_trim_removed if self._compaction_this_iteration else 0
                     )
                     # §0.4 + §2.8: Compaction telemetry from the strategy.
-                    strategy_result = self._context_strategy.last_result
-                    if strategy_result is not None:
-                        breakdown["compaction_event"] = {
-                            "trigger": strategy_result.trigger,
-                            "layer": strategy_result.layer,
-                            "tokens_before": strategy_result.tokens_before,
-                            "tokens_after": strategy_result.tokens_after,
-                            "tokens_freed": strategy_result.tokens_freed,
-                            "soft_ceiling": strategy_result.soft_ceiling,
-                            "hard_ceiling": strategy_result.hard_ceiling,
-                            "summary_tokens_injected": strategy_result.summary_tokens_injected,
-                        }
+                    # Audit-Fix-20: Only include compaction_event when actual compaction
+                    # occurred (gate on _compaction_this_iteration, not strategy_result).
+                    if self._compaction_this_iteration:
+                        strategy_result = self._context_strategy.last_result
+                        if strategy_result is not None:
+                            breakdown["compaction_event"] = {
+                                "trigger": strategy_result.trigger,
+                                "layer": strategy_result.layer,
+                                "tokens_before": strategy_result.tokens_before,
+                                "tokens_after": strategy_result.tokens_after,
+                                "tokens_freed": strategy_result.tokens_freed,
+                                "soft_ceiling": strategy_result.soft_ceiling,
+                                "hard_ceiling": strategy_result.hard_ceiling,
+                                "summary_tokens_injected": strategy_result.summary_tokens_injected,
+                            }
                     self._dispatch(self._on_token_breakdown, session_key, breakdown)
                     # Reset per-iteration flag — the CompactionEvent is already
                     # in the rolling history (_compaction_events). We do NOT

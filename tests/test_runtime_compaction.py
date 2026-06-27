@@ -8,6 +8,7 @@ Covers:
 - TestCompactionEvent: CompactionEvent history (_compaction_events),
   _last_trim_removed @property, and per-iteration flag semantics.
 """
+import threading
 import pytest
 from agent.config import AgentConfig, LLMProviderConfig
 from agent.runtime import AgentRuntime
@@ -31,6 +32,9 @@ def _make_runtime(providers: dict, default_provider: str = "openai") -> AgentRun
     # Initialize the new §2.8 fields so tests can exercise the property/flag.
     runtime._compaction_events = []
     runtime._compaction_this_iteration = False
+    # Audit-Fix-8: _last_trim_removed now acquires _compaction_lock.
+    # The real __init__ sets this; tests via __new__ must mirror it.
+    runtime._compaction_lock = threading.Lock()
     return runtime
 
 
@@ -48,7 +52,7 @@ def _make_event(turn: int = 1, layer: int = 2, messages_removed: int = 10) -> Co
         tokens_freed=25_000,
         summary_tokens_injected=500,
         soft_ceiling=20_000,
-        hard_ceiling=128_000,
+        hard_ceiling=None,  # Strategy doesn't know; runtime patches it.
         provider="openai",
         model="openai/gpt-4o",
     )
@@ -133,10 +137,28 @@ class TestCompactionEvent:
         # 0=no-op, 1=prune, 2=trim. 3=manual is reserved.
         assert strategy.last_result.layer in (0, 1, 2)
 
+    def test_no_op_compact_reports_layer_zero(self):
+        """When compact() does nothing, layer must be 0 (not phantom 2).
+
+        Audit-Fix-2: prior to this fix, the strategy forced layer=0 → 2 as a
+        phantom default. After the fix, layer=0 is honest reporting of no-op.
+        """
+        strategy = DefaultContextStrategy()
+        conv = Conversation(agent_name="Coder", model="openai/gpt-4o")
+        conv.add_user_message("hi")
+        conv.add_assistant_message("hello", [])
+        # Token budget is huge — no trimming needed.
+        strategy.compact(conv, token_budget=100000)
+        assert strategy.last_result is not None
+        assert strategy.last_result.layer == 0, (
+            "No-op compact must report layer=0, not phantom layer=2"
+        )
+
     def test_last_trim_removed_property_returns_zero_initially(self):
         """_last_trim_removed returns 0 when no events exist."""
         runtime = AgentRuntime.__new__(AgentRuntime)
         runtime._compaction_events = []
+        runtime._compaction_lock = threading.Lock()
         assert runtime._last_trim_removed == 0
 
     def test_last_trim_removed_property_reads_latest_trim_event(self):
@@ -145,12 +167,14 @@ class TestCompactionEvent:
         runtime._compaction_events = [
             _make_event(turn=1, layer=2, messages_removed=10),
         ]
+        runtime._compaction_lock = threading.Lock()
         assert runtime._last_trim_removed == 10
 
     def test_history_capped_at_100(self):
         """_compaction_events list is capped at 100 entries (oldest dropped)."""
         runtime = AgentRuntime.__new__(AgentRuntime)
         runtime._compaction_events = []
+        runtime._compaction_lock = threading.Lock()
         # Simulate the runtime's history-cap logic at the call site.
         for i in range(150):
             runtime._compaction_events.append(

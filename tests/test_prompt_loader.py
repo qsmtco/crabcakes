@@ -400,7 +400,7 @@ class TestProjectContextInjection:
 # ═══════════════════════════════════════════════════════════════════
 
 class TestSystemPromptBudget:
-    """Phase CB-2: system prompt is budgeted to 15% of model_max_tokens."""
+    """Phase CB-2/P7: system prompt budgeted to 15–25% of model_max_tokens (dynamic)."""
 
     def test_no_budget_when_model_max_is_none(self):
         """When model_max_tokens is None, the full file context is appended (backward-compatible)."""
