@@ -132,6 +132,15 @@ class DefaultContextStrategy:
         tail_preserve = 4
         min_messages = keep_first + tail_preserve
 
+        # ── Layer 1: prune_tool_outputs (P4) ──────────────────────────────
+        # Cheap lossless compaction: stub old tool result content in-place.
+        # Runs before the trim loop (Layer 2) to preserve conversation structure
+        # while reducing token usage. Returns tokens freed; we just call it for
+        # its side effect.
+        self.prune_tool_outputs(conv, token_budget, protect_turns=2)
+        # Re-snapshot tokens_after after Layer 1 for telemetry accuracy.
+        tokens_after_layer1 = conv.get_token_estimate()
+
         # ── Trim loop ─────────────────────────────────────────────────────────
         # Phase 4: delegates candidate selection to ``_select_prune_candidate``,
         # which implements P2 (keep_first) and P3 (protect_is_summary) as a
@@ -228,6 +237,85 @@ class DefaultContextStrategy:
             provider=provider,
             model=model_value,
         )
+
+    # ── Layer 1: prune_tool_outputs (Phase 5: P4 cheap lossless stubbing)
+
+    def prune_tool_outputs(
+        self,
+        conv: Conversation,
+        target_tokens: int,
+        protect_turns: int = 2,
+    ) -> int:
+        """Stub old tool results to free token budget. Returns tokens freed.
+
+        Cheap lossless Layer 1 compaction. Walks backward from the end,
+        skipping the protect_turns most recent TOOL_RESULT messages. For
+        each unprotected TOOL_RESULT, replaces content with a short stub:
+
+          "[compacted — {tool_name} output, {N} chars removed]"
+
+        Stops when get_token_estimate() <= target_tokens.
+        Idempotent: detects already-stubbed messages by their
+        "[compacted —" prefix and skips them.
+
+        **Cache invalidation contract:** This method mutates ``msg.content``
+        in place. The token estimate cache is keyed on
+        ``(len(messages), hash(system_prompt))`` — neither changes when we
+        mutate content. So we MUST invalidate the cache after each stub;
+        otherwise the loop's ``get_token_estimate()`` calls would return
+        the pre-stub cached value, causing the loop to over-stub.
+
+        Args:
+            target_tokens: Stop pruning when token estimate drops to this.
+            protect_turns: Number of most recent TOOL_RESULT messages to skip.
+
+        Returns:
+            Number of tokens freed (estimate before - estimate after).
+        """
+        tokens_before = conv.get_token_estimate()
+        if tokens_before <= target_tokens:
+            return 0
+
+        # Find TOOL_RESULT indices, most-recent-first.
+        tool_result_indices: list[int] = []
+        for i in range(len(conv.messages) - 1, -1, -1):
+            if conv.messages[i].role == MessageRole.TOOL_RESULT:
+                tool_result_indices.append(i)
+
+        # Skip the protect_turns most recent tool results.
+        prunable = tool_result_indices[protect_turns:]
+
+        for idx in prunable:
+            if conv.get_token_estimate() <= target_tokens:
+                break
+            msg = conv.messages[idx]
+            # Idempotence: skip already-stubbed messages.
+            if msg.content.startswith("[compacted \u2014"):
+                continue
+            # Find the tool name from the parent ASSISTANT message's tool_calls.
+            tool_name = "tool"
+            if idx > 0:
+                parent = conv.messages[idx - 1]
+                if parent.role == MessageRole.ASSISTANT and parent.tool_calls:
+                    # Match by tool_call_id to find the specific tool name.
+                    for tc in parent.tool_calls:
+                        if tc.call_id == msg.tool_call_id:
+                            tool_name = tc.tool_name
+                            break
+            original_len = len(msg.content)
+            msg.content = f"[compacted \u2014 {tool_name} output, {original_len} chars removed]"
+            msg.tokens_used = 0
+            # CRITICAL: invalidate cache after each mutation. The cache key
+            # (len(messages), hash(system_prompt)) is unchanged by content
+            # mutation, so a stale cache would return pre-stub tokens.
+            conv._token_estimate_cache = None
+
+        # Final invalidation for symmetry (also covers any external mutation
+        # paths that might have been added later). This is a no-op if the loop
+        # already invalidated, but cheap and defensive.
+        conv._token_estimate_cache = None
+        tokens_after = conv.get_token_estimate()
+        return tokens_before - tokens_after
 
     # ── Prune candidate selector (Phase 4: P2 keep_first + P3 protect_is_summary)
 
