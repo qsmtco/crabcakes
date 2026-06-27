@@ -42,15 +42,15 @@ The code is safe to ship for production use IF:
 
 | Phase | Spec | Audit Report | Bugs Found | CRITICAL | HIGH | MEDIUM | LOW |
 |-------|------|--------------|------------|----------|------|--------|-----|
-| 1 | Mechanical extraction | `phase1-audit-report.md` | 10 | 0 | 1 | 6 | 3 |
-| 2 | (read existing report) | `phase2-audit-report.md` (subagent) | 3 | 0 | 0 | 1 | 2 |
-| 3 | (read existing report) | `phase3-audit-report.md` (subagent) | 7 | 0 | 1 | 3 | 3 |
-| 4 | (read existing report) | `phase4-audit-report.md` (subagent) | 10 | 0 | 1 | 4 | 5 |
-| 5 | P4 prune_tool_outputs | `phase5-audit-report.md` | 10 | 0 | 1 | 4 | 5 |
-| 6 | P5/P6 split + fit | `phase6-audit-report.md` (subagent retry) | 2 | 0 | 0 | 1 | 1 |
-| 7 | (read existing report) | `phase7-audit-report.md` (subagent) | (read) | - | - | - | - |
-| 8 | (read existing report) | `phase8-audit-report.md` (subagent) | 8 | 0 | 1 | 3 | 4 |
-| 9 | CB-6 hardening + exception cleanup | `phase9-audit-report.md` | 10 | 0 | 0 | 2 | 8 |
+| 1 | Mechanical extraction | `CM-PHASE-1-ADVERSARIAL-AUDIT.md` | 10 | 0 | 1 | 6 | 3 |
+| 2 | (read existing report) | `CM-PHASE-2-ADVERSARIAL-AUDIT.md` (subagent) | 3 | 0 | 0 | 1 | 2 |
+| 3 | (read existing report) | `CM-PHASE-3-ADVERSARIAL-AUDIT.md` (subagent) | 7 | 0 | 1 | 3 | 3 |
+| 4 | (read existing report) | `CM-PHASE-4-ADVERSARIAL-AUDIT.md` (subagent) | 10 | 0 | 1 | 4 | 5 |
+| 5 | P4 prune_tool_outputs | `CM-PHASE-5-ADVERSARIAL-AUDIT.md` | 10 | 0 | 1 | 4 | 5 |
+| 6 | P5/P6 split + fit | `CM-PHASE-6-ADVERSARIAL-AUDIT.md` (subagent retry) | 2 | 0 | 0 | 1 | 1 |
+| 7 | (read existing report) | `CM-PHASE-7-ADVERSARIAL-AUDIT.md` (subagent) | (read) | - | - | - | - |
+| 8 | (read existing report) | `CM-PHASE-8-ADVERSARIAL-AUDIT.md` (subagent) | 8 | 0 | 1 | 3 | 4 |
+| 9 | CB-6 hardening + exception cleanup | `CM-PHASE-9-ADVERSARIAL-AUDIT.md` | 10 | 0 | 0 | 2 | 8 |
 | **TOTAL** | | | **68+** | **0** | **6+** | **28+** | **34+** |
 
 Note: The "TOTAL" row counts only my direct audits (1, 5, 6, 9) plus the subagent counts from the existing reports (2, 3, 4, 7, 8). The CRITICAL count is 0 across all phases — the worst bugs are HIGH severity (correctness, edge cases, scope violations).
@@ -277,18 +277,18 @@ on logical correctness and spec compliance.
 
 All audit reports are in `/home/q/.openclaw/workspace/qtr/`:
 
-- `phase1-audit-report.md` (25,945 bytes, 10 bugs)
-- `phase2-audit-report.md` (9,420 bytes, subagent-written, 3 bugs)
-- `phase3-audit-report.md` (16,835 bytes, subagent-written, 7 bugs)
-- `phase4-audit-report.md` (17,552 bytes, subagent-written, 10 bugs)
-- `phase5-audit-report.md` (22,740 bytes, 10 bugs)
-- `phase6-audit-report.md` (16,889 bytes, 2 bugs — subagent retry; my direct audit
+- `CM-PHASE-1-ADVERSARIAL-AUDIT.md` (25,945 bytes, 10 bugs)
+- `CM-PHASE-2-ADVERSARIAL-AUDIT.md` (9,420 bytes, subagent-written, 3 bugs)
+- `CM-PHASE-3-ADVERSARIAL-AUDIT.md` (16,835 bytes, subagent-written, 7 bugs)
+- `CM-PHASE-4-ADVERSARIAL-AUDIT.md` (17,552 bytes, subagent-written, 10 bugs)
+- `CM-PHASE-5-ADVERSARIAL-AUDIT.md` (22,740 bytes, 10 bugs)
+- `CM-PHASE-6-ADVERSARIAL-AUDIT.md` (16,889 bytes, 2 bugs — subagent retry; my direct audit
   of 10 bugs was overwritten when the late-arriving subagent completed; both
   audits found the same core issues — the subagent's version is the canonical one)
-- `phase7-audit-report.md` (8,750 bytes, subagent-written, bug count unknown)
-- `phase8-audit-report.md` (16,582 bytes, subagent-written, 8 bugs)
-- `phase9-audit-report.md` (25,830 bytes, 10 bugs)
-- `MASTER-AUDIT-REPORT.md` (this file)
+- `CM-PHASE-7-ADVERSARIAL-AUDIT.md` (8,750 bytes, subagent-written, bug count unknown)
+- `CM-PHASE-8-ADVERSARIAL-AUDIT.md` (16,582 bytes, subagent-written, 8 bugs)
+- `CM-PHASE-9-ADVERSARIAL-AUDIT.md` (25,830 bytes, 10 bugs)
+- `CM-CONTEXT-MANAGEMENT-ROADMAP-MASTER-AUDIT.md` (this file)
 
 Total: ~180,000 bytes across 10 files.
 
@@ -321,7 +321,7 @@ audits converge on the same core findings:
   with `keep_first=0`, stubbed messages, and consecutive orphans
 
 For the most thorough Phase 6 audit, combine both reports' findings. The
-subagent's report is the canonical file at `phase6-audit-report.md`.
+subagent's report is the canonical file at `CM-PHASE-6-ADVERSARIAL-AUDIT.md`.
 
 The implementation is **NOT a faithful execution of the 9-phase spec**.
 The spec described a sequential, audit-friendly, per-phase process. The
