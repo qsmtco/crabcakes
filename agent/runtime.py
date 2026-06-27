@@ -1229,7 +1229,12 @@ class AgentRuntime:
         self._on_response_complete = on_response_complete
         self._on_token_usage = on_token_usage
         self._on_token_breakdown = on_token_breakdown
-        self._last_trim_removed = 0  # set per iteration in _run_loop; read by the breakdown callback
+        # §2.8: Telemetry — rolling CompactionEvent history (capped at 100) +
+        # per-iteration flag for breakdown callbacks. Replaces the old scalar
+        # _last_trim_removed field. The _last_trim_removed property below reads
+        # the most recent layer==2 event from this history.
+        self._compaction_events: list = []
+        self._compaction_this_iteration: bool = False
         self._on_error = on_error
         self._on_enforcement_status = on_enforcement_status
 
@@ -1511,17 +1516,21 @@ class AgentRuntime:
             logger.exception("[model-max] failed to resolve provider max_tokens; using fallback")
             return FALLBACK
 
-    def _compute_compaction_threshold(self, conv: "Conversation") -> float:
-        """Return the compaction threshold for the current conversation's provider.
+    def _compute_compaction_threshold(self, conv: "Conversation") -> tuple[int, int]:
+        """Return (soft_ceiling, hard_ceiling) for the conversation's provider.
 
-        Resolution order:
+        Resolution order for the threshold fraction:
           1. conv.model's provider's compaction_threshold (when set and in (0, 1])
           2. 0.80 default
 
-        Returns 0.80 when:
+        Returns (int(128_000 * 0.80), 128_000) = (102_400, 128_000) when:
           - conv.model is None and self._config.default_provider is not configured
           - the resolved provider config has compaction_threshold <= 0 or > 1
           - any exception during provider lookup
+
+        The hard_ceiling comes from `_compute_model_max(conv)` — the resolved
+        provider's max_tokens, or 128_000 fallback. The soft_ceiling is
+        `int(hard_ceiling * threshold)` — the trigger point for compaction.
         """
         DEFAULT_THRESHOLD = 0.80
         try:
@@ -1530,14 +1539,13 @@ class AgentRuntime:
                 if conv.model and "/" in conv.model
                 else self._config.default_provider
             )
-            if not provider_name:
-                return DEFAULT_THRESHOLD
-            provider_cfg = self._config.providers.get(provider_name)
-            if provider_cfg is None:
-                return DEFAULT_THRESHOLD
-            threshold = getattr(provider_cfg, "compaction_threshold", None)
-            if threshold is not None and 0 < threshold <= 1:
-                return float(threshold)
+            threshold = DEFAULT_THRESHOLD
+            if provider_name:
+                provider_cfg = self._config.providers.get(provider_name)
+                if provider_cfg is not None:
+                    cfg_threshold = getattr(provider_cfg, "compaction_threshold", None)
+                    if cfg_threshold is not None and 0 < cfg_threshold <= 1:
+                        threshold = float(cfg_threshold)
         except Exception as e:
             # Defensive coding should not hide programming errors. The default
             # 0.80 is used as fallback. Operators can enable DEBUG logging to
@@ -1549,7 +1557,22 @@ class AgentRuntime:
                 DEFAULT_THRESHOLD,
                 e,
             )
-        return DEFAULT_THRESHOLD
+        hard_ceiling = self._compute_model_max(conv)
+        soft_ceiling = int(hard_ceiling * threshold)
+        return (soft_ceiling, hard_ceiling)
+
+    @property
+    def _last_trim_removed(self) -> int:
+        """Backward-compat accessor: count from latest trim-layer event.
+
+        Derived from _compaction_events so existing read sites (breakdown
+        callback) keep working without modification. Returns 0 when no
+        layer==2 (trim) events have been recorded.
+        """
+        for ev in reversed(self._compaction_events):
+            if ev.layer == 2:  # P2/P3/P6 trim layer
+                return ev.messages_removed
+        return 0
 
     def _prepare_kb_synthesis(
         self,
@@ -1658,15 +1681,20 @@ class AgentRuntime:
                 # old conv.trim_to_token_limit() call. The delegation shim on
                 # Conversation remains for backward compat with tests.
                 #
-                # soft_ceiling = model_max * compaction_threshold
+                # soft_ceiling = hard_ceiling * compaction_threshold
                 # (e.g. 128000 * 0.80 = 102400 — compact when usage exceeds 80%.)
-                model_max = self._compute_model_max(conv)
-                threshold = self._compute_compaction_threshold(conv)
-                soft_ceiling = int(model_max * threshold)
-                messages_count_before = len(conv.messages)
+                soft_ceiling, hard_ceiling = self._compute_compaction_threshold(conv)
+                model_max = hard_ceiling  # preserve for breakdown dispatch below
                 self._context_strategy.compact(conv, soft_ceiling)
-                messages_count_after = len(conv.messages)
-                self._last_trim_removed = messages_count_before - messages_count_after
+                # §2.8: Telemetry — read strategy.last_result, append to history.
+                if self._context_strategy.last_result is not None:
+                    self._compaction_events.append(self._context_strategy.last_result)
+                    self._compaction_this_iteration = True
+                    # Cap history at 100 events (prevents unbounded growth).
+                    if len(self._compaction_events) > 100:
+                        self._compaction_events = self._compaction_events[-100:]
+                else:
+                    self._compaction_this_iteration = False
 
                 # Get tools for this agent (filtered by allowed_tools if set)
                 from agent.tools import get_tool_definitions_for_api
