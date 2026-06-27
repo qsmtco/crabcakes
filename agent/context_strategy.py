@@ -192,20 +192,20 @@ class DefaultContextStrategy:
         # back over ``token_budget``.
         messages_removed = messages_count_before - len(conv.messages)
         if messages_removed > 0 and len(conv.messages) >= min_messages:
-            summary = self._summary(conv)
+            summary = self._summary(conv, token_budget=token_budget, keep_first=keep_first)
             if summary:
-                # Phase 1: use the legacy ``len(summary) // 4`` heuristic to
-                # preserve byte-exact behavior of the pre-extraction code path.
-                # Phase 6 upgrades this to tiktoken via ``_fit_summary``.
-                summary_tokens = len(summary) // 4
-                summary_tokens_injected = summary_tokens
                 current_tokens = conv.get_token_estimate()
-                if current_tokens + summary_tokens > token_budget:
-                    pass  # skip — injecting would exceed budget (Phase 6 adds _fit_summary)
-                else:
+                fitted = self._fit_summary(conv, summary, token_budget, current_tokens)
+                if fitted is not None:
+                    from models.conversation import _tiktoken_encoding_for
+                    encoding = _tiktoken_encoding_for(conv.model)
+                    if encoding is not None:
+                        summary_tokens_injected = len(encoding.encode(fitted))
+                    else:
+                        summary_tokens_injected = len(fitted) // 4
                     summary_msg = Message(
                         role=MessageRole.ASSISTANT,
-                        content=summary,
+                        content=fitted,
                         is_summary=True,
                     )
                     insert_at = max(keep_first, len(conv.messages) - tail_preserve)
