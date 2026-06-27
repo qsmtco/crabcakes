@@ -508,3 +508,54 @@ class TestFitSummary:
         # Should be either the stub or None (if even stub doesn't fit)
         if result is not None:
             assert len(result) <= 100  # stub or truncated version
+
+class TestDynamicPromptBudget:
+    """P7: Dynamic system prompt budget fraction."""
+
+    def test_small_template_uses_floor(self):
+        """Templates under 15% of context → budget stays at 15%."""
+        from utils.prompt_loader import _apply_system_prompt_budget
+        template = "small template"  # ~3 tokens
+        file_ctx = "x" * 1000
+        prompt, unused = _apply_system_prompt_budget(template, file_ctx, model_max_tokens=128000)
+        # Template is tiny, so budget = 15% = 19200 tokens = 76800 chars
+        # File context should fit entirely within budget
+        assert len(unused) == 0
+
+    def test_large_template_grows_budget(self):
+        """Templates over 15% of context → budget grows to fit template."""
+        from utils.prompt_loader import _apply_system_prompt_budget
+        # Template takes ~20% of context (25600 tokens = 102400 chars)
+        template = "x" * 102400
+        file_ctx = "file context data"
+        prompt, unused = _apply_system_prompt_budget(template, file_ctx, model_max_tokens=128000)
+        # Budget grew to 20% to accommodate template. File context fits.
+        assert len(unused) == 0
+
+    def test_budget_capped_at_25_percent(self):
+        """Templates over 25% of context → budget capped at 25%."""
+        from utils.prompt_loader import _apply_system_prompt_budget
+        # Template takes ~30% of context
+        template = "x" * 153600  # ~38400 tokens, 30% of 128000
+        file_ctx = "y" * 10000
+        prompt, unused = _apply_system_prompt_budget(template, file_ctx, model_max_tokens=128000)
+        # Budget capped at 25% = 32000 tokens = 128000 chars
+        # Template (153600 chars) exceeds budget_chars (128000), so file context dropped
+        assert len(unused) == len(file_ctx)  # all file context is unused
+
+    def test_zero_model_max_uses_default(self):
+        """model_max_tokens=0 → uses DEFAULT_SYSTEM_PROMPT_BUDGET_CHARS."""
+        from utils.prompt_loader import _apply_system_prompt_budget
+        template = "template"
+        file_ctx = "x" * 100
+        prompt, unused = _apply_system_prompt_budget(template, file_ctx, model_max_tokens=0)
+        # Default budget is 64000 chars; template + file_ctx fit easily
+        assert len(unused) == 0
+
+    def test_none_model_max_uses_default(self):
+        """model_max_tokens=None → uses DEFAULT_SYSTEM_PROMPT_BUDGET_CHARS."""
+        from utils.prompt_loader import _apply_system_prompt_budget
+        template = "template"
+        file_ctx = "x" * 100
+        prompt, unused = _apply_system_prompt_budget(template, file_ctx, model_max_tokens=None)
+        assert len(unused) == 0
