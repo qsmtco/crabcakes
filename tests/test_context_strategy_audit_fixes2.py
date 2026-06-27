@@ -65,6 +65,7 @@ def _make_runtime_with_lock(providers=None) -> AgentRuntime:
     runtime._config = config
     runtime._compaction_events = []
     runtime._compaction_this_iteration = False
+    runtime._last_breakdown_session = ""
     runtime._compaction_lock = threading.Lock()
     runtime._context_strategy = DefaultContextStrategy()
     return runtime
@@ -276,48 +277,46 @@ class TestFix18CB6IterationCap:
 
 
 class TestFix19NoOpDetection:
-    """Audit-Fix-19: Runtime detects no-op compact() and skips event append
-    and per-iteration flag setting."""
+    """Audit-Fix-19: Runtime detects no-op compact() and skips event append.
+    Audit-Fix-26 (Bug #1 refactor): the per-iteration flag is now a LOCAL
+    variable in _run_loop, not a runtime attribute. We test the gate-logic
+    semantics here: messages_removed>0 OR tokens_freed>0 → event appended;
+    otherwise the local stays False and no event is appended."""
 
     def test_runtime_skips_noop_event_append(self):
-        """Simulate the runtime's no-op detection: messages_removed=0 and
-        tokens_freed=0 → don't append to _compaction_events, don't set flag."""
+        """No-op compact (messages_removed=0 AND tokens_freed=0) → event NOT
+        appended; the local _compaction_happened stays False."""
         from agent.context_strategy import CompactionEvent
 
         runtime = _make_runtime_with_lock()
-        # Construct a no-op event: layer=0, messages_removed=0, tokens_freed=0.
         noop_event = CompactionEvent(
-            turn=1,
-            trigger="trim",
-            layer=0,
-            messages_before=2,
-            messages_after=2,
-            messages_removed=0,
-            tokens_before=100,
-            tokens_after=100,
-            tokens_freed=0,
+            turn=1, trigger="trim", layer=0,
+            messages_before=2, messages_after=2, messages_removed=0,
+            tokens_before=100, tokens_after=100, tokens_freed=0,
             summary_tokens_injected=0,
-            soft_ceiling=10_000,
-            hard_ceiling=None,
-            provider="openai",
-            model="openai/gpt-4o",
+            soft_ceiling=10_000, hard_ceiling=None,
+            provider="openai", model="openai/gpt-4o",
         )
         runtime._context_strategy._last_result = noop_event
 
-        # Simulate the call-site logic from runtime.py:
+        # Simulate the new local-capture gate logic from _run_loop:
         ev = runtime._context_strategy.last_result
+        _compaction_happened = False
+        _ev_for_breakdown = None
         if ev is not None and (ev.messages_removed > 0 or ev.tokens_freed > 0):
-            runtime._compaction_this_iteration = True
+            if ev.hard_ceiling is None:
+                ev.hard_ceiling = 10_000
+            _compaction_happened = True
+            _ev_for_breakdown = ev
             with runtime._compaction_lock:
                 runtime._compaction_events.append(ev)
                 if len(runtime._compaction_events) > 100:
                     runtime._compaction_events = runtime._compaction_events[-100:]
-        else:
-            runtime._compaction_this_iteration = False
 
-        # No-op was skipped — events list stays empty, flag stays False.
+        # No-op was skipped — events list stays empty, local stays False.
         assert runtime._compaction_events == []
-        assert runtime._compaction_this_iteration is False
+        assert _compaction_happened is False
+        assert _ev_for_breakdown is None
 
     def test_runtime_appends_real_compaction_event(self):
         """Real compaction (messages_removed > 0) DOES append event."""
@@ -325,78 +324,132 @@ class TestFix19NoOpDetection:
 
         runtime = _make_runtime_with_lock()
         real_event = CompactionEvent(
-            turn=1,
-            trigger="trim",
-            layer=2,
-            messages_before=20,
-            messages_after=10,
-            messages_removed=10,
-            tokens_before=50_000,
-            tokens_after=25_000,
-            tokens_freed=25_000,
+            turn=1, trigger="trim", layer=2,
+            messages_before=20, messages_after=10, messages_removed=10,
+            tokens_before=50_000, tokens_after=25_000, tokens_freed=25_000,
             summary_tokens_injected=500,
-            soft_ceiling=20_000,
-            hard_ceiling=128_000,
-            provider="openai",
-            model="openai/gpt-4o",
+            soft_ceiling=20_000, hard_ceiling=128_000,
+            provider="openai", model="openai/gpt-4o",
         )
         runtime._context_strategy._last_result = real_event
 
         ev = runtime._context_strategy.last_result
+        _compaction_happened = False
+        _ev_for_breakdown = None
         if ev is not None and (ev.messages_removed > 0 or ev.tokens_freed > 0):
-            runtime._compaction_this_iteration = True
+            if ev.hard_ceiling is None:
+                ev.hard_ceiling = 128_000
+            _compaction_happened = True
+            _ev_for_breakdown = ev
             with runtime._compaction_lock:
                 runtime._compaction_events.append(ev)
 
         assert len(runtime._compaction_events) == 1
-        assert runtime._compaction_this_iteration is True
+        assert _compaction_happened is True
+        assert _ev_for_breakdown is real_event
 
 
 # ── Fix 20: compaction_event dict only in breakdown on real compaction ────────
 
 
 class TestFix20BreakdownGate:
-    """Audit-Fix-20: compaction_event dict in breakdown is gated by
-    _compaction_this_iteration, not by strategy_result.is not None."""
+    """Audit-Fix-20 + Audit-Fix-26 (Bug #2): breakdown uses the LOCAL
+    _compaction_happened and _ev_for_breakdown captured at the gate site,
+    NOT the shared runtime attribute or strategy.last_result. This prevents
+    Bug #2 (cross-session last_result overwrite)."""
 
     def test_no_op_does_not_include_compaction_event(self):
-        """When _compaction_this_iteration is False (no-op), the breakdown
-        must NOT include the compaction_event dict."""
+        """When _compaction_happened is False (no-op), the breakdown must
+        NOT include the compaction_event dict."""
         runtime = _make_runtime_with_lock()
-        # Simulate no-op: flag is False.
-        runtime._compaction_this_iteration = False
+        # Local capture — represents no-op.
+        _compaction_happened = False
+        _ev_for_breakdown = None
         # Even though strategy.last_result is set, the gate prevents inclusion.
-        breakdown = {"trimmed_this_turn": runtime._compaction_this_iteration}
-        if runtime._compaction_this_iteration:
-            strategy_result = runtime._context_strategy.last_result
-            if strategy_result is not None:
-                breakdown["compaction_event"] = {"layer": strategy_result.layer}
+        breakdown = {"trimmed_this_turn": _compaction_happened}
+        if _compaction_happened and _ev_for_breakdown is not None:
+            breakdown["compaction_event"] = {"layer": _ev_for_breakdown.layer}
         assert "compaction_event" not in breakdown
 
     def test_real_compaction_includes_compaction_event(self):
-        """When _compaction_this_iteration is True, compaction_event is included."""
-        runtime = _make_runtime_with_lock()
-        runtime._compaction_this_iteration = True
-        # Set strategy.last_result to a real event.
+        """When _compaction_happened is True, compaction_event is included."""
         from agent.context_strategy import CompactionEvent
-        runtime._context_strategy._last_result = CompactionEvent(
+        runtime = _make_runtime_with_lock()
+        real_event = CompactionEvent(
             turn=1, trigger="trim", layer=2,
             messages_before=20, messages_after=10, messages_removed=10,
             tokens_before=50_000, tokens_after=25_000, tokens_freed=25_000,
-            summary_tokens_injected=500, soft_ceiling=20_000, hard_ceiling=128_000,
+            summary_tokens_injected=500,
+            soft_ceiling=20_000, hard_ceiling=128_000,
             provider="openai", model="openai/gpt-4o",
         )
+        # Local capture — represents real compaction.
+        _compaction_happened = True
+        _ev_for_breakdown = real_event
 
-        breakdown = {"trimmed_this_turn": runtime._compaction_this_iteration}
-        if runtime._compaction_this_iteration:
-            strategy_result = runtime._context_strategy.last_result
-            if strategy_result is not None:
-                breakdown["compaction_event"] = {
-                    "layer": strategy_result.layer,
-                    "messages_removed": strategy_result.messages_removed,
-                }
+        breakdown = {"trimmed_this_turn": _compaction_happened}
+        if _compaction_happened and _ev_for_breakdown is not None:
+            breakdown["compaction_event"] = {
+                "layer": _ev_for_breakdown.layer,
+                "messages_removed": _ev_for_breakdown.messages_removed,
+            }
         assert "compaction_event" in breakdown
         assert breakdown["compaction_event"]["layer"] == 2
+
+    def test_last_result_overwritten_between_gate_and_breakdown(self):
+        """Bug #2 regression: even if another session's compact() overwrites
+        strategy.last_result AFTER the gate, the breakdown uses _ev_for_breakdown
+        (captured at gate time) and reports the correct event."""
+        from agent.context_strategy import CompactionEvent
+        runtime = _make_runtime_with_lock()
+
+        # Session A's event captured at the gate site.
+        ev_a = CompactionEvent(
+            turn=1, trigger="trim", layer=2,
+            messages_before=20, messages_after=10, messages_removed=10,
+            tokens_before=50_000, tokens_after=25_000, tokens_freed=25_000,
+            summary_tokens_injected=500,
+            soft_ceiling=20_000, hard_ceiling=128_000,
+            provider="openai", model="openai/gpt-4o",
+            session_key="A",
+        )
+
+        # Capture to local at the gate site (the new pattern).
+        _compaction_happened = True
+        _ev_for_breakdown = ev_a
+
+        # Simulate concurrent overwrite: session B's compact() runs and
+        # overwrites strategy.last_result with B's event.
+        ev_b = CompactionEvent(
+            turn=2, trigger="trim", layer=2,
+            messages_before=30, messages_after=20, messages_removed=10,
+            tokens_before=80_000, tokens_after=60_000, tokens_freed=20_000,
+            summary_tokens_injected=700,
+            soft_ceiling=40_000, hard_ceiling=128_000,
+            provider="openai", model="openai/gpt-4o",
+            session_key="B",
+        )
+        runtime._context_strategy._last_result = ev_b
+
+        # Bug #2 anti-pattern: re-read strategy.last_result in the breakdown
+        # block — this gets session B's event (wrong!).
+        strategy_result_anti_pattern = runtime._context_strategy.last_result
+
+        # Bug #2 fixed pattern: use the LOCAL _ev_for_breakdown.
+        breakdown = {"trimmed_this_turn": _compaction_happened}
+        if _compaction_happened and _ev_for_breakdown is not None:
+            breakdown["compaction_event"] = {
+                "session_key": _ev_for_breakdown.session_key,
+                "tokens_freed": _ev_for_breakdown.tokens_freed,
+            }
+
+        # The anti-pattern would have read B's tokens_freed (20_000) — wrong.
+        assert strategy_result_anti_pattern.session_key == "B"
+        assert strategy_result_anti_pattern.tokens_freed == 20_000
+
+        # The fixed pattern reads A's tokens_freed (25_000) — correct.
+        assert breakdown["compaction_event"]["session_key"] == "A"
+        assert breakdown["compaction_event"]["tokens_freed"] == 25_000
 
 
 # ── Fix 21: on_token_breakdown docstring updated ──────────────────────────────

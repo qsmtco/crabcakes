@@ -1241,6 +1241,10 @@ class AgentRuntime:
         # the most recent layer==2 event from this history.
         self._compaction_events: list = []
         self._compaction_this_iteration: bool = False
+        # Audit-Fix-26 (Bug #3): tracks the session_key of the most recent
+        # breakdown dispatch so _last_trim_removed can filter _compaction_events
+        # by session. Read+written only inside _run_loop's breakdown block.
+        self._last_breakdown_session: str = ""
         self._on_error = on_error
         self._on_enforcement_status = on_enforcement_status
 
@@ -1580,10 +1584,23 @@ class AgentRuntime:
 
         Audit-Fix-24: Acquire _compaction_lock before iterating to guard against
         concurrent rebind via the append+truncate critical section.
+
+        Audit-Fix-26 (Bug #3): _compaction_events is shared across sessions on
+        a single runtime. Without per-session filtering, session A's trim
+        count bleeds into session B's breakdown. Use the breakdown session
+        context (passed via the breakdown callback) to filter.
         """
+        # The breakdown caller knows the session_key; we read it via the
+        # _last_breakdown_session helper set by the dispatch in _run_loop.
+        target_session = self._last_breakdown_session
         with self._compaction_lock:
             for ev in reversed(self._compaction_events):
-                if ev.layer == 2:  # P2/P3/P6 trim layer
+                if ev.layer != 2:
+                    continue
+                # Empty session_key on event = unscoped (back-compat with
+                # pre-Audit-Fix-26 events). Match against either empty or
+                # matching session_key.
+                if not ev.session_key or ev.session_key == target_session:
                     return ev.messages_removed
         return 0
 
@@ -1706,18 +1723,38 @@ class AgentRuntime:
                 # Audit-Fix-8: Guard append+truncate with _compaction_lock.
                 # Audit-Fix-19: Only mark iteration as having compacted when messages or
                 # tokens were actually freed (filter out no-op compact() calls).
+                # Audit-Fix-26 (Bug #1): capture the result into a LOCAL variable.
+                # Reading self._compaction_this_iteration in the breakdown block
+                # below was a TOCTOU race: another session's thread could overwrite
+                # the flag between compact() and the breakdown dispatch.
+                # Audit-Fix-26 (Bug #3): tag the event with session_key so
+                # _last_trim_removed can filter per-session when called from
+                # the breakdown block (events from other sessions on the same
+                # runtime are no longer mixed into this session's breakdown).
                 ev = self._context_strategy.last_result
+                _compaction_happened = False
+                _ev_for_breakdown = None
                 if ev is not None and (ev.messages_removed > 0 or ev.tokens_freed > 0):
                     if ev.hard_ceiling is None:
                         ev.hard_ceiling = hard_ceiling
-                    self._compaction_this_iteration = True
+                    # Tag the event with the originating session_key. Reuse the
+                    # event object directly (it's a fresh per-call dataclass).
+                    if not ev.session_key:
+                        ev.session_key = session_key
+                    _compaction_happened = True
+                    _ev_for_breakdown = ev
                     with self._compaction_lock:
                         self._compaction_events.append(ev)
                         # Cap history at 100 events (prevents unbounded growth).
                         if len(self._compaction_events) > 100:
                             self._compaction_events = self._compaction_events[-100:]
-                else:
-                    self._compaction_this_iteration = False
+                # NOTE: self._compaction_this_iteration is intentionally NO LONGER
+                # written here. Bug #1 was caused by treating a per-runtime flag as
+                # if it were per-session/per-iteration; the breakdown block now
+                # uses the local _compaction_happened instead. The attribute is
+                # retained on the instance for backward-compat reads (e.g. tests)
+                # but no longer carries meaningful state. See tests for the
+                # deprecation notice.
 
                 # Get tools for this agent (filtered by allowed_tools if set)
                 from agent.tools import get_tool_definitions_for_api
@@ -1759,34 +1796,48 @@ class AgentRuntime:
 
                 # §4.15 — Token budget breakdown for observability.
                 # Reuses the model_max that the trim call above already computed.
+                # Audit-Fix-26 (Bugs #1, #2, #3): use LOCAL variables
+                # (_compaction_happened, _ev_for_breakdown) instead of re-reading
+                # the shared _compaction_this_iteration flag or
+                # self._context_strategy.last_result. The shared state could be
+                # mutated by another session's thread between the gate and the
+                # breakdown dispatch, causing this session to report the wrong
+                # compaction state.
                 if self._on_token_breakdown is not None:
                     breakdown = conv.get_token_breakdown(model_max)
-                    breakdown["trimmed_this_turn"] = self._compaction_this_iteration
+                    breakdown["trimmed_this_turn"] = _compaction_happened
                     breakdown["messages_remaining"] = len(conv.messages)
+                    # Tag the most recent breakdown so _last_trim_removed knows
+                    # which session_key to filter on. _last_trim_removed reads
+                    # this attribute, so this must happen BEFORE the dispatch.
+                    # Bug #3 fix: filter _compaction_events by session_key to
+                    # avoid cross-session contamination.
+                    self._last_breakdown_session = session_key
                     breakdown["messages_removed_this_turn"] = (
-                        self._last_trim_removed if self._compaction_this_iteration else 0
+                        self._last_trim_removed if _compaction_happened else 0
                     )
                     # §0.4 + §2.8: Compaction telemetry from the strategy.
                     # Audit-Fix-20: Only include compaction_event when actual compaction
-                    # occurred (gate on _compaction_this_iteration, not strategy_result).
-                    if self._compaction_this_iteration:
-                        strategy_result = self._context_strategy.last_result
-                        if strategy_result is not None:
-                            breakdown["compaction_event"] = {
-                                "trigger": strategy_result.trigger,
-                                "layer": strategy_result.layer,
-                                "tokens_before": strategy_result.tokens_before,
-                                "tokens_after": strategy_result.tokens_after,
-                                "tokens_freed": strategy_result.tokens_freed,
-                                "soft_ceiling": strategy_result.soft_ceiling,
-                                "hard_ceiling": strategy_result.hard_ceiling,
-                                "summary_tokens_injected": strategy_result.summary_tokens_injected,
-                            }
+                    # occurred. Bug #2 fix: use the LOCAL _ev_for_breakdown instead
+                    # of re-reading self._context_strategy.last_result, which could
+                    # have been overwritten by another session's compact() call.
+                    if _compaction_happened and _ev_for_breakdown is not None:
+                        breakdown["compaction_event"] = {
+                            "trigger": _ev_for_breakdown.trigger,
+                            "layer": _ev_for_breakdown.layer,
+                            "tokens_before": _ev_for_breakdown.tokens_before,
+                            "tokens_after": _ev_for_breakdown.tokens_after,
+                            "tokens_freed": _ev_for_breakdown.tokens_freed,
+                            "soft_ceiling": _ev_for_breakdown.soft_ceiling,
+                            "hard_ceiling": _ev_for_breakdown.hard_ceiling,
+                            "summary_tokens_injected": _ev_for_breakdown.summary_tokens_injected,
+                        }
                     self._dispatch(self._on_token_breakdown, session_key, breakdown)
-                    # Reset per-iteration flag — the CompactionEvent is already
-                    # in the rolling history (_compaction_events). We do NOT
-                    # clear the history itself.
-                    self._compaction_this_iteration = False
+                    # Bug #1 fix: no longer reset self._compaction_this_iteration
+                    # here — the breakdown used the local _compaction_happened,
+                    # so there's no shared flag to reset. The attribute is kept
+                    # for backward-compat (read by tests) but is no longer the
+                    # source of truth for breakdown state.
 
                 logger.debug("[tool-loop] sk=%s llm response: text_len=%d tool_calls=%d tokens=%d cost=%.4f",
                              session_key, len(text_content or ""), len(tool_calls_raw),

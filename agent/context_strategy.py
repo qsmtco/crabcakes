@@ -59,6 +59,11 @@ class CompactionEvent:
     hard_ceiling: int | None
     provider: str
     model: str
+    # Audit-Fix-26: session_key tag added so per-runtime _compaction_events
+    # can be filtered by session (Bug #3 from the bugfix audit). Empty string
+    # means "unscoped" (e.g. older events from before this field existed, or
+    # synthetic events from tests that don't care about session filtering).
+    session_key: str = ""
 
 
 # ── Pluggable strategy protocol ────────────────────────────────────────────────
@@ -126,6 +131,13 @@ class DefaultContextStrategy:
         Phase 1: mechanical extraction of ``Conversation.trim_to_token_limit()``.
         ``self`` → ``conv`` throughout. No behavior changes.
         """
+        # Audit-Fix-31 (Bug #8): guard against non-positive budgets. A
+        # token_budget <= 0 would cause the trim loop to aggressively
+        # prune everything down to keep_first + tail_preserve messages,
+        # nuking useful context. Return without recording a CompactionEvent.
+        if token_budget <= 0:
+            return
+
         # Snapshot state for telemetry BEFORE any mutation.
         messages_count_before = len(conv.messages)
         tokens_before = conv.get_token_estimate()
@@ -185,9 +197,22 @@ class DefaultContextStrategy:
                     and conv.messages[idx + 1].role == MessageRole.TOOL_RESULT
                     and (idx + 1) < trimmable_end
                 ):
+                    # CB-6 safe: ASSISTANT+tc and TR both in trimmable region.
                     conv.messages.pop(idx + 1)
                     conv.messages.pop(idx)
+                elif (
+                    idx + 1 < len(conv.messages)
+                    and conv.messages[idx + 1].role == MessageRole.TOOL_RESULT
+                ):
+                    # Audit-Fix-27 (Bug #4): TR is in tail_preserve zone — popping
+                    # the ASSISTANT alone would orphan the TR, violating CB-6.
+                    # Skip this candidate by re-entering the loop so _select_prune_candidate
+                    # returns a different index. If no candidates remain, the
+                    # while-loop guard (conv.get_token_estimate() > token_budget)
+                    # terminates compaction cleanly.
+                    continue
                 else:
+                    # No TOOL_RESULT at idx+1 — safe to pop ASSISTANT alone.
                     conv.messages.pop(idx)
             else:
                 conv.messages.pop(idx)
@@ -290,6 +315,15 @@ class DefaultContextStrategy:
         Returns:
             Number of tokens freed (estimate before - estimate after).
         """
+        # Audit-Fix-28 (Bug #5): clamp negative protect_turns to 0. Without
+        # this, list slicing `tool_result_indices[protect_turns:]` with
+        # protect_turns=-1 gives tool_result_indices[-1:] = [last_index],
+        # meaning the MOST RECENT tool result is in the prunable set and
+        # gets stubbed while older results are "protected" — exactly
+        # backwards from intended behavior.
+        if protect_turns < 0:
+            protect_turns = 0
+
         tokens_before = conv.get_token_estimate()
         if tokens_before <= target_tokens:
             return 0
@@ -406,10 +440,18 @@ class DefaultContextStrategy:
         # P9-BUG#2: Cap iterations to prevent O(N²) on consecutive orphans.
         _cb6_cap = len(conv.messages)
         _cb6_iters = 0
+        # Audit-Fix-30 (Bug #7): track visited indices to detect bounce on
+        # duplicate tool_call_ids (malformed but possible). Without this,
+        # the CB-6 loop can oscillate between two TR messages that share
+        # the same tool_call_id, never reaching a stable split boundary.
+        _cb6_visited: set[int] = set()
         while split < len(conv.messages):
             _cb6_iters += 1
             if _cb6_iters > _cb6_cap:
                 break
+            if split in _cb6_visited:
+                break  # bounce detected on duplicate tool_call_id
+            _cb6_visited.add(split)
             msg_at_split = conv.messages[split]
             if msg_at_split.role == MessageRole.TOOL_RESULT:
                 if split > keep_first:
@@ -626,7 +668,11 @@ class DefaultContextStrategy:
         user_contents: list[str] = []
         for msg in head_messages:
             if msg.role == MessageRole.USER:
-                user_contents.append(msg.content.strip())
+                # Audit-Fix-29 (Bug #6): filter out whitespace-only USER
+                # messages so the summary doesn't show an empty preview line.
+                stripped = msg.content.strip()
+                if stripped:
+                    user_contents.append(stripped)
 
         if not user_contents:
             return ""

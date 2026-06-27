@@ -32,6 +32,9 @@ def _make_runtime(providers: dict, default_provider: str = "openai") -> AgentRun
     # Initialize the new §2.8 fields so tests can exercise the property/flag.
     runtime._compaction_events = []
     runtime._compaction_this_iteration = False
+    # Audit-Fix-26 (Bug #3): _last_trim_removed filters by session_key using
+    # _last_breakdown_session as the target session.
+    runtime._last_breakdown_session = ""
     # Audit-Fix-8: _last_trim_removed now acquires _compaction_lock.
     # The real __init__ sets this; tests via __new__ must mirror it.
     runtime._compaction_lock = threading.Lock()
@@ -159,6 +162,7 @@ class TestCompactionEvent:
         runtime = AgentRuntime.__new__(AgentRuntime)
         runtime._compaction_events = []
         runtime._compaction_lock = threading.Lock()
+        runtime._last_breakdown_session = ""
         assert runtime._last_trim_removed == 0
 
     def test_last_trim_removed_property_reads_latest_trim_event(self):
@@ -168,6 +172,7 @@ class TestCompactionEvent:
             _make_event(turn=1, layer=2, messages_removed=10),
         ]
         runtime._compaction_lock = threading.Lock()
+        runtime._last_breakdown_session = ""
         assert runtime._last_trim_removed == 10
 
     def test_history_capped_at_100(self):
