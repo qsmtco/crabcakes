@@ -577,3 +577,180 @@ class TestDynamicPromptBudget:
         file_ctx = "x" * 100
         prompt, unused = _apply_system_prompt_budget(template, file_ctx, model_max_tokens=None)
         assert len(unused) == 0
+
+
+class TestFindSplitIndexCB6Hardening:
+    """Phase 9: CB-6 edge case when parent ASSISTANT-with-tool-calls is in
+    the protected keep_first region.
+
+    Before the fix, the backward search in ``_find_split_index`` only
+    inspected indices ``[keep_first .. split-1]``. A parent at index
+    ``keep_first - 1`` was unreachable when the role-anchored walkback
+    landed on ``split == keep_first``, so the orphan TOOL_RESULT stayed
+    in the tail — a CB-6 violation. The fix adds a second search over
+    ``[0 .. keep_first-1]`` that pulls the TOOL_RESULT into the head.
+
+    Bug trigger conditions (verified empirically — see smoke test in
+    tests/test_context_strategy.py CB-6 comment):
+      1. keep_first=2, parent ASSISTANT-with-tool-calls at index 1
+      2. TOOL_RESULT at index keep_first (== 2)
+      3. Role-anchored walkback must land at split == keep_first (the
+         walkback stops as soon as messages[split-1] is ASSISTANT).
+         This happens when messages[keep_first - 1] is the parent ASSISTANT
+         AND the budget-derived split is at or above keep_first.
+      4. Old forward check skipped adjacent-parent test (``split ==
+         keep_first`` fails the ``split > keep_first`` guard) and the
+         backward search ``range(keep_first-1, keep_first-1, -1)`` was
+         empty, so the for-else branch broke out, leaving the orphan.
+
+    Spec note: the spec's example code used raw dicts for ``tool_calls``,
+    but ``Message.tool_calls: list[ToolCall]`` requires ``ToolCall``
+    instances (verified at ``models/conversation.py:115-139`` and used
+    by the existing ``test_split_with_tool_results_cb6`` at line 432).
+    These tests use the correct ``ToolCall`` constructor.
+    """
+
+    def test_tool_result_orphan_included_in_head(self):
+        """TOOL_RESULT whose parent is at keep_first-1 is included in head.
+
+        Constructs the exact bug-trigger pattern:
+          - keep_first=2, parent ASSISTANT-with-tool-calls at index 1
+          - TOOL_RESULT at index 2 (would be at split boundary)
+          - Short tail messages so role-anchored walkback lands at
+            ``messages[1]`` (the parent ASSISTANT), pinning split=2
+            without my Phase 9 fix.
+        """
+        strategy = DefaultContextStrategy()
+        conv = Conversation(agent_name="Coder", model="openai/gpt-4o")
+        # Index 0: USER
+        conv.add_user_message("question")
+        # Index 1: Parent ASSISTANT with tool_calls (keep_first - 1)
+        parent = Message(
+            role=MessageRole.ASSISTANT,
+            content="I'll check that",
+            tool_calls=[
+                ToolCall(call_id="call_1", tool_name="search", arguments={}),
+            ],
+        )
+        conv.messages.append(parent)
+        # Index 2: TOOL_RESULT (the orphan candidate)
+        child = Message(
+            role=MessageRole.TOOL_RESULT,
+            content="result data",
+            tool_call_id="call_1",
+        )
+        conv.messages.append(child)
+        # Index 3+: Short alternating user/assistant so the role-anchored
+        # walkback lands on messages[1] (the parent), pinning split=2.
+        conv.add_user_message("a")
+        conv.add_assistant_message("b", [])
+        conv.add_user_message("c")
+        conv.add_assistant_message("d", [])
+
+        # Use a small budget so the budget-derived split is high and the
+        # walkback doesn't pull split below keep_first.
+        split = strategy._find_split_index(conv, budget_tokens=200, keep_first=2)
+        # The TOOL_RESULT at index 2 must NOT be in the tail. The split
+        # must move past it (split > 2).
+        assert split > 2, (
+            f"TOOL_RESULT at index 2 should be in head, split={split}. "
+            f"CB-6 violation: parent at index 1 is orphaned from child."
+        )
+
+    def test_consecutive_tool_results_with_parent_in_head(self):
+        """Multiple TOOL_RESULTs whose parent is in keep_first are all in head.
+
+        Two TOOL_RESULTs (call_1 and call_2) have the same parent ASSISTANT
+        at index 1 (with multiple tool_calls). After the first
+        TOOL_RESULT is pulled into the head by ``split += 1``, the outer
+        ``while`` loop re-checks the new ``split`` position. The second
+        TOOL_RESULT is then pulled in the same way.
+        """
+        strategy = DefaultContextStrategy()
+        conv = Conversation(agent_name="Coder", model="openai/gpt-4o")
+        # Index 0: USER
+        conv.add_user_message("question")
+        # Index 1: Parent ASSISTANT with two tool_calls (keep_first - 1)
+        parent = Message(
+            role=MessageRole.ASSISTANT,
+            content="I'll check both",
+            tool_calls=[
+                ToolCall(call_id="call_1", tool_name="search", arguments={}),
+                ToolCall(call_id="call_2", tool_name="read", arguments={}),
+            ],
+        )
+        conv.messages.append(parent)
+        # Indices 2, 3: two TOOL_RESULTs
+        conv.messages.append(
+            Message(role=MessageRole.TOOL_RESULT, content="result1", tool_call_id="call_1")
+        )
+        conv.messages.append(
+            Message(role=MessageRole.TOOL_RESULT, content="result2", tool_call_id="call_2")
+        )
+        # Short tail messages for role-anchored walkback to land at parent.
+        conv.add_user_message("a")
+        conv.add_assistant_message("b", [])
+        conv.add_user_message("c")
+        conv.add_assistant_message("d", [])
+
+        split = strategy._find_split_index(conv, budget_tokens=200, keep_first=2)
+        # Both TOOL_RESULTs must be in the head: split > 3.
+        assert split > 3, (
+            f"Both TOOL_RESULTs should be in head, split={split}. "
+            f"CB-6 violation: at least one TOOL_RESULT orphaned from parent."
+        )
+
+    def test_no_orphan_when_parent_in_trimmable_region(self):
+        """Regression check: parent in trimmable region is handled normally.
+
+        When the parent ASSISTANT is in the trimmable region
+        (``keep_first <= parent_idx < split``), the existing backward
+        search handles it: ``split`` is rewound to the parent index.
+        The Phase 9 keep_first-region search is NOT triggered. This
+        test guards against the Phase 9 fix accidentally breaking
+        the existing CB-6 behavior.
+        """
+        strategy = DefaultContextStrategy()
+        conv = Conversation(agent_name="Coder", model="openai/gpt-4o")
+        # Index 0: USER
+        conv.add_user_message("question")
+        # Index 1: USER filler (keep_first - 1)
+        conv.add_user_message("context filler")
+        # Index 2: Parent ASSISTANT (in trimmable region when keep_first=2)
+        parent = Message(
+            role=MessageRole.ASSISTANT,
+            content="checking",
+            tool_calls=[
+                ToolCall(call_id="call_1", tool_name="search", arguments={}),
+            ],
+        )
+        conv.messages.append(parent)
+        # Index 3: TOOL_RESULT
+        conv.messages.append(
+            Message(role=MessageRole.TOOL_RESULT, content="result", tool_call_id="call_1")
+        )
+        # Tail messages
+        conv.add_user_message("a")
+        conv.add_assistant_message("b", [])
+        conv.add_user_message("c")
+        conv.add_assistant_message("d", [])
+
+        split = strategy._find_split_index(conv, budget_tokens=200, keep_first=2)
+        # The backward search rewinds split to the parent (index 2) or
+        # lands on an earlier ASSISTANT. Either way, split >= 2 and the
+        # TOOL_RESULT at index 3 is in the head.
+        assert split >= 2
+        # CRITICAL: no TOOL_RESULT in tail is orphaned from its parent.
+        for i in range(split, len(conv.messages)):
+            msg = conv.messages[i]
+            if msg.role == MessageRole.TOOL_RESULT and msg.tool_call_id:
+                # Find parent ASSISTANT in [keep_first .. len) with matching call_id.
+                parent_found = any(
+                    m.role == MessageRole.ASSISTANT
+                    and m.tool_calls
+                    and any(tc.call_id == msg.tool_call_id for tc in m.tool_calls)
+                    for m in conv.messages[split:i]
+                )
+                assert parent_found, (
+                    f"Orphaned TOOL_RESULT at index {i} in tail (split={split})"
+                )

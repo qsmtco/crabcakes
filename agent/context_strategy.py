@@ -379,6 +379,9 @@ class DefaultContextStrategy:
         # CB-6 forward check: if messages[split] is a TOOL_RESULT whose
         # parent ASSISTANT-with-tool-calls is in the head, move split forward
         # to include this TOOL_RESULT in the head (gets summarized with parent).
+        # Phase 9 hardening: also search the keep_first region (protected head)
+        # for the parent — if the parent is at index < keep_first, the TOOL_RESULT
+        # must also be in the head to preserve CB-6 pairing.
         while split < len(conv.messages):
             msg_at_split = conv.messages[split]
             if msg_at_split.role == MessageRole.TOOL_RESULT:
@@ -391,8 +394,9 @@ class DefaultContextStrategy:
                     ):
                         split += 1
                         continue
-                # Search backward for true parent in head.
+                # Search backward for true parent in trimmable region.
                 if msg_at_split.tool_call_id:
+                    found_parent = False
                     for j in range(split - 1, keep_first - 1, -1):
                         candidate = conv.messages[j]
                         if (
@@ -401,8 +405,25 @@ class DefaultContextStrategy:
                             and any(tc.call_id == msg_at_split.tool_call_id for tc in candidate.tool_calls)
                         ):
                             split = j
+                            found_parent = True
                             break
-                    else:
+                    if found_parent:
+                        continue
+                    # Parent not found in trimmable region. Search keep_first
+                    # region (indices 0 .. keep_first-1) for the parent.
+                    # If found, include this TOOL_RESULT in the head by
+                    # incrementing split — CB-6 pairing must be preserved.
+                    for j in range(min(keep_first, len(conv.messages)) - 1, -1, -1):
+                        candidate = conv.messages[j]
+                        if (
+                            candidate.role == MessageRole.ASSISTANT
+                            and candidate.tool_calls
+                            and any(tc.call_id == msg_at_split.tool_call_id for tc in candidate.tool_calls)
+                        ):
+                            split += 1  # include TOOL_RESULT in head
+                            found_parent = True
+                            break
+                    if not found_parent:
                         break
                 else:
                     break

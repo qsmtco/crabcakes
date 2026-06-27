@@ -305,8 +305,12 @@ def _convert_messages_for_anthropic(messages: list[dict]) -> list[dict]:
                 if isinstance(args_str, str):
                     try:
                         args_str = json.loads(args_str)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # Phase 9: log instead of silently passing. Malformed
+                        # JSON args may indicate upstream provider corruption;
+                        # a debug message lets the developer trace it without
+                        # disrupting the message conversion.
+                        logger.debug("Failed to parse tool-call args JSON: %s", e)
                 content_blocks.append({
                     "type": "tool_use",
                     "id": tc["id"],
@@ -1352,8 +1356,11 @@ class AgentRuntime:
             try:
                 from utils.mcp_client import disconnect_all
                 disconnect_all(session_key)  # Clean up MCP for this conversation
-            except Exception:
-                pass  # Best effort cleanup
+            except Exception as e:
+                # Phase 9: log instead of silently passing. MCP cleanup is
+                # best-effort during conversation replacement, but a failure
+                # may indicate resource leaks that warrant investigation.
+                logger.debug("MCP best-effort cleanup failed for %s: %s", session_key, e)
 
         from agent.context import build_system_prompt
         from models.conversation import Conversation
