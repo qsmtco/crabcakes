@@ -125,45 +125,57 @@ class DefaultContextStrategy:
         conv._token_estimate_cache = None
         summary_tokens_injected = 0
 
+        # Phase 4: P2/P3-aware trim parameters. Defined before the trim loop
+        # so both the loop guard and the summary injection block can reference
+        # them. tail_preserve matches the legacy value (4); min_messages
+        # combines keep_first + tail_preserve to enforce the lower bound.
+        tail_preserve = 4
+        min_messages = keep_first + tail_preserve
+
         # ── Trim loop ─────────────────────────────────────────────────────────
-        # Mirrors the legacy Conversation.trim_to_token_limit() body verbatim,
-        # rewritten so ``self.messages`` is now ``conv.messages``. The outer
-        # loop guard is ``len > 4`` (preserving the historical tail_preserve=4).
-        while conv.get_token_estimate() > token_budget and len(conv.messages) > 4:
-            removed = False
-            # Iterate backwards to avoid index-shift issues when popping.
-            for i in range(len(conv.messages) - 1, 0, -1):
-                msg = conv.messages[i]
-                # TOOL_RESULT: also remove the preceding ASSISTANT-with-tool_calls.
-                if msg.role == MessageRole.TOOL_RESULT:
-                    if (
-                        i > 0
-                        and conv.messages[i - 1].role == MessageRole.ASSISTANT
-                        and conv.messages[i - 1].tool_calls
-                    ):
-                        conv.messages.pop(i)
-                        conv.messages.pop(i - 1)
-                        removed = True
-                        break
-                # ASSISTANT-with-tool-calls: also remove the following TOOL_RESULT.
-                elif msg.role == MessageRole.ASSISTANT and msg.tool_calls:
-                    if (
-                        i + 1 < len(conv.messages)
-                        and conv.messages[i + 1].role == MessageRole.TOOL_RESULT
-                    ):
-                        conv.messages.pop(i + 1)
-                        conv.messages.pop(i)
-                        removed = True
-                        break
-            if not removed:
-                # Fallback: pop the oldest message in the trimmable region
-                # (indices [0, len - tail_preserve)). Safe because the outer
-                # guard ``len > 4`` ensures the preserved tail is untouched.
-                tail_preserve = 4
-                if len(conv.messages) > tail_preserve:
-                    conv.messages.pop(0)
-                else:
+        # Phase 4: delegates candidate selection to ``_select_prune_candidate``,
+        # which implements P2 (keep_first) and P3 (protect_is_summary) as a
+        # single two-pass scan (non-protected first, then protected).
+        while conv.get_token_estimate() > token_budget and len(conv.messages) > min_messages:
+            idx = self._select_prune_candidate(
+                conv, keep_first, tail_preserve, protect_is_summary
+            )
+            if idx is None:
+                break
+            msg = conv.messages[idx]
+            # CB-6: remove TOOL_RESULT + ASSISTANT-with-tool_calls as a pair.
+            if msg.role == MessageRole.TOOL_RESULT:
+                conv.messages.pop(idx)
+                if (
+                    idx > 0
+                    and conv.messages[idx - 1].role == MessageRole.ASSISTANT
+                    and conv.messages[idx - 1].tool_calls
+                    and (idx - 1) >= keep_first
+                ):
+                    conv.messages.pop(idx - 1)
+                elif (
+                    idx > 0
+                    and conv.messages[idx - 1].role == MessageRole.ASSISTANT
+                    and conv.messages[idx - 1].tool_calls
+                ):
+                    # Parent ASSISTANT is in keep_first region — can't remove.
+                    # _select_prune_candidate should have filtered this, but
+                    # break defensively to prevent CB-6 violations.
                     break
+            elif msg.role == MessageRole.ASSISTANT and msg.tool_calls:
+                trimmable_end = len(conv.messages) - tail_preserve
+                if (
+                    idx + 1 < len(conv.messages)
+                    and conv.messages[idx + 1].role == MessageRole.TOOL_RESULT
+                    and (idx + 1) < trimmable_end
+                ):
+                    conv.messages.pop(idx + 1)
+                    conv.messages.pop(idx)
+                else:
+                    conv.messages.pop(idx)
+            else:
+                conv.messages.pop(idx)
+            conv._token_estimate_cache = None
 
         # ── Summary injection ─────────────────────────────────────────────────
         # Phase 4.10: fire when any messages were removed AND at least 4
@@ -217,6 +229,74 @@ class DefaultContextStrategy:
             provider=provider,
             model=model_value,
         )
+
+    # ── Prune candidate selector (Phase 4: P2 keep_first + P3 protect_is_summary)
+
+    def _select_prune_candidate(
+        self,
+        conv: Conversation,
+        keep_first: int,
+        tail_preserve: int,
+        protect_is_summary: bool,
+    ) -> int | None:
+        """Find the index of the best message to remove for budget trimming.
+
+        Scans the trimmable region [keep_first, len - tail_preserve) for:
+        1. First pass: non-protected messages (not is_summary when protect_is_summary=True)
+        2. Second pass: protected messages (if no non-protected candidates)
+
+        Prefers TOOL_RESULT + ASSISTANT-with-tool_calls pairs (CB-6 aware).
+        Falls back to oldest non-protected message.
+
+        CB-6 invariant at keep_first boundary: When a TOOL_RESULT candidate is
+        at index ``keep_first``, its parent ASSISTANT-with-tool-calls at
+        ``keep_first - 1`` is in the keep_first region and cannot be removed.
+        This method skips those candidates.
+
+        Returns the index of the message to remove, or None if the
+        trimmable region is empty.
+        """
+        trimmable_end = len(conv.messages) - tail_preserve
+        if trimmable_end <= keep_first:
+            return None
+
+        # Build the candidate list, non-protected first.
+        non_protected: list[int] = []
+        protected: list[int] = []
+        for i in range(keep_first, trimmable_end):
+            msg = conv.messages[i]
+            is_protected = protect_is_summary and msg.is_summary
+            if is_protected:
+                protected.append(i)
+            else:
+                non_protected.append(i)
+
+        # Try non-protected first, then protected.
+        for candidate_pool in (non_protected, protected):
+            if not candidate_pool:
+                continue
+            # Prefer TOOL_RESULT + ASSISTANT-with-tool_calls pairs (CB-6 aware).
+            for i in candidate_pool:
+                msg = conv.messages[i]
+                if msg.role == MessageRole.TOOL_RESULT:
+                    if (
+                        i > 0
+                        and conv.messages[i - 1].role == MessageRole.ASSISTANT
+                        and conv.messages[i - 1].tool_calls
+                        and (i - 1) >= keep_first
+                    ):
+                        return i
+                elif msg.role == MessageRole.ASSISTANT and msg.tool_calls:
+                    if (
+                        i + 1 < len(conv.messages)
+                        and conv.messages[i + 1].role == MessageRole.TOOL_RESULT
+                        and (i + 1) < trimmable_end
+                    ):
+                        return i
+            # No CB-6 pairs found — return the first candidate (oldest).
+            return candidate_pool[0]
+
+        return None
 
     # ── Internal helpers ─────────────────────────────────────────────────────
 
