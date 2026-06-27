@@ -1264,6 +1264,12 @@ class AgentRuntime:
         # A-4: Audit log for tool executions
         self._audit_log = AuditLog()
 
+        # §0: Pluggable context management strategy.
+        # DefaultContextStrategy is the extracted trim_to_token_limit algorithm
+        # (Phase 1). Future: configurable via AgentConfig.context_strategy.
+        from agent.context_strategy import DefaultContextStrategy
+        self._context_strategy = DefaultContextStrategy()
+
     # ── Dispatch helpers ───────────────────────────────────────────────────────
 
     def set_approval_callback(self, cb: Callable[[str, str, dict], bool] | None) -> None:
@@ -1505,6 +1511,37 @@ class AgentRuntime:
             logger.exception("[model-max] failed to resolve provider max_tokens; using fallback")
             return FALLBACK
 
+    def _compute_compaction_threshold(self, conv: "Conversation") -> float:
+        """Return the compaction threshold for the current conversation's provider.
+
+        Resolution order:
+          1. conv.model's provider's compaction_threshold (when set and in (0, 1])
+          2. 0.80 default
+
+        Returns 0.80 when:
+          - conv.model is None and self._config.default_provider is not configured
+          - the resolved provider config has compaction_threshold <= 0 or > 1
+          - any exception during provider lookup
+        """
+        DEFAULT_THRESHOLD = 0.80
+        try:
+            provider_name = (
+                conv.model.split("/")[0]
+                if conv.model and "/" in conv.model
+                else self._config.default_provider
+            )
+            if not provider_name:
+                return DEFAULT_THRESHOLD
+            provider_cfg = self._config.providers.get(provider_name)
+            if provider_cfg is None:
+                return DEFAULT_THRESHOLD
+            threshold = getattr(provider_cfg, "compaction_threshold", None)
+            if threshold is not None and 0 < threshold <= 1:
+                return float(threshold)
+        except Exception:
+            pass
+        return DEFAULT_THRESHOLD
+
     def _prepare_kb_synthesis(
         self,
         conv: "Conversation",
@@ -1607,15 +1644,18 @@ class AgentRuntime:
                 from models.conversation import MessageRole
                 messages = conv.to_api_messages()
 
-                # Context-bloat fix (BUG #1) — cap history before each LLM call.
-                # Conversation.trim_to_token_limit() is unit-tested at
-                # tests/test_conversation.py:249 (TestConversationTrim) and
-                # tests/test_phase4.py:280 (summary-on-trim). It preserves the
-                # system prompt and the last 4 messages, and (per §4.10) injects
-                # a budget-aware summary when >= 8 messages remain.
+                # §0: Pluggable context strategy — compaction before each LLM call.
+                # The strategy lives in agent/context_strategy.py and replaces the
+                # old conv.trim_to_token_limit() call. The delegation shim on
+                # Conversation remains for backward compat with tests.
+                #
+                # soft_ceiling = model_max * compaction_threshold
+                # (e.g. 128000 * 0.80 = 102400 — compact when usage exceeds 80%.)
                 model_max = self._compute_model_max(conv)
+                threshold = self._compute_compaction_threshold(conv)
+                soft_ceiling = int(model_max * threshold)
                 messages_count_before = len(conv.messages)
-                conv.trim_to_token_limit(model_max)
+                self._context_strategy.compact(conv, soft_ceiling)
                 messages_count_after = len(conv.messages)
                 self._last_trim_removed = messages_count_before - messages_count_after
 
@@ -1664,6 +1704,18 @@ class AgentRuntime:
                     breakdown["trimmed_this_turn"] = self._last_trim_removed > 0
                     breakdown["messages_remaining"] = len(conv.messages)
                     breakdown["messages_removed_this_turn"] = self._last_trim_removed
+                    # §0.4: Compaction telemetry from the strategy.
+                    strategy_result = self._context_strategy.last_result
+                    if strategy_result is not None:
+                        breakdown["compaction_event"] = {
+                            "trigger": strategy_result.trigger,
+                            "layer": strategy_result.layer,
+                            "tokens_before": strategy_result.tokens_before,
+                            "tokens_after": strategy_result.tokens_after,
+                            "tokens_freed": strategy_result.tokens_freed,
+                            "soft_ceiling": strategy_result.soft_ceiling,
+                            "hard_ceiling": strategy_result.hard_ceiling,
+                        }
                     self._dispatch(self._on_token_breakdown, session_key, breakdown)
                     self._last_trim_removed = 0
 
