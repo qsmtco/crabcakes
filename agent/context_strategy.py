@@ -17,7 +17,6 @@ from models.conversation import (
     Conversation,
     Message,
     MessageRole,
-    _tiktoken_encoding_for,
 )
 
 
@@ -174,7 +173,11 @@ class DefaultContextStrategy:
         if messages_removed > 0 and len(conv.messages) >= 4:
             summary = self._summary(conv)
             if summary:
-                summary_tokens = self._estimate_summary_tokens(summary, conv.model)
+                # Phase 1: use the legacy ``len(summary) // 4`` heuristic to
+                # preserve byte-exact behavior of the pre-extraction code path.
+                # Phase 4 may upgrade this to tiktoken unconditionally if no
+                # behavior change is observed.
+                summary_tokens = len(summary) // 4
                 summary_tokens_injected = summary_tokens
                 current_tokens = conv.get_token_estimate()
                 if current_tokens + summary_tokens > token_budget:
@@ -253,18 +256,3 @@ class DefaultContextStrategy:
             lines.append(f"  … and {len(user_contents) - 5} more turns")
 
         return "\n".join(lines)
-
-    @staticmethod
-    def _estimate_summary_tokens(summary: str, model: str) -> int:
-        """Token estimate for a summary string.
-
-        Uses tiktoken when available (matching ``Conversation.get_token_estimate()``
-        semantics) and falls back to ``chars // 4`` otherwise. Mirrors the
-        historical ``len(summary) // 4`` heuristic so Phase 1 is byte-equivalent
-        to the pre-extraction code path; Phase 4 may upgrade this to tiktoken
-        unconditionally if no behavior change is observed.
-        """
-        encoding = _tiktoken_encoding_for(model)
-        if encoding is None:
-            return len(summary) // 4
-        return len(encoding.encode(summary))
