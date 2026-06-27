@@ -221,10 +221,23 @@ class DefaultContextStrategy:
         if "/" in model_value:
             provider, model_value = model_value.split("/", 1)
 
+        # Determine which layer(s) fired for telemetry.
+        # Layer 1 (prune_tool_outputs) fired iff tokens decreased between
+        # the initial snapshot and the post-Layer-1 snapshot. Layer 2
+        # (trim loop) fired iff any messages were removed. If neither
+        # fired, default to layer=2 (matches pre-Phase-5 behavior).
+        layer = 0
+        if tokens_after_layer1 < tokens_before:
+            layer = 1
+        if messages_count_before > len(conv.messages):
+            layer = max(layer, 2)
+        if layer == 0:
+            layer = 2  # default: no compaction occurred, report as layer 2
+
         self._last_result = CompactionEvent(
             turn=conv.step_count,
             trigger="trim",
-            layer=2,  # P2/P3/P6 trim layer, per §2.8.1
+            layer=layer,
             messages_before=messages_count_before,
             messages_after=len(conv.messages),
             messages_removed=messages_count_before - len(conv.messages),
