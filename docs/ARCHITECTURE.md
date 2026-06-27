@@ -78,6 +78,7 @@ crabcakes/
 │   ├── conversation.py        # Conversation + Message + ToolCall + MessageRole dataclasses (Agent Runtime Phase 1.1)
 │   ├── conversation_snapshot.py # ConversationSnapshot + SnapshotMessage — conversation snapshot data
 │   ├── feed_card.py           # FeedCardData dataclass + css_class_for_type() (Phase 5)
+│   ├── providers.py           # ProviderConfig dataclass + caller_default_max_tokens() (per-provider context window resolution)
 │   ├── review_state.py        # ReviewState dataclass — per-project review session data (Phase 7)
 │   ├── streaming.py           # StreamingBubble dataclass — streaming bubble state (Phase 5)
 │   ├── task.py                # Task + TaskStore + status/priority labels (Phase 3)
@@ -94,14 +95,17 @@ crabcakes/
 │   ├── tools.py              # Tool definitions + execution (read_file, write_file, edit_file, exec_command, etc.)
 │   ├── config.py             # LLM provider config + EnforcementConfig dataclass
 │   ├── context.py            # System prompt builder (via prompts/system/ templates) + file context builder + .gitignore parsing
+│   ├── context_strategy.py   # Pluggable context compaction strategy (Phase 4–9; ContextStrategy protocol + DefaultContextStrategy)
 │   ├── special_agents.py     # Coder + Debugger + Crabcakes agent definitions (auto_open, api_key_built_in, auto_add_to_projects fields)
 │   └── enforcement.py        # Post-write verification: syntax guard, test runner, lint check (Phase 3)
 │
 ├── ui/                        # All UI components
 │   ├── __init__.py
+│   ├── constants.py           # Cross-cutting UI constants (STREAMING_ENABLED toggle)
 │   ├── toolbar.py             # Toolbar widget — connect button + status label
 │   ├── styles.py              # All CSS — single source of truth (APP_CSS + apply_styles)
 │   ├── window.py              # MainWindow — assembles all components, wires callbacks
+│   ├── wiring.py              # Stateless wiring helpers (SettingsHandler callbacks, LOW-7 project path)
 │   ├── handlers/              # Handler modules (extracted from window.py)
 │   │   ├── __init__.py
 │   │   ├── prompts_handler.py  # PromptsHandler — favorites, search, last-used
@@ -123,9 +127,10 @@ crabcakes/
 │   │   ├── agent_builder_handler.py # ~199 lines — AgentBuilderHandler — agent create/edit form + delete_agent_with_confirmation() (Phase 5)
 │   │   ├── agent_command_handler.py # AgentCommandHandler — agent response slash-command parser (Phase 6.2)
 │   │   ├── feed_handler.py        # ~867 lines — FeedHandler — feed card lifecycle, persistence, review actions (Phase 5)
-│   │   └── session_handler.py     # ~164 lines — SessionHandler — session switching commands (Phase 7)
+│   │   ├── session_handler.py     # ~164 lines — SessionHandler — session switching commands (Phase 7)
 │   │   ├── connection_sync_handler.py  # post-connect wiring (Phase 3a extraction)
 │   │   ├── forward_handler.py     # 17 tests (Phase 3b extraction)
+│   │   ├── settings_handler.py    # Settings dialog logic — provider CRUD, test connection, status
 │   │   └── auxilium_wizard_handler.py # Auxilium first-run wizard handler (Tier 1, D7)
 │   └── views/                 # View widgets
 │       ├── __init__.py
@@ -137,12 +142,12 @@ crabcakes/
 │       ├── review_bar.py        # ReviewBar widget — review mode dropdown + action buttons (Phase 7)
 │       ├── file_tree.py        # FileTree — Gtk.TreeView directory browser
 │       ├── left_panel.py         # ~974 lines — LeftPanel (Prompts/Agents/Projects notebook + right-click copy menu)
-│       ├── left_progress.py    # Stub — progress indicator placeholder
 │       ├── main_content.py     # MainContent — chat notebook + input + button bar
 │       ├── session_menu.py     # Right-click session switcher popover
 │       ├── chat_input_toolbar.py # ~480 lines — ChatInputToolbar — find/replace bar + spell check toggle (view only)
 │       ├── feed_tab.py          # ~167 lines — FeedTab — project feed card container (view only)
-│       └── agent_builder.py     # AgentBuilderDialog — modal dialog for creating/editing agents
+│       ├── settings_dialog.py   # GTK4 dialog for managing LLM provider settings
+│       ├── agent_builder.py     # AgentBuilderDialog — modal dialog for creating/editing agents
 │       └── auxilium_wizard.py  # Auxilium first-run wizard view (Tier 1, D7)
 │
 ├── knowledge/                # User-facing documentation files (read by Crabcakes agent via web_fetch)
@@ -154,7 +159,20 @@ crabcakes/
 │   ├── gateway.md            # OpenClaw gateway connection
 │   └── troubleshooting.md    # Common problems and solutions
 │
-└── utils/                     # Pure Python utilities — no GTK, no network
+├── scripts/                  # Standalone utility scripts
+│   ├── rebuild_kb_index.py    # offline indexer — builds knowledge/.index/ from knowledge/*.md
+│   ├── audit_attack_scenarios.py  # streaming security audit scenarios
+│   └── audit_streaming_scenarios.py # streaming audit helper
+│
+├── prompts/                  # System prompt templates and default agent definitions
+│   ├── system/                # Agent system prompt templates (loaded by utils/prompt_loader.py)
+│   └── default_agents/        # Default agent YAML definitions
+│
+├── tests/                    # Test suite (100 files; see §13 for partial listing)
+│
+├── docs/                     # Specs, post-mortems, audits, research
+│
+└── utils/                     # Pure Python utilities — no GTK (with documented exceptions), no network
     ├── __init__.py
     ├── agent_defs.py            # Agent definition I/O — load, validate, save, list user-defined agents from agents/*.yaml
     ├── audit_parser.py          # extract_audit_reports() — parse ## Audit Report sections into AuditReport dataclasses
@@ -163,21 +181,27 @@ crabcakes/
     ├── conversation_store.py    # Snapshot creation — build ConversationSnapshot from message lists and git diffs
     ├── crabcard_parser.py       # extract_crabcards() — parse ```crabcard blocks from agent chat into FeedCardData (Phase 5)
     ├── diff_parser.py           # parse_diff() — unified diff → FileDiff/ParsedDiff data (Phase 7)
+    ├── env_security.py          # get_scrubbed_env() — allowlisted env dict for subprocesses (MED-2 / CRIT-2)
     ├── escaping.py              # escape_for_pango(), xml_escape_text() — Pango-aware XML escape
     ├── favorites.py             # favorites persistence (favorites.json)
     ├── feed_store.py            # Feed JSON persistence — load/save/append/update to .crabcakes/feed.json (Phase 5)
     ├── feedback_processor.py    # Audit report file I/O — write structured audit reports to agent bug journals
+    ├── file_security.py         # assert_secure_file() — config file permission validation (MED-6)
     ├── git_ops.py               # GitPython wrapper — git add/commit/diff/checkout/log/status/push via GitResult (Phase 7)
-    ├── icons.py                 # Gdk.Texture SVG rendering (agent avatars + folder icons)
+    ├── gtk_safe_link.py         # HIGH-6: activate-link guard for non-allowlisted URL schemes (GTK carve-out; see §2 table)
+    ├── icons.py                 # Gdk.Texture SVG rendering (agent avatars + folder icons) (GTK carve-out; see §2 table)
     ├── image_utils.py           # convert_logo_to_icons() — JPG to multi-size PNG conversion for app icons
     ├── improve.py               # improve_prompt() — MiniMax API for prompt improvement (template mode with {{USER_INPUT}} marker)
     ├── markdown.py              # format_markdown() — inline markdown → Pango Markup
     ├── mcp_client.py            # MCP client library — asyncio-to-threading bridge, stdio transport, connection pooling, tool discovery/call
     ├── mcp_config.py            # MCP server configuration loader — YAML/JSON deserialization with schema validation
     ├── project_awareness.py     # Project awareness system — manages .crabcakes/ directory per project (team, workflow, context)
+    ├── project_trust.py         # HIGH-5: per-project trust gate for .crabcakes/ rule/bug ingestion
     ├── prompt_loader.py         # System prompt template loader — loads/fills/composes prompts/system/*.md
     ├── prompts.py               # load_prompts() — reads .md from prompts/
     ├── projects.py              # load_projects(), scan_directory() — load project directories; load_members()/save_members() deprecated
+    ├── provider_url.py          # validate_provider_url() — https-only for non-loopback hosts (MED-5)
+    ├── providers_store.py       # Provider YAML persistence — load/save/add/remove/update providers.yaml + legacy migration
     ├── quoting.py               # _parse_quoted_payload() — quoted-payload parsing with escape handling (A2A_QUOTED_PAYLOAD_SPEC)
     ├── review_log.py            # Review log persistence — append/retrieve review entries per project
     ├── spellcheck.py            # Spell check engine — Enchant-based misspelling detection and suggestion
@@ -193,9 +217,22 @@ crabcakes/
 | `gateway/` | Network I/O, auth, event dispatch | `cryptography`, `websockets`, `gi.repository.GLib` |
 | `models/` | Data structures, state management | None (pure Python) |
 | `ui/` | GTK widgets, layout, user interaction | GTK4 only |
-| `utils/` | File I/O for prompts, projects, membership | None |
+| `utils/` | File I/O for prompts, projects, membership | None (with documented GTK carve-outs; see below) |
 
 **Critical rule:** `gateway/` and `models/` must NEVER import from `ui/`. They are the foundation that the UI depends on — not the other way around.
+
+**`utils/` GTK carve-out (documented exceptions):** Three files in `utils/`
+import `gi.repository` despite the "no GTK" rule above. These are
+narrowly-scoped exceptions that have been reviewed and accepted:
+
+| File | Import | Why it's in `utils/` | Justification |
+|------|--------|---------------------|---------------|
+| `utils/icons.py` | `gi.repository.Gdk` (module-level) | Pure texture rendering — no widget hierarchy, no layout, no signals | `Gdk.Texture` is the only way to render SVGs to pixel buffers; callers pass textures as plain objects |
+| `utils/gtk_safe_link.py` | `gi.repository.Gtk, Pango` (lazy, inside functions) | Link-safety guard; callers are GTK-bound labels | Function-level import minimizes the GTK surface; the logic is scheme-string validation that happens to need Pango markup parsing |
+| `utils/stt.py` | `gi.repository.GLib` (lazy, inside thread callback) | `GLib.idle_add` marshals STT results from the whisper thread to the main loop | Thread-dispatch mechanism only — no widgets, no windows, no signals. Has `except ImportError` fallback |
+
+**Rule:** Do not add new GTK imports to `utils/` without documenting them
+here and justifying why the file cannot live in `ui/`.
 
 ---
 
@@ -393,6 +430,20 @@ apply_styles()  # Call once at startup, before any windows are created
 - No other file may call `Gtk.CssProvider().load_from_data()` or define CSS inline.
 - Views use `widget.add_css_class("name")` only — they never define what classes look like.
 - See Section 9 for full CSS conventions.
+
+### 3.5a `ui/constants.py` — Cross-Cutting UI Constants
+
+**Responsibility:** Neutral module for UI state shared between views and
+handlers without violating §8.6 R7 (views must not import from handlers).
+
+**Public API:**
+```python
+STREAMING_ENABLED: bool = False   # toggled by toolbar button; read by ChatHandler
+```
+
+**Architecture rule (§8.6 R7):** When both a view and a handler need to
+read AND write the same mutable state, put it here. For one-way state,
+pass via constructor or setter from `ui/window.py` instead.
 
 ### 3.6 `ui/window.py` — Main Window
 
@@ -652,6 +703,43 @@ def test_connection(
 
 The `default_max_tokens` field on `ProviderConfig` records the *configured intent* (set by auxilium wizard from `CALLER_DEFAULT_MAX_TOKENS`); it's used as a sentinel marker so Test Connection's pre-fill logic doesn't overwrite a wizard's deliberate choice. See audit BUG #7.
 
+### 3.11c `utils/provider_url.py` — Provider URL Validation (MED-5)
+
+**Responsibility:** Validates that non-loopback provider URLs use `https://`.
+Loopback addresses (`localhost`, `127.0.0.1`, `::1`) may use `http://` for
+local servers (e.g., Ollama).
+
+**Public API:**
+```python
+def validate_provider_url(url: str) -> None   # raises ValueError for non-HTTPS non-loopback
+```
+
+**Architecture:** Pure utility — no GTK, no network, no imports beyond stdlib.
+
+### 3.11d `utils/providers_store.py` — Provider YAML Persistence
+
+**Responsibility:** Load, save, add, remove, and update provider configurations
+from `<config_dir>/providers.yaml`. Handles atomic writes (temp file +
+`os.replace`) with `chmod 0o600` for security. Also handles legacy migration
+from `agent.json`'s `providers` key on first load.
+
+**Public API:**
+```python
+def get_providers_path() -> str                          # path to providers.yaml
+ndef load_providers() -> list[ProviderConfig]             # load from YAML (or JSON fallback)
+def save_providers(providers: list[ProviderConfig]) -> None  # atomic write, chmod 0o600
+def add_provider(p: ProviderConfig) -> None               # append + save
+def remove_provider(name: str) -> None                    # filter + save
+def update_provider(name: str, **fields) -> None          # in-place update + save
+def has_any_verified_provider() -> bool                   # True if any provider has last_verified_at
+def migrate_from_agent_json(agent_json_path: str) -> int  # legacy migration; returns count migrated
+```
+
+**Architecture:** Pure functions — no GTK, no state, no network. Imports
+`models.providers.ProviderConfig` and stdlib only (`yaml` if available,
+`json` fallback). Mirrors the patterns from `utils/feed_store.py` and
+`utils/agent_defs.py`.
+
 ### 3.12 `ui/handlers/agent_list_handler.py` — Agent List Handler (Agent Cards)
 
 **Responsibility:** Agent card rendering data — initials, colors, sorting. Does NOT build widgets (view does).
@@ -748,6 +836,28 @@ result = format_markdown("use `my_var` for **bold** and *italic*")
 ```
 
 **Important:** Handles ONLY inline formatting. Block-level elements (code blocks, blockquotes) are handled by `utils/block_parser.py` in Phase 2.
+
+### 3.14b.1 `utils/gtk_safe_link.py` — GTK Link Safety Guard (HIGH-6)
+
+**Responsibility:** Creates `Gtk.Label` widgets with an `activate-link` handler
+that gates navigation on the link scheme. Non-allowlisted schemes are blocked
+from opening. This is defense-in-depth on top of the render-time allowlist in
+`utils/markdown.py`.
+
+**Allowed schemes:** `http`, `https`, `mailto` (matches
+`_ALLOWED_LINK_SCHEMES` in markdown.py).
+
+**Blocked schemes:** `file://`, `smb://`, `ftp://`, `javascript:`, `data:`,
+custom URI schemes, and relative paths that resolve to `file://`.
+
+**Public API:**
+```python
+def on_activate_link(_label, uri: str) -> bool    # True = block, False = allow
+def make_safe_label(markup: str, ...) -> Gtk.Label  # pre-wired label
+```
+
+**Architecture:** This file imports `gi.repository.Gtk` and `Pango` (lazy,
+inside functions). See §2 GTK carve-out for `utils/` for rationale.
 
 ### 3.14c `ui/views/chat_bubble.py` — Chat Bubble Widget Factories
 
@@ -1527,6 +1637,64 @@ the default provider's `max_tokens` to `build_system_prompt()`.
 get a new optional keyword `model_max_tokens: int | None = None`. When `None`,
 no budget is enforced. All existing call sites continue to work unchanged.
 
+### 3.21p.5 `agent/context_strategy.py` — Pluggable Context Compaction Strategy (Phase 4–9)
+
+**Responsibility:** Hosts the pluggable context-compaction algorithms for the
+agent runtime. Implements `ContextStrategy` (a `Protocol`) and the concrete
+`DefaultContextStrategy` that performs the 3-layer compaction cycle: Layer 1
+(lossless tool-output pruning), Layer 2 (message trimming with summary
+injection), and Layer 3 (manual fallback). `models/conversation.py`
+(§3.21l) stays pure data — it retains thin delegation shims that forward to
+`DefaultContextStrategy` so existing callers and tests work unchanged.
+
+**Spec reference:** `docs/specs/SPEC-CONTEXT-MANAGEMENT-ROADMAP.md` §0.
+
+**Public API:**
+```python
+@dataclass
+class CompactionEvent:        # telemetry record for one compaction cycle
+    turn: int                  # tool-loop iteration (1-indexed)
+    trigger: str               # what caused compaction
+    layer: int                 # 1=prune, 2=trim, 3=manual
+    messages_before: int
+    messages_after: int
+    messages_removed: int
+    tokens_before: int
+    tokens_after: int
+    tokens_freed: int
+    summary_tokens_injected: int
+    soft_ceiling: int
+    hard_ceiling: int
+    provider: str
+    model: str
+
+class ContextStrategy(Protocol):
+    def compact(self, conv: Conversation, token_budget: int) -> None: ...
+    @property
+    def last_result(self) -> CompactionEvent | None: ...
+
+class DefaultContextStrategy:
+    def compact(self, conv, token_budget, *, keep_first=2, protect_is_summary=True) -> None
+    def prune_tool_outputs(self, conv, target_tokens, protect_turns=2) -> int
+    # Private: _find_split_index, _fit_summary, _select_prune_candidate, _summary
+```
+
+**Compaction flow:**
+1. **Layer 1 — prune_tool_outputs:** Replaces old `TOOL_RESULT` message
+   content with `[pruned]` stubs (lossless structure, lossy content).
+   Targets messages older than `protect_turns` turns.
+2. **Layer 2 — trim:** If still over budget, finds a split index that
+   preserves the system prompt + first `keep_first` messages, trims the
+   middle, and injects a summary message.
+3. **Layer 3 — manual fallback:** If the strategy cannot fit within budget,
+   a final brute-force trim removes oldest messages.
+
+**Telemetry:** Each `compact()` call produces a `CompactionEvent` stored on
+`self._last_result`. The runtime reads this and appends it to
+`_compaction_events` history for debugging and dashboards.
+
+---
+
 ### 3.21q.5 `agent/kb_lookup.py` — Knowledge-Base Lookup (Auxilium Tier 1)
 
 **Responsibility:** Semantic search over the project's `knowledge/*.md` files. Embeds the user's question with a local Sentence-Transformers model, computes cosine similarity against pre-built chunk embeddings, and returns the top-K most relevant chunks. Powers the Auxilium help agent's "KB-first" answer engine.
@@ -1844,6 +2012,35 @@ def wire_settings_handler(
 - Lazy factories: dialogs are constructed on demand, not at wiring time. This matches the "dialogs are not widgets, they're ephemeral UI" principle in §3.6.
 - Idempotency: makes the wiring safe to call from tests (multiple wire_settings_handler calls in a test do not produce double-callbacks).
 
+**LOW-7 env-var helpers:** The module also contains the active-project path
+wiring for the image viewer:
+```python
+ACTIVE_PROJECT_ENV = "CRABCAKES_ACTIVE_PROJECT_PATH"
+
+def set_active_project_path(project_path: str) -> None   # publish for chat_bubble.py
+def clear_active_project_path() -> None                   # clear on project close
+```
+These set/clear a process-global env var that `chat_bubble.py`'s
+`_is_path_in_allowed_roots()` reads to determine the active project root.
+Without this wiring, the image viewer only ever has the home + `/tmp`
+fallback roots.
+
+### 3.21u.a.1 `utils/env_security.py` — Subprocess Environment Scrubbing (MED-2 / CRIT-2)
+
+**Responsibility:** Provides a minimal, allowlisted environment dict for
+subprocess execution. Strips API keys, gateway tokens, and other sensitive
+env vars so they don't leak to shell tools or post-write enforcement
+processes.
+
+**Public API:**
+```python
+ALLOWED_SUBPROCESS_ENV_VARS: frozenset[str]   # PATH, HOME, LANG, LC_ALL, LANGUAGES, TZ, TMPDIR, PWD
+
+def get_scrubbed_env() -> dict[str, str]       # filter os.environ to allowlist only
+```
+
+**Architecture:** Pure utility — no GTK, no network, stdlib only.
+
 ### 3.21u `agent/enforcement.py` — Post-Write Verification (Phase 3)
 
 **Responsibility:** Run automatic verification checks after every file write (write_file / edit_file). Three tiers: syntax guard, test runner, lint check. Pure logic — no UI imports, no GTK.
@@ -1947,6 +2144,21 @@ class MCPServerConfig:
 - `mcp_servers` must be a `list[str]` (string entry gets coerced to single-element list)
 - Server names must not contain `"/"` (reserved for namespacing separator)
 - Invalid entries rejected with error messages
+
+### 3.21w.1 `utils/file_security.py` — Config File Permission Validation (MED-6)
+
+**Responsibility:** Validates that config files (e.g., `mcp-servers.json`,
+`agent.json`, `device-auth.json`) are owned by the current user and have no
+group/world write permissions.
+
+**Public API:**
+```python
+def assert_secure_file(path: str, expected_owner: bool = True) -> None
+    # Raises PermissionError for unsafe permissions or wrong owner.
+    # Raises FileNotFoundError if the file does not exist.
+```
+
+**Architecture:** Pure utility — no GTK, no network, stdlib only.
 
 ### 3.21x `utils/mcp_client.py` — MCP Client Library (MCP Phase A/B)
 
@@ -2084,6 +2296,50 @@ class ForwardHandler:
 **Thread safety:** Called only on the main thread (button click handler). The `GLib.timeout_add(16, ...)` deferral runs on the default main loop context.
 
 **Extracted from:** `window._on_forward_clicked` and `window._forward_to_agent` (former location: ui/window.py, 100 combined lines). The methods were tightly coupled via a shared `popover` variable and were extracted as a single unit to preserve that coupling.
+
+### 3.21za `ui/handlers/settings_handler.py` — Settings Dialog Logic Handler
+
+**Responsibility:** Settings dialog business logic — provider CRUD operations,
+test-connection dispatch, red-dot status tracking. Bridges the GTK view
+(`settings_dialog.py`) and the data store (`utils/providers_store.py`).
+Pure logic — no GTK widget imports (only optional `GLib.idle_add` for
+thread dispatch).
+
+**Public API:**
+```python
+class SettingsHandler:
+    def __init__(self, *, GLib_module=None, parent_window=None,
+                 on_providers_changed=None, on_status_changed=None): ...
+    def list_providers(self) -> list[ProviderConfig]
+    def add_or_update(self, provider: ProviderConfig) -> None
+    def remove(self, name: str) -> None
+    def test_connection(self, provider: ProviderConfig) -> None   # async (thread)
+    def check_verified_status(self) -> bool                       # any provider verified?
+```
+
+**Callbacks:**
+- `on_providers_changed(list[ProviderConfig])` — fired on add/remove/edit.
+- `on_status_changed(bool)` — fired when verified status changes.
+
+### 3.21zb `ui/views/settings_dialog.py` — Settings Dialog GTK View
+
+**Responsibility:** GTK4 dialog for managing LLM provider settings. Pure view —
+receives data from `SettingsHandler`, emits user actions back through handler
+methods. No direct file I/O or network calls.
+
+**Public API:**
+```python
+class SettingsDialog(Gtk.Dialog):
+    def __init__(self, handler: SettingsHandler): ...
+    def refresh_providers(self, providers: list[ProviderConfig]) -> None
+
+class _ProviderCard:
+    # Internal: one card per provider in the dialog's ListBox.
+    # Holds name/base_url/model/api_key entries, reveal toggle, test button.
+```
+
+**CSS classes:** `settings-provider-card`, `settings-test-button`,
+`settings-status-dot`.
 
 ### 3.22 `ui/views/feedbar.py` — Response Status Bar (Phase 6)
 
@@ -2493,6 +2749,32 @@ def load_custom_identity(project_path: str) -> dict | None
 `TEAM_ROSTER` at 500 chars and `CURRENT_STATE` at 1,000 chars, matching the existing
 `PROJECT_MEMORY` truncation pattern. See `TEAM_ROSTER_MAX_CHARS` and
 `CURRENT_STATE_MAX_CHARS` constants. See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.4.
+
+### 3.27a `utils/project_trust.py` — Per-Project Trust Gate (HIGH-5)
+
+**Responsibility:** Gates `.crabcakes/` rule/bug file ingestion behind a
+per-project trust prompt on first open. After the user approves once, the
+project path is recorded in the trust store and subsequent loads skip the
+gate. If denied, the project's `.crabcakes/` content is silently skipped.
+
+**Storage:** `~/.config/crabcakes/trusted_projects.json` — maps absolute
+project path to `{trusted: bool, ts: ISO8601, reason: str}`.
+
+**Public API:**
+```python
+def is_project_trusted(project_path: str) -> bool
+def trust_project(project_path: str, reason: str = "") -> None
+def untrust_project(project_path: str) -> None
+def prompt_if_needed(project_path: str, prompt_fn: Callable) -> bool
+    # Calls prompt_fn (UI callback) if no trust decision exists yet.
+    # Returns True if trusted, False otherwise.
+```
+
+**Thread-safety:** Read-mostly. Writes go through a module-level lock to
+avoid two concurrent first-opens both prompting.
+
+**Architecture:** Pure utility — no GTK, no network, stdlib only. The UI
+layer supplies the `prompt_fn` callback (e.g., a dialog).
 
 ---
 
@@ -3467,127 +3749,136 @@ As of PHASE-10, the API caller for a provider is resolved via `provider_cfg.call
 
 ## 13. File Inventory
 
+> **Line counts verified as of commit `8902696` (2026-06-27).**
+> Counts drift over time — treat `~` values as approximate snapshots.
+
 ```
 crabcakes/
 ├── main.py                         # 56 lines — bootstrap only
 │
 ├── gateway/
 │   ├── __init__.py                # 6 lines — exports GatewayClient, SnapshotValidationError
-│   └── client.py                 # ~486 lines — GatewayClient (threaded WebSocket + v3 device auth)
+│   └── client.py                 # ~644 lines — GatewayClient (threaded WebSocket + v3 device auth)
 │
 ├── models/
-│   ├── __init__.py               # exports 28 symbols: AgentManager, AgentRoutingTable, Command/Result/Registry,
-│   │                               #   FeedCardData, StreamingBubble, ActivityBubble, ToolStatus,
-│   │                               #   Conversation/Message/MessageRole/ToolCall/ToolCallStatus,
-│   │                               #   ConversationSnapshot/SnapshotMessage, ReviewState, TeamMember/ProjectTeam,
-│   │                               #   Task/TaskStore/TASK_STATUS_LABELS/PRIORITY_LABELS, next_agent_color, reset_color_indices
-│   ├── activity.py               # ActivityBubble dataclass — activity bubble state
-│   ├── agents.py                 # AgentManager — session_key → name, color, sessions
-│   ├── colors.py                 # AGENT_COLORS palette + round-robin
-│   ├── command.py                # Command, CommandResult, CommandRegistry (Phase 7)
-│   ├── conversation.py           # MessageRole, ToolCall, Message, Conversation + summary-on-trim + token breakdown
-│   ├── conversation_snapshot.py  # ConversationSnapshot, SnapshotMessage — conversation snapshot data
-│   ├── feed_card.py              # FeedCardData + css_class_for_type() (Phase 5)
-│   ├── review_state.py           # ReviewState dataclass (Phase 7)
-│   ├── routing.py                # AgentRoutingTable (session_key → project_name)
-│   ├── streaming.py              # StreamingBubble dataclass (Phase 5)
-│   ├── task.py                   # Task + TaskStore + labels (Phase 3)
-│   └── team.py                   # TeamMember, ProjectTeam — project team membership data
+│   ├── __init__.py               # 69 lines — exports 28+ symbols
+│   ├── activity.py               # 250 lines — ActivityBubble dataclass
+│   ├── agents.py                 # 60 lines — AgentManager
+│   ├── colors.py                 # 83 lines — AGENT_COLORS palette + round-robin
+│   ├── command.py                # 171 lines — Command, CommandResult, CommandRegistry (Phase 7)
+│   ├── conversation.py           # 437 lines — MessageRole, ToolCall, Message, Conversation + summary-on-trim + token breakdown
+│   ├── conversation_snapshot.py  # 83 lines — ConversationSnapshot, SnapshotMessage
+│   ├── feed_card.py              # 198 lines — FeedCardData + css_class_for_type() (Phase 5)
+│   ├── providers.py              # 54 lines — ProviderConfig + caller_default_max_tokens()
+│   ├── review_state.py           # 26 lines — ReviewState dataclass (Phase 7)
+│   ├── routing.py                # 41 lines — AgentRoutingTable (session_key → project_name)
+│   ├── streaming.py              # 30 lines — StreamingBubble dataclass (Phase 5)
+│   ├── task.py                   # 105 lines — Task + TaskStore + labels (Phase 3)
+│   └── team.py                   # 103 lines — TeamMember, ProjectTeam
 │
 ├── agent/
-│   ├── __init__.py               # exports: AgentRuntime, AgentConfig, EnforcementConfig, LLMProviderConfig,
-│   │                              # SpecialAgentDef, SPECIAL_AGENTS, ToolDefinition, ToolResult,
-│   │                              # build_system_prompt, build_file_context, check, get_api_key, get_special_agents,
-│   │                              # load_agent_config, reload_registry
-│   ├── config.py                 # ~249 lines — LLMProviderConfig, EnforcementConfig, AgentConfig, load_agent_config(), get_api_key()
-│   ├── context.py                # ~437 lines — build_system_prompt, build_file_context, _read_crabcakes_docs + .gitignore parsing
-│   ├── enforcement.py            # ~761 lines — Post-write verification: 3-tier checks + per-project override + TestConfig + venv detection
-│   ├── kb_lookup.py              # KB lookup — cosine-sim retrieval over indexed KB chunks (Auxilium Tier 1)
-│   ├── kb_server.py              # KB HTTP server — wraps kb_lookup in OpenAI-compatible API on localhost:18790 (KB Provider Phase 1)
-│   ├── runtime.py                # ~1420 lines — AgentRuntime: tool loop, enforcement hook, stuck detection, providers, streaming, cost
-│   ├── special_agents.py         # ~182 lines — SpecialAgentDef, get_special_agents(), reload_registry()
-│   └── tools.py                  # ~892 lines — 8 tools: read_file, write_file, edit_file, exec_command, list_files, search_files, web_search, web_fetch
+│   ├── __init__.py               # 76 lines — exports: AgentRuntime, AgentConfig, EnforcementConfig, etc.
+│   ├── config.py                 # ~319 lines — LLMProviderConfig, EnforcementConfig, AgentConfig, load_agent_config()
+│   ├── context.py                # ~541 lines — build_system_prompt, build_file_context, .gitignore parsing
+│   ├── context_strategy.py       # ~598 lines — Pluggable context compaction strategy (Phase 4–9)
+│   ├── enforcement.py            # ~882 lines — Post-write verification: 3-tier checks + per-project override
+│   ├── kb_lookup.py              # ~279 lines — KB cosine-sim retrieval (Auxilium Tier 1)
+│   ├── kb_server.py              # ~457 lines — KB HTTP server on localhost:18790
+│   ├── runtime.py                # ~2418 lines — AgentRuntime: tool loop, enforcement, streaming, cost, compaction
+│   ├── special_agents.py         # ~172 lines — SpecialAgentDef, get_special_agents(), reload_registry()
+│   └── tools.py                  # ~1108 lines — 8+ tools: read_file, write_file, edit_file, exec_command, etc.
 │
 ├── scripts/
-│   └── rebuild_kb_index.py       # offline indexer — builds knowledge/.index/ from knowledge/*.md (Auxilium Tier 1)
+│   ├── audit_attack_scenarios.py  # streaming security audit scenarios
+│   ├── audit_streaming_scenarios.py # streaming audit helper
+│   └── rebuild_kb_index.py       # offline indexer — builds knowledge/.index/ from knowledge/*.md
 │
 ├── ui/
 │   ├── __init__.py               # 1 line
-│   ├── toolbar.py                # ~112 lines — Toolbar widget (connect button + status label)
-│   ├── styles.py                 # ~1045 lines — APP_CSS constant + apply_styles()
-│   ├── window.py                 # ~693 lines — MainWindow — assembles all components, wires callbacks. Business logic extracted to handlers (see Section 3.6). Most recent extractions: ConnectionSyncHandler (§3.21y) and ForwardHandler (§3.21z).
+│   ├── constants.py              # 16 lines — cross-cutting UI constants (STREAMING_ENABLED)
+│   ├── toolbar.py                # ~142 lines — Toolbar widget (connect button + status label)
+│   ├── styles.py                 # ~1245 lines — APP_CSS constant + apply_styles()
+│   ├── window.py                 # ~957 lines — MainWindow — assembles all components, wires callbacks
+│   ├── wiring.py                 # ~128 lines — settings callback wiring + LOW-7 project path helpers
 │   ├── handlers/
 │   │   ├── __init__.py           # 0 lines — package marker
-│   │   ├── activity_handler.py   # ~610 lines — 6-state activity machine + two-phase progress (Phase 6)
-│   │   ├── agent_builder_handler.py # ~199 lines — AgentBuilderHandler — agent create/edit form + delete_agent_with_confirmation() (Phase 5)
-│   │   ├── agent_command_handler.py # ~546 lines — agent response command parser + relay (Phase 6.2)
-│   │   ├── agent_list_handler.py # ~126 lines — agent card data (initials, colors, sorting)
-│   │   ├── agent_runtime_handler.py # ~867 lines — AgentRuntime UI bridge: conversation lifecycle, tool approval, reload_agents_and_mcp() (Phase 5)
-│   │   ├── chat_handler.py       # ~853 lines — send, fan-out, routing, special agent routing, tab switching
-│   │   ├── chat_render_handler.py # ~770 lines — escape + markdown + highlight + bubble pipeline
-│   │   ├── collab_handler.py     # Collaboration commands: ask, delegate, stop, tell (Phase 7)
-│   │   ├── command_handler.py    # ~601 lines — slash-prefix command parser + @mention resolution; auto-registers 21 commands on init (Phase 7)
-│   │   ├── connection_sync_handler.py # ~173 lines — ConnectionSyncHandler — post-connect wiring of live GatewayClient + AgentManager into 16 dependents (Phase 3a extraction)
-│   │   ├── crabwatch_handler.py  # ~364 lines — CrabWatchHandler — Gio.FileMonitor filesystem watcher (Phase 5)
-│   │   ├── feed_handler.py       # ~932 lines — FeedHandler — feed card lifecycle, persistence, add_audit_report_card() (Phase 5)
-│   │   ├── forward_handler.py    # ~194 lines — ForwardHandler — agent-to-agent popover + routing + forwarded bubble (Phase 3b extraction)
-│   │   ├── gateway_handler.py    # ~233 lines — connect, agents, lifecycle (Phase 2)
-│   │   ├── input_toolbar_handler.py # ~395 lines — InputToolbarHandler — find/replace, spell check, word count logic
+│   │   ├── activity_handler.py   # ~767 lines — 6-state activity machine + two-phase progress (Phase 6)
+│   │   ├── agent_builder_handler.py # ~221 lines — AgentBuilderHandler (Phase 5)
+│   │   ├── agent_command_handler.py # ~578 lines — agent response command parser + relay (Phase 6.2)
+│   │   ├── agent_list_handler.py # ~145 lines — agent card data
+│   │   ├── agent_runtime_handler.py # ~1065 lines — AgentRuntime UI bridge (Phase 5)
+│   │   ├── chat_handler.py       # ~810 lines — send, fan-out, routing
+│   │   ├── chat_render_handler.py # ~729 lines — escape + markdown + highlight + bubble pipeline
+│   │   ├── collab_handler.py     # ~65 lines — collaboration commands (Phase 7)
+│   │   ├── command_handler.py    # ~623 lines — slash-prefix command parser (Phase 7)
+│   │   ├── connection_sync_handler.py # ~234 lines — post-connect wiring (Phase 3a)
+│   │   ├── crabwatch_handler.py  # ~364 lines — CrabWatchHandler filesystem watcher (Phase 5)
+│   │   ├── feed_handler.py       # ~1102 lines — FeedHandler — feed card lifecycle, persistence (Phase 5)
+│   │   ├── forward_handler.py    # ~194 lines — ForwardHandler (Phase 3b)
+│   │   ├── gateway_handler.py    # ~234 lines — connect, agents, lifecycle (Phase 2)
+│   │   ├── input_toolbar_handler.py # ~485 lines — find/replace, spell check, word count
 │   │   ├── media_handler.py      # ~99 lines — STT + improve (Phase 4)
-│   │   ├── project_handler.py    # ~551 lines — active project + agent-to-project routing + session switching
-│   │   ├── project_list_handler.py # ~86 lines — project card data + color round-robin
-│   │   ├── prompts_handler.py    # ~208 lines — favorites, search, last-used, load_prompt()
-│   │   ├── review_handler.py     # ~400 lines — review session lifecycle: checkpoint/check/accept/reject (Phase 7)
-│   │   └── session_handler.py    # ~164 lines — SessionHandler — session switching commands (Phase 7)
-│   │   ├── connection_sync_handler.py  # post-connect wiring
-│   │   ├── forward_handler.py     # 17 tests (Phase 3b extraction)
+│   │   ├── project_handler.py    # ~568 lines — active project + routing
+│   │   ├── project_list_handler.py # ~86 lines — project card data
+│   │   ├── prompts_handler.py    # ~208 lines — favorites, search, last-used
+│   │   ├── review_handler.py     # ~523 lines — review session lifecycle (Phase 7)
+│   │   ├── session_handler.py    # ~164 lines — session switching (Phase 7)
+│   │   ├── settings_handler.py   # ~231 lines — settings dialog logic (provider CRUD, test connection)
+│   │   └── auxilium_wizard_handler.py # ~449 lines — Auxilium wizard handler (Tier 1, D7)
 │   └── views/
 │       ├── __init__.py           # 1 line
-│       ├── activity_drawer.py     # NEW (SPEC-activity-drawer) — collapsible activity event panel
-│       ├── agent_builder.py      # AgentBuilderDialog — modal dialog for creating/editing agents
-│       ├── chat_bubble.py        # ~1015 lines — build_role_bubble() factory (Phase 1 + 2 block-level)
-│       ├── chat_input_toolbar.py # ~480 lines — ChatInputToolbar — find/replace bar + spell check toggle (view only)
-│       ├── diff_card.py          # ~356 lines — build_file_diff_card(), build_diff_summary_card() (Phase 7)
-│       ├── feed_card.py          # ~581 lines — feed_card widget factory (Phase 5)
-│       ├── feed_tab.py           # ~167 lines — FeedTab — project feed card container (view only)
+│       ├── activity_drawer.py    # ~764 lines — collapsible activity event panel
+│       ├── agent_builder.py      # ~770 lines — AgentBuilderDialog
+│       ├── auxilium_wizard.py    # ~452 lines — Auxilium wizard view (Tier 1, D7)
+│       ├── chat_bubble.py        # ~1059 lines — build_role_bubble() factory (Phase 1 + 2)
+│       ├── chat_input_toolbar.py # ~588 lines — find/replace bar + spell check (view only)
+│       ├── diff_card.py          # ~356 lines — diff card factories (Phase 7)
+│       ├── feed_card.py          # ~616 lines — feed_card widget factory (Phase 5)
+│       ├── feed_tab.py           # ~387 lines — FeedTab (view only)
 │       ├── feedbar.py            # ~124 lines — FeedBar + progress bar (Phase 6)
 │       ├── file_tree.py          # ~439 lines — FileTree (TreeView directory browser)
-│       ├── left_panel.py         # ~974 lines — LeftPanel (Prompts/Agents/Projects notebook + right-click copy menu)
-│       ├── left_progress.py      # 0 lines — stub placeholder
-│       ├── main_content.py       # ~857 lines — MainContent (tabs + input + review bar integration)
-│       ├── review_bar.py         # ~166 lines — ReviewBar widget: dropdown + action buttons (Phase 7)
-│       └── session_menu.py       # ~212 lines — right-click session/project switcher popover
+│       ├── left_panel.py         # ~982 lines — LeftPanel (Prompts/Agents/Projects notebook)
+│       ├── main_content.py       # ~942 lines — MainContent (tabs + input + review bar)
+│       ├── review_bar.py         # ~166 lines — ReviewBar widget (Phase 7)
+│       ├── session_menu.py       # ~216 lines — session/project switcher popover
+│       └── settings_dialog.py    # ~487 lines — GTK4 provider settings dialog
 │
 └── utils/
     ├── __init__.py               # 1 line
-    ├── agent_defs.py             # ~570 lines — agent definition I/O: load, validate, save, list from agents/*.yaml
-    ├── audit_parser.py           # extract_audit_reports() — parse ## Audit Report sections
-    ├── block_parser.py           # ~158 lines — extract_blocks() — block segment extraction (Phase 2)
+    ├── agent_defs.py             # ~552 lines — agent definition I/O
+    ├── audit_parser.py           # ~182 lines — extract_audit_reports()
+    ├── block_parser.py           # ~251 lines — extract_blocks() (Phase 2)
     ├── config.py                 # ~72 lines — config path helpers + COMMAND_PREFIX
-    ├── conversation_store.py     # Snapshot creation — build ConversationSnapshot from messages + git diffs
-    ├── crabcard_parser.py        # extract_crabcards() — parse ```crabcard blocks into FeedCardData (Phase 5)
-    ├── diff_parser.py            # ~321 lines — parse_diff() → FileDiff/ParsedDiff (Phase 7)
-    ├── escaping.py               # ~182 lines — escape_for_pango(), xml_escape_text()
-    ├── favorites.py              # ~60 lines — favorites persistence (favorites.json)
-    ├── feed_store.py             # Feed JSON persistence — load/save/append/update feed.json
-    ├── feedback_processor.py     # Audit report file I/O — write to agent bug journals + role resolution
-    ├── git_ops.py                # ~147 lines — GitPython wrapper: stage/commit/diff/checkout/log/status/push (Phase 7)
-    ├── icons.py                  # ~165 lines — Gdk.Texture SVG rendering (avatars + folder icons)
-    ├── image_utils.py            # convert_logo_to_icons() — JPG to multi-size PNG for app icons
-    ├── improve.py                # ~160 lines — improve_prompt() MiniMax API (template mode + {{USER_INPUT}})
-    ├── markdown.py               # ~220 lines — format_markdown() — inline markdown → Pango (Phase 1)
-    ├── mcp_client.py             # ~488 lines — MCP asyncio-threading bridge, stdio transport, tool discovery/call
-    ├── mcp_config.py             # ~240 lines — MCP server configuration loader with YAML/JSON schema validation
-    ├── project_awareness.py      # ~641 lines — project awareness system managing .crabcakes/ directory per project
-    ├── prompt_loader.py          # System prompt template loader — loads/fills/composes prompts/system/*.md
-    ├── prompts.py                # ~25 lines — load_prompts() — reads .md from prompts/
-    ├── projects.py               # ~77 lines — load_projects(), scan_directory(); load_members()/save_members() deprecated
-    ├── quoting.py                # ~50 lines — _parse_quoted_payload() — escape-aware quoted-payload parsing
-    ├── review_log.py             # Review log persistence — append/retrieve entries per project
-    ├── spellcheck.py             # Spell check engine — Enchant-based detection + suggestions
-    ├── stt.py                    # ~182 lines — STTEngine (faster-whisper push-to-talk; respects STT_MODEL_SIZE env var)
-    ├── syntax_highlight.py       # ~164 lines — highlight() — Pygments → Pango markup (Tokyo Night)
-    └── workflow_state.py         # Workflow state tracker — manages .crabcakes/workflow.md per project
+    ├── conversation_store.py     # ~139 lines — ConversationSnapshot creation
+    ├── crabcard_parser.py        # ~170 lines — parse crabcard blocks (Phase 5)
+    ├── diff_parser.py            # ~321 lines — parse_diff() (Phase 7)
+    ├── env_security.py           # ~44 lines — get_scrubbed_env() (MED-2 / CRIT-2)
+    ├── escaping.py               # ~187 lines — escape_for_pango(), xml_escape_text()
+    ├── favorites.py              # ~60 lines — favorites persistence
+    ├── feed_store.py             # ~268 lines — feed JSON persistence (Phase 5)
+    ├── feedback_processor.py     # ~274 lines — audit report file I/O
+    ├── file_security.py          # ~36 lines — assert_secure_file() (MED-6)
+    ├── git_ops.py                # ~263 lines — GitPython wrapper (Phase 7)
+    ├── gtk_safe_link.py          # ~107 lines — HIGH-6 link safety guard (GTK carve-out)
+    ├── icons.py                  # ~207 lines — Gdk.Texture SVG rendering (GTK carve-out)
+    ├── image_utils.py            # convert_logo_to_icons()
+    ├── improve.py                # ~212 lines — improve_prompt() MiniMax API
+    ├── markdown.py               # ~279 lines — format_markdown() (Phase 1)
+    ├── mcp_client.py             # ~541 lines — MCP asyncio-threading bridge
+    ├── mcp_config.py             # ~295 lines — MCP server config loader
+    ├── project_awareness.py      # ~641 lines — project awareness system
+    ├── project_trust.py          # ~203 lines — HIGH-5 per-project trust gate
+    ├── prompt_loader.py          # ~489 lines — system prompt template loader
+    ├── prompts.py                # ~25 lines — load_prompts()
+    ├── projects.py               # ~86 lines — load_projects(), scan_directory()
+    ├── provider_url.py           # ~40 lines — validate_provider_url() (MED-5)
+    ├── providers_store.py        # ~415 lines — provider YAML persistence
+    ├── quoting.py                # ~78 lines — quoted-payload parsing
+    ├── review_log.py             # ~146 lines — review log persistence
+    ├── spellcheck.py             # ~100 lines — spell check engine (Enchant)
+    ├── stt.py                    # ~219 lines — STTEngine (GTK carve-out: lazy GLib import)
+    ├── syntax_highlight.py       # ~164 lines — Pygments → Pango (Tokyo Night)
+    └── workflow_state.py         # ~226 lines — workflow state tracker
 
 prompts/                         # System prompt templates for agent runtime
     └── system/
@@ -3615,34 +3906,35 @@ knowledge/                       # User-facing documentation (read by Crabcakes 
     ├── setup.md
     └── troubleshooting.md
 
-tests/                           # 61 files (57 test + 4 support)
+tests/                           # 100 files (verified 2026-06-27)
     ├── conftest.py
     ├── css_test.py               # CSS variant tests
     ├── format_test.py            # Format tests
     ├── generate_synthetic_conversations.py  # Test data generator
     ├── fixtures/
     ├── test_activity_bubbles.py
-    ├── test_activity_drawer.py     # NEW (SPEC-activity-drawer) — drawer view tests
+    ├── test_activity_drawer.py
     ├── test_agent_builder_handler.py
-    ├── test_agent_command_handler.py  # ~713 lines
+    ├── test_agent_command_handler.py
     ├── test_agent_defs.py
     ├── test_agent_list_handler.py
     ├── test_agent_runtime.py
-    ├── test_auxilium_tier1.py    # Auxilium Tier 1 first-run wizard
-    ├── test_auxilium_tier2.py    # Auxilium Tier 2 KB synthesis
+    ├── test_auxilium_tier1.py
+    ├── test_auxilium_tier2.py
     ├── test_agents.py
     ├── test_architecture.py
     ├── test_audit_parser.py
     ├── test_block_parser.py
-    ├── test_bug_fixes.py         # Regression tests for specific fixed bugs
+    ├── test_bug_fixes.py
     ├── test_chat_handler.py
     ├── test_chat_render_handler.py
     ├── test_command_handler.py
     ├── test_command_models.py
     ├── test_config.py
-    ├── test_context.py           # ~329 lines
-    ├── test_connection_sync_handler.py  # 28 tests (Phase 3a extraction)
-    ├── test_conversation.py      # ~299 lines
+    ├── test_context.py
+    ├── test_context_strategy.py     # Context compaction strategy (41 tests)
+    ├── test_connection_sync_handler.py
+    ├── test_conversation.py
     ├── test_crabcard_parser.py
     ├── test_crabwatch_handler.py
     ├── test_create_project.py
@@ -3654,19 +3946,19 @@ tests/                           # 61 files (57 test + 4 support)
     ├── test_feed_card.py
     ├── test_feed_handler.py
     ├── test_feed_store.py
-    ├── test_forward_handler.py   # 17 tests (Phase 3b extraction)
+    ├── test_forward_handler.py
     ├── test_gateway_handler.py
     ├── test_git_ops.py
     ├── test_icons.py
     ├── test_improve.py
     ├── test_left_panel.py
     ├── test_markdown.py
-    ├── test_mcp_client.py        # ~304 lines
-    ├── test_mcp_config.py        # ~216 lines
-    ├── test_mcp_integration.py   # ~358 lines
+    ├── test_mcp_client.py
+    ├── test_mcp_config.py
+    ├── test_mcp_integration.py
     ├── test_media_handler.py
-    ├── test_missing_message_fix.py  # Regression test for missing message recovery
-    ├── test_phase4.py            # Phase 4 event card rendering
+    ├── test_missing_message_fix.py
+    ├── test_phase4.py
     ├── test_project_awareness.py
     ├── test_project_handler.py
     ├── test_project_list_handler.py
@@ -3677,14 +3969,15 @@ tests/                           # 61 files (57 test + 4 support)
     ├── test_review_log.py
     ├── test_review_state.py
     ├── test_routing.py
+    ├── test_runtime_compaction.py    # Runtime compaction integration
     ├── test_special_agents.py
     ├── test_streaming.py
     ├── test_syntax_highlight.py
     ├── test_tasks.py
-    └── test_tools.py             # ~334 lines
+    └── test_tools.py
 ```
 
-**Test count:** 84 test files (snapshot as of 2026-05-31 was 61; grew by 23 files in June 2026 with the KB, providers, settings, and wizard features). For the current collected-test count and pass/fail status, run `pytest --co -q` and `pytest -q`. The explicit test-file enumeration in §13 is illustrative, not exhaustive — new tests are added with the features they cover and may not be retroactively enumerated.
+**Test count:** 100 test files (as of 2026-06-27). For the current count and pass/fail status, run `pytest --co -q` and `pytest -q`. The explicit test-file enumeration in §13 is illustrative, not exhaustive — new tests are added with the features they cover and may not be retroactively enumerated.
 
 ---
 
