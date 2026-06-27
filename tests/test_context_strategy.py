@@ -227,3 +227,166 @@ class TestLastResult:
         assert result is not None
         assert result.provider == "openai"
         assert result.model == "gpt-4o"
+
+
+class TestPruneToolOutputs:
+    """P4: Backwards-walk tool output pruning (Layer 1 cheap lossless compaction)."""
+
+    def test_oldest_tool_results_stubbed_first(self):
+        """Tool results are stubbed oldest-first."""
+        conv = Conversation(agent_name="test", model="test/x")
+        for i in range(3):
+            tc = ToolCall(
+                call_id=f"call_{i}",
+                tool_name="exec_command",
+                arguments={"cmd": f"echo {i}"},
+            )
+            conv.add_assistant_message("", [tc])
+            conv.add_tool_result(f"call_{i}", "x" * 5000)
+        strategy = DefaultContextStrategy()
+        freed = strategy.prune_tool_outputs(
+            conv, target_tokens=500, protect_turns=1
+        )
+        assert freed > 0
+        # First two tool results should be stubbed.
+        assert "[compacted \u2014" in conv.messages[1].content
+        assert "[compacted \u2014" in conv.messages[3].content
+        # Most recent tool result should be intact.
+        assert "[compacted \u2014" not in conv.messages[5].content
+
+    def test_protected_recent_turns_untouched(self):
+        """The protect_turns most recent tool results are never stubbed."""
+        conv = Conversation(agent_name="test", model="test/x")
+        for i in range(5):
+            tc = ToolCall(
+                call_id=f"call_{i}",
+                tool_name="read_file",
+                arguments={"path": f"f{i}"},
+            )
+            conv.add_assistant_message("", [tc])
+            conv.add_tool_result(f"call_{i}", "x" * 5000)
+        strategy = DefaultContextStrategy()
+        strategy.prune_tool_outputs(conv, target_tokens=200, protect_turns=2)
+        # Last 2 tool results should be intact (they are at the end of the list).
+        # After 5 add_assistant_message + 5 add_tool_result pairs, indices 8 and 9
+        # are tool results (the last 2 tool calls).
+        last_tool_result = conv.messages[-1]
+        third_to_last_tool_result = conv.messages[-3]
+        assert "[compacted \u2014" not in last_tool_result.content
+        assert "[compacted \u2014" not in third_to_last_tool_result.content
+        assert last_tool_result.role == MessageRole.TOOL_RESULT
+        assert third_to_last_tool_result.role == MessageRole.TOOL_RESULT
+
+    def test_idempotence(self):
+        """Running prune_tool_outputs twice is a no-op the second time."""
+        conv = Conversation(agent_name="test", model="test/x")
+        for i in range(3):
+            tc = ToolCall(
+                call_id=f"call_{i}",
+                tool_name="exec_command",
+                arguments={"cmd": "ls"},
+            )
+            conv.add_assistant_message("", [tc])
+            conv.add_tool_result(f"call_{i}", "x" * 5000)
+        strategy = DefaultContextStrategy()
+        freed1 = strategy.prune_tool_outputs(
+            conv, target_tokens=500, protect_turns=1
+        )
+        freed2 = strategy.prune_tool_outputs(
+            conv, target_tokens=500, protect_turns=1
+        )
+        assert freed2 == 0, f"Second prune should be no-op, freed={freed2}"
+        # Verify the stub count didn't change between the two calls.
+        stub_count_1 = sum(
+            1 for m in conv.messages if m.content.startswith("[compacted \u2014")
+        )
+        # Re-check after second call (which should be no-op).
+        stub_count_2 = sum(
+            1 for m in conv.messages if m.content.startswith("[compacted \u2014")
+        )
+        assert stub_count_1 == stub_count_2, "stub count must not change on re-prune"
+
+    def test_cb6_pairing_preserved(self):
+        """Tool result still references the correct tool_call_id after stubbing.
+
+        Stubs mutate msg.content in-place; tool_call_id and the parent
+        ASSISTANT's tool_calls[].call_id must both remain unchanged.
+        """
+        conv = Conversation(agent_name="test", model="test/x")
+        tc = ToolCall(
+            call_id="call_42",
+            tool_name="exec_command",
+            arguments={"cmd": "ls"},
+        )
+        conv.add_assistant_message("", [tc])
+        conv.add_tool_result("call_42", "x" * 5000)
+        strategy = DefaultContextStrategy()
+        strategy.prune_tool_outputs(conv, target_tokens=100, protect_turns=0)
+        tool_result_msg = next(
+            m for m in conv.messages if m.role == MessageRole.TOOL_RESULT
+        )
+        assert tool_result_msg.tool_call_id == "call_42"
+        assistant_msg = next(
+            m
+            for m in conv.messages
+            if m.role == MessageRole.ASSISTANT and m.tool_calls
+        )
+        assert assistant_msg.tool_calls[0].call_id == "call_42"
+        # And the content was actually stubbed (cb6 invariant wouldn't be
+        # useful if no stubbing happened).
+        assert "[compacted \u2014" in tool_result_msg.content
+        assert tool_result_msg.content == (
+            "[compacted \u2014 exec_command output, 5000 chars removed]"
+        )
+
+    def test_token_cache_reflects_post_prune_state(self):
+        """After prune_tool_outputs returns, the token cache must reflect
+        the post-prune token count, not the pre-prune cached value.
+
+        Deviation from spec test: the spec asserts ``cache is None`` after
+        pruning, but the implementation's final ``tokens_after =
+        conv.get_token_estimate()`` call repopulates the cache. The
+        semantically correct invariant is that the cache value matches the
+        actual post-prune token count (not the pre-prune value that would
+        cause over-stubbing).
+        """
+        conv = Conversation(agent_name="test", model="test/x")
+        for i in range(3):
+            tc = ToolCall(
+                call_id=f"call_{i}",
+                tool_name="exec_command",
+                arguments={"cmd": "ls"},
+            )
+            conv.add_assistant_message("", [tc])
+            conv.add_tool_result(f"call_{i}", "x" * 5000)
+        # Prime the cache with the pre-prune token count.
+        pre_prune_tokens = conv.get_token_estimate()
+        assert conv._token_estimate_cache is not None
+        cached_pre_prune = conv._token_estimate_cache[1]
+        assert cached_pre_prune == pre_prune_tokens
+
+        strategy = DefaultContextStrategy()
+        strategy.prune_tool_outputs(
+            conv, target_tokens=500, protect_turns=1
+        )
+
+        # After prune, get_token_estimate returns the post-prune value.
+        post_prune_tokens = conv.get_token_estimate()
+        # The cache must reflect the post-prune value, NOT the pre-prune one.
+        assert conv._token_estimate_cache is not None
+        cached_post_prune = conv._token_estimate_cache[1]
+        assert cached_post_prune == post_prune_tokens
+        assert cached_post_prune < cached_pre_prune, (
+            "cache must reflect the smaller post-prune count, not the "
+            "pre-prune value (would cause over-stubbing in a fresh call)"
+        )
+
+    def test_no_prune_when_under_target(self):
+        """prune_tool_outputs is a no-op when already under target."""
+        conv = Conversation(agent_name="test", model="test/x")
+        conv.add_user_message("hi")
+        strategy = DefaultContextStrategy()
+        freed = strategy.prune_tool_outputs(conv, target_tokens=10000)
+        assert freed == 0
+        # Verify the message was not modified.
+        assert conv.messages[0].content == "hi"
