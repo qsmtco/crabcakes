@@ -182,25 +182,24 @@ class DefaultContextStrategy:
         # messages remain. Skip if the summary would push the conversation
         # back over ``token_budget``.
         messages_removed = messages_count_before - len(conv.messages)
-        if messages_removed > 0 and len(conv.messages) >= 4:
+        if messages_removed > 0 and len(conv.messages) >= min_messages:
             summary = self._summary(conv)
             if summary:
                 # Phase 1: use the legacy ``len(summary) // 4`` heuristic to
                 # preserve byte-exact behavior of the pre-extraction code path.
-                # Phase 4 may upgrade this to tiktoken unconditionally if no
-                # behavior change is observed.
+                # Phase 6 upgrades this to tiktoken via ``_fit_summary``.
                 summary_tokens = len(summary) // 4
                 summary_tokens_injected = summary_tokens
                 current_tokens = conv.get_token_estimate()
                 if current_tokens + summary_tokens > token_budget:
-                    pass  # skip — injecting would exceed budget
+                    pass  # skip — injecting would exceed budget (Phase 6 adds _fit_summary)
                 else:
                     summary_msg = Message(
                         role=MessageRole.ASSISTANT,
                         content=summary,
                         is_summary=True,
                     )
-                    insert_at = max(1, len(conv.messages) - 4)
+                    insert_at = max(keep_first, len(conv.messages) - tail_preserve)
                     conv.messages.insert(insert_at, summary_msg)
 
         # Invalidate cache and snapshot post-state for telemetry.
