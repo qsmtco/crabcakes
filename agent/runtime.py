@@ -1738,10 +1738,12 @@ class AgentRuntime:
                 # Reuses the model_max that the trim call above already computed.
                 if self._on_token_breakdown is not None:
                     breakdown = conv.get_token_breakdown(model_max)
-                    breakdown["trimmed_this_turn"] = self._last_trim_removed > 0
+                    breakdown["trimmed_this_turn"] = self._compaction_this_iteration
                     breakdown["messages_remaining"] = len(conv.messages)
-                    breakdown["messages_removed_this_turn"] = self._last_trim_removed
-                    # §0.4: Compaction telemetry from the strategy.
+                    breakdown["messages_removed_this_turn"] = (
+                        self._last_trim_removed if self._compaction_this_iteration else 0
+                    )
+                    # §0.4 + §2.8: Compaction telemetry from the strategy.
                     strategy_result = self._context_strategy.last_result
                     if strategy_result is not None:
                         breakdown["compaction_event"] = {
@@ -1752,9 +1754,13 @@ class AgentRuntime:
                             "tokens_freed": strategy_result.tokens_freed,
                             "soft_ceiling": strategy_result.soft_ceiling,
                             "hard_ceiling": strategy_result.hard_ceiling,
+                            "summary_tokens_injected": strategy_result.summary_tokens_injected,
                         }
                     self._dispatch(self._on_token_breakdown, session_key, breakdown)
-                    self._last_trim_removed = 0
+                    # Reset per-iteration flag — the CompactionEvent is already
+                    # in the rolling history (_compaction_events). We do NOT
+                    # clear the history itself.
+                    self._compaction_this_iteration = False
 
                 logger.debug("[tool-loop] sk=%s llm response: text_len=%d tool_calls=%d tokens=%d cost=%.4f",
                              session_key, len(text_content or ""), len(tool_calls_raw),
