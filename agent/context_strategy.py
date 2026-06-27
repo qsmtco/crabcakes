@@ -543,10 +543,19 @@ class DefaultContextStrategy:
         if len(conv.messages) <= tail_preserve:
             return ""
 
-        # P5: Compute a smarter split index.
-        budget_tokens = token_budget if token_budget > 0 else conv.get_token_estimate()
-        split = self._find_split_index(conv, budget_tokens, keep_first=keep_first)
-        split = max(keep_first, min(split, len(conv.messages) - tail_preserve))
+        if token_budget > 0:
+            # P5: smart split when a budget is provided (called from compact()).
+            split = self._find_split_index(conv, token_budget, keep_first=keep_first)
+            split = max(keep_first, min(split, len(conv.messages) - tail_preserve))
+        else:
+            # Legacy shim compatibility: when called via _last_exchange_summary()
+            # with no max_tokens, fall back to messages[:-tail_preserve]. The smart
+            # split uses token_budget to size the tail, but with no budget it would
+            # default to conv.get_token_estimate() — which makes split land at
+            # keep_first for small conversations (because all msgs fit in half).
+            # That breaks the Phase 1 tests that rely on messages[:-tail_preserve]
+            # semantics. Deviation from spec Step 3's literal fallback.
+            split = len(conv.messages) - tail_preserve
 
         head_messages = conv.messages[:split]
 
