@@ -389,7 +389,19 @@ def _apply_system_prompt_budget(
 
     # Compute the budget
     if model_max_tokens is not None and model_max_tokens > 0:
-        budget_tokens = int(model_max_tokens * SYSTEM_PROMPT_BUDGET_FRACTION)
+        # P7: Dynamic budget fraction.
+        # Goal: ensure (templates + file_context) fits in ≤ 25% of the context window.
+        # Floor: 15% (backward-compatible default from SYSTEM_PROMPT_BUDGET_FRACTION).
+        # Ceiling: 25% (system prompt budget never exceeds 25% of context).
+        # Behavior:
+        #   - template_fraction <= 0.15 → budget stays at 15% (no growth for small
+        #     templates; preserves backward-compatible behavior).
+        #   - template_fraction > 0.15 → budget expands to fit the templates plus
+        #     some file_context (budget_fraction = template_fraction, capped at 0.25).
+        template_tokens = len(template_result) // 4
+        template_fraction = template_tokens / model_max_tokens
+        budget_fraction = min(0.25, max(SYSTEM_PROMPT_BUDGET_FRACTION, template_fraction))
+        budget_tokens = int(model_max_tokens * budget_fraction)
         budget_chars = budget_tokens * 4
     else:
         budget_chars = DEFAULT_SYSTEM_PROMPT_BUDGET_CHARS

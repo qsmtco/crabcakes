@@ -1538,8 +1538,17 @@ class AgentRuntime:
             threshold = getattr(provider_cfg, "compaction_threshold", None)
             if threshold is not None and 0 < threshold <= 1:
                 return float(threshold)
-        except Exception:
-            pass
+        except Exception as e:
+            # Defensive coding should not hide programming errors. The default
+            # 0.80 is used as fallback. Operators can enable DEBUG logging to
+            # see the underlying cause. A misconfigured provider shouldn't
+            # crash compaction, but it shouldn't be silently invisible either.
+            logger.debug(
+                "_compute_compaction_threshold: failed to resolve per-provider "
+                "threshold, using default %s. Error: %s",
+                DEFAULT_THRESHOLD,
+                e,
+            )
         return DEFAULT_THRESHOLD
 
     def _prepare_kb_synthesis(
