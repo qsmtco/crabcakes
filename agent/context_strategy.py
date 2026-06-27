@@ -330,6 +330,130 @@ class DefaultContextStrategy:
         tokens_after = conv.get_token_estimate()
         return tokens_before - tokens_after
 
+    # ── Phase 6: P5 _find_split_index + P6 _fit_summary ──────────────────────
+
+    def _find_split_index(
+        self,
+        conv: Conversation,
+        budget_tokens: int,
+        keep_first: int = 2,
+    ) -> int:
+        """Find the message index where the head ends and the tail begins.
+
+        Walks backward from the end, accumulating tokens, until half the
+        budget is consumed. Then walks back further to land on an assistant
+        message boundary (role-anchored, Aider pattern).
+
+        Also enforces CB-6 (tool-call pairing) at the split boundary.
+
+        Args:
+            budget_tokens: Total token budget for the conversation.
+            keep_first: Minimum index for the split (never split before this).
+
+        Returns:
+            Message index >= keep_first where the head can be summarized
+            and the tail kept verbatim.
+        """
+        if len(conv.messages) <= keep_first:
+            return keep_first
+
+        half_budget = budget_tokens // 2
+        tail_tokens = 0
+        split = len(conv.messages)
+
+        for i in range(len(conv.messages) - 1, keep_first - 1, -1):
+            msg = conv.messages[i]
+            msg_tokens = msg.tokens_used or (len(msg.content) // 4)
+            if tail_tokens + msg_tokens >= half_budget:
+                break
+            tail_tokens += msg_tokens
+            split = i
+
+        # Role-anchor walk-back: walk back until messages[split - 1] is ASSISTANT.
+        while split > keep_first:
+            prev_msg = conv.messages[split - 1]
+            if prev_msg.role == MessageRole.ASSISTANT:
+                break
+            split -= 1
+
+        # CB-6 forward check: if messages[split] is a TOOL_RESULT whose
+        # parent ASSISTANT-with-tool-calls is in the head, move split forward
+        # to include this TOOL_RESULT in the head (gets summarized with parent).
+        while split < len(conv.messages):
+            msg_at_split = conv.messages[split]
+            if msg_at_split.role == MessageRole.TOOL_RESULT:
+                if split > keep_first:
+                    adjacent_parent = conv.messages[split - 1]
+                    if (
+                        adjacent_parent.role == MessageRole.ASSISTANT
+                        and adjacent_parent.tool_calls
+                        and any(tc.call_id == msg_at_split.tool_call_id for tc in adjacent_parent.tool_calls)
+                    ):
+                        split += 1
+                        continue
+                # Search backward for true parent in head.
+                if msg_at_split.tool_call_id:
+                    for j in range(split - 1, keep_first - 1, -1):
+                        candidate = conv.messages[j]
+                        if (
+                            candidate.role == MessageRole.ASSISTANT
+                            and candidate.tool_calls
+                            and any(tc.call_id == msg_at_split.tool_call_id for tc in candidate.tool_calls)
+                        ):
+                            split = j
+                            break
+                    else:
+                        break
+                else:
+                    break
+            else:
+                break
+
+        return max(split, keep_first)
+
+    def _fit_summary(
+        self,
+        conv: Conversation,
+        summary: str,
+        token_budget: int,
+        current_tokens: int,
+    ) -> str | None:
+        """Fit a summary into the remaining token budget by truncating.
+
+        Tries 5 iterations, each reducing the summary to 80% of its previous
+        length. If none fit, returns a minimal stub. If even the stub doesn't
+        fit, returns None.
+
+        Uses tiktoken (via ``_tiktoken_encoding_for()``) when available for
+        accurate token counts; falls back to the ``chars // 4`` heuristic.
+        """
+        available_tokens = token_budget - current_tokens
+        if available_tokens <= 0:
+            return None
+
+        # Use tiktoken when available for accurate token counting.
+        from models.conversation import _tiktoken_encoding_for
+        encoding = _tiktoken_encoding_for(conv.model)
+
+        def _count_tokens(s: str) -> int:
+            if encoding is not None:
+                return len(encoding.encode(s))
+            return len(s) // 4
+
+        # Try progressively smaller versions.
+        fitted = summary
+        for _attempt in range(5):
+            fitted_tokens = _count_tokens(fitted)
+            if fitted_tokens <= available_tokens:
+                return fitted
+            fitted = fitted[:int(len(fitted) * 0.8)]
+
+        # Final fallback: minimal stub.
+        stub = "[Context reset — earlier conversation was too large to summarize]"
+        if _count_tokens(stub) <= available_tokens:
+            return stub
+        return None
+
     # ── Prune candidate selector (Phase 4: P2 keep_first + P3 protect_is_summary)
 
     def _select_prune_candidate(
@@ -403,15 +527,14 @@ class DefaultContextStrategy:
     def _summary(
         self,
         conv: Conversation,
-        token_budget: int = 0,              # noqa: ARG002 — Phase 4 uses this
-        keep_first: int = 2,                # noqa: ARG002 — Phase 4 uses this
+        token_budget: int = 0,
+        keep_first: int = 2,
     ) -> str:
         """Generate a summary of the oldest trimmed user messages.
 
-        Phase 1: mechanical extraction of ``Conversation._last_exchange_summary()``.
-        No behavior changes. The ``token_budget`` and ``keep_first`` parameters
-        are accepted for forward compatibility with the Phase 4 spec but are
-        not yet used.
+        Phase 6: Uses _find_split_index() to compute a smarter split point
+        instead of the naive messages[:-4] slice. The split index lands on
+        an assistant message boundary (role-anchored) and respects CB-6.
         """
         if not conv.messages:
             return ""
@@ -420,8 +543,15 @@ class DefaultContextStrategy:
         if len(conv.messages) <= tail_preserve:
             return ""
 
+        # P5: Compute a smarter split index.
+        budget_tokens = token_budget if token_budget > 0 else conv.get_token_estimate()
+        split = self._find_split_index(conv, budget_tokens, keep_first=keep_first)
+        split = max(keep_first, min(split, len(conv.messages) - tail_preserve))
+
+        head_messages = conv.messages[:split]
+
         user_contents: list[str] = []
-        for msg in conv.messages[:-tail_preserve]:
+        for msg in head_messages:
             if msg.role == MessageRole.USER:
                 user_contents.append(msg.content.strip())
 
