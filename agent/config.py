@@ -36,6 +36,7 @@ class LLMProviderConfig:
     supports_tools: bool = True
     supports_streaming: bool = True
     max_tokens: int = 128_000          # context window size
+    compaction_threshold: float = 0.80  # fraction of max_tokens that triggers compaction
     enabled: bool = True
     last_verified_at: str | None = None
     last_error: str | None = None
@@ -139,6 +140,7 @@ def _to_llm_provider(p) -> LLMProviderConfig:
         supports_tools=p.supports_tools,
         supports_streaming=p.supports_streaming,
         max_tokens=p.max_tokens,
+        compaction_threshold=getattr(p, "compaction_threshold", 0.80),
         enabled=p.enabled,
         last_verified_at=p.last_verified_at,
         last_error=p.last_error,

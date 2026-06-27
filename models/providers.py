@@ -49,5 +49,6 @@ class ProviderConfig:
     supports_streaming: bool = True
     max_tokens: int = 128_000
     default_max_tokens: int = 0
+    compaction_threshold: float = 0.80  # fraction of max_tokens that triggers compaction
     last_verified_at: str | None = None
     last_error: str | None = None

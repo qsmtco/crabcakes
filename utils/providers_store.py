@@ -45,6 +45,7 @@ def _to_dict(p: ProviderConfig) -> dict[str, Any]:
         "supports_streaming": p.supports_streaming,
         "max_tokens": p.max_tokens,
         "default_max_tokens": p.default_max_tokens,
+        "compaction_threshold": p.compaction_threshold,
         "last_verified_at": p.last_verified_at,
         "last_error": p.last_error,
     }
@@ -63,6 +64,7 @@ def _from_dict(d: dict[str, Any]) -> ProviderConfig:
         supports_streaming=d.get("supports_streaming", True),
         max_tokens=d.get("max_tokens", 128_000),
         default_max_tokens=d.get("default_max_tokens", 0),
+        compaction_threshold=d.get("compaction_threshold", 0.80),
         last_verified_at=d.get("last_verified_at"),
         last_error=d.get("last_error"),
     )
