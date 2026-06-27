@@ -362,9 +362,22 @@ class Conversation:
             "usage_percent": round(total_used / model_max_tokens * 100, 1) if model_max_tokens > 0 else 0,
         }
 
-    def trim_to_token_limit(self, max_tokens: int) -> None:
+    def trim_to_token_limit(
+        self,
+        max_tokens: int,
+        *,
+        keep_first: int = 2,                # noqa: ARG002 — Phase 4 wires this
+        protect_is_summary: bool = True,    # noqa: ARG002 — Phase 4 wires this
+    ) -> None:
         """
         Trim oldest messages to stay under token limit.
+
+        .. deprecated:: 2026-06-26
+            Use :class:`agent.context_strategy.DefaultContextStrategy.compact`
+            instead. This shim delegates to the strategy for backward
+            compatibility with existing tests. See
+            ``docs/specs/SPEC-CONTEXT-MANAGEMENT-ROADMAP.md`` §0 for the
+            full rationale and ``§2.1.2`` for the original algorithm.
 
         Keeps:
         - The system prompt (never removed — stored separately in Conversation)
@@ -380,84 +393,27 @@ class Conversation:
         This prevents the model from losing context of what was accomplished in
         the removed exchanges.
         """
-        # Phase CB-5: capture message count before trim and invalidate cache.
-        messages_count_before = len(self.messages)
-        self._token_estimate_cache = None
+        # Deferred import: ``agent/context_strategy.py`` imports from
+        # ``models/conversation.py``. Importing it at module level would
+        # create a circular import. The shim is the one place that crosses
+        # the models→agent boundary.
+        from agent.context_strategy import DefaultContextStrategy
+        strategy = DefaultContextStrategy()
+        strategy.compact(
+            self,
+            max_tokens,
+            keep_first=keep_first,
+            protect_is_summary=protect_is_summary,
+        )
 
-        while self.get_token_estimate() > max_tokens and len(self.messages) > 4:
-            removed = False
-            # Iterate backwards to avoid index shift issues when popping
-            for i in range(len(self.messages) - 1, 0, -1):
-                msg = self.messages[i]
-                # If this is a TOOL_RESULT, also remove the preceding ASSISTANT with tool_calls
-                if msg.role == MessageRole.TOOL_RESULT:
-                    if i > 0 and self.messages[i-1].role == MessageRole.ASSISTANT and self.messages[i-1].tool_calls:
-                        # Remove TOOL_RESULT (i) first, then ASSISTANT (i-1)
-                        self.messages.pop(i)
-                        self.messages.pop(i - 1)
-                        removed = True
-                        break
-                # If this is an ASSISTANT with tool_calls, also remove the following TOOL_RESULT
-                elif msg.role == MessageRole.ASSISTANT and msg.tool_calls:
-                    if i + 1 < len(self.messages) and self.messages[i+1].role == MessageRole.TOOL_RESULT:
-                        # Remove TOOL_RESULT (i+1) first, then ASSISTANT (i)
-                        self.messages.pop(i + 1)
-                        self.messages.pop(i)
-                        removed = True
-                        break
-            if not removed:
-                # Fallback: remove the oldest message in the trimmable region.
-                #
-                # The trimmable region is indices [0, len - tail_preserve),
-                # i.e., everything except the preserved tail (last 4 messages).
-                #
-                # The previous code scanned `range(1, len-1)` looking for USER
-                # messages. This had two failure modes:
-                #   1. It excluded index 0 (the oldest message), so the oldest
-                #      message was never considered as a removal candidate.
-                #   2. It required the candidate to be a USER message, so when
-                #      the trimmable region became all ASSISTANT (e.g., after
-                #      a long tool-call sequence or a 20-exchange user/assistant
-                #      history), the trim stalled at 21+ messages instead of
-                #      reaching the 4-5 message target.
-                #
-                # The fix: pop the oldest message in the trimmable region
-                # regardless of role. This is always safe because:
-                #   - The preserved tail (last 4 messages) is never touched
-                #     (we only pop index 0, and we only enter the fallback
-                #     when len > 4).
-                #   - The outer loop guard `len > 4` prevents infinite loops.
-                #   - The backwards loop above has already tried to remove
-                #     TOOL_RESULT + ASSISTANT-with-tool-calls pairs.
-                #
-                # See QTR's Phase CB-1 audit (2026-06-17) for the empirical trace.
-                tail_preserve = 4
-                if len(self.messages) > tail_preserve:
-                    self.messages.pop(0)
-                else:
-                    break
-
-        # §4.10: Inject summary when old messages are removed so the model
-        # doesn't lose context of what was accomplished in the trimmed turns.
-        # Phase CB-5: fire on any removal (not just 8+ remaining).
-        messages_removed = messages_count_before - len(self.messages)
-        if messages_removed > 0 and len(self.messages) >= 4:
-            summary = self._last_exchange_summary()
-            if summary:
-                # Bug 1 fix: skip injection if it would push us back over the budget.
-                summary_tokens = len(summary) // 4
-                current_tokens = self.get_token_estimate()
-                if current_tokens + summary_tokens > max_tokens:
-                    return  # skip — injecting would exceed budget
-                # Inject summary as an assistant message right before the preserved tail
-                # (at index len-4, before the "always keep" last-4 messages).
-                summary_msg = Message(role=MessageRole.ASSISTANT, content=summary, is_summary=True)
-                insert_at = max(1, len(self.messages) - 4)
-                self.messages.insert(insert_at, summary_msg)
-
-    def _last_exchange_summary(self) -> str:
+    def _last_exchange_summary(self, *, max_tokens: int = 0, keep_first: int = 2) -> str:
         """
         Generate a summary of the oldest trimmed user messages.
+
+        .. deprecated:: 2026-06-26
+            Use :class:`agent.context_strategy.DefaultContextStrategy._summary`
+            instead. This shim delegates to the strategy for backward
+            compatibility with existing tests.
 
         Called after trim_to_token_limit removes old exchanges.
         The summary is injected as an assistant message before the preserved
@@ -466,32 +422,10 @@ class Conversation:
         Returns empty string when the conversation is too short to summarize
         meaningfully (< 4 messages) or when no user messages remain to capture.
         """
-        if not self.messages:
-            return ""
-
-        # Collect user message content from the trimmed portion of the conversation.
-        # The ``tail_preserve`` messages (last 4: user + assistant + tool_result + assistant)
-        # are excluded so the summary only covers the part that was actually removed.
-        tail_preserve = 4
-        if len(self.messages) <= tail_preserve:
-            return ""
-
-        user_contents: list[str] = []
-        for msg in self.messages[:-tail_preserve]:
-            if msg.role == MessageRole.USER:
-                user_contents.append(msg.content.strip())
-
-        if not user_contents:
-            return ""
-
-        lines = [f"Conversation so far ({len(user_contents)} prior turns):"]
-        for i, content in enumerate(user_contents[:5], 1):
-            preview = content[:100] + ("…" if len(content) > 100 else "")
-            lines.append(f"  {i}. {preview}")
-        if len(user_contents) > 5:
-            lines.append(f"  … and {len(user_contents) - 5} more turns")
-
-        return "\n".join(lines)
+        # Deferred import (see trim_to_token_limit shim above for rationale).
+        from agent.context_strategy import DefaultContextStrategy
+        strategy = DefaultContextStrategy()
+        return strategy._summary(self, max_tokens, keep_first)
 
     # ── Cost tracking ─────────────────────────────────────────────────────────
 
