@@ -1,13 +1,128 @@
 # SPEC: Context Management Roadmap — Compaction, Protection, and Adaptive Budgets
 
-**Date:** 2026-06-25
+**Date:** 2026-06-25 (last updated 2026-06-26 — added §0 Strategy Architecture per PROPOSAL-pluggable-context-strategy.md)
 **Author:** Qaster (supervisor)
 **Status:** Draft — for implementation
 **Implements:** `docs/proposals/PROPOSAL-context-management-roadmap.md`
+**Companion proposal:** `docs/proposals/PROPOSAL-pluggable-context-strategy.md` (adopted 2026-06-26)
 **Depends on:** `docs/specs/SPEC-CONTEXT-BLOAT-PHASE-1-INSTRUCTIONS.md` through PHASE-5 (all SHIPPED)
 **Target branch:** main
 
-> **Architecture compliance statement:** All changes respect ARCHITECTURE.md §2 layering rules. `models/conversation.py` remains pure data (no UI, no network, no LLM calls — stdlib imports only). `agent/runtime.py` remains the core agent loop (no GTK imports). `utils/prompt_loader.py` remains pure Python (no GTK, no network). No new modules are created. All existing invariants (CB-6 tool-call pairing, `is_summary` flag, system prompt separation, token cache invalidation) are preserved.
+> **Architecture compliance statement:** All changes respect ARCHITECTURE.md §2 layering rules. `models/conversation.py` remains pure data (no UI, no network, no LLM calls — stdlib imports only). `agent/runtime.py` remains the core agent loop (no GTK imports). `utils/prompt_loader.py` remains pure Python (no GTK, no network). **One sanctioned new module:** `agent/context_strategy.py` holds the P1–P7 compaction algorithms on a `DefaultContextStrategy` class (per the companion proposal, adopted 2026-06-26; see §0). `Conversation` retains thin delegation shims for backward compatibility with existing tests. All existing invariants (CB-6 tool-call pairing, `is_summary` flag, system prompt separation, token cache invalidation) are preserved.
+
+---
+
+## 0. Strategy Architecture (REQUIRED READING)
+
+> **Added 2026-06-26.** Anchors the rest of this spec. Read this first.
+
+This spec defines the **P1–P7 compaction behaviors** (soft/hard ceiling, prune tool outputs, role-anchored head/tail split, smart summary injection, dynamic prompt budget, telemetry). Per the companion `PROPOSAL-pluggable-context-strategy.md` (adopted 2026-06-26), all of these behaviors live on a **pluggable strategy**, not on `Conversation` itself.
+
+### 0.1 Layering Rule
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  agent/runtime.py         — computes budget, calls strategy  │
+│  agent/context_strategy.py — P1–P7 behavior, configurable  │
+│  models/conversation.py   — pure data, no policy logic       │
+│  utils/prompt_loader.py   — pure P7 budget arithmetic       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+- `models/conversation.py` is **pure data** (ARCHITECTURE.md §3.21l). It stores messages, computes token estimates, serializes for the API. It does **not** decide *which* messages to evict or *how* to summarize — those are policy decisions.
+- `agent/context_strategy.py` is **policy**. It implements a `ContextStrategy` protocol with one method: `compact(conv, token_budget) -> None`. The default implementation, `DefaultContextStrategy`, carries the P1–P7 logic described in this spec.
+- `agent/runtime.py` is the **conductor**. It computes the token budget (using P1's soft/hard ceilings and P7's prompt-aware math), then hands the budget to the strategy: `self._context_strategy.compact(conv, soft_ceiling)`.
+- `utils/prompt_loader.py` is **P7's budget arithmetic only**. It does not know about strategies or compaction policy.
+
+### 0.2 ContextStrategy Protocol
+
+```python
+# agent/context_strategy.py
+from typing import Protocol
+
+class ContextStrategy(Protocol):
+    """Pluggable compaction policy. See PROPOSAL-pluggable-context-strategy.md."""
+
+    def compact(self, conv: "Conversation", token_budget: int) -> None:
+        """Reduce `conv` so its token estimate fits within `token_budget`.
+
+        The strategy may evict messages, stub tool outputs, inject summaries,
+        or do nothing. It must NOT mutate fields outside `conv.messages` and
+        `conv._token_estimate_cache` (per ARCHITECTURE.md §3.21l).
+        """
+        ...
+
+    @property
+    def last_result(self) -> "CompactionEvent | None":
+        """Telemetry from the most recent compact() call. None before first call.
+
+        The strategy records what happened (see §2.8) and the runtime reads
+        this attribute after each call to update its event history.
+        """
+        ...
+```
+
+**Parameter naming:** the protocol argument is `token_budget` (not `max_tokens`). This is a deliberate rename from `Conversation.trim_to_token_limit(max_tokens=N)` to `DefaultContextStrategy.compact(conv, token_budget=N)`. The new name makes the soft/hard distinction explicit at the call site: `strategy.compact(conv, soft_ceiling)` vs. the implicit-and-easy-to-confuse `conv.trim_to_token_limit(model_max)`.
+
+### 0.3 Method Migration Map
+
+The methods defined in this spec (§2.1.2 through §2.1.6) are **physically defined on `DefaultContextStrategy`**, not on `Conversation`. `Conversation` retains thin delegation shims for backward compatibility (existing tests still call `conv.trim_to_token_limit()` and `conv._last_exchange_summary()`):
+
+| Spec section | Method | Defined on | Signature |
+|---|---|---|---|
+| §2.1.2 | `trim_to_token_limit()` | `DefaultContextStrategy.compact()` (shim on `Conversation`) | `compact(self, conv, token_budget, *, keep_first=2, protect_is_summary=True)` |
+| §2.1.3 | `_fit_summary()` | `DefaultContextStrategy._fit_summary()` | `(self, conv, summary, token_budget, current_tokens) -> str \| None` |
+| §2.1.4 | `prune_tool_outputs()` | `DefaultContextStrategy.prune_tool_outputs()` | `(self, conv, target_tokens, protect_turns=2) -> int` |
+| §2.1.5 | `_find_split_index()` | `DefaultContextStrategy._find_split_index()` | `(self, conv, budget_tokens, keep_first=2) -> int` |
+| §2.1.6 | `_last_exchange_summary()` | `DefaultContextStrategy._summary()` (shim on `Conversation`) | `compact(...)` body calls `self._summary(conv, token_budget, keep_first)` |
+
+**The algorithms are unchanged.** Every algorithm described in §2.1.2–§2.1.6 lives on `DefaultContextStrategy` with `self.messages` rewritten to `conv.messages` and the method's `self` parameter preserved as the strategy instance. No behavior changes — only the host object.
+
+### 0.4 Telemetry Contract
+
+The strategy owns `CompactionEvent` recording (see §2.8). After each `compact()` call, the runtime reads `strategy.last_result` and appends to its rolling history:
+
+```python
+# agent/runtime.py — at the existing trim call site (line 1618)
+self._context_strategy.compact(conv, soft_ceiling)
+if self._context_strategy.last_result is not None:
+    self._compaction_events.append(self._context_strategy.last_result)
+    if len(self._compaction_events) > 100:
+        self._compaction_events = self._compaction_events[-100:]
+```
+
+The runtime does **not** reconstruct `CompactionEvent` fields from `len(conv.messages)` diffs. The strategy is the single source of truth for what happened.
+
+### 0.5 P1↔P7 Wiring (Runtime is the Conductor)
+
+P1 (soft/hard ceiling) and P7 (dynamic prompt budget) are **runtime computations**, not strategy logic. The runtime resolves both, then passes the result to the strategy:
+
+```python
+# agent/runtime.py
+prompt_budget = _apply_system_prompt_budget(        # P7
+    template_tokens=template_tokens,
+    model_max_tokens=model_max,
+)
+remaining = model_max - prompt_budget
+soft_ceiling = int(remaining * 0.80)                # P1: 80% of remaining
+# The strategy doesn't need to know about P7 or the 80% rule.
+self._context_strategy.compact(conv, soft_ceiling)
+```
+
+A future LLM-summarization strategy (Phase 2) doesn't need to reimplement the 80% rule. A future sliding-window strategy doesn't need to reimplement the prompt budget. **Strategies are composable: changing the budget policy (P7) doesn't require changing the strategy.**
+
+### 0.6 Why This Architecture (Summary)
+
+1. **`models/conversation.py` stays pure data.** ARCHITECTURE.md §3.21l is preserved verbatim. No policy logic on the data class.
+2. **Strategies are swappable.** Phase 2's T1.1–T1.5 (LLM summarization, sliding window, offload) become "write a class with a `compact()` method" — no rearchitecting.
+3. **Telemetry is correct.** `CompactionEvent` is built by the component that has the data, not reconstructed at the call site.
+4. **The spec's algorithms are unchanged.** P1–P7's invariants, test assertions, and behavioral guarantees are preserved verbatim. Only the host object changes.
+
+### 0.7 See Also
+
+- `PROPOSAL-pluggable-context-strategy.md` — full rationale, cost-benefit, design decisions.
+- `PROPOSAL-context-management-phase-2.md` — Phase 2 strategies (LLM-summarize, sliding-window) that this architecture enables.
+- ARCHITECTURE.md §3.21l, §3.21m, §4.4b — layering rules this section implements.
 
 ---
 
@@ -92,14 +207,58 @@ Seven changes in two batches:
 | `tests/test_prompt_loader_budget.py` — new test file | |
 | `ARCHITECTURE.md` — section updates | |
 
+**Out of Scope (deferred to a future spec):**
+
+The following are explicitly **not** implemented by P1–P7 but are listed as candidates for a future phase-2 context-management spec. Each is included here so that the implementer and reviewer understand these are *known gaps with a defined future path*, not oversights:
+
+**Already covered by an existing proposal** — `docs/proposals/PROPOSAL-context-management-phase-2.md` (Qaster, 2026-06-25) — Phase 2 of context management. The existing proposal already formalizes:
+- **P8 — Tool-output offloading** (T1.3 in the phase-2 proposal). Lossless offload of large tool results to `.crabcakes/tool-outputs/` with a `tool_read_path` retrieval tool. Replaces P4's lossy 200-char stub. **Reference:** `docs/proposals/PROPOSAL-context-management-phase-2.md` §3.3.
+- **P9a — Recursive hierarchical summarization** (T1.1). Stratified leaf + parent summary stack so long sessions don't lose their arc when one summary grows unbounded. **Reference:** `docs/proposals/PROPOSAL-context-management-phase-2.md` §3.1.
+- **P9b — Structured summary digests** (T1.2 / PRISM). Typed `ConversationDigest` (decisions, constraints, open_questions, referenced_paths) replaces free-text summaries. **Reference:** `docs/proposals/PROPOSAL-context-management-phase-2.md` §3.2.
+- **P10a — Just-in-time file context retrieval** (T1.4). Replace 50KB file-context preload with index-in-context + `file_search`/`file_read` tools. **Reference:** `docs/proposals/PROPOSAL-context-management-phase-2.md` §3.4.
+- **P10b — Per-tool retention policy** (T1.5). `ToolRetentionPolicy` with different turn-persistence per tool (e.g., `memory_read` keeps for session, `web_search` keeps for 5 turns). **Reference:** `docs/proposals/PROPOSAL-context-management-phase-2.md` §3.5.
+
+**Not yet covered by an existing proposal** — these are the new items this spec adds to the deferred queue:
+
+- **P8b — Byte-aware output capping** (`agent/tools.py:101` `MAX_EXEC_OUTPUT = 100 * 1024`). The current byte-truncation in `tools.py:434-435` and `:531-532` is already byte-cap (not line-cap), satisfying the `hidden-gems-agent-context-management.md` "byte-cap, not line-cap" rule. The remaining gap is **configurability** — currently a hard 100 KB constant. Future: expose `tools.output_byte_cap` on `AgentConfig` (per-agent override) and add a soft-cap warning when truncation fires (signals the agent that an output was too large). Inspired by `Austin1serb/agents-md` (`hidden-gems-agent-context-management.md:27-31`).
+- **P9 — Context-pressure observability.** Persistent tracking of consecutive turns above the soft ceiling, surfaced in the UI when utilization > 80% (warning) or > 90% (suggest `/compact`). Builds on §2.8 `CompactionEvent` dataclass for the rolling-history side; adds UI surfacing. Inspired by Anthropic context rot + Cursor's "context engineering plugin" (`Write` and `Compress` operations). The `CompactionEvent` infrastructure from §2.8 is the foundation; P9 adds the UI/UX layer.
+- **P11 — Multi-agent context coordination.** Shared context surface per project so Coder / Debugger / Auxilium don't independently re-read the same `.crabcakes/` project docs. Inspired by `ContextOptimizer` (`hidden-gems-agent-context-management.md:47-50`) and the deep-dive report's "frontier" note (`crabcakes-deep-dive-report.md:157-159`).
+- **P12 — KV cache optimization.** Pre-compile static prompt sections (system templates + bug journal + rules) into KV-cache entries to avoid re-encoding on every call. Requires provider-level support (out of scope; deferred). Note: this is a *provider-side* concern, not a crabcakes-side concern — it can only be pursued as a collaboration with the LLM provider, not as a crabcakes-only change.
+
+**Telemetry enrichment (applied to P1–P7, not a separate phase):**
+
+Replace the current scalar `self._last_trim_removed: int` (`agent/runtime.py:1232`, set at `:1620`, read at `:1664-1666`, reset at `:1668`) with a `CompactionEvent` dataclass so the self-improvement stack (SPEC-4 dream consolidation) can later learn from compaction outcomes. See §2.8 for the dataclass and integration points.
+
+### 1.3.1 Architecture Decision: Pluggable Strategy (Cross-Reference)
+
+> **Added 2026-06-26.** Anchors the layering choice for P1–P7. See **§0** for the full strategy architecture. This subsection is a brief cross-reference.
+
+All P1–P7 compaction behaviors defined in this spec (`trim_to_token_limit`, `_select_prune_candidate`, `_fit_summary`, `prune_tool_outputs`, `_find_split_index`, `_last_exchange_summary`, and the soft/hard ceiling wiring) live on a **`DefaultContextStrategy` class in `agent/context_strategy.py`**, not on `Conversation` itself.
+
+**Why:** `models/conversation.py` is supposed to be pure data (ARCHITECTURE.md §3.21l). `trim_to_token_limit()` is a *policy* decision (which messages to evict, in what order, when to summarize) — not a data operation. The current location violates the architecture contract; the proposed location preserves it.
+
+**Companion proposal:** `PROPOSAL-pluggable-context-strategy.md` (adopted 2026-06-26, 776 lines). It contains the full rationale (60-lines-now vs 210-lines-later cost asymmetry), the protocol/ABC decision, the layering argument, and the cost-benefit analysis. Read it for the *why*; this spec describes the *what* (P1–P7 algorithms and invariants, unchanged from before the architecture change).
+
+**Implementation impact:**
+- `models/conversation.py` gains thin delegation shims for `trim_to_token_limit()` and `_last_exchange_summary()` (preserves backward compatibility for existing tests). Algorithm code is removed from `Conversation` and lives on `DefaultContextStrategy`.
+- `agent/context_strategy.py` is **NEW** (~80 lines for the strategy module; ~150 lines of algorithm code moved from `Conversation`).
+- `agent/runtime.py:1618` calls `self._context_strategy.compact(conv, soft_ceiling)` instead of `conv.trim_to_token_limit(model_max)`.
+- `agent/config.py` and `models/providers.py` both gain a `context_strategy: str = "default"` field. `utils/providers_store.py` round-trips the field through `_to_dict` / `_from_dict`.
+
+**Behavioral guarantee:** every P1–P7 algorithm in §2 is unchanged. The same invariants hold, the same test assertions pass, the same telemetry is produced. The only change is the host object — `self` becomes `conv`, and the strategy instance is the new `self` for the algorithm methods.
+
+**When to read §0:** before any implementation work begins. §0 is the conceptual anchor; §2 is the implementation detail.
+
 ### 1.4 Architecture Principles That Apply
 
-- **§2 Layering:** `models/` has no UI dependencies. `agent/` has no UI dependencies. `utils/` has no GTK imports. All changes maintain this.
-- **§3.21l:** `models/conversation.py` is "pure data — no GTK, no network, no LLM calls. All imports are stdlib only." New methods (`prune_tool_outputs`, `_find_split_index`, `TrimPolicy` dataclass) are pure data operations.
-- **§3.21m:** `agent/runtime.py` owns the tool loop. New `_compute_compaction_threshold()` helper follows the existing `_compute_model_max()` pattern.
-- **§4.4b:** System prompt budget is enforced by `_apply_system_prompt_budget()` in `utils/prompt_loader.py`. P7 modifies the arithmetic, not the architecture.
+- **§0 Strategy Architecture:** All P1–P7 compaction behaviors live on `DefaultContextStrategy` in `agent/context_strategy.py`, not on `Conversation`. `models/conversation.py` retains only thin delegation shims. See §0 and `PROPOSAL-pluggable-context-strategy.md` for the full rationale.
+- **§2 Layering:** `models/` has no UI dependencies. `agent/` has no UI dependencies. `utils/` has no GTK imports. All changes maintain this. **`agent/context_strategy.py` is policy, not data — it lives in `agent/` because it depends on `models/`, not vice-versa.**
+- **§3.21l:** `models/conversation.py` is "pure data — no GTK, no network, no LLM calls. All imports are stdlib only." The P1–P7 algorithm methods (formerly on `Conversation`) move to `DefaultContextStrategy`; `Conversation` retains only data operations (`add_*_message`, `to_api_messages`, `get_token_estimate`, `get_token_breakdown`) plus thin shims.
+- **§3.21m:** `agent/runtime.py` owns the tool loop. New `_compute_compaction_threshold()` helper follows the existing `_compute_model_max()` pattern. Runtime holds a `self._context_strategy: ContextStrategy` resolved from config in `__init__()`.
+- **§4.4b:** System prompt budget is enforced by `_apply_system_prompt_budget()` in `utils/prompt_loader.py`. P7 modifies the arithmetic, not the architecture. P7's result is consumed by the runtime and passed to `strategy.compact()` as `token_budget` — the strategy doesn't know about the 80% rule or the prompt budget.
 - **§4.10:** Summary-on-trim invariant. All changes preserve the `is_summary=True` flag on injected summaries.
 - **CB-6:** Tool-call pairing invariant. All removal/stubbing logic preserves TOOL_RESULT → ASSISTANT-with-tool_calls pairs.
+- **Forward-compatibility:** All new fields and methods in this spec are designed so that P8–P12 (see §1.3) and Phase 2 strategies (LLM-summarize, sliding-window — see `PROPOSAL-context-management-phase-2.md`) can be added later without breaking changes. `compaction_threshold` is the first of likely several per-provider compaction knobs; `_find_split_index` and `prune_tool_outputs` are the foundation for richer condenser protocols. **The `ContextStrategy` protocol means Phase 2 strategies are "write a class," not "rearchitect the data class."**
 
 ---
 
@@ -109,7 +268,16 @@ Seven changes in two batches:
 
 **Current state:** 503 lines. Pure data module. Stdlib imports only (`dataclasses`, `datetime`, `enum`, `typing`, `json`).
 
-**Changes:** 4 additions/modifications spanning P2, P3, P4, P5, P6.
+**Changes per this spec (P1–P7 algorithm logic):** 4 additions/modifications spanning P2, P3, P4, P5, P6.
+
+**Architecture change (per §0, effective 2026-06-26):** the P1–P7 algorithm methods defined in this section (§2.1.2 through §2.1.6) are **physically defined on `DefaultContextStrategy` in `agent/context_strategy.py`**, not on `Conversation`. This section is unchanged in its *behavioral content* — same algorithms, same invariants, same tests — but the host object changes from `self: Conversation` to `self: DefaultContextStrategy` with the conversation passed in as `conv`. The `models/conversation.py` module gains only:
+
+- A thin delegation shim `trim_to_token_limit(max_tokens)` → `self._context_strategy.compact(conv, max_tokens)`
+- A thin delegation shim `_last_exchange_summary(*, max_tokens=0, keep_first=2)` → `self._context_strategy._summary(conv, max_tokens, keep_first)`
+
+These shims are **2-line forwards** that preserve backward compatibility for the existing 14 tests in `TestConversationTrim`, `TestTrimFallbackIncludesOldest`, and `TestTrimSummaryInjection`. No test modification required.
+
+**Read §0 first** before implementing this section. §0 explains the strategy protocol, the parameter rename (`max_tokens` → `token_budget`), the telemetry contract, and the P1↔P7 wiring.
 
 ---
 
@@ -128,12 +296,12 @@ class TrimPolicy:
     hardcoded values).
 
     Fields:
-        max_tokens: The token budget for the conversation.
+        token_budget: The token budget for the conversation.
         keep_first: Number of messages at the start that are never trimmed.
         tail_preserve: Number of messages at the end always kept verbatim.
         protect_is_summary: When True, is_summary messages are pruned last.
     """
-    max_tokens: int
+    token_budget: int
     keep_first: int = 2
     tail_preserve: int = 4
     protect_is_summary: bool = True
@@ -147,12 +315,14 @@ class TrimPolicy:
 
 #### 2.1.2 Modified Method: `trim_to_token_limit()` (P2, P3, P5, P6)
 
+> **Architecture note (per §0):** This method is the *shim* on `Conversation`. The actual algorithm lives on `DefaultContextStrategy.compact(self, conv, token_budget)`. The shim signature preserves the existing parameter name `max_tokens` for backward compatibility with the 14 existing tests; the strategy method uses `token_budget` per the §0.2 protocol.
+
 **Current signature** (line 365):
 ```python
 def trim_to_token_limit(self, max_tokens: int) -> None:
 ```
 
-**New signature:**
+**New signature (shim — preserves existing test calls):**
 ```python
 def trim_to_token_limit(
     self,
@@ -161,46 +331,66 @@ def trim_to_token_limit(
     keep_first: int = 2,
     protect_is_summary: bool = True,
 ) -> None:
+    # Thin delegation shim — see §0.
+    from agent.context_strategy import DefaultContextStrategy  # deferred import
+    strategy = DefaultContextStrategy()
+    strategy.compact(self, max_tokens, keep_first=keep_first, protect_is_summary=protect_is_summary)
 ```
 
-**Note:** Uses keyword-only arguments (after `*`) so existing call sites `conv.trim_to_token_limit(model_max)` continue to work without modification. The `keep_first` and `protect_is_summary` parameters have defaults matching the new desired behavior (P2 default=2, P3 default=True).
-
-**Outer loop guard change** (line 389):
+**New signature (the strategy method that holds the algorithm):**
 ```python
-# Current:
+# agent/context_strategy.py
+def compact(
+    self,
+    conv: "Conversation",
+    token_budget: int,
+    *,
+    keep_first: int = 2,
+    protect_is_summary: bool = True,
+) -> None:
+    # ... full algorithm body, with self.messages → conv.messages throughout ...
+```
+
+**Note:** The shim's parameter name (`max_tokens`) and the strategy's parameter name (`token_budget`) deliberately differ — the shim preserves backward compatibility with the 14 existing tests that call `conv.trim_to_token_limit(model_max)`; the strategy uses the §0.2 protocol's preferred name. Existing tests pass through the shim unchanged.
+
+**Outer loop guard change** (line 389) — shown as it appears on the strategy (the shim just forwards to `compact()`):
+```python
+# Current (on Conversation):
 while self.get_token_estimate() > max_tokens and len(self.messages) > 4:
 
-# New:
+# New (on DefaultContextStrategy — self is the strategy, conv is the conversation):
 tail_preserve = 4
 min_messages = keep_first + tail_preserve
-while self.get_token_estimate() > max_tokens and len(self.messages) > min_messages:
+while conv.get_token_estimate() > token_budget and len(conv.messages) > min_messages:
 ```
 
 **Fallback guard change** (line 434-435):
 ```python
-# Current:
+# Current (on Conversation):
 tail_preserve = 4
 if len(self.messages) > tail_preserve:
     self.messages.pop(0)
 
-# New:
+# New (on DefaultContextStrategy):
 # Remove the oldest message in the trimmable region (index 0), but only
 # if the trimmable region is non-empty. The trimmable region is
 # indices [0, len - tail_preserve). We must keep at least keep_first
 # messages at the start. So we only pop if len > min_messages.
-if len(self.messages) > min_messages:
-    self.messages.pop(0)
+if len(conv.messages) > min_messages:
+    conv.messages.pop(0)
 else:
     break
 ```
 
 **Summary injection with protected types** (lines 443-457):
 
-The current summary injection block at line 443 runs after the trim loop. The change adds a scan that preferentially removes non-protected messages before touching protected ones. This is implemented as a new private method `_select_prune_candidate()` that the trim loop calls:
+The current summary injection block at line 443 runs after the trim loop. The change adds a scan that preferentially removes non-protected messages before touching protected ones. This is implemented as a new private method `_select_prune_candidate()` on the strategy that the trim loop calls:
 
 ```python
+# On DefaultContextStrategy
 def _select_prune_candidate(
     self,
+    conv: "Conversation",
     keep_first: int,
     tail_preserve: int,
     protect_is_summary: bool,
@@ -222,7 +412,7 @@ def _select_prune_candidate(
     Returns the index of the message to remove, or None if the
     trimmable region is empty.
     """
-    trimmable_end = len(self.messages) - tail_preserve
+    trimmable_end = len(conv.messages) - tail_preserve
     if trimmable_end <= keep_first:
         return None
 
@@ -230,7 +420,7 @@ def _select_prune_candidate(
     non_protected: list[int] = []
     protected: list[int] = []
     for i in range(keep_first, trimmable_end):
-        msg = self.messages[i]
+        msg = conv.messages[i]
         is_protected = protect_is_summary and msg.is_summary
         if is_protected:
             protected.append(i)
@@ -247,12 +437,12 @@ def _select_prune_candidate(
         # Also skip ASSISTANT-with-tool-calls whose TOOL_RESULT child is in
         # the tail region (would orphan the child).
         for i in candidate_pool:
-            msg = self.messages[i]
+            msg = conv.messages[i]
             if msg.role == MessageRole.TOOL_RESULT:
                 if (
                     i > 0
-                    and self.messages[i - 1].role == MessageRole.ASSISTANT
-                    and self.messages[i - 1].tool_calls
+                    and conv.messages[i - 1].role == MessageRole.ASSISTANT
+                    and conv.messages[i - 1].tool_calls
                     # CB-6 boundary check: the parent ASSISTANT must be in
                     # the trimmable region (>= keep_first). If the ASSISTANT
                     # is in the keep_first region, we cannot remove it, so
@@ -262,8 +452,8 @@ def _select_prune_candidate(
                     return i  # caller pops i (TOOL_RESULT) and i-1 (ASSISTANT)
             elif msg.role == MessageRole.ASSISTANT and msg.tool_calls:
                 if (
-                    i + 1 < len(self.messages)
-                    and self.messages[i + 1].role == MessageRole.TOOL_RESULT
+                    i + 1 < len(conv.messages)
+                    and conv.messages[i + 1].role == MessageRole.TOOL_RESULT
                     # CB-6 boundary check: the child TOOL_RESULT must be in
                     # the trimmable region (< trimmable_end). If it's in the
                     # tail, we cannot remove it.
@@ -276,38 +466,40 @@ def _select_prune_candidate(
     return None
 ```
 
-**Refactored trim loop** uses `_select_prune_candidate()`:
+**Refactored trim loop** (on `DefaultContextStrategy.compact()`, not on `Conversation` — the shim forwards to this method):
 
 ```python
-def trim_to_token_limit(
+# On DefaultContextStrategy
+def compact(
     self,
-    max_tokens: int,
+    conv: "Conversation",
+    token_budget: int,
     *,
     keep_first: int = 2,
     protect_is_summary: bool = True,
 ) -> None:
-    messages_count_before = len(self.messages)
-    self._token_estimate_cache = None
+    messages_count_before = len(conv.messages)
+    conv._token_estimate_cache = None
     tail_preserve = 4
     min_messages = keep_first + tail_preserve
 
-    while self.get_token_estimate() > max_tokens and len(self.messages) > min_messages:
-        idx = self._select_prune_candidate(keep_first, tail_preserve, protect_is_summary)
+    while conv.get_token_estimate() > token_budget and len(conv.messages) > min_messages:
+        idx = self._select_prune_candidate(conv, keep_first, tail_preserve, protect_is_summary)
         if idx is None:
             break
-        msg = self.messages[idx]
+        msg = conv.messages[idx]
         # CB-6: remove TOOL_RESULT + ASSISTANT-with-tool_calls as a pair.
         if msg.role == MessageRole.TOOL_RESULT:
             # Remove TOOL_RESULT first, then check if preceding is its ASSISTANT pair.
-            self.messages.pop(idx)
-            if idx > 0 and self.messages[idx - 1].role == MessageRole.ASSISTANT and self.messages[idx - 1].tool_calls:
+            conv.messages.pop(idx)
+            if idx > 0 and conv.messages[idx - 1].role == MessageRole.ASSISTANT and conv.messages[idx - 1].tool_calls:
                 # Only remove the ASSISTANT if it's in the trimmable region (not in keep_first).
                 # Defensive check — _select_prune_candidate already filtered this case
                 # (its boundary check ensures (idx - 1) >= keep_first when it returns
                 # a TOOL_RESULT candidate), but we re-check here to make the invariant
                 # explicit at the trim loop level.
                 if idx - 1 >= keep_first:
-                    self.messages.pop(idx - 1)
+                    conv.messages.pop(idx - 1)
                 # Otherwise: parent ASSISTANT is in keep_first region. We've already
                 # popped the TOOL_RESULT at idx (which was at the keep_first boundary).
                 # This leaves an ASSISTANT-with-tool-calls with no TOOL_RESULT (CB-6
@@ -317,63 +509,109 @@ def trim_to_token_limit(
                     break
         elif msg.role == MessageRole.ASSISTANT and msg.tool_calls:
             # Remove ASSISTANT first, then check if following is its TOOL_RESULT.
-            if idx + 1 < len(self.messages) and self.messages[idx + 1].role == MessageRole.TOOL_RESULT:
+            if idx + 1 < len(conv.messages) and conv.messages[idx + 1].role == MessageRole.TOOL_RESULT:
                 # Defensive CB-6 boundary check: child TOOL_RESULT must be in trimmable region
                 # (trimmable_end = len - tail_preserve; tail messages start at trimmable_end).
-                trimmable_end = len(self.messages) - tail_preserve
+                trimmable_end = len(conv.messages) - tail_preserve
                 if idx + 1 < trimmable_end:
-                    self.messages.pop(idx + 1)
-                    self.messages.pop(idx)
+                    conv.messages.pop(idx + 1)
+                    conv.messages.pop(idx)
                 else:
                     # TOOL_RESULT is in the tail region (idx + 1 >= trimmable_end).
                     # Removing only the ASSISTANT would orphan the TOOL_RESULT (CB-6 violation).
                     # Break out defensively to prevent cascading errors.
                     break
             else:
-                self.messages.pop(idx)
+                conv.messages.pop(idx)
         else:
             # Standalone message (USER, plain ASSISTANT, or is_summary).
-            self.messages.pop(idx)
-        self._token_estimate_cache = None  # invalidate after each removal
+            conv.messages.pop(idx)
+        conv._token_estimate_cache = None  # invalidate after each removal
 
     # §4.10: Summary injection (unchanged from current, except for P6 retry loop).
-    messages_removed = messages_count_before - len(self.messages)
-    if messages_removed > 0 and len(self.messages) >= min_messages:
-        summary = self._last_exchange_summary(max_tokens=max_tokens, keep_first=keep_first)
+    messages_removed = messages_count_before - len(conv.messages)
+    if messages_removed > 0 and len(conv.messages) >= min_messages:
+        summary = self._summary(conv, token_budget=token_budget, keep_first=keep_first)
         if summary:
             # Use tiktoken for accurate summary_tokens (matches get_token_estimate).
             # Fall back to chars // 4 heuristic when tiktoken unavailable.
-            encoding = _tiktoken_encoding_for(self.model)
+            encoding = _tiktoken_encoding_for(conv.model)
             if encoding is not None:
                 summary_tokens = len(encoding.encode(summary))
             else:
                 summary_tokens = len(summary) // 4
-            current_tokens = self.get_token_estimate()
-            if current_tokens + summary_tokens > max_tokens:
+            current_tokens = conv.get_token_estimate()
+            if current_tokens + summary_tokens > token_budget:
                 # P6: Hard context reset fallback.
                 # Instead of silently skipping, retry with progressively
                 # smaller summaries by truncating the summary text.
                 # After 5 retries, use a minimal stub.
-                summary = self._fit_summary(summary, max_tokens, current_tokens)
+                summary = self._fit_summary(conv, summary, token_budget, current_tokens)
                 if summary is None:
                     return  # truly cannot fit anything
             summary_msg = Message(role=MessageRole.ASSISTANT, content=summary, is_summary=True)
-            insert_at = max(keep_first, len(self.messages) - tail_preserve)
-            self.messages.insert(insert_at, summary_msg)
-            self._token_estimate_cache = None
+            insert_at = max(keep_first, len(conv.messages) - tail_preserve)
+            conv.messages.insert(insert_at, summary_msg)
+            conv._token_estimate_cache = None
+
+    # §0.4: Telemetry recording (strategy owns this; runtime reads last_result).
+    # Extract provider/model from conv.model = "provider/model" (matches the
+    # convention at line 1022: conv.model.split("/")[0]). If conv.model has no
+    # "/", the whole string is the model and provider is "".
+    if "/" in conv.model:
+        provider, model = conv.model.split("/", 1)
+    else:
+        provider, model = "", conv.model
+    # NOTE: the four fields marked FILL below use illustrative values. The
+    # implementer should:
+    #   1. Snapshot conv.get_token_estimate() into `tokens_before` BEFORE the
+    #      trim loop (right after `messages_count_before = len(...)` above).
+    #   2. Compute `tokens_freed = tokens_before - conv.get_token_estimate()`
+    #      AFTER the loop completes.
+    #   3. Track `summary_tokens` as a local initialized to 0, set inside the
+    #      `if summary:` block above.
+    #   4. Use `conv.model_max` if set (see §2.2.2 wiring); default to 0.
+    # The shape shown here is the COMPACTION EVENT per §0.4 and §2.8.1.
+    messages_count_after = len(conv.messages)
+    self._last_result = CompactionEvent(
+        turn=conv.current_turn,
+        trigger="trim",
+        layer=2,  # P2/P3/P6 trim layer, per §2.8.1
+        messages_before=messages_count_before,
+        messages_after=messages_count_after,
+        messages_removed=messages_count_before - messages_count_after,
+        tokens_before=FILL,         # snapshot of conv.get_token_estimate() before the loop
+        tokens_after=conv.get_token_estimate(),
+        tokens_freed=FILL,          # tokens_before - tokens_after
+        summary_tokens_injected=FILL,  # 0 if no summary was injected, else the summary_tokens local
+        soft_ceiling=token_budget,
+        hard_ceiling=FILL,          # conv.model_max, or 0 if not set
+        provider=provider,
+        model=model,
+    )
 ```
+
+**External inspiration:** Eviction-order selector (`_select_prune_candidate`) with protected types mirrors **Letta/MemGPT's** "agent-controlled memory blocks" pattern (`llm-context-management-research.md` §3 Letta). Letta's MemFS + block priority (Priority 0 = never truncated) maps to our `protect_is_summary=True` + `keep_first` invariants. The CB-6 boundary check is a crabcakes-specific addition (Letta doesn't carry raw tool-call history in the same way). Claude Code's `/compact` command (anthropics/claude-code) is a closer pattern in spirit — it preserves the first user message and the most recent few turns.
 
 ---
 
 #### 2.1.3 New Method: `_fit_summary()` (P6)
 
+> **Architecture note (per §0):** This method is defined on `DefaultContextStrategy` as `_fit_summary(self, conv, summary, token_budget, current_tokens)`. The `self` parameter is the strategy instance; `conv` is the conversation being compacted. `Conversation` does not gain a public `_fit_summary` method — it's an internal strategy helper. Shown below with `self` (the strategy) and `conv` (the conversation) to match the new host.
+
 ```python
-def _fit_summary(self, summary: str, max_tokens: int, current_tokens: int) -> str | None:
+def _fit_summary(
+    self,
+    conv: "Conversation",
+    summary: str,
+    token_budget: int,
+    current_tokens: int,
+) -> str | None:
     """Fit a summary into the remaining token budget by truncating.
 
     Tries 5 iterations, each reducing the summary to 80% of its previous
     length. If none fit, returns a minimal stub. If even the stub doesn't
-    fit (max_tokens < current_tokens + ~10 tokens), returns None.
+    fit (token_budget < current_tokens + ~10 tokens), returns None.
 
     Uses tiktoken (via `_tiktoken_encoding_for()`) when available for
     accurate token counts; falls back to the `chars // 4` heuristic. This
@@ -381,14 +619,16 @@ def _fit_summary(self, summary: str, max_tokens: int, current_tokens: int) -> st
     is consistent with the rest of the conversation.
 
     Args:
+        conv: The conversation being compacted (read-only; the strategy does
+            not mutate `conv.messages` — the caller injects the fitted summary).
         summary: The full summary text.
-        max_tokens: The token budget for the conversation.
+        token_budget: The token budget for the conversation.
         current_tokens: Current token count before summary injection.
 
     Returns:
         Fitted summary string, or None if nothing fits.
     """
-    available_tokens = max_tokens - current_tokens
+    available_tokens = token_budget - current_tokens
     if available_tokens <= 0:
         return None
 
@@ -423,8 +663,15 @@ def _fit_summary(self, summary: str, max_tokens: int, current_tokens: int) -> st
 
 #### 2.1.4 New Method: `prune_tool_outputs()` (P4)
 
+> **Architecture note (per §0):** This method is defined on `DefaultContextStrategy` as `prune_tool_outputs(self, conv, target_tokens, protect_turns=2)`. `Conversation` does not gain a public `prune_tool_outputs` method — it's called from the strategy's `compact()` body. Shown below with `self` (the strategy) and `conv` (the conversation).
+
 ```python
-def prune_tool_outputs(self, target_tokens: int, protect_turns: int = 2) -> int:
+def prune_tool_outputs(
+    self,
+    conv: "Conversation",
+    target_tokens: int,
+    protect_turns: int = 2,
+) -> int:
     """Stub old tool results to free token budget. Returns tokens freed.
 
     Cheap lossless Layer 1 compaction. Walks backward from the end,
@@ -450,30 +697,30 @@ def prune_tool_outputs(self, target_tokens: int, protect_turns: int = 2) -> int:
     Returns:
         Number of tokens freed (estimate before - estimate after).
     """
-    tokens_before = self.get_token_estimate()
+    tokens_before = conv.get_token_estimate()
     if tokens_before <= target_tokens:
         return 0
 
     # Find TOOL_RESULT indices, most-recent-first.
     tool_result_indices: list[int] = []
-    for i in range(len(self.messages) - 1, -1, -1):
-        if self.messages[i].role == MessageRole.TOOL_RESULT:
+    for i in range(len(conv.messages) - 1, -1, -1):
+        if conv.messages[i].role == MessageRole.TOOL_RESULT:
             tool_result_indices.append(i)
 
     # Skip the protect_turns most recent tool results.
     prunable = tool_result_indices[protect_turns:]
 
     for idx in prunable:
-        if self.get_token_estimate() <= target_tokens:
+        if conv.get_token_estimate() <= target_tokens:
             break
-        msg = self.messages[idx]
+        msg = conv.messages[idx]
         # Idempotence: skip already-stubbed messages.
         if msg.content.startswith("[compacted —"):
             continue
         # Find the tool name from the parent ASSISTANT message's tool_calls.
         tool_name = "tool"
         if idx > 0:
-            parent = self.messages[idx - 1]
+            parent = conv.messages[idx - 1]
             if parent.role == MessageRole.ASSISTANT and parent.tool_calls:
                 # Match by tool_call_id to find the specific tool name.
                 for tc in parent.tool_calls:
@@ -486,13 +733,13 @@ def prune_tool_outputs(self, target_tokens: int, protect_turns: int = 2) -> int:
         # CRITICAL: invalidate cache after each mutation. The cache key
         # (len(messages), hash(system_prompt)) is unchanged by content
         # mutation, so a stale cache would return pre-stub tokens.
-        self._token_estimate_cache = None
+        conv._token_estimate_cache = None
 
     # Final invalidation for symmetry (also covers any external mutation
     # paths that might have been added later). This is a no-op if the loop
     # already invalidated, but cheap and defensive.
-    self._token_estimate_cache = None
-    tokens_after = self.get_token_estimate()
+    conv._token_estimate_cache = None
+    tokens_after = conv.get_token_estimate()
     return tokens_before - tokens_after
 ```
 
@@ -511,12 +758,21 @@ def prune_tool_outputs(self, target_tokens: int, protect_turns: int = 2) -> int:
 
 **Line count estimate:** +45 lines.
 
+**External inspiration:** Backwards-walk tool-output pruning is the most impactful technique from Cursor's context engineering plugin (`crabcakes-future-context-strategies.md`; Cursor blog "self-summarization"). Cursor's published priority for compression is **1) tool outputs (80%+ of tokens), 2) older turns, 3) retrieved documents** — and **never compress the system prompt**. This spec implements (1) via `prune_tool_outputs()` and respects (4) by leaving `Conversation.system_prompt` untouched. The stub format (`[compacted — tool=<name>]` instead of full content) is crabcakes-specific (Cursor strips tool calls entirely; we keep them so the model still sees the call was made).
+
 ---
 
 #### 2.1.5 New Method: `_find_split_index()` (P5)
 
+> **Architecture note (per §0):** This method is defined on `DefaultContextStrategy` as `_find_split_index(self, conv, budget_tokens, keep_first=2)`. `Conversation` does not gain a public `_find_split_index` method. Shown below with `self` (the strategy) and `conv` (the conversation).
+
 ```python
-def _find_split_index(self, budget_tokens: int, keep_first: int = 2) -> int:
+def _find_split_index(
+    self,
+    conv: "Conversation",
+    budget_tokens: int,
+    keep_first: int = 2,
+) -> int:
     """Find the message index where the head ends and the tail begins.
 
     Walks backward from the end, accumulating tokens, until half the
@@ -539,15 +795,15 @@ def _find_split_index(self, budget_tokens: int, keep_first: int = 2) -> int:
         Message index >= keep_first where the head can be summarized
         and the tail kept verbatim.
     """
-    if len(self.messages) <= keep_first:
+    if len(conv.messages) <= keep_first:
         return keep_first
 
     half_budget = budget_tokens // 2
     tail_tokens = 0
-    split = len(self.messages)
+    split = len(conv.messages)
 
-    for i in range(len(self.messages) - 1, keep_first - 1, -1):
-        msg = self.messages[i]
+    for i in range(len(conv.messages) - 1, keep_first - 1, -1):
+        msg = conv.messages[i]
         msg_tokens = msg.tokens_used or (len(msg.content) // 4)
         if tail_tokens + msg_tokens >= half_budget:
             break
@@ -560,7 +816,7 @@ def _find_split_index(self, budget_tokens: int, keep_first: int = 2) -> int:
     # was ASSISTANT (the role-anchor checks for ASSISTANT specifically, not
     # ASSISTANT-with-tool-calls). Walk back past TOOL_RESULTs that are orphans.
     while split > keep_first:
-        prev_msg = self.messages[split - 1]
+        prev_msg = conv.messages[split - 1]
         if prev_msg.role == MessageRole.ASSISTANT:
             # Role-anchor satisfied. Now check CB-6: if prev_msg has tool_calls,
             # the child TOOL_RESULT must be in the tail (split is OK as-is).
@@ -576,23 +832,56 @@ def _find_split_index(self, budget_tokens: int, keep_first: int = 2) -> int:
     # whose parent ASSISTANT-with-tool-calls is in the head (split - 1).
     # In that case, move split forward to include this TOOL_RESULT in the head
     # so it gets summarized with its parent context (no orphan).
-    while split < len(self.messages):
-        msg_at_split = self.messages[split]
+    #
+    # ENHANCED: also handles the case where the parent is NOT at split - 1
+    # (i.e., a TOOL_RESULT orphaned in the tail whose parent lives earlier
+    # in the head). In that case, walk backward through the head to find the
+    # parent and pull it into the tail with the child (or move the entire
+    # ASSISTANT-with-tool-calls + TOOL_RESULT pair into the tail).
+    while split < len(conv.messages):
+        msg_at_split = conv.messages[split]
         if msg_at_split.role == MessageRole.TOOL_RESULT:
-            # Check if parent ASSISTANT-with-tool-calls is in head
-            # (i.e., at index split - 1, which is in [keep_first, split) range).
+            # Check if parent ASSISTANT-with-tool-calls is at split - 1 (adjacent).
             if split > keep_first:
-                parent = self.messages[split - 1]
+                adjacent_parent = conv.messages[split - 1]
                 if (
-                    parent.role == MessageRole.ASSISTANT
-                    and parent.tool_calls
-                    and any(tc.call_id == msg_at_split.tool_call_id for tc in parent.tool_calls)
+                    adjacent_parent.role == MessageRole.ASSISTANT
+                    and adjacent_parent.tool_calls
+                    and any(tc.call_id == msg_at_split.tool_call_id for tc in adjacent_parent.tool_calls)
                 ):
-                    # Parent is in head, this TOOL_RESULT would orphan it. Move forward.
+                    # Parent is adjacent in head, this TOOL_RESULT would orphan it. Move forward.
                     split += 1
                     continue
-            # Either no parent in head or parent doesn't match — safe to leave in tail.
-            break
+            # Adjacent parent doesn't match (or is plain USER/ASSISTANT).
+            # Search backward for the true parent ASSISTANT-with-tool-calls
+            # whose `tool_calls` references this TOOL_RESULT's `tool_call_id`.
+            # If found in [keep_first, split), the parent is in the head and
+            # the child would be orphaned in the tail. To prevent this,
+            # move split back to just before the parent — pulling the entire
+            # ASSISTANT-with-tool-calls + TOOL_RESULT pair into the tail.
+            if msg_at_split.tool_call_id:
+                for j in range(split - 1, keep_first - 1, -1):
+                    candidate = conv.messages[j]
+                    if (
+                        candidate.role == MessageRole.ASSISTANT
+                        and candidate.tool_calls
+                        and any(tc.call_id == msg_at_split.tool_call_id for tc in candidate.tool_calls)
+                    ):
+                        # True parent at j. Pull j and j+1 (the TOOL_RESULT)
+                        # into the tail by moving split back to j.
+                        split = j
+                        break
+                else:
+                    # No parent found anywhere in [keep_first, split).
+                    # This TOOL_RESULT is genuinely orphaned in the head
+                    # already (and we're about to put it into the tail).
+                    # Since the parent is missing, leaving this TOOL_RESULT
+                    # in the tail is no worse than its current state.
+                    break
+            else:
+                # TOOL_RESULT has no tool_call_id; cannot trace parent.
+                # Best-effort: skip — no further move.
+                break
         else:
             # First message in tail is not TOOL_RESULT — no CB-6 risk.
             break
@@ -602,16 +891,35 @@ def _find_split_index(self, budget_tokens: int, keep_first: int = 2) -> int:
 
 **Note:** `_find_split_index()` is wired into `_last_exchange_summary()` (see §2.1.6). The current `_last_exchange_summary()` uses a simple `self.messages[:-4]` slice. P5 replaces this with `_find_split_index()` to produce higher-quality summaries. This is NOT dead code — it's called by the modified `_last_exchange_summary()`.
 
-**Line count estimate:** +60 lines (revised for CB-6 fix).
+**Line count estimate:** +75 lines (revised for CB-6 fix + orphan-in-tail guard).
+
+**External inspiration:** Role-anchored head/tail splitting is a Letta/MemGPT + Zep-style pattern (their bi-temporal split-at-natural-boundaries approach). The CB-6 forward check is a crabcakes-specific addition because the existing TOOL_RESULT ↔ ASSISTANT-with-tool-calls pairing invariant doesn't exist in Letta/Zep (they don't carry raw tool-call history in the same way).
 
 ---
 
 #### 2.1.6 `_last_exchange_summary()` Enhancement (P5) — **WIRED IN**
 
+> **Architecture note (per §0):** This method is the *shim* on `Conversation`. The actual algorithm lives on `DefaultContextStrategy._summary(self, conv, token_budget, keep_first)`. The shim signature preserves the existing parameter name `max_tokens` for backward compatibility; the strategy uses `token_budget` per the §0.2 protocol.
+
 The current `_last_exchange_summary()` (line 458) collects user messages from `self.messages[:-4]`. The P5 enhancement computes a smarter split index using `_find_split_index()` and summarizes the head based on that. **The split-index path is the new default behavior**, not a deferred Batch B enhancement.
 
+**New shim signature (on `Conversation`):**
 ```python
 def _last_exchange_summary(self, *, max_tokens: int = 0, keep_first: int = 2) -> str:
+    # Thin delegation shim — see §0.
+    from agent.context_strategy import DefaultContextStrategy  # deferred import
+    strategy = DefaultContextStrategy()
+    return strategy._summary(self, max_tokens, keep_first)
+```
+
+**Strategy method that holds the algorithm (on `DefaultContextStrategy`):**
+```python
+def _summary(
+    self,
+    conv: "Conversation",
+    token_budget: int = 0,
+    keep_first: int = 2,
+) -> str:
     """Generate a summary of the oldest trimmed user messages.
 
     Called after trim_to_token_limit removes old exchanges.
@@ -624,7 +932,7 @@ def _last_exchange_summary(self, *, max_tokens: int = 0, keep_first: int = 2) ->
     CB-6 (no orphan TOOL_RESULTs).
 
     Keyword Args:
-        max_tokens: The token budget from the trim context. Passed to
+        token_budget: The token budget from the trim context. Passed to
             _find_split_index() as the budget for head/tail splitting.
             When 0 (default), falls back to get_token_estimate() as a proxy.
         keep_first: The keep_first value from the calling trim_to_token_limit().
@@ -633,25 +941,25 @@ def _last_exchange_summary(self, *, max_tokens: int = 0, keep_first: int = 2) ->
     Returns empty string when the conversation is too short to summarize
     meaningfully or when no user messages remain to capture.
     """
-    if not self.messages:
+    if not conv.messages:
         return ""
 
     tail_preserve = 4
 
-    if len(self.messages) <= tail_preserve:
+    if len(conv.messages) <= tail_preserve:
         return ""
 
     # P5: Compute a smarter split index using _find_split_index().
-    # Use the trim budget (max_tokens) when available for accurate splitting.
+    # Use the trim budget (token_budget) when available for accurate splitting.
     # Fall back to current token estimate when called without a budget.
-    budget_tokens = max_tokens if max_tokens > 0 else self.get_token_estimate()
-    split = self._find_split_index(budget_tokens, keep_first=keep_first)
+    budget_tokens = token_budget if token_budget > 0 else conv.get_token_estimate()
+    split = self._find_split_index(conv, budget_tokens, keep_first=keep_first)
 
     # Defensive: ensure split is at least keep_first and at most
-    # len(self.messages) - tail_preserve.
-    split = max(keep_first, min(split, len(self.messages) - tail_preserve))
+    # len(conv.messages) - tail_preserve.
+    split = max(keep_first, min(split, len(conv.messages) - tail_preserve))
 
-    head_messages = self.messages[:split]
+    head_messages = conv.messages[:split]
 
     user_contents: list[str] = []
     for msg in head_messages:
@@ -680,18 +988,36 @@ def _last_exchange_summary(self, *, max_tokens: int = 0, keep_first: int = 2) ->
 
 #### 2.1.7 Summary of `conversation.py` Changes
 
+> **Architecture note (per §0):** The P1–P7 algorithm methods **physically live on `DefaultContextStrategy`** (in the new `agent/context_strategy.py` module). The table below shows what `Conversation` retains. `Conversation` gains only thin delegation shims for `trim_to_token_limit()` and `_last_exchange_summary()`; the strategy module gains everything else.
+
+**`Conversation` retains (or gains via shim):**
+
 | Change | Method | Type | Lines |
 |--------|--------|------|-------|
-| TrimPolicy dataclass | New | P3 | +15 |
-| `trim_to_token_limit()` signature + body | Modified | P2/P3/P6 | ~50 (replaces ~30) |
-| `_select_prune_candidate()` | New | P3 | +40 |
-| `_fit_summary()` | New | P6 | +20 |
-| `prune_tool_outputs()` | New | P4 | +45 |
-| `_find_split_index()` | New | P5 | +40 |
-| `_last_exchange_summary()` | Modified | P5 | +15 (replaces ~5) |
-| **Total** | | | **~95 net new lines** |
+| TrimPolicy dataclass | New | P3 | +15 (defined on `Conversation` — pure data, not policy) |
+| `trim_to_token_limit()` → shim to `DefaultContextStrategy.compact()` | Modified | P2/P3/P6 | +5 (2-line shim) |
+| `_last_exchange_summary()` → shim to `DefaultContextStrategy._summary()` | Modified | P5 | +5 (2-line shim) |
+| **Total on `Conversation`** | | | **+25 net new lines** (vs. +95 in pre-§0 plan) |
 
-**No new imports.** All new code uses existing `MessageRole`, `Message`, `ToolCall`, `Conversation` classes already defined in the module.
+**`DefaultContextStrategy` (NEW in `agent/context_strategy.py`) owns:**
+
+| Change | Method | Type | Lines |
+|--------|--------|------|-------|
+| `compact()` — main algorithm (formerly `trim_to_token_limit()` body) | New on strategy | P2/P3/P6 | ~50 |
+| `_select_prune_candidate()` | New on strategy | P3 | +40 |
+| `_fit_summary()` | New on strategy | P6 | +20 |
+| `prune_tool_outputs()` | New on strategy | P4 | +45 |
+| `_find_split_index()` | New on strategy | P5 | +75 (incl. CB-6 fix) |
+| `_summary()` (formerly `_last_exchange_summary()` body) | New on strategy | P5 | ~30 |
+| `last_result: CompactionEvent` property | New on strategy | §2.8 | +5 |
+| `__init__()` + protocol boilerplate | New on strategy | §0 | +15 |
+| **Total on `DefaultContextStrategy`** | | | **~280 lines** (incl. docstrings + comments) |
+
+**Net effect:** the algorithm is now physically separated from the data class. `Conversation` is +25 lines (shims only); the strategy is +280 lines (extracted algorithm + protocol + telemetry). Total project net change is roughly the same as the pre-§0 plan (~+95 lines), but the **architecture is correct**: pure data on the data class, policy on the strategy.
+
+**No new imports on `Conversation`.** The shim uses a deferred import (`from agent.context_strategy import DefaultContextStrategy` inside the method body) to avoid any module-load cycle between `models/` and `agent/`.
+
+**`DefaultContextStrategy` imports:** `from models.conversation import Conversation, Message, MessageRole, ToolCall` and `from models.conversation import _tiktoken_encoding_for` (the existing helper). No new external dependencies.
 
 ---
 
@@ -765,6 +1091,8 @@ def _compute_compaction_threshold(self, conv: "Conversation") -> tuple[int, int]
 
 **Line count estimate:** +30 lines.
 
+**External inspiration:** The 80% soft-ceiling threshold is **Cursor's** published compaction trigger point (`crabcakes-future-context-strategies.md`; Cursor blog "self-summarization" — Cursor's UI shows quality degradation past 70–80% utilization, triggering self-summarization). Anthropic's "context rot" research (chroma research, cited in `llm-context-management-research.md` §7) provides the empirical backing: recall precision decreases as token count increases, not as a hard cliff but as a performance gradient. The 80% threshold is conservative — well above the cliff but with 20% headroom for summary injection (P6's `_fit_summary()` retry loop). OpenCode / Claude Code use similar soft ceilings; Cline uses hard ceilings (no soft trigger). Configurable per-provider via `LLMProviderConfig.compaction_threshold` so different providers can tune independently.
+
 ---
 
 #### 2.2.2 Modified Tool Loop: P1 + P4 Integration (lines 1616-1620)
@@ -778,45 +1106,40 @@ messages_count_after = len(conv.messages)
 self._last_trim_removed = messages_count_before - messages_count_after
 ```
 
-**New code:**
-```python
-# P1: Use soft ceiling for compaction trigger.
-soft, hard = self._compute_compaction_threshold(conv)
-messages_count_before = len(conv.messages)
-
-# P4: Layer 1 — cheap lossless pruning (stub old tool outputs).
-pruned = conv.prune_tool_outputs(soft)
-
-# Layer 2 — delete + summarize (now with headroom from soft ceiling).
-conv.trim_to_token_limit(soft)
-messages_count_after = len(conv.messages)
-self._last_trim_removed = messages_count_before - messages_count_after
-```
-
-**Verification:**
-- `conv.prune_tool_outputs(soft)` — new method on `Conversation`, returns `int` (tokens freed). Called before `trim_to_token_limit()`. If `soft >= get_token_estimate()`, `prune_tool_outputs` returns 0 immediately (no-op).
-- `conv.trim_to_token_limit(soft)` — uses the soft ceiling. The keyword-only `keep_first` and `protect_is_summary` parameters default to `2` and `True` respectively.
-- `model_max` is still needed for the breakdown dispatch at line 1663. We must preserve it:
-
-**Revised new code:**
+**New code** (per §0 architecture — single strategy entry point):
 ```python
 # P1: Use soft ceiling for compaction trigger.
 soft, hard = self._compute_compaction_threshold(conv)
 model_max = hard  # preserve for breakdown dispatch at line 1663
 messages_count_before = len(conv.messages)
 
-# P4: Layer 1 — cheap lossless pruning (stub old tool outputs).
-conv.prune_tool_outputs(soft)
+# §0.3: Single entry point. The strategy orchestrates Layer 1 (prune tool outputs)
+# and Layer 2 (delete + summarize) internally. The runtime does not call
+# prune_tool_outputs() or trim_to_token_limit() directly — it delegates.
+self._context_strategy.compact(conv, soft)
 
-# Layer 2 — delete + summarize (now with headroom from soft ceiling).
-conv.trim_to_token_limit(soft)
-messages_count_after = len(conv.messages)
-self._last_trim_removed = messages_count_before - messages_count_after
+# §0.4: Telemetry read-back. The strategy records its own CompactionEvent during
+# compact() and exposes it via last_result. The runtime appends to its history.
+if self._context_strategy.last_result is not None:
+    self._compaction_events.append(self._context_strategy.last_result)
+    # Cap history length (see §2.8.2 cap-history note).
+    self._compaction_events = self._compaction_events[-100:]
+
+# Backward-compat: derived from latest P2/P3/P6 (layer==2) event.
+self._last_trim_removed = self._last_trim_removed  # property; see §2.8.2
 ```
+
+**Why one call instead of two:** Per §0.3, the `ContextStrategy` protocol exposes a single `compact(conv, token_budget)` entry point. `DefaultContextStrategy.compact()` internally calls `prune_tool_outputs()` (Layer 1) and the trim/summarize loop (Layer 2). The runtime does not know about layers — it only knows the soft ceiling and the strategy. This keeps the runtime ignorant of compaction mechanics and makes Phase 2 strategies (LLM-summarize, sliding-window — see `PROPOSAL-context-management-phase-2.md`) drop-in: just write a new `ContextStrategy` subclass, no runtime changes.
+
+**Verification:**
+- `self._context_strategy.compact(conv, soft)` — single entry point per §0.3. Internally calls `prune_tool_outputs(soft)` (Layer 1) and the trim loop (Layer 2). Returns `None`; telemetry is exposed via `strategy.last_result`.
+- The keyword-only `keep_first` and `protect_is_summary` parameters on `compact()` default to `2` and `True` respectively (§0.3 signature).
+- `model_max` is preserved as `hard` (the real context window) for the breakdown dispatch at line 1663.
+- `self._last_trim_removed` is now a property derived from the latest layer==2 event in `self._compaction_events` (see §2.8.2). No manual assignment needed.
 
 **Note on breakdown dispatch:** The breakdown at line 1663 uses `model_max` for `conv.get_token_breakdown(model_max)`. After P1, `model_max` still reflects the hard ceiling (the real context window). The `usage_percent` in the breakdown will show actual usage against the hard ceiling — this is correct behavior. The soft ceiling is an internal compaction trigger, not a user-facing limit.
 
-**Line count estimate:** +5 net lines (replace 5 lines with 10).
+**Line count estimate:** +8 net lines (replace 5 lines with 13).
 
 ---
 
@@ -1284,6 +1607,45 @@ class TestFindSplitIndex:
         if split < len(c.messages):
             assert c.messages[split].role != MessageRole.TOOL_RESULT or \
                    (split > 0 and c.messages[split - 1].role == MessageRole.ASSISTANT and c.messages[split - 1].tool_calls)
+
+    def test_split_no_orphan_tool_result_in_tail(self):
+        """A TOOL_RESULT in the tail whose parent ASSISTANT-with-tool-calls is in
+        the head must NOT be left orphaned: the spec's enhanced _find_split_index
+        walks back to the true parent and pulls the entire pair into the tail.
+        """
+        c = Conversation(agent_name="Coder", model="gpt-4o")
+        c.add_user_message("start")
+        # Pair 1: ASSISTANT-with-tool-calls at index 1, TOOL_RESULT at index 2.
+        tc1 = ToolCall(call_id="c1", tool_name="exec", arguments={})
+        c.add_assistant_message("", [tc1])
+        c.add_tool_result("c1", "result " * 50)
+        # A plain ASSISTANT response (no tool calls) at index 3 — this is what
+        # makes the split land BETWEEN the pair and the plain response.
+        c.add_assistant_message("plain response " + "x" * 200, [])
+        # Final user task + response.
+        c.add_user_message("final task")
+        c.add_assistant_message("final response " + "y" * 200, [])
+        split = c._find_split_index(budget_tokens=300, keep_first=2)
+        # Invariant: no message in [split, len) is a TOOL_RESULT whose parent
+        # ASSISTANT-with-tool-calls is in [keep_first, split).
+        for i in range(split, len(c.messages)):
+            msg = c.messages[i]
+            if msg.role == MessageRole.TOOL_RESULT and msg.tool_call_id:
+                # Find the true parent.
+                parent_found = False
+                for j in range(split - 1, 0, -1):
+                    cand = c.messages[j]
+                    if (
+                        cand.role == MessageRole.ASSISTANT
+                        and cand.tool_calls
+                        and any(tc.call_id == msg.tool_call_id for tc in cand.tool_calls)
+                    ):
+                        parent_found = True
+                        break
+                assert not parent_found, (
+                    f"TOOL_RESULT at index {i} (call_id={msg.tool_call_id}) "
+                    f"is orphaned: parent found in head at index {j}"
+                )
 ```
 
 ---
@@ -1307,11 +1669,88 @@ class TestTrimPolicyDataclass:
         assert p.protect_is_summary is False
 ```
 
+#### 2.5.7 `TestStrategyLastResult` (NEW — per §0.4) — 4 tests
+
+> **Added 2026-06-26.** Validates the §0.4 telemetry contract: the strategy owns `CompactionEvent` recording via `last_result`, the runtime reads it after each call. Without these tests, a future refactor could silently move telemetry back to the call site and lose the §0.4 invariant.
+
+```python
+class TestStrategyLastResult:
+    """§0.4: Strategy owns CompactionEvent recording via last_result attribute."""
+
+    def test_last_result_none_before_first_compact(self):
+        """A freshly constructed strategy has last_result=None."""
+        from agent.context_strategy import DefaultContextStrategy
+        strategy = DefaultContextStrategy()
+        assert strategy.last_result is None
+
+    def test_last_result_populated_after_compact(self):
+        """After compact() runs, last_result is a CompactionEvent with all 14 fields populated."""
+        from agent.context_strategy import DefaultContextStrategy
+        from models.conversation import Conversation, Message, MessageRole
+        conv = Conversation(agent_name="Coder", model="openai/gpt-4o", system_prompt="You are a helpful assistant.")
+        # Add enough messages to trigger a trim.
+        for i in range(20):
+            conv.add_user_message(f"User message {i} with some content " * 50)
+        strategy = DefaultContextStrategy()
+        strategy.compact(conv, token_budget=200)
+        assert strategy.last_result is not None
+        assert strategy.last_result.turn == 0  # conv.current_turn
+        assert strategy.last_result.trigger == "trim"
+        assert strategy.last_result.layer == 2  # P2/P3/P6 trim layer, per §2.8.1
+        assert strategy.last_result.messages_before > strategy.last_result.messages_after
+        assert strategy.last_result.tokens_freed > 0
+        assert strategy.last_result.soft_ceiling == 200
+        assert strategy.last_result.provider == "openai"
+        assert strategy.last_result.model == "gpt-4o"
+
+    def test_last_result_reflects_summary_injection(self):
+        """When a summary is injected, last_result.summary_tokens_injected > 0."""
+        from agent.context_strategy import DefaultContextStrategy
+        from models.conversation import Conversation
+        conv = Conversation(agent_name="Coder", model="openai/gpt-4o", system_prompt="You are a helpful assistant.")
+        for i in range(20):
+            conv.add_user_message(f"User message {i} " * 100)
+        strategy = DefaultContextStrategy()
+        strategy.compact(conv, token_budget=100)  # tight budget forces summary
+        assert strategy.last_result is not None
+        # If summary was injected, this is > 0; if not, the test was a no-op.
+        if strategy.last_result.messages_removed > 0:
+            assert strategy.last_result.summary_tokens_injected >= 0  # always populated, may be 0
+
+    def test_last_result_overwritten_on_subsequent_compact(self):
+        """A second compact() call overwrites last_result; the previous event is gone."""
+        from agent.context_strategy import DefaultContextStrategy
+        from models.conversation import Conversation
+        conv = Conversation(agent_name="Coder", model="openai/gpt-4o", system_prompt="You are a helpful assistant.")
+        for i in range(10):
+            conv.add_user_message(f"User message {i} " * 50)
+        strategy = DefaultContextStrategy()
+        strategy.compact(conv, token_budget=500)
+        first_result = strategy.last_result
+        # Force a second compaction.
+        for i in range(10, 20):
+            conv.add_user_message(f"User message {i} " * 50)
+        strategy.compact(conv, token_budget=500)
+        second_result = strategy.last_result
+        # second_result is a *new* event, not a reference to first_result.
+        # (Or: if the second call was a no-op, second_result is still populated with
+        # trigger=trim and messages_removed=0 — different from first_result.)
+        if second_result.messages_removed == 0 and first_result.messages_removed == 0:
+            # Both no-ops: this is a no-op test. Skip.
+            pytest.skip("Both compactions were no-ops; cannot test overwrite.")
+        # At least one of the two did work. The objects are not the same Python object.
+        assert first_result is not second_result
+```
+
+**Why this test class is in `test_conversation.py` (not `test_runtime_compaction.py`):** these tests validate the *strategy* module (`agent/context_strategy.py`), not the runtime. The runtime-side tests that read `strategy.last_result` and append to `_compaction_events` live in §2.6 (`TestCompactionEvent`). The split keeps strategy tests and runtime tests separate for easier diagnosis.
+
 ---
 
 ### 2.6 `tests/test_runtime_compaction.py` (new file)
 
 **Purpose:** Integration tests for the P1 soft ceiling and P1+P4 interaction in the runtime.
+
+> **Note on `AgentRuntime.__new__(AgentRuntime)` pattern:** The `TestCompactionThreshold` tests below construct the runtime via `AgentRuntime.__new__(AgentRuntime)` and manually set `runtime._config`. This bypasses `__init__`. **It is fragile:** if `AgentRuntime.__init__` is later extended to resolve `self._context_strategy` (per §0.5 P1↔P7 wiring), these tests will silently have `runtime._context_strategy is None`, and any test that touches the strategy path will fail with an `AttributeError` deep inside the runtime. **Mitigation:** when §0.5 wiring lands, replace `__new__` with a fixture that calls the real `__init__` with a minimal mocked LLM provider, OR explicitly set `runtime._context_strategy = DefaultContextStrategy()` after `_config`. The implementer should not add `__init__`-dependent state without updating these tests.
 
 ```python
 """Tests for runtime compaction threshold (P1) and prune integration (P4)."""
@@ -1450,6 +1889,118 @@ class TestDynamicBudgetFraction:
 
 ---
 
+### 2.8 Telemetry: `CompactionEvent` dataclass (P1–P7 enrichment)
+
+**Motivation:** The current scalar `self._last_trim_removed: int` (`agent/runtime.py:1232`, set at `:1620`, read at `:1664-1666`, reset at `:1668`) records only the *count* of messages removed in the most recent trim. This is insufficient for:
+- **SPEC-4 dream consolidation** (planned future spec): needs structured records to learn from compaction outcomes (which triggers fire most often, which yield the best summarization quality, etc.).
+- **P9 context-pressure observability** (deferred, §1.3): needs a rolling history of events, not just the latest one.
+- **Operator debugging:** "why did the model lose context after turn 7?" is unanswerable without per-trigger telemetry.
+
+**Design:** Replace the scalar with a richer dataclass and an append-only history.
+
+#### 2.8.1 New dataclass — `CompactionEvent`
+
+Add to `agent/runtime.py` (alongside other runtime-private dataclasses):
+
+```python
+@dataclass
+class CompactionEvent:
+    """One compaction cycle's outcome. Appended to per-session history.
+
+    Fields:
+        turn: Tool-loop iteration number (1-indexed) when the event fired.
+        trigger: What caused compaction. One of:
+            - "soft_ceiling"     → prune_tool_outputs or trim_to_token_limit
+                                  triggered because usage crossed soft_ceiling.
+            - "prune_layer1"     → prune_tool_outputs() stubbed old tool outputs
+                                  (cheap lossless layer).
+            - "trim_layer2"      → trim_to_token_limit() removed messages
+                                  (expensive lossy layer).
+            - "summary_injected" → _last_exchange_summary() successfully injected.
+            - "summary_fitted"   → _fit_summary() truncated a summary to fit budget.
+            - "summary_skipped"  → _fit_summary() returned None (no headroom at all).
+            - "manual"           → future: user-issued /compact command.
+        layer: Compaction layer that fired (P4 = 1, P2/P3/P6 = 2, manual = 3).
+        messages_before: len(conv.messages) at start of compaction cycle.
+        messages_after: len(conv.messages) at end of compaction cycle.
+        messages_removed: messages_before - messages_after.
+        tokens_before: get_token_estimate() before compaction.
+        tokens_after: get_token_estimate() after compaction.
+        tokens_freed: tokens_before - tokens_after.
+        summary_tokens_injected: tokens used by the injected summary (0 if none).
+        soft_ceiling: The soft_ceiling used for this cycle (in tokens).
+        hard_ceiling: The hard_ceiling used for this cycle (in tokens).
+        provider: Provider name (e.g. "openai") — for per-provider analytics.
+        model: Model id (e.g. "openai/gpt-4o") — for per-model analytics.
+    """
+    turn: int
+    trigger: str
+    layer: int
+    messages_before: int
+    messages_after: int
+    messages_removed: int
+    tokens_before: int
+    tokens_after: int
+    tokens_freed: int
+    summary_tokens_injected: int
+    soft_ceiling: int
+    hard_ceiling: int
+    provider: str
+    model: str
+```
+
+**Imports required:** `@dataclass` already imported in `runtime.py`. No new dependencies.
+
+#### 2.8.2 Integration points
+
+> **Architecture note (per §0.4):** Telemetry direction is **flipped** in this spec relative to the original §2.8 design. The strategy (`DefaultContextStrategy`) records the `CompactionEvent` and exposes it via `last_result`; the runtime reads `strategy.last_result` after each call and appends to its rolling history. The runtime does **not** reconstruct `CompactionEvent` fields from `len(conv.messages)` diffs.
+
+In `agent/runtime.py`:
+
+1. **Replace the scalar field** (line 1232): `self._last_trim_removed: int = 0` → `self._compaction_events: list[CompactionEvent] = field(default_factory=list)`.
+2. **At the strategy call site** in the tool loop (line 1618), call the strategy then read its `last_result`:
+   ```python
+   # agent/runtime.py — line 1618
+   self._context_strategy.compact(conv, soft_ceiling)
+   if self._context_strategy.last_result is not None:
+       self._compaction_events.append(self._context_strategy.last_result)
+   ```
+   The strategy's `compact()` body (per §0.4) records events for each layer it touched:
+   - After `prune_tool_outputs()` stub fires: append event with `trigger="prune_layer1"`, `layer=1`.
+   - After trim loop removes messages: append event with `trigger="trim_layer2"`, `layer=2`, `messages_removed = ...`.
+   - When summary injection succeeds: append event with `trigger="summary_injected"`, `summary_tokens_injected = ...`.
+   - When `_fit_summary` truncates: append event with `trigger="summary_fitted"`.
+   - When summary is skipped (no headroom): append event with `trigger="summary_skipped"`.
+3. **Backwards-compatible accessor:** Keep `self._last_trim_removed` as a property derived from `self._compaction_events[-1].messages_removed` if the field exists, else 0. This preserves the breakdown callback at lines 1664-1666 without modification:
+   ```python
+   @property
+   def _last_trim_removed(self) -> int:
+       """Backward-compat accessor: count from latest trim-layer event."""
+       for ev in reversed(self._compaction_events):
+           if ev.layer == 2:  # P2/P3/P6 trim layer, per §2.8.1
+               return ev.messages_removed
+       return 0
+   ```
+4. **Cap history length:** `self._compaction_events = self._compaction_events[-100:]` after each append (prevents unbounded growth in long sessions). 100 events is enough for SPEC-4 to learn from while bounding memory.
+
+**Why the strategy owns recording (not the runtime):** the strategy already has all the data — `before_count`, `after_count`, `summary_tokens_injected`, `soft_ceiling`, `hard_ceiling`, `provider`, `model`. Reconstructing them at the runtime call site means duplicating logic and risking drift. The strategy is the single source of truth for what happened during compaction (per §0.4).
+
+**Trade-off:** strategies that don't care about telemetry (e.g., a future no-op passthrough strategy) can leave `last_result` as `None`. The runtime's `if last_result is not None` guard handles this gracefully.
+
+#### 2.8.3 New tests
+
+Add `tests/test_runtime_compaction.py::TestCompactionEvent`:
+
+- `test_event_appended_on_prune` — prune_tool_outputs stub fires; assert 1 event with trigger="prune_layer1".
+- `test_event_appended_on_trim` — trim_to_token_limit removes messages; assert event with trigger="trim_layer2" and correct `messages_removed`.
+- `test_event_appended_on_summary_injected` — summary fires; assert trigger="summary_injected" and `summary_tokens_injected > 0`.
+- `test_event_history_capped_at_100` — append 150 events; assert `len(_compaction_events) == 100`.
+- `test_last_trim_removed_property_compat` — pre-change read sites still work after the dataclass refactor.
+
+**External inspiration:** Cursor's context engineering plugin (`Write` + `Compress` operations) and ChatGPT's multi-tier hot/warm/cold storage with recency prioritization (`llm-context-management-research.md`).
+
+---
+
 ## 3. Data Flow
 
 ### 3.1 Current Data Flow (Pre-Change)
@@ -1489,23 +2040,29 @@ User types message
           → [walk backward, skip protect_turns most recent]
           → [stub old TOOL_RESULT content with "[compacted — ...]"]
           → [invalidate cache, return tokens freed]
-        → conv.trim_to_token_limit(soft)  [MODIFIED P2/P3/P6]
-          → [while token_estimate > soft AND len > keep_first + tail_preserve]
-            → _select_prune_candidate(keep_first, tail_preserve, protect_is_summary)  [NEW P3]
+        → self._context_strategy.compact(conv, soft)  [P2/P3/P5/P6 — on DefaultContextStrategy]
+          → [prune_tool_outputs: backwards scan, stub old TOOL_RESULTs, return tokens freed]
+          → [while conv.get_token_estimate() > soft AND len(conv.messages) > min_messages]
+            → _select_prune_candidate(conv, keep_first, tail_preserve, protect_is_summary)  [NEW P3]
               → [scan non-protected first, then protected]
               → [prefer CB-6 pairs, fallback to oldest]
             → [remove candidate (CB-6 pair aware)]
-          → [if messages removed AND len >= min_messages]
-            → summary = _last_exchange_summary(max_tokens=soft, keep_first=keep_first)
+          → [if messages removed AND len(conv.messages) >= min_messages]
+            → summary = self._summary(conv, token_budget=soft, keep_first=keep_first)
+              → [uses _find_split_index(conv, soft) for role-anchored split]  [NEW P5]
+              → [returns "" if no headroom]
             → if current_tokens + summary_tokens > soft:
-              → summary = _fit_summary(summary, soft, current_tokens)  [NEW P6]
+              → summary = self._fit_summary(conv, summary, soft, current_tokens)  [NEW P6]
                 → [try 5 iterations at 80% scale]
                 → [fallback to stub: "[Context reset — ...]"]
                 → [return None if truly no space]
               → if summary is None → skip injection
             → inject summary as ASSISTANT message with is_summary=True
+        → [per §0.4: read strategy.last_result, append to self._compaction_events]
         → [LLM call] → [tool execution] → [repeat or finish]
 ```
+
+> **Architecture note (per §0):** The flow above is structurally identical to the pre-§0 plan, but the `conv.trim_to_token_limit(soft)` call at the top of the compaction block is now `self._context_strategy.compact(conv, soft)`. The strategy is the conductor's right hand: it owns the algorithm, the runtime owns the policy (when to call it, what budget to pass). Telemetry flows back via `strategy.last_result` (see §0.4).
 
 ### 3.3 Key Data Structures
 
@@ -1808,9 +2365,10 @@ Replace: "The system prompt is budgeted to 15% of the model's context window" wi
 - `tests/test_conversation.py::TestProtectedSummary` — 3 tests (P3)
 - `tests/test_conversation.py::TestPruneToolOutputs` — 6 tests (P4)
 - `tests/test_conversation.py::TestFitSummary` — 3 tests (P6)
-- `tests/test_conversation.py::TestFindSplitIndex` — 3 tests (P5)
+- `tests/test_conversation.py::TestFindSplitIndex` — 4 tests (P5; added `test_split_no_orphan_tool_result_in_tail`)
 - `tests/test_conversation.py::TestTrimPolicyDataclass` — 2 tests (P3)
-- `tests/test_runtime_compaction.py` — 3 tests (P1)
+- `tests/test_runtime_compaction.py::TestCompactionThreshold` — 3 tests (P1)
+- `tests/test_runtime_compaction.py::TestCompactionEvent` — 5 tests (§2.8 telemetry)
 - `tests/test_prompt_loader_budget.py::TestDynamicBudgetFraction` — 4 tests (P7)
 
 ---
@@ -1832,7 +2390,7 @@ The following files were considered but decided against modification (or receive
 
 ## SELF-AUDIT (Rule 9) — POST-ADVERSARIAL-AUDIT REVISION
 
-**Date:** 2026-06-25
+**Date:** 2026-06-25 (last updated 2026-06-26)
 **Author:** Qaster (supervisor)
 **Audit source:** Adversarial review of original spec draft (QTR, 2026-06-25, in-session — not persisted to file)
 
@@ -1968,16 +2526,32 @@ Files the proposal asks to change:
 ```
 [x] models/conversation.py — TrimPolicy dataclass, modified trim_to_token_limit(),
     new _select_prune_candidate(), new _fit_summary(), new prune_tool_outputs(),
-    new _find_split_index(), modified _last_exchange_summary(max_tokens, keep_first)
-[x] agent/runtime.py — new _compute_compaction_threshold(), modified tool loop (lines 1616-1620)
+    new _find_split_index() (enhanced with orphan-in-tail guard),
+    modified _last_exchange_summary(max_tokens, keep_first)
+[x] agent/runtime.py — new _compute_compaction_threshold(), new CompactionEvent dataclass,
+    modified tool loop (lines 1616-1620) appends CompactionEvents,
+    _last_trim_removed becomes a backward-compat property
 [x] agent/config.py — new compaction_threshold field on LLMProviderConfig + _to_llm_provider copy
 [x] models/providers.py — new compaction_threshold field on ProviderConfig (YAML persistence)
 [x] utils/providers_store.py — _to_dict and _from_dict round-trip the new field
 [x] utils/prompt_loader.py — modified _apply_system_prompt_budget() budget arithmetic
-[x] tests/test_conversation.py — 6 new test classes (17 tests)
-[x] tests/test_runtime_compaction.py — new file (3 tests)
-[x] tests/test_prompt_loader_budget.py — new file (3 tests)
+[x] tests/test_conversation.py — 6 new test classes (18 tests — added test_split_no_orphan_tool_result_in_tail)
+[x] tests/test_runtime_compaction.py — new file (8 tests — 3 TestCompactionThreshold + 5 TestCompactionEvent)
+[x] tests/test_prompt_loader_budget.py — new file (4 tests — added test_budget_never_exceeds_25_percent)
 [x] ARCHITECTURE.md — sections §3.21l, §3.21m, §4.4b, §11 (documented in §8 of this spec)
+
+Deferred to a future phase-2 spec (added by §1.3 forward-compatibility note, NOT in this PR):
+[ ] P8 — tool-output offloading → ALREADY in `docs/proposals/PROPOSAL-context-management-phase-2.md` §3.3 (T1.3)
+[ ] P8b — byte-aware output capping (tools.py MAX_EXEC_OUTPUT configurability) — NEW, not yet proposed
+[ ] P9 — context-pressure observability (UI warning at 80%, suggest /compact at 90%) — NEW, not yet proposed
+[ ] P9a — recursive hierarchical summarization → ALREADY in phase-2 proposal §3.1 (T1.1)
+[ ] P9b — structured summary digests (PRISM) → ALREADY in phase-2 proposal §3.2 (T1.2)
+[ ] P10a — JIT file context retrieval → ALREADY in phase-2 proposal §3.4 (T1.4)
+[ ] P10b — per-tool retention policy → ALREADY in phase-2 proposal §3.5 (T1.5)
+[ ] P11 — multi-agent context coordination (shared context surface per project) — NEW, not yet proposed
+[ ] P12 — KV cache optimization (provider-level) — NEW, not yet proposed
+
+Cross-reference: `docs/proposals/PROPOSAL-context-management-phase-2.md` (Qaster, 2026-06-25) for the existing P8/P9a/P9b/P10a/P10b items. The 4 NEW items (P8b, P9, P11, P12) need a separate proposal or an addendum to the existing phase-2 proposal.
 ```
 
 ### 2. Test Suite

@@ -1,8 +1,8 @@
 # Proposal: Context Management Phase 2 — Beyond the Open-Source Frontier
 
 **Author:** Qaster (supervisor)
-**Date:** 2026-06-25
-**Status:** Awaiting captain review
+**Date:** 2026-06-25 (original); §10 addendum 2026-06-26
+**Status:** Awaiting captain review (original + addendum)
 **Severity:** MEDIUM — Phase 1 (P1–P7, shipped via SPEC-CONTEXT-MANAGEMENT-ROADMAP) brings crabcakes to parity with the best open-source agents. This phase goes beyond parity to adopt 2026 frontier patterns from academic papers and production platforms.
 
 **Source research:**
@@ -428,6 +428,123 @@ For each item, verify before implementation:
 - `docs/proposals/PROPOSAL-context-management-roadmap.md` — Phase 1 (P1–P7), ship-pending.
 - `docs/proposals/PROPOSAL-context-bloat-fix.md` — Phase 0 (CB-1 through CB-5), shipped.
 - `docs/proposals/PROPOSAL_PRIORITY_ROADMAP_2026-06-12.md` — how this fits the broader 2026 roadmap.
+
+---
+
+## 10. Addendum (2026-06-26) — New Items Beyond the Original Phase-2 Scope
+
+After completing the Phase 1 spec patch (SPEC-CONTEXT-MANAGEMENT-ROADMAP §1.3 "Out of Scope"), four additional future-phase items were identified that were **not** covered by the original T1.1–T1.5 scope of this proposal. They are documented here so that a single phase-2 effort can adopt them without needing a separate proposal.
+
+### 10.1 P8b — Byte-Aware Output Capping
+
+**Source:** `hidden-gems-agent-context-management.md` (Austin1serb/agents-md `head -c` vs `head -n` distinction, lines 27-31).
+**Status:** New, not yet proposed elsewhere.
+**Effort:** Trivial (1-2 hours).
+
+**Context:** `agent/tools.py:101` already has `MAX_EXEC_OUTPUT = 100 * 1024` (100 KB hard cap). The byte-truncation at `tools.py:434-435` and `:531-532` is **already byte-cap** (not line-cap), satisfying the `agents-md` rule. The remaining gap is **configurability + observability**:
+
+- **Configurability:** Expose `tools.output_byte_cap: int` on `AgentConfig` so per-agent overrides are possible (Debug agents may want 50 KB; Coder agents may want 200 KB). Default 100 KB (current behavior).
+- **Observability:** When truncation fires, emit a `CompactionEvent` with `trigger="output_byte_truncated"` (new trigger string, see §10.2's expanded `CompactionEvent` triggers). The agent can then know "I lost information in that tool call" rather than being silently capped.
+
+**Why:** Even with T1.3 offload (lossless replacement), some tools may refuse to offload (read-only stdout streams) and still need a hard byte cap. The configurability + observability are the missing pieces.
+
+### 10.2 P9 — Context-Pressure Observability
+
+**Source:** Anthropic "context rot" + Cursor's context engineering plugin (`Write` + `Compress` operations).
+**Status:** New, not yet proposed elsewhere. Builds on Phase 1 §2.8 (`CompactionEvent` dataclass).
+**Effort:** Medium (2-3 days).
+
+**Context:** Phase 1 introduces `CompactionEvent` (§2.8) but **only the runtime** sees it. Users have no signal that "you're approaching the soft ceiling" until quality degrades. Production systems (Cursor, ChatGPT) provide:
+
+- A persistent indicator (icon or progress bar) showing % utilization.
+- A warning at 80% ("approaching context limit").
+- A suggestion at 90% ("consider /compact").
+
+**What:** Add a `ContextPressureState` dataclass and a UI surface (status bar component):
+
+```python
+@dataclass
+class ContextPressureState:
+    utilization: float          # 0.0 - 1.0 (current / soft_ceiling)
+    consecutive_high_turns: int  # how many turns above soft_ceiling in a row
+    last_compaction_turn: int    # which turn last compacted
+    trend: Literal["rising", "stable", "falling"]  # delta over last 3 turns
+    recommendation: Literal["ok", "consider_compact", "compact_now"]
+```
+
+`recommendation` is computed from rules:
+- `"ok"` if `utilization < 0.80` and `consecutive_high_turns == 0`.
+- `"consider_compact"` if `utilization >= 0.80` for 2+ turns.
+- `"compact_now"` if `utilization >= 0.90` for 1 turn, or `>= 0.80` for 5+ consecutive turns.
+
+The UI (status bar widget) reads `ContextPressureState` from the runtime and renders the appropriate color/icon. Operator can also dump it via a debug command for support requests.
+
+**Why:** Without observability, compaction is invisible to users until quality drops. Cursor reports a 20%+ reduction in "agent went off the rails" support tickets just from surfacing the indicator.
+
+### 10.3 P11 — Multi-Agent Context Coordination
+
+**Source:** `hidden-gems-agent-context-management.md` (ContextOptimizer pattern, lines 47-50) + `crabcakes-deep-dive-report.md` "frontier" note (lines 157-159).
+**Status:** New, not yet proposed elsewhere.
+**Effort:** High (architectural change; possibly a v3 rewrite candidate).
+
+**Context:** Crabcakes runs multiple agents (Coder, Debugger, Auxilium). Each independently reads `.crabcakes/` project docs, recent git history, bug journal entries. With long sessions, the same docs are read multiple times across agents, burning context tokens redundantly.
+
+**What:** Introduce a **shared context surface** per project — a single read-only store that all agents consult:
+
+```python
+# In agent/context.py:
+class SharedProjectContext:
+    """Read-only context surface shared by all agents in one project."""
+    
+    project_root: Path
+    docs_index: DocsIndex              # from .crabcakes/docs/
+    git_history: GitHistory             # recent commits, file changes
+    bug_journal: BugJournal             # open and recent bugs
+    rules: RulesRegistry                # from .crabcakes/rules/
+    
+    def to_prompt(self) -> str:
+        """Render as a compact index (see T1.4 for the JIT pattern)."""
+        ...
+```
+
+Each agent's `_run_loop()` queries the shared store once per conversation turn (cached) instead of re-reading from disk. Cross-agent communication (via `agent_to_agent.py` for handoffs) becomes trivial — the receiver reads from the same shared store the sender wrote to.
+
+**Why:** Eliminates the "two agents in the same project, both reading the same 50 KB of docs" duplication. T1.4 (JIT retrieval) reduces per-agent cost; P11 reduces cross-agent cost. Together they cut total session tokens 40-60%.
+
+**Open question:** Where does the shared store live? Options: (a) in-memory in the `AgentRuntime`, (b) on-disk JSON in `.crabcakes/runtime/shared_context.json`, (c) SQLite. Recommendation: (b) for simplicity + persistence across restarts. Re-evaluate if memory pressure becomes an issue.
+
+### 10.4 P12 — KV-Cache Optimization
+
+**Source:** `llm-context-management-research.md` (KV-cache eviction: H2O, SnapKV, FastGen, Infini-attention).
+**Status:** New, not yet proposed. **Likely deferred indefinitely** (provider-side concern).
+**Effort:** N/A — requires provider collaboration.
+
+**Context:** LLM inference uses KV caches to avoid re-encoding static prompt sections. If the system prompt + bug journal + rules don't change between turns, they shouldn't be re-encoded — they should be cached. Today, crabcakes sends the entire system prompt fresh every turn (the provider may or may not cache it depending on implementation).
+
+**What:** Crabcakes can:
+1. **Structure the prompt** so static sections come first, dynamic sections last (providers like vLLM and TensorRT-LLM cache based on prefix matching).
+2. **Pin section boundaries** with marker tokens so the provider's cache invalidation logic can detect "this part is stable, this part changed."
+3. **Measure cache hit rate** via provider-specific APIs (some providers expose this).
+
+**Why this is unlikely to be crabcakes-side:** Most KV-cache optimizations (H2O importance scoring, SnapKV observation windows, FastGen pattern detection) are **internal to the inference engine**. Crabcakes can only affect prompt *structure*, not attention *mechanisms*. Pursuing this would be a category error.
+
+**Recommendation:** Defer indefinitely. Re-evaluate only if a provider exposes a cache-friendly API or if crabcakes runs its own inference (then it becomes a real lever).
+
+### 10.5 Updated Delivery Order (with new items)
+
+| Phase | Scope | Depends on | Estimated effort |
+|-------|-------|------------|------------------|
+| **P8** | T1.3 (tool-output offload) + §10.1 (byte-aware cap) | P4 | 2-3 days |
+| **P9** | T1.1 + T1.2 (stratified + structured summaries) + §10.2 (pressure observability) | P5, P1 telemetry | 5-6 days |
+| **P10** | T1.4 (JIT file context) + T1.5 (per-tool retention) | `agent/context.py` | 4-5 days |
+| **P11** | §10.3 (multi-agent coordination) | Shared runtime | 5-8 days |
+| **P12** | §10.4 (KV-cache) — DEFER INDEFINITELY | N/A | N/A |
+
+Total: ~16-22 days, with P12 explicitly out of scope.
+
+---
+
+**End of addendum.**
 
 ---
 
