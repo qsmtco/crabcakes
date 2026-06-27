@@ -11,7 +11,12 @@ pattern in tests/test_phase4.py. See COMPLETENESS checklist for rationale.
 """
 import pytest
 from agent.context_strategy import DefaultContextStrategy, CompactionEvent
-from models.conversation import Conversation, Message, MessageRole
+from models.conversation import (
+    Conversation,
+    Message,
+    MessageRole,
+    ToolCall,
+)
 
 
 def _append_summary(conv: Conversation, content: str) -> None:
