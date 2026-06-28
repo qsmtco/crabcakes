@@ -564,7 +564,15 @@ class AgentRuntimeHandler:
             si_cfg = agent_def.get_self_improvement_config()
             si_enforcement = si_cfg.get('enforcement')
 
-        # Create conversation if it doesn't exist yet, with project context and filtered tools
+        # Create conversation if it doesn't exist yet, with project context and filtered tools.
+        # First try to load the persisted conversation from disk (preserves message history,
+        # token/cost data, and other state across app restarts). Only create fresh if no
+        # persisted conversation exists.
+        if rt.get_conversation(session_key) is None:
+            loaded = rt.load_conversation(session_key)
+            if loaded:
+                logger.info("send_to_special_agent: loaded persisted conversation for %s", session_key)
+
         if rt.get_conversation(session_key) is None:
             rt.create_conversation(
                 agent_name=agent_def.display_name,
