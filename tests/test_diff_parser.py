@@ -294,3 +294,142 @@ diff --git a/f2.py b/f2.py
 """
         result = parse_diff(diff_text)
         assert "2 files changed" in result.summary
+
+
+class TestSummarizeDiffstat:
+    """Tests for summarize_diffstat(stat_text) → str."""
+
+    def test_empty_string(self):
+        """Empty input → 'No changes'."""
+        assert summarize_diffstat("") == "No changes"
+
+    def test_whitespace_only(self):
+        """Whitespace-only input → 'No changes'."""
+        assert summarize_diffstat("   \n\t  \n") == "No changes"
+
+    def test_no_changes_no_files(self):
+        """Stat output with no parseable file lines → 'No changes'."""
+        # Lines without a '|' separator are ignored by parse_diff_stat,
+        # so this yields an empty list.
+        assert summarize_diffstat("nothing to see here\n") == "No changes"
+
+    def test_no_changes_zero_markers(self):
+        """Stat lines where all per-file adds/dels are zero → 'No changes'."""
+        # parse_diff_stat requires at least one '+' or '-' marker to record
+        # a file, so an empty marker bar also produces "No changes".
+        assert summarize_diffstat("foo.txt | 0\n") == "No changes"
+
+    def test_single_file_additions_only(self):
+        """One file, only additions → '1 file changed, N insertions(+), 0 deletions(-)'."""
+        stat_text = " newfile.py | 3 +++\n 1 file changed, 3 insertions(+), 0 deletions(-)"
+        assert summarize_diffstat(stat_text) == "1 file changed, 3 insertions(+), 0 deletions(-)"
+
+    def test_single_file_deletions_only(self):
+        """One file, only deletions → '1 file changed, 0 insertions(+), N deletions(-)'."""
+        stat_text = " oldfile.py | 2 --\n 1 file changed, 0 insertions(+), 2 deletions(-)"
+        assert summarize_diffstat(stat_text) == "1 file changed, 0 insertions(+), 2 deletions(-)"
+
+    def test_single_file_mixed(self):
+        """One file with both adds and dels → uses the user's example shape."""
+        stat_text = " src/main.py | 5 ++---\n 1 file changed, 2 insertions(+), 3 deletions(-)"
+        assert summarize_diffstat(stat_text) == "1 file changed, 2 insertions(+), 3 deletions(-)"
+
+    def test_multiple_files(self):
+        """Multiple files → 'N files changed, X insertions(+), Y deletions(-)'."""
+        stat_text = (
+            " src/main.py | 5 ++---\n"
+            " tests/test_main.py | 4 +++\n"
+            " README.md | 1 +\n"
+            " 3 files changed, 6 insertions(+), 3 deletions(-)"
+        )
+        assert summarize_diffstat(stat_text) == "3 files changed, 6 insertions(+), 3 deletions(-)"
+
+    def test_multiple_files_no_additions(self):
+        """All-deletions across multiple files."""
+        stat_text = (
+            " a.py | 4 ----\n"
+            " b.py | 2 --\n"
+            " 2 files changed, 0 insertions(+), 6 deletions(-)"
+        )
+        assert summarize_diffstat(stat_text) == "2 files changed, 0 insertions(+), 6 deletions(-)"
+
+    def test_summary_line_ignored(self):
+        """The trailing 'N files changed, ...' line is a normal stat line
+        without '+' or '-' markers, so parse_diff_stat skips it. The summary
+        function should be unaffected by its presence or wording."""
+        # Note: the trailing line is included in the input but should be
+        # ignored (no '+' or '-' markers means parse_diff_stat skips it).
+        stat_text = (
+            " foo.py | 1 +\n"
+            " 1 file changed, 1 insertion(+), 0 deletions(-)"  # wrong counts in the trailer — must not affect output
+        )
+        assert summarize_diffstat(stat_text) == "1 file changed, 1 insertions(+), 0 deletions(-)"
+
+    def test_zero_total_after_parsing_returns_no_changes(self):
+        """If parse_diff_stat somehow yields a file with 0/0 (currently
+        impossible, but defensive), return 'No changes' rather than
+        '1 file changed, 0 insertions(+), 0 deletions(-)'."""
+        # Build a synthetic case: monkey-patch parse_diff_stat to return
+        # an entry that would have been filtered out — guards against
+        # future regressions in parse_diff_stat's filtering logic.
+        from utils import diff_parser
+        original = diff_parser.parse_diff_stat
+        diff_parser.parse_diff_stat = lambda _t: [("foo.py", 0, 0)]
+        try:
+            assert summarize_diffstat("anything") == "No changes"
+        finally:
+            diff_parser.parse_diff_stat = original
+
+    def test_real_git_diff_stat(self, tmp_path):
+        """End-to-end: run `git diff --stat` for real and summarize its output."""
+        import subprocess
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+
+        subprocess.run(["git", "init"], cwd=repo_dir, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=repo_dir, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=repo_dir, capture_output=True)
+
+        (repo_dir / "a.txt").write_text("one\ntwo\nthree\n")
+        (repo_dir / "b.txt").write_text("alpha\n")
+        subprocess.run(["git", "add", "."], cwd=repo_dir, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo_dir, capture_output=True)
+
+        # Modify a.txt (1 add, 1 del) and append a line to b.txt (1 add)
+        (repo_dir / "a.txt").write_text("one\nTWO\nthree\n")
+        (repo_dir / "b.txt").write_text("alpha\nbeta\n")
+
+        stat = subprocess.run(
+            ["git", "diff", "--stat", "HEAD"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+        ).stdout
+
+        summary = summarize_diffstat(stat)
+        assert "2 files changed" in summary
+        assert "2 insertions(+)" in summary
+        assert "1 deletions(-)" in summary
+
+    def test_clean_repo_no_changes(self, tmp_path):
+        """A clean repo produces empty stat output → 'No changes'."""
+        import subprocess
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+
+        subprocess.run(["git", "init"], cwd=repo_dir, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=repo_dir, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=repo_dir, capture_output=True)
+
+        (repo_dir / "a.txt").write_text("hello\n")
+        subprocess.run(["git", "add", "."], cwd=repo_dir, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo_dir, capture_output=True)
+
+        stat = subprocess.run(
+            ["git", "diff", "--stat", "HEAD"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+        ).stdout
+
+        assert summarize_diffstat(stat) == "No changes"
