@@ -223,3 +223,132 @@ def test_get_suggestions_empty_response():
     with patch("utils.spellcheck.subprocess.run", return_value=mock):
         result = get_suggestions("wrld")
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Custom dictionary tests (.crabcakes/dictionary.txt via -p)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not ENCHANT_AVAILABLE, reason="enchant-2 not installed")
+def test_check_words_custom_dict_excludes_word(tmp_path):
+    """A word listed in the custom dictionary is treated as correct."""
+    d = tmp_path / "dictionary.txt"
+    d.write_text("# project jargon\ncrabcakes\nqontinuum\n")
+    result = check_words("hello crabcakes world", dictionary_path=str(d))
+    assert "crabcakes" not in result
+
+
+@pytest.mark.skipif(not ENCHANT_AVAILABLE, reason="enchant-2 not installed")
+def test_check_words_custom_dict_still_flags_other_words(tmp_path):
+    """Custom dictionary only adds words — other misspellings still flagged."""
+    d = tmp_path / "dictionary.txt"
+    d.write_text("crabcakes\n")
+    result = check_words("crabcakes wrld", dictionary_path=str(d))
+    assert "wrld" in result
+    assert "crabcakes" not in result
+
+
+@pytest.mark.skipif(not ENCHANT_AVAILABLE, reason="enchant-2 not installed")
+def test_get_suggestions_custom_dict_marks_word_correct(tmp_path):
+    """A word in the custom dictionary returns [] (correct)."""
+    d = tmp_path / "dictionary.txt"
+    d.write_text("crabcakes\n")
+    # enchant -a returns '*' for a correct word, which get_suggestions ignores
+    suggestions = get_suggestions("crabcakes", dictionary_path=str(d))
+    assert suggestions == []
+
+
+def test_check_words_missing_dict_file_falls_back(tmp_path):
+    """Nonexistent dictionary path → no -p arg, no error."""
+    missing = tmp_path / "does_not_exist.txt"
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return _mock_result("wrld\n")
+
+    with patch("utils.spellcheck.subprocess.run", side_effect=fake_run):
+        result = check_words("some text", dictionary_path=str(missing))
+    assert result == ["wrld"]
+    # -p flag MUST NOT be present when the file doesn't exist
+    assert "-p" not in captured["cmd"]
+
+
+def test_get_suggestions_missing_dict_file_falls_back(tmp_path):
+    """Nonexistent dictionary path → no -p arg, no error."""
+    missing = tmp_path / "does_not_exist.txt"
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return _mock_result("")
+
+    with patch("utils.spellcheck.subprocess.run", side_effect=fake_run):
+        result = get_suggestions("wrld", dictionary_path=str(missing))
+    assert result == []
+    assert "-p" not in captured["cmd"]
+
+
+def test_check_words_none_dict_path_preserves_legacy_behavior():
+    """dictionary_path=None → current behavior (no -p arg)."""
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return _mock_result("")
+
+    with patch("utils.spellcheck.subprocess.run", side_effect=fake_run):
+        result = check_words("some text")
+    assert result == []
+    assert "-p" not in captured["cmd"]
+
+
+def test_check_words_directory_as_dict_path_falls_back(tmp_path):
+    """A directory path (not a file) → no -p arg, no error."""
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return _mock_result("")
+
+    with patch("utils.spellcheck.subprocess.run", side_effect=fake_run):
+        result = check_words("some text", dictionary_path=str(tmp_path))
+    assert result == []
+    assert "-p" not in captured["cmd"]
+
+
+def test_check_words_valid_dict_passes_path(tmp_path):
+    """Valid dictionary file → -p <path> appears in cmd."""
+    d = tmp_path / "dictionary.txt"
+    d.write_text("crabcakes\n")
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return _mock_result("")
+
+    with patch("utils.spellcheck.subprocess.run", side_effect=fake_run):
+        result = check_words("some text", dictionary_path=str(d))
+    assert result == []
+    assert "-p" in captured["cmd"]
+    # The path should appear immediately after -p
+    p_idx = captured["cmd"].index("-p")
+    assert captured["cmd"][p_idx + 1] == str(d)
+
+
+def test_get_suggestions_valid_dict_passes_path(tmp_path):
+    """Valid dictionary file → -p <path> appears in cmd for suggestions too."""
+    d = tmp_path / "dictionary.txt"
+    d.write_text("crabcakes\n")
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return _mock_result("")
+
+    with patch("utils.spellcheck.subprocess.run", side_effect=fake_run):
+        result = get_suggestions("wrld", dictionary_path=str(d))
+    assert result == []
+    assert "-p" in captured["cmd"]
+    assert captured["cmd"][captured["cmd"].index("-p") + 1] == str(d)

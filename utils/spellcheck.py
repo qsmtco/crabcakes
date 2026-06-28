@@ -3,6 +3,8 @@
 Security Manifest:
 - Reads text strings from caller (user-provided message text).
 - Executes the ``enchant-2`` binary via subprocess; no other I/O.
+- Optionally reads a personal word list from a caller-supplied path
+  (``--dictionary-path``) — read-only, no writes.
 - No files are written. No network calls. No secrets accessed.
 - All subprocess calls have a 5-second timeout to prevent hangs.
 """
@@ -10,6 +12,7 @@ Security Manifest:
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 
 logger = logging.getLogger(__name__)
@@ -18,18 +21,43 @@ _ENCHANT_BIN = "enchant-2"
 _TIMEOUT = 5  # seconds
 
 
-def check_words(text: str) -> list[str]:
+def _personal_wordlist_args(dictionary_path: str | None) -> list[str]:
+    """Return ``["-p", path]`` if *dictionary_path* is set and readable.
+
+    Silently returns ``[]`` when the path is unset, missing, or not a
+    regular file — call sites then fall back to enchant's default
+    dictionaries (current behavior preserved).
+    """
+    if not dictionary_path:
+        return []
+    try:
+        if os.path.isfile(dictionary_path):
+            return ["-p", dictionary_path]
+    except OSError:
+        # Defensive: exotic path (e.g. ENOENT races, EACCES) → fall back.
+        pass
+    return []
+
+
+def check_words(text: str, dictionary_path: str | None = None) -> list[str]:
     """Return list of misspelled words found in *text*.
 
     Uses ``enchant-2 -l`` (batch mode — one subprocess call for entire text).
     Deduplicates results while preserving order.
+
+    Args:
+        text: The text to spell-check.
+        dictionary_path: Optional path to a personal word list (one word per
+            line, ``#`` comments allowed). If the file does not exist or is
+            unreadable, falls back to enchant's default dictionaries.
     """
     if not isinstance(text, str) or not text.strip():
         return []
 
+    cmd = [_ENCHANT_BIN, "-l", *_personal_wordlist_args(dictionary_path)]
     try:
         result = subprocess.run(
-            [_ENCHANT_BIN, "-l"],
+            cmd,
             input=text,
             capture_output=True,
             text=True,
@@ -55,18 +83,24 @@ def check_words(text: str) -> list[str]:
     return misspelled
 
 
-def get_suggestions(word: str) -> list[str]:
+def get_suggestions(word: str, dictionary_path: str | None = None) -> list[str]:
     """Return up to 8 spelling suggestions for a misspelled *word*.
 
     Uses ``enchant-2 -a`` (ispell pipe mode).
     Returns empty list if *word* is correctly spelled.
+
+    Args:
+        word: The word to look up suggestions for.
+        dictionary_path: Optional path to a personal word list. Same
+            fallback rules as :func:`check_words`.
     """
     if not isinstance(word, str) or not word.strip():
         return []
 
+    cmd = [_ENCHANT_BIN, "-a", *_personal_wordlist_args(dictionary_path)]
     try:
         result = subprocess.run(
-            [_ENCHANT_BIN, "-a"],
+            cmd,
             input=word,
             capture_output=True,
             text=True,
