@@ -365,18 +365,24 @@ def resolve_context_mode(
 
     Args:
         explicit_mode: One of "auto", "preload", "jit", "hybrid".
-            "auto" is resolved by this function.
+            Case-insensitive; whitespace is stripped. "auto" is resolved by
+            this function.
         model_max_tokens: Model context window from ProviderConfig.
-            If None or 0, defaults to 128_000 for heuristics.
+            If None, 0, or negative, defaults to 128_000 for heuristics.
 
     Returns:
         One of "preload", "hybrid", "jit".
     """
+    # Normalize input via the shared validator (case-insensitive, strips whitespace)
+    from models.providers import validate_provider_context_mode
+    explicit_mode = validate_provider_context_mode(explicit_mode)
+
     if explicit_mode in ("preload", "jit", "hybrid"):
         return explicit_mode
-    if explicit_mode != "auto":
-        raise ValueError(f"Invalid context_mode: {explicit_mode!r}")
-    # auto: resolve by model context window size
+    # explicit_mode is "auto" — resolve by model context window size
+    if model_max_tokens is not None and model_max_tokens <= 0:
+        # Negative/zero window → unknown, use balanced default
+        return "hybrid"
     window = model_max_tokens or 128_000
     if window >= 500_000:
         return "preload"   # large window — convenience wins
@@ -554,9 +560,12 @@ def build_file_context_with_core_files(
     All other behavior (gitignore, .crabcakes/ docs, CB-5 core file
     preservation) is unchanged.
     """
-    # Validate mode
-    if context_mode not in ("preload", "jit", "hybrid"):
-        raise ValueError(f"Invalid context_mode: {context_mode!r}")
+    # Validate and normalize mode (case-insensitive)
+    from models.providers import validate_provider_context_mode
+    context_mode = validate_provider_context_mode(context_mode)
+    if context_mode == "auto":
+        # Should have been resolved by caller; treat as hybrid fallback
+        context_mode = "hybrid"
 
     if not project_path or not os.path.isdir(project_path):
         return ""
