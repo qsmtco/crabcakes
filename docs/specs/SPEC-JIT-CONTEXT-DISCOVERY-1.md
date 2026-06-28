@@ -121,7 +121,7 @@ def build_file_index(
     """Build a compact file index for the system prompt.
 
     Walks the project tree (respecting .gitignore via _load_gitignore_patterns
-    and the EXCLUDED_DIRS frozenset already defined at line 145), groups files
+    and the EXCLUDED_DIRS frozenset already defined at line 197), groups files
     by extension, shows path + size + (optionally) line count. Capped at
     max_entries; if more files exist, appends a truncation note.
 
@@ -142,10 +142,10 @@ def build_file_index(
 ```
 
 **Implementation requirements** (verified against existing helpers in `agent/context.py`):
-- Reuse `_load_gitignore_patterns()` (line 36) — same ignore logic as `build_file_context`
-- Reuse `EXCLUDED_DIRS` frozenset (line 145) — same exclusion logic
-- Skip hidden files (start with `.`) and `__pycache__` (matches `_build_directory_tree` pattern at line 109)
-- Sort files: by extension group, then by size descending within each group (largest first, like `_find_matching_files` at line 397)
+- Reuse `_load_gitignore_patterns()` (line 24) — same ignore logic as `build_file_context`
+- Reuse `EXCLUDED_DIRS` frozenset (line 197) — same exclusion logic
+- Skip hidden files (start with `.`) and `__pycache__` (matches `_build_directory_tree` pattern at line 104)
+- Sort files: by extension group, then by size descending within each group (largest first, like `_find_matching_files` at line 424)
 - Group by extension (last `.` in filename)
 - File metadata: `rel_path` + line count (if enabled) + `os.path.getsize()`
 - Size formatting: human-readable (KB for <1MB, MB for >=1MB). Use `f"{size // 1024}KB"` if < 1MB, else `f"{size // (1024*1024)}MB"`
@@ -268,7 +268,7 @@ def _file_search(
     """Find files by name OR content pattern. Returns grouped, previewed results.
 
     Combines:
-    - Filename matching via agent.context._find_matching_files (line 380)
+    - Filename matching via agent.context._find_matching_files (line 424)
     - Content matching via _search_files (line 505) with grep
 
     Results are grouped by file. Each file shows:
@@ -315,7 +315,7 @@ def _file_search(
 
 #### 2.3.2 New tool registration
 
-Add inside `_register_tools()` after the `search_files` block (around line 920, before `web_search` at line 924):
+Add inside `_register_tools()` after the `search_files` block (note: `_register_tools` is at line 719; `web_search` registration is at line 924 — `file_search` goes before it):
 
 ```python
     # file_search
@@ -442,11 +442,10 @@ def resolve_context_mode(
     Logic:
         - explicit "preload"/"jit"/"hybrid" → return as-is
         - explicit "auto":
-            - if model_max_tokens is None or 0: return "preload" (backward compat;
-              no reliable way to assess pressure without window size)
-            - if model_max_tokens >= 500_000: return "preload"  (large window —
+            - treat None or 0 model_max_tokens as 128_000 (typical default)
+            - if window >= 500_000: return "preload"  (large window —
               plenty of room, convenience wins; e.g. MiniMax-M3 1M)
-            - if model_max_tokens <= 32_000: return "jit"  (small window —
+            - if window <= 32_000: return "jit"  (small window —
               every token counts; e.g. legacy 32K models)
             - else: return "hybrid"  (typical 128K–256K — balanced default)
     """
@@ -499,10 +498,6 @@ No new parameters on `compose_system_prompt()` beyond `context_mode`. The `turn_
 - `test_resolve_context_mode_auto_no_model_returns_hybrid` — model_max_tokens=None → "hybrid" (128K default)
 
 **Imports required:** `resolve_context_mode` from `agent.context` (lazy import at line 331, same as existing `build_file_context_with_core_files` lazy import).
-
----
-
-### 2.5
 
 ---
 
@@ -727,7 +722,7 @@ New code paths and their exceptions:
 - `_find_matching_files` returns `list[str]` of relative paths — verified
 - `_load_gitignore_patterns` returns `list[str]` of patterns — verified
 - `EXCLUDED_DIRS` is `frozenset` — verified
-- `CORE_FILES` is `list[str]` of 4 filenames — verified at `agent/context.py:289`
+- `CORE_FILES` is `list[str]` of 4 filenames — verified at `agent/context.py:349`
 - `Conversation.system_prompt` is `str` field (line 149), set once at construction (line 1409), never reassigned — verified via grep for `.system_prompt =` in `agent/runtime.py` (only one hit: line 1409 in `create_conversation`)
 - `_search_files` uses `subprocess.run` with `grep -n -H --directories=skip -r` — verified at lines 514–525; `_run_grep` extracts this exact call
 
