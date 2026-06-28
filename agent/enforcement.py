@@ -852,12 +852,22 @@ def check(
     tool_result,       # ToolResult from the original tool execution
     project_path: str,
     config: Any,        # EnforcementConfig
+    verbose: bool = False,
 ) -> EnforcementResult:
     """
     Main entry point. Called after each tool execution in the tool loop.
 
     Only acts on write_file calls where the file was successfully written.
     Returns empty result for all other tools.
+
+    When *verbose* is True, files that match a skip pattern (or that are
+    themselves test files) produce a placeholder ``EnforcementCheck`` with
+    a ``SKIPPED:`` detail prefix in ``result.checks`` and a corresponding
+    line in ``appended_message``. This lets callers (debug UIs, audit
+    logs) see *why* a file was not checked.
+
+    When verbose is False (default), behavior is unchanged: skipped files
+    do not appear in the output, exactly as before.
 
     Returns:
         EnforcementResult with checks and formatted message to append.
