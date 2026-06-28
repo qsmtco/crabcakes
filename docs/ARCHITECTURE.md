@@ -1554,7 +1554,14 @@ class AgentRuntime:
 
 ### 3.21n `agent/tools.py` — Tool Definitions + Execution (Phase 1.1)
 
-**Responsibility:** 8 tools for local file/exec/web operations, sandboxed to `project_path`, with PM approval gating for `exec_command`.
+**Responsibility:** 9 tools for local file/exec/web operations, sandboxed to `project_path`, with PM approval gating for `exec_command`.
+
+**P10 additions:** `file_search` tool (find files by name OR content pattern,
+returns grouped previews). Shared `_run_grep()` helper used by both
+`search_files` and `file_search` to guarantee identical grep behavior.
+`_run_grep` validates `search_root` (non-empty string required). Grep output
+paths are normalized (leading `./` stripped) to prevent duplicate entries
+when merging filename and content matches.
 
 
 **Public API:**
@@ -1601,13 +1608,37 @@ def get_api_key(provider_name) -> str | None
 
 **Public API:**
 ```python
-def build_system_prompt(agent_name, project_path, tools, review_mode, agent_role="") -> str
+def build_system_prompt(agent_name, project_path, tools, review_mode, agent_role="", model_max_tokens=None, *, context_mode="auto") -> str
 def build_file_context(project_path, query=None) -> str    # respects .gitignore, capped ~50K chars; §4.4a prepends .crabcakes/ docs
-def build_file_context_with_core_files(project_path, query=None) -> str  # Phase CB-2: appends CORE_FILES at end for budget preservation
+def build_file_context_with_core_files(project_path, query=None, max_chars=50_000, *, context_mode="preload") -> str  # Phase CB-2 + P10
+def build_file_index(project_path, max_entries=200, include_line_counts=True) -> str  # P10: compact file index for JIT/hybrid
+def resolve_context_mode(explicit_mode: str, model_max_tokens: int | None) -> str  # P10: resolves "auto" → preload|hybrid|jit
+def _find_matching_files(project_path, query, patterns, max_files=20) -> list[str]  # P10: filename search for file_search tool
 def _read_crabcakes_docs(project_path) -> str               # §4.4a — always include project docs in context
 def _load_crabcakes_doc(doc_name, project_path) -> str | None  # individual doc access
 def load_custom_system_prompt(project_path) -> str | None  # .crabcakes/agent-system-prompt.md → AGENTS.md → None
 ```
+
+**Context discovery (P10).** `resolve_context_mode()` resolves `"auto"` to one
+of `"preload"`, `"hybrid"`, or `"jit"` based on `model_max_tokens`:
+- `≥ 500,000` → `"preload"` (large window — full context)
+- `≤ 32,000` → `"jit"` (small window — index only)
+- Otherwise → `"hybrid"` (core files + index)
+Negative/zero `model_max_tokens` defaults to `"hybrid"`. Input is normalized
+via `validate_provider_context_mode()` (case-insensitive, whitespace stripped).
+
+`build_file_index()` walks the project tree and produces a compact, grouped
+file listing (extension-grouped, size + optional line count). Files >1MB skip
+line counting for performance. Capped at `max_entries` with a directory summary
+for large projects.
+
+`build_file_context_with_core_files()` gains a `context_mode` parameter:
+- `"preload"` — full file context + core files (existing behavior)
+- `"jit"` — file index only, no core files
+- `"hybrid"` — core files + file index
+
+Oversized core files (>50KB) get a size placeholder with `read_file()` hint
+instead of being silently dropped.
 
 **Core files (Phase CB-2).** `build_file_context_with_core_files()` places the
 following files at the END of the file context, so they are the last to be
