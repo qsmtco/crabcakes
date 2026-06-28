@@ -607,6 +607,14 @@ class AgentRuntimeHandler:
                     conv.si_enforcement = si_enforcement
                 # conv.fallback_model assignment removed in 2026-06-15 — runtime derives from provider card.
 
+        # Reset step_count on each new user message so the agent gets a
+        # fresh step_limit budget per task. step_count counts assistant turns
+        # (conversation.py:190), and without this reset it accumulates across
+        # all tasks until hitting step_limit=100 and killing the agent.
+        conv = rt.get_conversation(session_key)
+        if conv is not None:
+            conv.step_count = 0
+
         rt.send_message(session_key, text)
 
     def stop_all(self) -> None:
