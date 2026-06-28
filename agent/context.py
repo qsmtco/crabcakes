@@ -492,9 +492,9 @@ def build_file_index(
             else:
                 size_str = f"{size // (1024 * 1024)}MB"
 
-            # Line count (best-effort)
+            # Line count (best-effort) — skip for large files to avoid I/O cost
             line_str = ""
-            if include_line_counts:
+            if include_line_counts and size <= 1_000_000:
                 try:
                     full_path = os.path.join(project_path, rel_path)
                     with open(full_path, "rb") as f:
@@ -581,6 +581,12 @@ def build_file_context_with_core_files(
             content = _read_file_safe(core_path)
             if content:
                 core_sections.append(f"## {core_file}\n\n{content}\n")
+            elif os.path.isfile(core_path):
+                size = os.path.getsize(core_path)
+                core_sections.append(
+                    f"## {core_file}\n\n[{size // 1024}KB — too large for inline; "
+                    f'use read_file("{core_file}") to read in full]\n'
+                )
         if not core_sections:
             return base_context
         core_block = "\n".join(core_sections)
@@ -599,6 +605,12 @@ def build_file_context_with_core_files(
         content = _read_file_safe(core_path)
         if content:
             core_sections.append(f"## {core_file}\n\n{content}\n")
+        elif os.path.isfile(core_path):
+            size = os.path.getsize(core_path)
+            core_sections.append(
+                f"## {core_file}\n\n[{size // 1024}KB — too large for inline; "
+                f'use read_file("{core_file}") to read in full]\n'
+            )
     if not core_sections:
         return file_index
     return "\n".join(core_sections) + "\n\n" + file_index
