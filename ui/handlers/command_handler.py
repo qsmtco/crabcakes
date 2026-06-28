@@ -136,6 +136,14 @@ class CommandHandler:
             if hasattr(project_handler, "cmd_cost"):
                 self.register_command("cost", project_handler.cmd_cost,
                     help_text="Spending summary for this project")
+            if hasattr(project_handler, "cmd_clear"):
+                # Spec: docs/specs/STEP-COUNT-RESET-FIX.md Edit 1.
+                # /clear resets the current special agent's conversation
+                # (messages, step_count, total_tokens, total_cost) so the
+                # user can start fresh when step_count would otherwise
+                # hit step_limit=100 and kill the agent.
+                self.register_command("clear", project_handler.cmd_clear,
+                    help_text="Clear agent conversation history and reset step count")
 
         # Session — requires SessionHandler
         if session_handler is not None:

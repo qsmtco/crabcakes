@@ -279,6 +279,102 @@ class AgentRuntimeHandler:
         """Return {session_key: display_name} for registered special agents."""
         return {sk: ad.display_name for sk, ad in self._agents.items()}
 
+    def clear_conversation(self, session_key: str) -> bool:
+        """Reset a special agent's conversation in place.
+
+        Resets messages=[], step_count=0, total_tokens=0, total_cost=0.0,
+        and invalidates the token-estimate cache. Also deletes the persisted
+        conversation JSON so the next session start loads a fresh state.
+
+        In-place reset (vs remove + recreate) avoids races with in-flight
+        tool loops: a background thread may be reading conv.messages via
+        the runtime's _run_loop; resetting the list is safer than
+        deleting the conversation object and recreating it, because the
+        object identity stays stable for the running thread.
+
+        Returns True on success, False if the session isn't a registered
+        special agent or has no runtime/conversation.
+
+        Spec: docs/specs/STEP-COUNT-RESET-FIX.md Edit 4.
+        """
+        # Guard: only special-agent sessions can be cleared this way.
+        # `special:coder`, `special:debugger`, `special:crabcakes`, etc.
+        if not isinstance(session_key, str) or not session_key.startswith("special:"):
+            logger.warning(
+                "clear_conversation: refusing non-special session_key=%r",
+                session_key,
+            )
+            return False
+
+        agent_def = self._agents.get(session_key)
+        if agent_def is None:
+            logger.warning(
+                "clear_conversation: no registered special agent for %s",
+                session_key,
+            )
+            return False
+
+        # Resolve the runtime that owns this session. Display name is the
+        # key in self._runtimes; _get_runtime will lazily create one if
+        # the agent has never been used yet (clear-before-first-use is a
+        # legitimate no-op case).
+        try:
+            rt = self._get_runtime(agent_def.display_name, agent_def=agent_def)
+        except Exception as exc:
+            logger.error(
+                "clear_conversation: failed to acquire runtime for %s: %s",
+                session_key, exc,
+            )
+            return False
+
+        # In-place reset. Keep the Conversation object identity so any
+        # in-flight _run_loop thread continues to see the same object.
+        conv = rt.get_conversation(session_key)
+        if conv is not None:
+            try:
+                conv.messages = []
+                conv.step_count = 0
+                conv.total_tokens = 0
+                conv.total_cost = 0.0
+                # _token_estimate_cache is keyed on (len(messages), hash(system_prompt))
+                # — messages are now empty, so the cache MUST be invalidated
+                # or the next trim pass will read a stale value.
+                conv._token_estimate_cache = None
+            except Exception as exc:
+                logger.error(
+                    "clear_conversation: in-place reset failed for %s: %s",
+                    session_key, exc,
+                )
+                return False
+            logger.info(
+                "clear_conversation: reset in-memory conversation for %s",
+                session_key,
+            )
+
+        # Delete the persisted JSON so a restart doesn't restore the old
+        # state. Best-effort: a missing file is fine (nothing to delete),
+        # other OSErrors are logged but don't fail the whole operation —
+        # the in-memory state is already cleared.
+        try:
+            from utils.config import get_config_dir
+            import os
+            conv_dir = os.path.join(get_config_dir(), "conversations")
+            conv_path = os.path.join(conv_dir, f"{session_key}.json")
+            os.remove(conv_path)
+            logger.info(
+                "clear_conversation: deleted persisted conversation %s",
+                conv_path,
+            )
+        except FileNotFoundError:
+            pass  # No persisted file — that's fine.
+        except OSError as exc:
+            logger.warning(
+                "clear_conversation: could not delete persisted file for %s: %s",
+                session_key, exc,
+            )
+
+        return True
+
     def get_special_agent_def(self, session_key: str) -> Any | None:
         """Return the SpecialAgentDef for a session key, or None."""
         return self._agents.get(session_key)

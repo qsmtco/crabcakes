@@ -589,6 +589,11 @@ class MainWindow(Gtk.ApplicationWindow):
         self._agent_runtime_handler.set_feed_handler(self._feed_handler)
         # Wire AgentRoutingTable into AgentRuntimeHandler (solo DM response routing)
         self._agent_runtime_handler.set_agent_routing(self._agent_to_project)
+        # Wire ProjectHandler → AgentRuntimeHandler for /clear command.
+        # Spec: docs/specs/STEP-COUNT-RESET-FIX.md Edit 5. The /clear command
+        # resets a special agent's in-memory conversation + deletes the
+        # persisted JSON so step_count starts fresh.
+        self._project_handler.set_clear_callback(self._agent_runtime_handler.clear_conversation)
         # Wire local agent lifecycle → ActivityHandler (offline mode progress bar)
         self._agent_runtime_handler.set_on_agent_start(
             lambda sk: self._activity_handler.on_agent_start(sk)

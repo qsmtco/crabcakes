@@ -71,6 +71,10 @@ class ProjectHandler:
         self._on_project_opened: list[Callable] = []   # window's callbacks
         self._on_project_closed: list[Callable] = []   # window's close callbacks
         self._on_members_changed: Callable | None = None   # window's callback
+        # /clear command callback — injected by window.py to call
+        # AgentRuntimeHandler.clear_conversation(session_key). None means
+        # the runtime handler hasn't been wired yet (e.g. test fixtures).
+        self._clear_callback: Callable[[str], bool] | None = None
 
     # ── Public API — for window / other handlers ───────────────────────────
 
@@ -384,6 +388,23 @@ class ProjectHandler:
         """Inject the live AgentManager after gateway connect. Called by window.py."""
         self._agent_mgr = agent_mgr
 
+    def set_clear_callback(self, fn: Callable[[str], bool] | None) -> None:
+        """Inject callback for /clear command.
+
+        Spec: docs/specs/STEP-COUNT-RESET-FIX.md Edit 3.
+
+        Wired by window.py to AgentRuntimeHandler.clear_conversation. The
+        callback takes a session_key (e.g. "special:coder") and returns
+        True on success, False otherwise. cmd_clear invokes this callback
+        to reset the in-memory conversation + delete the persisted JSON.
+
+        Trigger: invoked synchronously from cmd_clear (which is called by
+        CommandHandler.process_input when a user types /clear in a chat
+        tab). set_clear_callback MUST be called before the /clear command
+        can succeed.
+        """
+        self._clear_callback = fn
+
     # ── Phase 5: Project Onboarding ─────────────────────────────────────
 
     def _auto_add_onboarding_agents(self, project_path: str) -> None:
@@ -541,6 +562,71 @@ class ProjectHandler:
             "Note: Cost data requires OpenClaw usage tracking to be enabled.",
         ])
         return CommandResult(handled=True, response_text="\n".join(lines))
+
+    def cmd_clear(self, cmd: Command, session_key: str | None = None) -> CommandResult:
+        """/clear — reset the current special agent's conversation.
+
+        Spec: docs/specs/STEP-COUNT-RESET-FIX.md Edit 2.
+
+        Clears messages, step_count, total_tokens, total_cost for the agent
+        whose tab the user is typing in. Only operates on special agent
+        tabs (session_key starts with "special:"). Project tabs are a
+        no-op with a hint telling the user to use /clear in an agent tab.
+        """
+        sk = cmd.source_session_key or session_key
+        if not sk:
+            return CommandResult(
+                handled=True,
+                response_text="No active session to clear.",
+            )
+
+        # Project tabs: explain where /clear actually works. We don't
+        # clear project-tab state because there isn't a single "the
+        # conversation" for a project tab — each member has their own.
+        if sk.startswith("project:"):
+            return CommandResult(
+                handled=True,
+                response_text="Use /clear in an agent tab to reset that agent's conversation.",
+            )
+
+        # Special agent tabs: dispatch to the runtime handler via the
+        # callback injected by window.py.
+        if sk.startswith("special:"):
+            agent_name = sk.split(":", 1)[1]
+            if self._clear_callback is None:
+                return CommandResult(
+                    handled=True,
+                    response_text=(
+                        f"Clear unavailable — runtime handler not wired "
+                        f"for {agent_name}. Restart the app and try again."
+                    ),
+                )
+            try:
+                ok = self._clear_callback(sk)
+            except Exception as exc:
+                _logger.exception("cmd_clear: callback raised for %s", sk)
+                return CommandResult(
+                    handled=True,
+                    response_text=f"Clear failed for {agent_name}: {exc}",
+                )
+            if ok:
+                return CommandResult(
+                    handled=True,
+                    response_text=(
+                        f"Cleared {agent_name}'s conversation. "
+                        f"Step count reset to 0."
+                    ),
+                )
+            return CommandResult(
+                handled=True,
+                response_text=f"Could not clear {agent_name}'s conversation.",
+            )
+
+        # Unknown session prefix — refuse cleanly.
+        return CommandResult(
+            handled=True,
+            response_text=f"Cannot clear session of type '{sk.split(':', 1)[0]}'.",
+        )
 
 
     def set_review_handler(self, review_handler) -> None:
