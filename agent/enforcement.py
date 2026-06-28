@@ -532,6 +532,7 @@ def _check_tests(
     project_path: str,
     config: Any,
     syntax_passed: bool,
+    verbose: bool = False,
 ) -> EnforcementCheck | None:
     """
     Run Tier 2 test runner.
@@ -543,6 +544,10 @@ def _check_tests(
     CRIT-2: All subprocess calls use argv lists + shell=False.
     _ALLOWED_BINARIES gate is applied to project-supplied full_suite_command.
     (Phase 0)
+
+    When *verbose* is True, skip paths return a placeholder EnforcementCheck
+    with a ``SKIPPED:`` detail prefix instead of None. When verbose is False
+    (default), behavior is unchanged from prior versions.
     """
     # Skip if syntax failed — no point running tests on broken code
     if not syntax_passed:
@@ -551,10 +556,24 @@ def _check_tests(
     # Skip test files themselves
     basename = os.path.basename(file_path)
     if basename.startswith("test_") or basename.endswith("_test.py"):
+        if verbose:
+            return EnforcementCheck(
+                tier="tests", tool="write_file", file=file_path,
+                passed=True,
+                detail=f"SKIPPED: {file_path} is itself a test file",
+                output="", duration_ms=0,
+            )
         return None
 
     # Skip files matching skip patterns (markdown, configs, etc.)
     if _is_skipped(file_path, config.skip_patterns):
+        if verbose:
+            return EnforcementCheck(
+                tier="tests", tool="write_file", file=file_path,
+                passed=True,
+                detail=f"SKIPPED: {file_path} matches skip pattern (tests tier)",
+                output="", duration_ms=0,
+            )
         return None
 
     # Load per-project test configuration
@@ -735,15 +754,27 @@ def _check_lint(
     project_path: str,
     config: Any,
     syntax_passed: bool,
+    verbose: bool = False,
 ) -> EnforcementCheck | None:
     """
     Run Tier 3 lint check.
     Returns None if skipped.
+
+    When *verbose* is True and the file matches a skip pattern, returns a
+    placeholder EnforcementCheck with a ``SKIPPED:`` detail prefix instead
+    of None. When verbose is False (default), behavior is unchanged.
     """
     if not syntax_passed:
         return None
 
     if _is_skipped(file_path, config.skip_patterns):
+        if verbose:
+            return EnforcementCheck(
+                tier="lint", tool="write_file", file=file_path,
+                passed=True,
+                detail=f"SKIPPED: {file_path} matches skip pattern (lint tier)",
+                output="", duration_ms=0,
+            )
         return None
 
     linter = _detect_linter(file_path, project_path)
