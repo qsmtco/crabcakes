@@ -52,3 +52,21 @@ class ProviderConfig:
     compaction_threshold: float = 0.80  # fraction of max_tokens that triggers compaction
     last_verified_at: str | None = None
     last_error: str | None = None
+    context_mode: str = "auto"          # "auto" | "preload" | "jit" | "hybrid"
+
+
+# ── Context mode validation ───────────────────────────────────────────────────
+
+_VALID_CONTEXT_MODES = frozenset({"auto", "preload", "jit", "hybrid"})
+
+
+def validate_provider_context_mode(mode: str) -> str:
+    """Validate and normalize a context_mode string. Raises ValueError on bad input."""
+    if not isinstance(mode, str):
+        raise ValueError(f"context_mode must be a string, got {type(mode).__name__}")
+    normalized = mode.lower().strip()
+    if normalized not in _VALID_CONTEXT_MODES:
+        raise ValueError(
+            f"Invalid context_mode: {mode!r}. Must be one of {sorted(_VALID_CONTEXT_MODES)}."
+        )
+    return normalized

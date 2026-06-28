@@ -151,6 +151,8 @@ def compose_system_prompt(
     tools: list[str] | None = None,
     review_mode: str = "off",
     model_max_tokens: int | None = None,
+    *,
+    context_mode: str = "auto",
 ) -> str:
     """Compose the full system prompt by loading and merging templates.
 
@@ -328,8 +330,12 @@ def compose_system_prompt(
     # fallback applies for unknown model sizes.
     # File context is truncated to fit, but core files are always preserved.
     if project_path:
-        from agent.context import build_file_context_with_core_files
-        file_context_with_core = build_file_context_with_core_files(project_path)
+        from agent.context import build_file_context_with_core_files, resolve_context_mode
+        effective_mode = resolve_context_mode(context_mode, model_max_tokens)
+        file_context_with_core = build_file_context_with_core_files(
+            project_path,
+            context_mode=effective_mode,
+        )
         if file_context_with_core:
             result, _unused_file_context = _apply_system_prompt_budget(
                 result, file_context_with_core, model_max_tokens

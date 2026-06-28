@@ -502,42 +502,152 @@ def _list_files(path: str, project_path: str, recursive: bool = False) -> ToolRe
         return ToolResult(success=False, error=f"Cannot list {path}: {e}")
 
 
+def _run_grep(
+    pattern: str,
+    search_root: str,
+    file_type: str | None = None,
+    timeout: int = 10,
+) -> tuple[int, str, str]:
+    """Run grep and return (returncode, stdout, stderr).
+
+    Shared by _search_files (tool) and _file_search (tool) to guarantee
+    identical grep behavior: same flags (-n -H --directories=skip -r),
+    same --include filter, same -- separator, same timeout.
+    """
+    cmd = ["grep", "-n", "-H", "--directories=skip", "-r"]
+    if file_type:
+        cmd += ["--include=*." + file_type]
+    cmd += ["--", pattern, "."]
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        timeout=timeout,
+        cwd=search_root,
+        text=True,
+    )
+    return result.returncode, result.stdout, result.stderr
+
+
 def _search_files(pattern: str, project_path: str, path: str | None = None, file_type: str | None = None) -> ToolResult:
     """Search file contents using grep/ripgrep."""
     search_root = _resolve_project_path(path or ".", project_path)
     if search_root is None:
         return ToolResult(success=False, error=f"Path escapes project sandbox: {path or '.'}")
 
-    cmd = ["grep", "-n", "-H", "--directories=skip", "-r"]
-    if file_type:
-        cmd += ["--include=*." + file_type]
-    # MED-11: prepend -- before pattern to prevent argument injection
-    cmd += ["--", pattern, "."]
-
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            timeout=10,
-            cwd=search_root,   # run grep from the search root so paths are relative
-            text=True,
-        )
-        if result.returncode == 1:
-            return ToolResult(success=True, output="(no matches)")
-        elif result.returncode != 0:
-            return ToolResult(success=False, error=f"grep exited with {result.returncode}: {result.stderr[:200]}")
-
-        output = result.stdout
-        if len(output) > MAX_EXEC_OUTPUT:
-            output = output[:MAX_EXEC_OUTPUT] + f"\n[... truncated ...]"
-        return ToolResult(success=True, output=output)
-
+        returncode, stdout, stderr = _run_grep(pattern, search_root, file_type)
     except subprocess.TimeoutExpired:
         return ToolResult(success=False, error="Search timed out after 10s")
     except FileNotFoundError:
         return ToolResult(success=False, error="grep not found on this system")
     except OSError as e:
         return ToolResult(success=False, error=f"Search failed: {e}")
+
+    if returncode == 1:
+        return ToolResult(success=True, output="(no matches)")
+    elif returncode != 0:
+        return ToolResult(success=False, error=f"grep exited with {returncode}: {stderr[:200]}")
+
+    output = stdout
+    if len(output) > MAX_EXEC_OUTPUT:
+        output = output[:MAX_EXEC_OUTPUT] + f"\n[... truncated ...]"
+    return ToolResult(success=True, output=output)
+
+
+def _file_search(
+    query: str,
+    project_path: str,
+    file_type: str | None = None,
+    max_results: int = 20,
+    preview_lines: int = 5,
+) -> ToolResult:
+    """Find files by name OR content pattern. Returns grouped, previewed results.
+
+    Combines:
+    - Filename matching via agent.context._find_matching_files
+    - Content matching via _run_grep (shared with _search_files)
+    """
+    if not query or not query.strip():
+        return ToolResult(success=False, error="empty query")
+
+    search_root = _resolve_project_path(".", project_path)
+    if search_root is None:
+        return ToolResult(success=False, error=f"Path escapes project sandbox: {project_path}")
+
+    # Filename matching via _find_matching_files
+    from agent.context import _find_matching_files, _load_gitignore_patterns
+    patterns = _load_gitignore_patterns(project_path)
+    name_matches = _find_matching_files(
+        project_path, query, patterns, max_files=max_results
+    )
+
+    # Content matching via _run_grep
+    grep_hits: dict[str, list[tuple[int, str]]] = {}
+    try:
+        returncode, stdout, stderr = _run_grep(query, search_root, file_type)
+        if returncode == 0 and stdout:
+            for line in stdout.splitlines():
+                # Parse grep output: file:line:content
+                parts = line.split(":", 2)
+                if len(parts) >= 3:
+                    fpath, lineno, content = parts[0], int(parts[1]), parts[2]
+                    if fpath not in grep_hits:
+                        grep_hits[fpath] = []
+                    grep_hits[fpath].append((lineno, content))
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass  # Non-fatal — name matches still usable
+
+    # Merge results: files from both name + content matches
+    all_files = set(name_matches)
+    all_files.update(grep_hits.keys())
+    all_files = sorted(all_files)[:max_results]
+
+    if not all_files:
+        return ToolResult(success=True, output="(no matches)")
+
+    # Build output
+    lines: list[str] = []
+    for fpath in all_files:
+        full_path = os.path.join(search_root, fpath)
+        try:
+            size = os.path.getsize(full_path)
+            size_str = f"{size // 1024}KB" if size < 1024 * 1024 else f"{size // (1024 * 1024)}MB"
+        except OSError:
+            size_str = "?KB"
+
+        # Best-effort line count
+        try:
+            with open(full_path, "rb") as f:
+                lc = sum(1 for _ in f)
+            lc_str = f"{lc:,} lines"
+        except (OSError, UnicodeDecodeError):
+            lc_str = "?"
+
+        lines.append(f"{fpath} ({lc_str}, {size_str})")
+
+        if fpath in grep_hits:
+            for lineno, content in grep_hits[fpath][:preview_lines]:
+                lines.append(f"  Line {lineno}: {content.strip()}")
+        else:
+            lines.append("  [name match only — use read_file for content]")
+
+    lines.append("")
+    lines.append('[Use read_file("path") to read full contents. Use list_files(".") to browse directory tree.]')
+
+    output = "\n".join(lines)
+    if len(output) > MAX_EXEC_OUTPUT:
+        output = output[:MAX_EXEC_OUTPUT] + f"\n[... truncated ...]"
+    return ToolResult(success=True, output=output)
+
+    if returncode == 1:
+        return ToolResult(success=True, output="(no matches)")
+    elif returncode != 0:
+        return ToolResult(success=False, error=f"grep exited with {returncode}: {stderr[:200]}")
+
+    output = stdout
+    if len(output) > MAX_EXEC_OUTPUT:
+        output = output[:MAX_EXEC_OUTPUT] + f"\n[... truncated ...]"
+    return ToolResult(success=True, output=output)
 
 
 def _get_brave_api_key() -> str | None:
@@ -918,6 +1028,34 @@ def _register_tools() -> None:
         ),
         lambda pattern, project_path, path=None, file_type=None, **kwargs:  # type: ignore
             _search_files(pattern, project_path, path, file_type),
+    )
+
+    # file_search
+    _TOOLS["file_search"] = (
+        ToolDefinition(
+            name="file_search",
+            description=(
+                "Find files by name or content pattern. Returns grouped results\n"
+                "with file metadata and preview lines.\n\n"
+                "WHEN TO USE: Discovering which files contain a function, class,\n"
+                "or concept before reading them. Replaces browsing the file index.\n\n"
+                "BEHAVIOR: Groups matches by file. Shows line count + size per file.\n"
+                "Returns up to 5 preview lines per match.\n"
+                "Use read_file() to get full contents after finding the right file."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Filename fragment or text/regex pattern"},
+                    "file_type": {"type": "string", "description": "Filter by extension (e.g. 'py', 'md')"},
+                    "max_results": {"type": "integer", "description": "Max files to return (default 20)"},
+                },
+                "required": ["query"],
+            },
+            requires_approval=False,
+        ),
+        lambda query, project_path, file_type=None, max_results=None, **kwargs:  # type: ignore
+            _file_search(query, project_path, file_type, max_results or 20),
     )
 
     # web_search

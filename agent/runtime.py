@@ -1397,7 +1397,13 @@ class AgentRuntime:
             agent_name, project_path, tool_names,
             agent_role=agent_role,
             model_max_tokens=model_max_for_budget,
+            context_mode=getattr(default_provider_cfg, "context_mode", "auto") or "auto",
         )
+        # TODO: P10.8 — mid-session re-escalation. Currently the system prompt
+        # is built once here and never reassigned. P10.8 will add a
+        # _maybe_rebuild_system_prompt() check in the tool loop that calls
+        # resolve_context_mode(turn_count, token_estimate) before each LLM call
+        # and rebuilds if the effective mode changes.
 
         conv = Conversation(
             agent_name=agent_name,
