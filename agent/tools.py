@@ -381,8 +381,9 @@ def _exec_command(command: str, project_path: str, timeout: int = 30, session_ke
     """Run a shell command in the project directory. Requires PM approval.
 
     Args:
-        scratch_dir: Per-session scratch directory for exec_command working directory.
-            When provided, subprocess runs in scratch_dir instead of project_path.
+        scratch_dir: Deprecated/ignored. Previously used as exec_command working directory.
+            Now ignored — exec_command always runs in project_path. Retained for API
+            compatibility; will be removed in a future cleanup.
 
     MED-2 (Phase 6): env= is now scrubbed to the same allowlist used by
     agent/enforcement.py. The shell semantics (shell=True, pipes, redirects,
@@ -404,8 +405,11 @@ def _exec_command(command: str, project_path: str, timeout: int = 30, session_ke
     from utils.env_security import get_scrubbed_env
 
     start = time.monotonic()
-    # Use scratch_dir if provided, otherwise fall back to project_path
-    exec_cwd = scratch_dir if scratch_dir else project_path
+    # exec_command always runs in project_path — the scratch_dir must NOT
+    # override the CWD because the model expects commands to run in the project
+    # root (as advertised by {{PROJECT_PATH}} in the system prompt).
+    # scratch_dir is accepted as a parameter for API compatibility but ignored.
+    exec_cwd = project_path
     try:
         result = subprocess.run(
             command,
@@ -1166,10 +1170,8 @@ def execute_tool(
         session_key: Session key of the agent (for exec_command approval)
         approval_callback: Per-call approval callback (MED-1). Takes precedence
             over the global _approval_callback.
-        scratch_dir: Per-session scratch directory for exec_command working directory.
-            File tools (read_file, write_file, edit_file, list_files, search_files)
-            ignore this and always use project_path as their sandbox base.
-            exec_command uses scratch_dir (or project_path if None) as cwd.
+        scratch_dir: Deprecated/ignored. Previously used as exec_command cwd.
+            All tools now use project_path. Retained for API compatibility.
 
     Returns:
         ToolResult with output or error.

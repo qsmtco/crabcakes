@@ -1999,10 +1999,11 @@ class AgentRuntime:
                     per_call_cb = (lambda *a: True) if bypass_approval else None
                     # LOW-2: resolve workspace before use; raises ValueError if project_path is empty
                     workspace = _resolve_session_workspace(conv.project_path, session_key)
-                    # project_path = sandbox base (file tools resolve relative paths here)
-                    # scratch_dir = per-session workspace for exec_command cwd
+                    # project_path is the sandbox base for all tools AND exec_command cwd.
+                    # scratch_dir (workspace) is resolved for future use but no longer
+                    # overrides exec_command CWD — see exec-cwd-fix spec.
                     result = execute_tool(tool_name, args, conv.project_path, session_key,
-                                          approval_callback=per_call_cb, scratch_dir=workspace)
+                                          approval_callback=per_call_cb)
                     logger.debug("[tool-loop] sk=%s tool %s result: success=%s output_len=%d",
                                  session_key, tool_name, result.success, len(result.output or ""))
 
