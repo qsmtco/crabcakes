@@ -285,6 +285,48 @@ def _parse_file_block(block: str) -> tuple[FileDiff | None, int, int]:
     return file_diff, additions, deletions
 
 
+def summarize_diffstat(stat_text: str) -> str:
+    """
+    Build a one-line human-readable summary of `git diff --stat` output.
+
+    Reuses :func:`parse_diff_stat` to count per-file additions and deletions,
+    then formats the totals in the same shape git itself uses:
+
+        "3 files changed, 12 insertions(+), 4 deletions(-)"
+        "1 file changed, 5 insertions(+), 0 deletions(-)"
+
+    Args:
+        stat_text: Raw output of ``git diff --stat`` (the whole block, including
+            the trailing ``" N files changed, ..."`` summary line is fine —
+            :func:`parse_diff_stat` ignores it).
+
+    Returns:
+        A one-line summary string. Returns ``"No changes"`` when:
+        - the input is empty or whitespace-only
+        - the input contains no parseable per-file lines
+        - every parsed file has zero additions and zero deletions
+    """
+    files = parse_diff_stat(stat_text)
+    if not files:
+        return "No changes"
+
+    total_additions = sum(adds for _, adds, _ in files)
+    total_deletions = sum(dels for _, _, dels in files)
+    if total_additions == 0 and total_deletions == 0:
+        return "No changes"
+
+    file_count = len(files)
+    if file_count == 1:
+        files_phrase = "1 file changed"
+    else:
+        files_phrase = f"{file_count} files changed"
+
+    return (
+        f"{files_phrase}, {total_additions} insertions(+), "
+        f"{total_deletions} deletions(-)"
+    )
+
+
 def parse_diff_stat(stat_text: str) -> list[tuple[str, int, int]]:
     """
     Parse `git diff --stat` output.

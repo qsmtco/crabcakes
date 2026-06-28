@@ -3,7 +3,7 @@
 
 import pytest
 from utils.diff_parser import (
-    parse_diff, parse_diff_stat,
+    parse_diff, parse_diff_stat, summarize_diffstat,
     DiffLine, DiffHunk, FileDiff, ParsedDiff,
 )
 
