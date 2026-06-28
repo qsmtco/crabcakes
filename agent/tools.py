@@ -645,16 +645,6 @@ def _file_search(
         output = output[:MAX_EXEC_OUTPUT] + f"\n[... truncated ...]"
     return ToolResult(success=True, output=output)
 
-    if returncode == 1:
-        return ToolResult(success=True, output="(no matches)")
-    elif returncode != 0:
-        return ToolResult(success=False, error=f"grep exited with {returncode}: {stderr[:200]}")
-
-    output = stdout
-    if len(output) > MAX_EXEC_OUTPUT:
-        output = output[:MAX_EXEC_OUTPUT] + f"\n[... truncated ...]"
-    return ToolResult(success=True, output=output)
-
 
 def _get_brave_api_key() -> str | None:
     """Get Brave Search API key from environment."""
