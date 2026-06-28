@@ -559,3 +559,134 @@ class TestCheckEndToEnd:
             config,
         )
         assert len(result.checks) == 0
+
+    # ── verbose mode: SKIPPED entries ────────────────────────────────────
+
+    def test_verbose_false_skipped_files_absent(self, tmp_path):
+        """Default behavior (verbose=False): skipped files do NOT appear in output.
+
+        A .md file matches the default skip patterns, so all three tiers
+        return None. result.checks must be empty and appended_message empty.
+        This guarantees backward compatibility for existing callers.
+        """
+        config = _make_config()
+        # Create a markdown file that matches DEFAULT_SKIP_PATTERNS
+        md_path = tmp_path / "README.md"
+        md_path.write_text("# Title\n")
+
+        result = check(
+            "write_file",
+            {"path": "README.md"},
+            ToolResult(success=True, output="written", error="", duration_ms=10,
+                       stdout="", stderr="", exit_code=0),
+            str(tmp_path),
+            config,
+            verbose=False,
+        )
+        assert result.checks == []
+        assert result.appended_message == ""
+
+    def test_verbose_true_skipped_files_appear(self, tmp_path):
+        """verbose=True: skipped files appear with a SKIPPED: prefix.
+
+        A .md file matches the default skip patterns, so all three tiers
+        return SKIPPED placeholder checks (one per tier) with the SKIPPED
+        prefix in their detail field. The appended_message includes the
+        file path so callers can see why the file was not checked.
+        """
+        config = _make_config()
+        md_path = tmp_path / "README.md"
+        md_path.write_text("# Title\n")
+
+        result = check(
+            "write_file",
+            {"path": "README.md"},
+            ToolResult(success=True, output="written", error="", duration_ms=10,
+                       stdout="", stderr="", exit_code=0),
+            str(tmp_path),
+            config,
+            verbose=True,
+        )
+        # All three tiers produce a SKIPPED placeholder
+        assert len(result.checks) == 3
+        tiers = {c.tier for c in result.checks}
+        assert tiers == {"syntax", "tests", "lint"}
+        # Every check is marked as SKIPPED in its detail
+        for c in result.checks:
+            assert c.detail.startswith("SKIPPED:")
+            assert "README.md" in c.detail
+            # SKIPPED is not a failure — passed stays True
+            assert c.passed is True
+        # appended_message includes the file path and the SKIPPED marker
+        assert "SKIPPED" in result.appended_message
+        assert "README.md" in result.appended_message
+
+    def test_verbose_default_is_false(self, tmp_path):
+        """Calling check() without an explicit verbose arg preserves old behavior.
+
+        Regression guard: if someone changes the default to True, this test
+        will fail. The contract is 'no behavior change for existing callers'.
+        """
+        config = _make_config()
+        (tmp_path / "CHANGELOG.md").write_text("# changes\n")
+
+        # No verbose kwarg — relies on the default
+        result = check(
+            "write_file",
+            {"path": "CHANGELOG.md"},
+            ToolResult(success=True, output="written", error="", duration_ms=10,
+                       stdout="", stderr="", exit_code=0),
+            str(tmp_path),
+            config,
+        )
+        assert result.checks == []
+        assert result.appended_message == ""
+
+    def test_verbose_true_does_not_affect_non_skipped_files(self, tmp_path):
+        """verbose=True must not change behavior for files that DO get checked.
+
+        A .py file with a passing syntax check: with verbose=True we still
+        get a real syntax check (not a SKIPPED placeholder). The tier
+        function should not turn a real check into a placeholder just
+        because verbose is on.
+        """
+        config = _make_config()
+        py_path = tmp_path / "module.py"
+        py_path.write_text("x = 1\n")
+
+        result = check(
+            "write_file",
+            {"path": "module.py"},
+            ToolResult(success=True, output="written", error="", duration_ms=10,
+                       stdout="", stderr="", exit_code=0),
+            str(tmp_path),
+            config,
+            verbose=True,
+        )
+        # At least one real syntax check (not SKIPPED) must be present
+        syntax_checks = [c for c in result.checks if c.tier == "syntax"]
+        assert len(syntax_checks) == 1
+        assert not syntax_checks[0].detail.startswith("SKIPPED:")
+        # The check actually ran and is a real pass
+        assert syntax_checks[0].passed is True
+
+    def test_verbose_true_test_file_appears_as_skipped(self, tmp_path):
+        """A file that IS a test file is skipped at the tests tier with SKIPPED: prefix
+        in verbose mode."""
+        config = _make_config()
+        (tmp_path / "test_helper.py").write_text("def test_x(): assert True\n")
+
+        result = check(
+            "write_file",
+            {"path": "test_helper.py"},
+            ToolResult(success=True, output="written", error="", duration_ms=10,
+                       stdout="", stderr="", exit_code=0),
+            str(tmp_path),
+            config,
+            verbose=True,
+        )
+        # The tests tier must produce a SKIPPED placeholder for the test file
+        test_checks = [c for c in result.checks if c.tier == "tests"]
+        assert len(test_checks) == 1
+        assert test_checks[0].detail.startswith("SKIPPED:")
+        assert "test_helper.py" in test_checks[0].detail
