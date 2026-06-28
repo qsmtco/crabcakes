@@ -703,6 +703,12 @@ def test_connection(
 
 The `default_max_tokens` field on `ProviderConfig` records the *configured intent* (set by auxilium wizard from `CALLER_DEFAULT_MAX_TOKENS`); it's used as a sentinel marker so Test Connection's pre-fill logic doesn't overwrite a wizard's deliberate choice. See audit BUG #7.
 
+**Context mode (P10):** `ProviderConfig.context_mode` (default `"auto"`) stores
+the context discovery strategy. `validate_provider_context_mode()` normalizes
+input (case-insensitive, whitespace stripped) and validates against the
+allowed set: `{"auto", "preload", "jit", "hybrid"}`. Called by
+`resolve_context_mode()` in `agent/context.py`.
+
 ### 3.11c `utils/provider_url.py` — Provider URL Validation (MED-5)
 
 **Responsibility:** Validates that non-loopback provider URLs use `https://`.
@@ -1546,6 +1552,8 @@ class AgentRuntime:
 
 **Providers:** OpenAI (`openai/*`), MiniMax (`minimax/*`), Anthropic (`anthropic/*`), OpenRouter (`openrouter/*`), ZAI (`zai/*`) — selected by explicit `caller` field on `LLMProviderConfig` (persisted in `providers.yaml`); falls back to model-prefix derivation for legacy configs without an explicit caller. See §12 for full resolution details. Tool calls normalized to internal `ToolCall` format regardless of provider.
 
+**Context mode (P10):** `create_conversation()` reads `context_mode` from `ProviderConfig` (default `"auto"`) and passes it to `build_system_prompt()`. The mode is resolved once at conversation creation time via `resolve_context_mode()` and fixed for the session. `TODO: P10.8 — mid-session re-escalation` marker for future turn-count/token-estimate-based mode switching.
+
 **Streaming:** SSE for supported providers. `on_text_delta` fires incrementally. `on_tool_call_start` fires when complete call is received. The provider-assigned tool_call `id` (e.g. `call_function_3679004591_1`) is preserved end-to-end through the streaming path — captured from the first SSE delta in `_stream_openai_events`/`_stream_minimax_events` (from the `content_block_start` event in `_stream_anthropic_events` for Anthropic), held in the accumulator's first-write-wins slot in `_call_llm_streaming`, and surfaced on the final assembled tool_call so the round-trip `tool_call_id` matches on the next LLM turn. Without this, providers reject the tool result with `status_code=2013: invalid params, tool call result does not follow tool call` (regression fixed by `STREAM-ID-PRES`, see `docs/specs/SPEC-STREAMING-TOOL-CALL-ID-PRESERVATION.md`).
 
 **Cost tracking:** Provider-specific pricing tables. Fires `on_token_usage(session_key, tokens, cost)` after each LLM call. Stops loop if `cost_limit` exceeded.
@@ -1668,6 +1676,14 @@ the default provider's `max_tokens` to `build_system_prompt()`.
 **Backward compatibility:** `compose_system_prompt()` and `build_system_prompt()`
 get a new optional keyword `model_max_tokens: int | None = None`. When `None`,
 no budget is enforced. All existing call sites continue to work unchanged.
+
+**Context mode (P10):** `compose_system_prompt()` and `build_system_prompt()`
+gain a `context_mode` keyword-only parameter (default `"auto"`). The prompt
+loader lazy-imports `resolve_context_mode` from `agent.context` and resolves
+the effective mode before building the file context block. When `context_mode`
+is `"jit"` or `"hybrid"`, `build_file_context_with_core_files()` produces a
+compact file index (via `build_file_index()`) instead of full file contents,
+significantly reducing prompt size for large projects.
 
 ### 3.21p.5 `agent/context_strategy.py` — Pluggable Context Compaction Strategy (Phase 4–9)
 
