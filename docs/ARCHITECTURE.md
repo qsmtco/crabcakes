@@ -1585,6 +1585,7 @@ def set_approval_callback(cb) -> None              # cb(session_key, tool_name, 
 | `exec_command` | **Yes** | Run shell command (PM must approve; hardcoded blocklist rejects catastrophic calls first) |
 | `list_files` | No | List directory contents |
 | `search_files` | No | Grep/ripgrep for pattern |
+| `file_search` | No | Find files by name OR content (P10 — uses `_find_matching_files` + `_run_grep`) |
 | `web_search` | No | Brave Search API |
 | `web_fetch` | No | Fetch URL as text |
 
