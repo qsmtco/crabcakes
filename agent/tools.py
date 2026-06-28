@@ -514,6 +514,8 @@ def _run_grep(
     identical grep behavior: same flags (-n -H --directories=skip -r),
     same --include filter, same -- separator, same timeout.
     """
+    if not search_root or not isinstance(search_root, str):
+        raise ValueError(f"search_root must be a non-empty string, got {search_root!r}")
     cmd = ["grep", "-n", "-H", "--directories=skip", "-r"]
     if file_type:
         cmd += ["--include=*." + file_type]
@@ -591,6 +593,10 @@ def _file_search(
                 parts = line.split(":", 2)
                 if len(parts) >= 3:
                     fpath, lineno, content = parts[0], int(parts[1]), parts[2]
+                    # Normalize grep paths: strip leading "./" so they match
+                    # the format from _find_matching_files (relative, no prefix)
+                    if fpath.startswith("./"):
+                        fpath = fpath[2:]
                     if fpath not in grep_hits:
                         grep_hits[fpath] = []
                     grep_hits[fpath].append((lineno, content))
