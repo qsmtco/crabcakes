@@ -304,10 +304,17 @@ def _check_syntax(
     file_path: str,
     project_path: str,
     config: Any,
+    verbose: bool = False,
 ) -> EnforcementCheck | None:
     """
     Run Tier 1 syntax guard on a file.
     Returns None if skipped (unknown extension, binary, not installed).
+
+    When *verbose* is True and the file matches a skip pattern, returns a
+    placeholder EnforcementCheck with a ``SKIPPED:`` detail prefix instead
+    of None — so callers can surface the skip reason in the output. When
+    verbose is False (default), this function returns None on skip exactly
+    as it did before, preserving existing behavior.
     """
     ext = os.path.splitext(file_path)[1].lower()
     checker = SYNTAX_CHECKERS.get(ext)
@@ -315,6 +322,13 @@ def _check_syntax(
         return None
 
     if _is_skipped(file_path, config.skip_patterns):
+        if verbose:
+            return EnforcementCheck(
+                tier="syntax", tool="write_file", file=file_path,
+                passed=True,
+                detail=f"SKIPPED: {file_path} matches skip pattern (syntax tier)",
+                output="", duration_ms=0,
+            )
         return None
 
     abs_path = os.path.join(project_path, file_path)
