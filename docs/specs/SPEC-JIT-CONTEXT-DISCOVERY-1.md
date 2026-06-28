@@ -8,13 +8,13 @@
 **Target branch:** main
 
 > **Architecture compliance:** Per `docs/ARCHITECTURE.md`:
-> - `agent/context.py` (§3.21p) — owns file-context building; no new imports
-> - `agent/tools.py` (§3.21n) — owns tool registration; no new imports
-> - `utils/prompt_loader.py` (§4.4b) — owns prompt composition and budget; no new imports
-> - `agent/runtime.py` (§3.21m) — owns system prompt wiring; no new imports
-> - `models/providers.py` (§3.21d) — owns `ProviderConfig`; no new imports
+> - `agent/context.py` (§3.21p) — owns file-context building; `build_file_index()`, `resolve_context_mode()`, modified `build_file_context_with_core_files()`; no new imports
+> - `agent/tools.py` (§3.21n) — owns tool registration; new `_file_search()` + new shared `_run_grep()` helper + refactored `_search_files()`; no new imports
+> - `utils/prompt_loader.py` (§4.4b) — owns prompt composition and budget; new `context_mode` pass-through parameter; no new imports (lazy import of `resolve_context_mode`)
+> - `agent/runtime.py` (§3.21m) — owns system prompt wiring; new `context_mode` pass-through; no new imports
+> - `models/providers.py` (§3.21d) — owns `ProviderConfig`; new `context_mode` field + `validate_provider_context_mode()` helper; no new imports
 > - **No `ui/` imports** in any changed file
-> - **No `subprocess` added** to any changed file (existing `_search_files` uses subprocess; `file_search` will reuse it)
+> - **No `subprocess` added** to any changed file (existing `_search_files` uses subprocess; `_run_grep` extracts the existing call; `_file_search` calls `_run_grep`)
 > - **No `gateway/` imports** in any changed file
 
 ---
@@ -150,15 +150,28 @@ def build_file_index(
 - File metadata: `rel_path` + line count (if enabled) + `os.path.getsize()`
 - Size formatting: human-readable (KB for <1MB, MB for >=1MB). Use `f"{size // 1024}KB"` if < 1MB, else `f"{size // (1024*1024)}MB"`
 - Line counting: `sum(1 for _ in open(path, "rb"))` — but wrap in try/except for binary files (skip them with no line count)
-- Truncation: if `len(matches) > max_entries`, show first `max_entries` + append `f"\n[... and {total - max_entries} more files. Use file_search to find specific files.]"`
+- Truncation: tiered strategy for large projects:
+  - **≤ max_entries files**: list all files (existing behavior)
+  - **> max_entries files**: list top `max_entries` by size + append a **directory-level summary** of the omitted files, grouped by top-level directory. Format:
+    ```
+    [... and 8,432 more files across 47 directories. Top directories:]
+    src/ ............ 3,891 files / 45.2MB
+    tests/ .......... 1,204 files / 8.7MB
+    node_modules/ ... 2,100 files / 12.1MB
+    vendor/ ......... 1,237 files / 5.4MB
+    [Use file_search("symbol") to find specific files within these directories.]
+    ```
+    This gives the agent **navigational awareness** of large projects (what directories exist, how much code is in each) even when individual files are too numerous to list. The directory summary is capped at 10 entries (sorted by file count descending).
+  - The `max_entries` parameter controls the per-file listing cap. The directory summary is always computed from the full file set, so it reflects the true project size even when the file listing is truncated.
 
 **Tests:**
 - `test_build_file_index_returns_compact_listing` — verify output is < 3K chars for a fixture project (5–10 files)
 - `test_build_file_index_respects_gitignore` — gitignored files don't appear
 - `test_build_file_index_groups_by_extension` — Python files in `### Python` section, Markdown in `### Markdown`
-- `test_build_file_index_max_entries_cap` — project with 300 files shows 200 + truncation note
+- `test_build_file_index_max_entries_cap` — project with 300 files shows 200 + directory summary
 - `test_build_file_index_sorted_by_size` — within a group, largest files first
 - `test_build_file_index_handles_invalid_path` — empty string for missing dir
+- `test_build_file_index_directory_summary_large_project` — project with 1000+ files shows per-directory summary with file counts and total sizes
 
 #### 2.2.2 Modified function: `build_file_context_with_core_files()`
 
@@ -187,7 +200,7 @@ def build_file_context_with_core_files(
 **Mode dispatch logic:**
 
 ```python
-    # Validate mode
+    # Validate mode (delegate to resolve_context_mode for consistency)
     if context_mode not in ("preload", "jit", "hybrid"):
         raise ValueError(f"Invalid context_mode: {context_mode!r}")
 
@@ -279,12 +292,12 @@ def _file_search(
 ```
 
 **Implementation requirements** (verified against existing helpers):
-- Import `_find_matching_files` from `agent.context` at module top (or lazy-import inside function — lazy is preferred to avoid circular imports):
+- Import `_find_matching_files` from `agent.context` (lazy import inside function to avoid circular imports):
   ```python
   from agent.context import _find_matching_files  # safe — context.py imports nothing from tools.py
   ```
 - Call `_find_matching_files(project_path, query, patterns, max_files=max_results)` — signature verified: `(project_path, query, patterns, max_files=20, max_total_chars=40000) -> list[str]`
-- For each matching file, also call `_search_files(query, project_path, file_type=file_type)` — signature verified: `(pattern, project_path, path=None, file_type=None) -> ToolResult`. Parse its `output` to extract `(path, line_num, content)` tuples (grep output is `path:line:content`)
+- For content matching, call `_run_grep(query, project_path, file_type)` (see §2.3.2 below — new shared helper). Do NOT call `_search_files()` directly; both `_search_files` and `_file_search` route through the same `_run_grep` to guarantee identical grep behavior (same flags, same timeout, same error handling). This prevents behavioral drift between the two tools.
 - Group by file: `dict[file_path, list[(line_num, content)]]`
 - For files matched only by name (no grep hits), show "[name match only — use read_file for content]"
 - Truncate preview to `preview_lines` per file
@@ -341,11 +354,47 @@ Add inside `_register_tools()` after the `search_files` block (around line 920, 
 
 **Imports required:** None new (`_file_search` is in the same module; lazy import of `_find_matching_files` is inside the function).
 
+#### 2.3.2 Shared helper: `_run_grep()`
+
+Extract the grep logic currently inside `_search_files()` (lines 505–540) into a shared helper so both `_search_files` and `_file_search` use identical grep behavior:
+
+```python
+def _run_grep(
+    pattern: str,
+    search_root: str,
+    file_type: str | None = None,
+    timeout: int = 10,
+) -> tuple[int, str, str]:
+    """Run grep and return (returncode, stdout, stderr).
+
+    Shared by _search_files (tool) and _file_search (tool) to guarantee
+    identical grep behavior: same flags (-n -H --directories=skip -r),
+    same --include filter, same -- separator, same timeout.
+    """
+    cmd = ["grep", "-n", "-H", "--directories=skip", "-r"]
+    if file_type:
+        cmd += ["--include=*." + file_type]
+    cmd += ["--", pattern, "."]
+    result = subprocess.run(
+        cmd, capture_output=True, timeout=timeout,
+        cwd=search_root, text=True,
+    )
+    return result.returncode, result.stdout, result.stderr
+```
+
+**Modify `_search_files()`** (lines 505–540) to call `_run_grep()` instead of inlining the subprocess call. This is a pure refactor — the grep flags, timeout, and error handling are identical. The only change is moving the subprocess call behind a shared function.
+
+**Why this matters:** Without a shared helper, any future change to grep flags (e.g., adding `--max-count` or switching to ripgrep) would need to be applied in two places. With `_run_grep`, both tools evolve together.
+
+**Test:**
+- `test_run_grep_returns_expected_format` — verify `(returncode, stdout, stderr)` tuple
+- `test_search_files_unchanged_after_refactor` — existing `search_files` behavior identical post-refactor (regression test)
+
 ---
 
 ### 2.4 `utils/prompt_loader.py` — Add `context_mode` parameter
 
-**Change type:** Modified function signature. **Lines:** +6 / −2.
+**Change type:** Modified function signature. **Lines:** +8 / −2.
 
 #### 2.4.1 `compose_system_prompt()` — new parameter
 
@@ -365,23 +414,27 @@ def compose_system_prompt(
 ) -> str:
 ```
 
-**Mode resolution:** New helper function (private, in same module):
+**v1 scope — conversation-creation-time resolution only:** The system prompt is built once in `create_conversation()` (line 1396) and stored on the `Conversation` dataclass (line 1409). It is never reassigned mid-session — there is no rebuild step in the tool loop. Therefore `resolve_context_mode()` in v1 resolves using **only `model_max_tokens`** (available at creation time). The `turn_count` and `token_estimate` parameters from the proposal's §5.4 auto-escalation pseudo-code are **not available** at conversation creation time and are deferred to P10.8 (mid-session re-escalation).
+
+**Mode resolution:** New helper function. This lives in `agent/context.py` (next to `build_file_context_with_core_files`) rather than `prompt_loader.py`, because mode resolution is a context-strategy concern and `context.py` is the module that owns file-context semantics. `prompt_loader.py` calls it indirectly via `build_file_context_with_core_files(context_mode=...)`.
+
+In `agent/context.py`:
 
 ```python
-def _resolve_context_mode(
+def resolve_context_mode(
     explicit_mode: str,
-    turn_count: int,
-    token_estimate: int,
     model_max_tokens: int | None,
 ) -> str:
-    """Resolve the effective context mode based on session state.
+    """Resolve the effective context mode based on provider configuration.
+
+    v1: resolves at conversation-creation time only, using model_max_tokens.
+    Mid-session escalation (turn_count, token_estimate) is deferred to P10.8.
 
     Args:
         explicit_mode: One of "auto", "preload", "jit", "hybrid".
             "auto" is resolved by this function.
-        turn_count: Current turn number (1-indexed: turn 1 is the first user message).
-        token_estimate: Current token usage estimate (sum of all message tokens).
-        model_max_tokens: Model context window. If None, defaults to 128_000.
+        model_max_tokens: Model context window from ProviderConfig.
+            If None or 0, defaults to 128_000 for heuristics.
 
     Returns:
         One of "preload", "hybrid", "jit".
@@ -389,17 +442,30 @@ def _resolve_context_mode(
     Logic:
         - explicit "preload"/"jit"/"hybrid" → return as-is
         - explicit "auto":
-            - if model_max_tokens is None or 0: return "preload" (backward compat)
-            - pressure = token_estimate / model_max_tokens
-            - if pressure > 0.50 or turn_count > 15: return "jit"      # high pressure OR long session
-            - elif turn_count <= 5 and pressure < 0.30: return "preload"  # short session AND low pressure
-            - else: return "hybrid"                                      # middle ground
+            - if model_max_tokens is None or 0: return "preload" (backward compat;
+              no reliable way to assess pressure without window size)
+            - if model_max_tokens >= 500_000: return "preload"  (large window —
+              plenty of room, convenience wins; e.g. MiniMax-M3 1M)
+            - if model_max_tokens <= 32_000: return "jit"  (small window —
+              every token counts; e.g. legacy 32K models)
+            - else: return "hybrid"  (typical 128K–256K — balanced default)
     """
+    if explicit_mode in ("preload", "jit", "hybrid"):
+        return explicit_mode
+    if explicit_mode != "auto":
+        raise ValueError(f"Invalid context_mode: {explicit_mode!r}")
+    # auto: resolve by model context window size
+    window = model_max_tokens or 128_000
+    if window >= 500_000:
+        return "preload"   # large window — convenience wins
+    if window <= 32_000:
+        return "jit"       # small window — every token counts
+    return "hybrid"        # typical 128K–256K — balanced
 ```
 
-**Note on ordering:** The pressure check runs FIRST so a short session with high pressure (e.g., turn 2 with a huge system prompt) escalates to "jit" rather than staying in "preload". This matches the proposal's intent that "high pressure" is a hard trigger regardless of turn count.
+**Why model-window-based heuristics instead of turn-count/pressure?** In v1, mode resolution happens at `create_conversation()` time only. At that point we know the model's context window but not how long the conversation will be or what the token pressure will become. Window-size heuristics are a stable proxy: large-window models (500K+) can afford the preload cost; small-window models (32K) benefit immediately from JIT; typical 128K–256K models get the balanced hybrid default. This is a simpler, more predictable rule than pseudo-turn-count escalation that can't actually fire.
 
-**Threshold source:** The proposal has minor internal inconsistencies between §3.1 (Goal 5 says `turn > 10`) and §5.4 (code says `turn_count > 15`). This spec follows §5.4 (the actual code in the proposal's `resolve_context_mode` pseudo-code) and §14 (test plan: `turn >15 or high pressure → jit`). The §9 token-savings table also shows `16-30 → jit` which is consistent with `turn_count > 15`. The §3.1 wording is treated as approximate.
+**P10.8 future (mid-session re-escalation):** When implemented, `resolve_context_mode()` will gain `turn_count: int = 0` and `token_estimate: int = 0` parameters. The runtime tool loop will call it before each LLM invocation and rebuild the system prompt if the mode changes. This requires adding a `_maybe_rebuild_system_prompt()` step to the tool loop (estimated 3–4 hours, including cache-invalidation testing). For v1, a `# TODO: P10.8 — mid-session re-escalation` comment marks the extension point in `create_conversation()`.
 
 **Wire `context_mode` to file context builder:**
 
@@ -412,42 +478,31 @@ In `compose_system_prompt()`, at line 331–335 (the file-context block), replac
 with:
 
 ```python
-        effective_mode = _resolve_context_mode(
-            context_mode,
-            turn_count=turn_count or 0,  # NEW parameter, see below
-            token_estimate=token_estimate or 0,  # NEW parameter
-            model_max_tokens=model_max_tokens,
-        )
+        from agent.context import resolve_context_mode  # already same package
+        effective_mode = resolve_context_mode(context_mode, model_max_tokens)
         file_context_with_core = build_file_context_with_core_files(
             project_path,
             context_mode=effective_mode,
         )
 ```
 
-**New optional parameters** on `compose_system_prompt()`:
-
-```python
-def compose_system_prompt(
-    ...
-    *,
-    context_mode: str = "auto",
-    turn_count: int = 0,           # NEW — for auto-escalation
-    token_estimate: int = 0,      # NEW — for auto-escalation
-) -> str:
-```
-
-Default `turn_count=0` and `token_estimate=0` preserve backward compatibility (existing callers don't need to change).
+No new parameters on `compose_system_prompt()` beyond `context_mode`. The `turn_count` and `token_estimate` parameters from the proposal are not needed in v1 because `resolve_context_mode()` uses model-window heuristics only (no per-turn data required). They will be added in P10.8 when mid-session re-escalation is implemented.
 
 **Tests:**
 - `test_compose_prompt_jit_mode_produces_smaller_prompt` — JIT prompt < preload prompt for same project
 - `test_compose_prompt_hybrid_mode_includes_core_files` — core files present in hybrid mode
 - `test_compose_prompt_default_mode_is_auto` — explicit `context_mode="auto"` is accepted
 - `test_resolve_context_mode_explicit_override` — explicit "jit" not overridden by auto logic
-- `test_resolve_context_mode_short_session_preload` — turn=3, pressure=0.1 → "preload"
-- `test_resolve_context_mode_long_session_jit` — turn=20, pressure=0.6 → "jit"
-- `test_resolve_context_mode_middle_session_hybrid` — turn=10, pressure=0.4 → "hybrid"
+- `test_resolve_context_mode_large_window_preload` — window=1_000_000 → "preload"
+- `test_resolve_context_mode_small_window_jit` — window=32_000 → "jit"
+- `test_resolve_context_mode_typical_window_hybrid` — window=128_000 → "hybrid"
+- `test_resolve_context_mode_auto_no_model_returns_hybrid` — model_max_tokens=None → "hybrid" (128K default)
 
-**Imports required:** None new (`build_file_context_with_core_files` already imported lazily at line 331).
+**Imports required:** `resolve_context_mode` from `agent.context` (lazy import at line 331, same as existing `build_file_context_with_core_files` lazy import).
+
+---
+
+### 2.5
 
 ---
 
@@ -476,6 +531,11 @@ In `agent/runtime.py` at lines 1389–1396, modify the `default_provider_cfg` bl
             model_max_tokens=model_max_for_budget,
             context_mode=context_mode,  # NEW
         )
+        # TODO: P10.8 — mid-session re-escalation. Currently the system prompt
+        # is built once here and never reassigned. P10.8 will add a
+        # _maybe_rebuild_system_prompt() check in the tool loop that calls
+        # resolve_context_mode(turn_count, token_estimate) before each LLM call
+        # and rebuilds if the effective mode changes.
 ```
 
 **Tests:**
@@ -484,7 +544,7 @@ In `agent/runtime.py` at lines 1389–1396, modify the `default_provider_cfg` bl
 
 #### 2.5.2 `build_system_prompt()` — accept and forward `context_mode`
 
-In `agent/context.py` at line ~390, add `context_mode` parameter:
+In `agent/context.py` at line 485, add `context_mode` parameter:
 
 ```python
 def build_system_prompt(
@@ -499,12 +559,15 @@ def build_system_prompt(
 ) -> str:
 ```
 
-In the `compose_system_prompt()` call (around line ~410), forward:
+In the `compose_system_prompt()` call (around line ~510), forward:
 
 ```python
         prompt = compose_system_prompt(
             agent_name=agent_name,
-            agent_role=agent_role or (...),
+            agent_role=agent_role or (
+                "coder" if "coder" in agent_name.lower() else
+                "debugger" if "debugger" in agent_name.lower() else ""
+            ),
             project_path=project_path,
             project_awareness=awareness_dict,
             tools=tools,
@@ -523,19 +586,15 @@ In the `compose_system_prompt()` call (around line ~410), forward:
 ## 3. Data Flow
 
 ```
-User sends message
+ProviderConfig(context_mode="auto") 
         ↓
-send_message() spawns thread → _run_loop()
+create_conversation() reads context_mode via getattr()
         ↓
-Run loop reads conversation.system_prompt (already set in create_conversation)
+build_system_prompt(..., context_mode="auto")
         ↓
-[If rebuild needed: create_conversation() called with context_mode from ProviderConfig]
+compose_system_prompt(..., context_mode="auto")
         ↓
-build_system_prompt(..., context_mode="auto"|"preload"|"hybrid"|"jit")
-        ↓
-compose_system_prompt(..., context_mode=...)
-        ↓
-_resolve_context_mode(explicit, turn_count, token_estimate, model_max_tokens)
+resolve_context_mode("auto", model_max_tokens)  ← v1: creation-time only
         ↓  (returns "preload"|"hybrid"|"jit")
 build_file_context_with_core_files(project_path, context_mode=resolved)
         ↓
@@ -545,18 +604,21 @@ build_file_context_with_core_files(project_path, context_mode=resolved)
         ↓
 _apply_system_prompt_budget(result, file_context, model_max_tokens)
         ↓
-Final system prompt → LLM
+Final system prompt stored on Conversation.system_prompt (set once, never reassigned)
         ↓
 [Agent wants to read file] → file_search(query) → read_file(path) → tool result → LLM
 ```
 
+**v1 scope — mode is resolved at conversation creation only.** The system prompt is built once in `create_conversation()` (line 1396) and stored on `Conversation.system_prompt` (line 1409). There is no per-turn rebuild. Auto-escalation based on `turn_count` and `token_estimate` requires a mid-session prompt rebuild step (P10.8). For v1, mode is resolved using `model_max_tokens` heuristics only:
+- Large window (≥500K, e.g. MiniMax-M3 1M): `preload` — plenty of room
+- Small window (≤32K): `jit` — every token counts
+- Typical (128K–256K): `hybrid` — balanced default
+
 **Key invariants:**
-- `context_mode="auto"` resolves to "preload" for turn ≤ 5 with low pressure → existing short-session behavior unchanged
-- `context_mode="auto"` resolves to "hybrid" for middle sessions → core files preserved (CB-5)
-- `context_mode="auto"` resolves to "jit" for long sessions → token savings kick in
-- Explicit `context_mode="preload"`/`"jit"`/`"hybrid"` never overridden by auto logic
+- Explicit `context_mode="preload"`/`"jit"`/`"hybrid"` is never overridden by auto logic
 - File context budget (§4.4b) still enforced via `_apply_system_prompt_budget()`
-- `_token_estimate_cache` (`Conversation`, line ~166) naturally invalidates on prompt change (mode change → different prompt hash)
+- `_token_estimate_cache` (`Conversation`, line ~166) naturally invalidates on prompt change (different hash) — relevant for P10.8 when mid-session mode changes are added
+- `# TODO: P10.8 — mid-session re-escalation` comment marks the extension point in `create_conversation()`
 
 ---
 
@@ -565,21 +627,21 @@ Final system prompt → LLM
 | File | Change Type | Lines (est.) | Risk Level |
 |---|---|---|---|
 | `models/providers.py` | New field + new function | +25 | LOW (additive) |
-| `agent/context.py` | New function + modified function | +110 / −10 | LOW (default arg preserves back-compat) |
-| `agent/tools.py` | New function + new tool registration | +85 | LOW (additive, no existing tools changed) |
-| `utils/prompt_loader.py` | Modified function + new helper | +50 / −5 | MEDIUM (mode resolution affects prompt content) |
+| `agent/context.py` | New function (`build_file_index`) + new function (`resolve_context_mode`) + modified function | +140 / −10 | LOW (default arg preserves back-compat) |
+| `agent/tools.py` | New function (`_file_search`) + new shared helper (`_run_grep`) + refactor `_search_files` + new tool registration | +110 / −15 | LOW (additive; `_search_files` refactor is pure extraction) |
+| `utils/prompt_loader.py` | Modified function (pass-through to `resolve_context_mode`) | +8 / −3 | MEDIUM (mode resolution affects prompt content) |
 | `agent/runtime.py` | Modified function (pass-through) | +25 / −5 | LOW (defaults preserve behavior) |
-| `tests/test_jit_context_discovery.py` | NEW test file | +400 | N/A (test only) |
-| **Total** | | **+695 / −20** | |
+| `tests/test_jit_context_discovery.py` | NEW test file | +450 | N/A (test only) |
+| **Total** | | **+758 / −33** | |
 
 ---
 
 ## 5. Implementation Order
 
-**P10.1**: `models/providers.py` — add `context_mode` field + `validate_provider_context_mode()` helper + 4 tests
-**P10.2**: `agent/context.py` — add `build_file_index()` + modify `build_file_context_with_core_files()` + 10 tests
-**P10.3**: `agent/tools.py` — add `_file_search()` function + register `file_search` tool + 10 tests
-**P10.4**: `utils/prompt_loader.py` — add `context_mode` + `_resolve_context_mode()` + 7 tests
+**P10.1**: `models/providers.py` — add `context_mode` field + `validate_provider_context_mode()` helper + 4 tests  
+**P10.2**: `agent/context.py` — add `build_file_index()` + `resolve_context_mode()` + modify `build_file_context_with_core_files()` + 12 tests  
+**P10.3**: `agent/tools.py` — add `_run_grep()` shared helper + refactor `_search_files()` to use it + add `_file_search()` function + register `file_search` tool + 12 tests  
+**P10.4**: `utils/prompt_loader.py` — add `context_mode` parameter to `compose_system_prompt()` + wire to `resolve_context_mode()` in `agent.context` + 4 tests  
 **P10.5**: `agent/runtime.py` + `agent/context.py::build_system_prompt` — wire `context_mode` end-to-end + 4 tests
 
 After each phase: `pytest tests/test_jit_context_discovery.py tests/test_context.py tests/test_prompt_loader.py tests/test_agent_runtime.py -v` — must show all green.
@@ -594,12 +656,12 @@ After each phase: `pytest tests/test_jit_context_discovery.py tests/test_context
 | 2 | `file_search` tool is registered and callable via `get_all_tools()` | `test_file_search_tool_registered` |
 | 3 | `context_mode` parameter accepted by `build_file_context_with_core_files()`, `compose_system_prompt()`, `build_system_prompt()` | All mode tests |
 | 4 | `context_mode` field exists on `ProviderConfig` with default `"auto"` | `test_provider_config_defaults_context_mode_auto` |
-| 5 | Auto-escalation switches mode based on turn count and token pressure | `test_resolve_context_mode_*` (3 tests) |
+| 5 | Auto-escalation resolves mode based on model context window size | `test_resolve_context_mode_*` (4 tests) |
 | 6 | All 158 existing in-scope tests still pass without modification | full test run |
 | 7 | System prompt in JIT mode is demonstrably smaller than preload mode (measured) | `test_compose_prompt_jit_mode_produces_smaller_prompt` |
 | 8 | Hybrid mode includes core files (README, AGENTS, CONVENTIONS, ARCHITECTURE) | `test_compose_prompt_hybrid_mode_includes_core_files` |
 | 9 | Backward compatibility: existing callers without `context_mode` get `"preload"` default (no behavior change) | `test_*_backward_compat` |
-| 10 | `_resolve_context_mode` with explicit `"preload"`/`"jit"`/`"hybrid"` never overridden | `test_resolve_context_mode_explicit_override` |
+| 10 | `resolve_context_mode` with explicit `"preload"`/`"jit"`/`"hybrid"` never overridden | `test_resolve_context_mode_explicit_override` |
 
 ---
 
@@ -609,13 +671,13 @@ After each phase: `pytest tests/test_jit_context_discovery.py tests/test_context
 |---|---|---|
 | `project_path` doesn't exist | `build_file_index()` returns `""` | `test_build_file_index_handles_invalid_path` |
 | `context_mode="invalid"` | `ValueError` raised | `test_build_file_context_invalid_mode_raises` |
-| `context_mode="auto"`, `model_max_tokens=None` | Resolves to `"preload"` (backward compat) | `test_resolve_context_mode_auto_no_model_returns_preload` |
+| `context_mode="auto"`, `model_max_tokens=None` | Resolves to `"hybrid"` (128K default window) | `test_resolve_context_mode_auto_no_model_returns_hybrid` |
 | File in `.gitignore` | Not in index | `test_build_file_index_respects_gitignore` |
-| Very large project (1000+ files) | Index capped at `max_entries=200`, truncation note appended | `test_build_file_index_max_entries_cap` |
+| Very large project (1000+ files) | Index shows top 200 by size + directory-level summary with file counts and total sizes per directory | `test_build_file_index_directory_summary_large_project` |
 | File is binary | Skipped from line count (but path still shown if matched by name) | `test_build_file_index_handles_binary_files` |
 | `file_search("")` | Returns error `ToolResult(success=False, error="empty query")` | `test_file_search_invalid_query_returns_error` |
 | Two sessions with different `context_mode` | Each gets its own mode (no shared state — `ProviderConfig` is per-provider, not per-session) | `test_runtime_per_session_context_mode_isolation` |
-| Mode changes mid-session | System prompt rebuilt, `_token_estimate_cache` invalidated naturally (different hash) | `test_runtime_context_mode_change_invalidates_cache` |
+| Mode changes mid-session | v1: not supported (mode resolved at creation time). P10.8 will add mid-session re-escalation via tool-loop rebuild. | `test_runtime_context_mode_fixed_for_session` |
 | File has no extension (e.g. `Makefile`) | Grouped under `### Other (N files)` | `test_build_file_index_groups_files_without_extension` |
 
 ---
@@ -624,11 +686,11 @@ After each phase: `pytest tests/test_jit_context_discovery.py tests/test_context
 
 After implementation, update these sections:
 
-1. **§3.21p** — Add `build_file_index` to the public API list. Add a paragraph explaining the 3 modes. Reference the new `context_mode` parameter.
-2. **§3.21n** — Add `file_search` to the tools list. Note it's purpose-built for context discovery (different from `search_files` which is for grep).
+1. **§3.21p** — Add `build_file_index` and `resolve_context_mode` to the public API list. Add a paragraph explaining the 3 modes and the creation-time resolution. Reference the new `context_mode` parameter.
+2. **§3.21n** — Add `file_search` to the tools list. Document `_run_grep` as the shared grep helper used by both `search_files` and `file_search`. Note `file_search` is purpose-built for context discovery (different from `search_files` which is for raw grep).
 3. **§4.4b** — Note that `_apply_system_prompt_budget` still applies in all 3 modes. The index is much smaller (~2K) so truncation is rare in JIT mode.
-4. **§3.21d** — Document `context_mode` field on `ProviderConfig` with valid values.
-5. **§3.21m** — Document the `context_mode` pass-through in `create_conversation()`.
+4. **§3.21d** — Document `context_mode` field on `ProviderConfig` with valid values and resolution heuristics.
+5. **§3.21m** — Document the `context_mode` pass-through in `create_conversation()`. Note P10.8 extension point for mid-session re-escalation.
 
 ---
 
@@ -645,7 +707,7 @@ Verified:
 - `EXCLUDED_DIRS`: frozenset at `agent/context.py:145` — verified
 - `_resolve_project_path`: returns `str | None` — verified
 - `build_file_context_with_core_files` signature: `(project_path, query=None, max_chars=50_000) -> str` — verified; new param is keyword-only with default "preload"
-- `compose_system_prompt` signature: 7 existing positional/keyword args + new keyword-only `context_mode`, `turn_count`, `token_estimate`
+- `compose_system_prompt` signature: 7 existing positional/keyword args + new keyword-only `context_mode`
 - `build_system_prompt` signature: 6 existing args + new keyword-only `context_mode`
 
 ### 2. Did I catch all exception types?
@@ -655,7 +717,7 @@ New code paths and their exceptions:
 - `_file_search`: `OSError` from `os.walk`, `subprocess.TimeoutExpired` from grep (re-raised as `ToolResult(success=False, error="...")`)
 - `validate_provider_context_mode`: raises `ValueError` on invalid input
 - `build_file_context_with_core_files` (modified): raises `ValueError` on invalid mode
-- `_resolve_context_mode`: no new exceptions (pure function)
+- `resolve_context_mode`: raises `ValueError` on invalid mode string; no I/O exceptions (pure function using model_max_tokens heuristics)
 
 ### 3. Did I verify key structures?
 
@@ -666,12 +728,16 @@ New code paths and their exceptions:
 - `_load_gitignore_patterns` returns `list[str]` of patterns — verified
 - `EXCLUDED_DIRS` is `frozenset` — verified
 - `CORE_FILES` is `list[str]` of 4 filenames — verified at `agent/context.py:289`
+- `Conversation.system_prompt` is `str` field (line 149), set once at construction (line 1409), never reassigned — verified via grep for `.system_prompt =` in `agent/runtime.py` (only one hit: line 1409 in `create_conversation`)
+- `_search_files` uses `subprocess.run` with `grep -n -H --directories=skip -r` — verified at lines 514–525; `_run_grep` extracts this exact call
 
 ### 4. Did I trace the data flow end-to-end?
 
-Traced from `ProviderConfig.context_mode` → `runtime.create_conversation()` reads via `getattr()` → `build_system_prompt(context_mode=...)` → `compose_system_prompt(context_mode=...)` → `_resolve_context_mode()` → `build_file_context_with_core_files(context_mode=resolved)` → final prompt.
+Traced from `ProviderConfig.context_mode` → `runtime.create_conversation()` reads via `getattr()` → `build_system_prompt(context_mode=...)` → `compose_system_prompt(context_mode=...)` → `resolve_context_mode(context_mode, model_max_tokens)` (in `agent/context.py`) → `build_file_context_with_core_files(context_mode=resolved)` → final prompt stored once on `Conversation.system_prompt` (never reassigned).
 
-For `file_search` tool: agent LLM call with function-call → `agent.tools._file_search(query, ...)` → combines `_find_matching_files` + `_search_files` → grouped output → LLM sees preview lines.
+For `file_search` tool: agent LLM call with function-call → `agent.tools._file_search(query, ...)` → combines `_find_matching_files` + `_run_grep` (shared helper) → grouped output → LLM sees preview lines.
+
+**v1 limitation confirmed:** `system_prompt` is set once at line 1409 and never reassigned (grep for `.system_prompt =` in runtime.py returns only the `create_conversation` assignment). Mid-session escalation requires adding a rebuild step to the tool loop — deferred to P10.8.
 
 ### 5. Would an implementer following this spec produce working code?
 
@@ -697,3 +763,12 @@ Yes. Every change specifies:
 **Mantra check:** "A spec is a contract. If it has a bug, the implementer will ship that bug. Verify everything." ✓
 
 **Mantra 2 check:** "Done means every file changed, every test passing, every old pattern gone." ✓ (acceptance criteria include grep sweep for old `build_file_context_with_core_files()` callsites without `context_mode` — should all still work due to default arg)
+
+---
+
+## Revision History
+
+| Date | Revision | Author | Changes |
+|---|---|---|---|
+| 2026-06-27 | v1.0 | Captain Q | Initial spec from proposal |
+| 2026-06-27 | v1.1 | Qaster | Fix 4 review concerns: (1) v1 scope is conversation-creation-time resolution only, mid-session escalation deferred to P10.8; (2) extract `_run_grep()` shared helper to prevent grep behavior drift between `search_files` and `file_search`; (3) move `resolve_context_mode()` from `prompt_loader.py` to `agent/context.py` (context-strategy concern); (4) add tiered directory-level summary for large projects (1000+ files) instead of bare truncation note |
