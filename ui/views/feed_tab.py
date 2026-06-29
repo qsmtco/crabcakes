@@ -634,3 +634,33 @@ class FeedTab(Gtk.Box):
         """
         self._batch_accept_callback = callback
         self._on_batch_accept_clicked = callback
+
+    def hide_card_buttons(self, card_id: str, button_names: list[str]) -> None:
+        """Hide specific action buttons on a card widget. (Phase 5)
+
+        Used by FeedHandler._auto_approve_exec_card() in Show mode to hide
+        the Approve/Deny buttons on cards that were auto-approved. Walks
+        the card widget's children looking for attributes named
+        `_<name>_button` (where <name> is each entry in `button_names`)
+        and calls `set_visible(False)` on each.
+
+        Args:
+            card_id: The card whose buttons should be hidden. If the card
+                is not currently in self._cards_by_id (e.g. user navigated
+                away from it), the method is a no-op.
+            button_names: List of button names to hide (e.g. ["approve", "deny"]).
+                Each name is mapped to an attribute `_approve_button` /
+                `_deny_button` on the card widget. Names without a matching
+                attribute are silently skipped.
+
+        Idempotent: calling twice with the same args has the same effect as
+        calling once. The view never owns card state, so we don't track
+        which buttons have already been hidden.
+        """
+        card_widget = self._cards_by_id.get(card_id)
+        if card_widget is None:
+            return
+        for name in button_names:
+            btn = getattr(card_widget, f"_{name}_button", None)
+            if btn is not None:
+                btn.set_visible(False)
