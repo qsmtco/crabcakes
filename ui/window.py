@@ -935,17 +935,20 @@ class MainWindow(Gtk.ApplicationWindow):
         gi.require_version('Gtk', '4.0')
         from gi.repository import Gtk
 
+        # FIX: GTK4 MessageDialog uses `secondary_text=` constructor kwarg.
+        # GTK3's `format_secondary_text` method does not exist in GTK4.
+        # (Pattern matches ui/views/chat_input_toolbar.py:336.)
         dialog = Gtk.MessageDialog(
             transient_for=self,
             modal=True,
             message_type=Gtk.MessageType.WARNING,
             buttons=Gtk.ButtonsType.NONE,
             text=f"Enable Auto-Accept for {agent_name}?",
-        )
-        dialog.format_secondary_text(
-            f"All future file-change cards from {agent_name} will be "
-            f"automatically accepted without review. This cannot be undone "
-            f"for cards already accepted."
+            secondary_text=(
+                f"All future file-change cards from {agent_name} will be "
+                f"automatically accepted without review. This cannot be "
+                f"undone for cards already accepted."
+            ),
         )
         dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
         dialog.add_button("Turn On", Gtk.ResponseType.OK)
