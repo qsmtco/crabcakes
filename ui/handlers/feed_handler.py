@@ -27,6 +27,7 @@ from utils import git_ops
 from utils import feed_store
 from utils import conversation_store
 from models.conversation_snapshot import ConversationSnapshot
+from models.feed_card import AutoAcceptPrefs as _AutoAcceptPrefs  # noqa: F811
 
 _logger = logging.getLogger(__name__)
 
