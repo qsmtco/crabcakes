@@ -954,7 +954,17 @@ class MainWindow(Gtk.ApplicationWindow):
         dialog.add_button("Turn On", Gtk.ResponseType.OK)
         dialog.set_default_response(Gtk.ResponseType.CANCEL)
 
+        # Bug A fix: one-shot dispatch guard. `dialog.close()` below triggers a
+        # second `response` emission with DELETE_EVENT; without this guard the
+        # cancel branch would fire after the confirm branch, subverting the
+        # user's consent (state persisted ON while toggle flipped back OFF).
+        # See .crabcakes/coder-bugs.md (auto-accept response cascade).
+        _dispatched = [False]
+
         def _on_response(dialog, response):
+            if _dispatched[0]:
+                return
+            _dispatched[0] = True
             if response == Gtk.ResponseType.OK:
                 on_confirm()
             else:
