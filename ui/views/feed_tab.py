@@ -40,6 +40,14 @@ class FeedTab(Gtk.Box):
         self._empty_widget: Gtk.Widget | None = None
         # Batch accept bar (Phase 5): shown when ≥2 consecutive file-change cards are pending
         self._batch_bar: Gtk.Box | None = None
+        # Phase 5 — Auto-accept toggle callback (set by FeedHandler via set_auto_accept_callback).
+        # Stores the caller's function; invoked from _on_auto_accept_toggled when the user clicks
+        # the toggle button. None means no callback is wired yet (toggling still updates the
+        # visual but does nothing externally).
+        self._auto_accept_callback: Callable[[bool], None] | None = None
+        # Phase 5 — Batch button label (read by tests for assertions; mirrors the actual
+        # _batch_accept_button.get_label()).
+        self._batch_button_label: str = ""
         # One-shot scroll handler ID for deferred scroll-to-bottom (Bug A fix)
         self._scroll_handler_id: int | None = None
         # Timeout source ID for scroll fallback; disarmed when 'changed' fires (4D-3)
@@ -63,6 +71,36 @@ class FeedTab(Gtk.Box):
 
         scroll.set_child(card_container)
         self.append(scroll)
+
+        # ── Persistent bottom toolbar (Phase 5 — auto-accept + batch accept) ──────
+        # Always visible regardless of pending count. The batch button inside this
+        # toolbar is shown only when count >= 2; the auto-accept toggle is always
+        # shown. Built eagerly in __init__ (not lazy like the old _batch_bar) because
+        # the toggle must exist before update_auto_accept_state() is ever called.
+        self._toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._toolbar.add_css_class("feed-toolbar")
+
+        self._auto_accept_toggle = Gtk.ToggleButton(label="Auto-Accept: OFF")
+        self._auto_accept_toggle.add_css_class("feed-toolbar-toggle")
+        self._auto_accept_toggle.connect("toggled", self._on_auto_accept_toggled)
+
+        self._divider = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        self._divider.add_css_class("feed-toolbar-divider")
+
+        self._batch_accept_button = Gtk.Button(label="Accept All")
+        self._batch_accept_button.add_css_class("feed-btn-batch-accept")
+        self._batch_accept_button.set_visible(False)  # hidden until count >= 2
+        self._batch_accept_button.connect("clicked", self._on_batch_button_clicked)
+
+        self._batch_accept_label = Gtk.Label(label="")
+        self._batch_accept_label.add_css_class("feed-batch-bar-info")
+
+        self._toolbar.append(self._auto_accept_toggle)
+        self._toolbar.append(self._divider)
+        self._toolbar.append(self._batch_accept_button)
+        self._toolbar.append(self._batch_accept_label)
+
+        self.append(self._toolbar)
 
         # When the feed tab becomes visible (mapped), scroll to the bottom so
         # the newest card is shown. This handles the case where GTK4 resets
@@ -324,39 +362,19 @@ class FeedTab(Gtk.Box):
 
     def update_batch_bar(self, pending_count: int) -> None:
         """
-        Show or hide the batch accept bar based on pending consecutive file-change cards.
-        pending_count is the number of consecutive pending file-change cards stacked
-        at the bottom of the feed. Bar is hidden if count < 2. (Phase 5)
+        Update the batch accept button inside the persistent bottom toolbar.
+        pending_count is the number of consecutive pending file-change cards
+        stacked at the bottom of the feed. Button is hidden when count < 2,
+        shown with label "Accept All (N)" when count >= 2. (Phase 5)
         """
-        if pending_count < 2:
-            if self._batch_bar is not None:
-                self._batch_bar.set_visible(False)
-            return
-        if self._batch_bar is None:
-            # Lazy-create on first show
-            self._batch_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-            self._batch_bar.add_css_class("feed-batch-bar")
-            info_label = Gtk.Label()
-            info_label.add_css_class("feed-batch-bar-info")
-            self._batch_bar.append(info_label)
-            self._batch_bar._info_label = info_label  # type: ignore[attr-defined]
-
-            accept_btn = Gtk.Button(label="Accept All")
-            accept_btn.add_css_class("feed-btn-batch-accept")
-            accept_btn.connect("clicked", lambda _: self._on_batch_accept_clicked())
-            self._batch_bar.append(accept_btn)
-            self._batch_bar._accept_btn = accept_btn  # type: ignore[attr-defined]
-
-            # Insert before feed_scroll in the parent (pinned to top, outside scrolled window)
-            parent = self._feed_scroll.get_parent()
-            if parent is not None:
-                parent.prepend(self._batch_bar)
-
-        # Update the count text
-        self._batch_bar._info_label.set_text(  # type: ignore[attr-defined]
-            f"{pending_count} file changes pending"
-        )
-        self._batch_bar.set_visible(True)
+        if pending_count >= 2:
+            self._batch_accept_button.set_label(f"Accept All ({pending_count})")
+            self._batch_accept_button.set_visible(True)
+        else:
+            self._batch_accept_button.set_label("Accept All")
+            self._batch_accept_button.set_visible(False)
+        self._batch_button_label = self._batch_accept_button.get_label()
+        self._batch_accept_label.set_text("")
 
     def _on_batch_accept_clicked(self) -> None:
         """
