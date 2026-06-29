@@ -9,7 +9,7 @@ import sys
 from unittest.mock import MagicMock, patch
 
 from models.feed_card import AutoAcceptPrefs, ExecCommandPref, FeedCardData, FileChangePref
-from utils.feed_store import _default_prefs, _merge_v2_defaults, _migrate_v1_to_v2
+from utils.feed_store import _default_prefs, _merge_v2_defaults, _migrate_v1_to_v2, load_feed_prefs
 
 
 # ── Mock GLib that records calls instead of dispatching ──────────────────────
