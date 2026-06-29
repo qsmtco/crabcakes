@@ -23,6 +23,7 @@
 # Responses from agents are routed back to the project tab via _agent_to_project lookup.
 
 import logging
+from typing import Callable
 
 import gi
 
@@ -472,6 +473,13 @@ class MainWindow(Gtk.ApplicationWindow):
         # Tell FeedHandler about the FeedTab (FeedHandler needs it to add/remove cards)
         self._feed_handler.set_feed_tab(self._feed_tab)
 
+        # Phase 5: wire auto-accept warning dialog callback
+        self._feed_handler.set_show_auto_accept_warning(
+            lambda agent_name, on_confirm, on_cancel: self._show_auto_accept_warning(
+                agent_name, on_confirm, on_cancel
+            )
+        )
+
         # Inject FeedTab into LeftPanel's Projects notebook "Feed" sub-tab
         self._left_panel.set_feed_tab(self._feed_tab)
 
@@ -902,6 +910,56 @@ class MainWindow(Gtk.ApplicationWindow):
     def _on_agent_selected(self, session_key, agent_name):
         """Called when an agent row is clicked — create/open chat tab."""
         self._main_content.create_chat_tab(session_key, agent_name)
+
+    # ── Auto-Accept warning dialog (Phase 5) ───────────────────────────────
+
+    def _show_auto_accept_warning(
+        self,
+        agent_name: str,
+        on_confirm: Callable,
+        on_cancel: Callable,
+    ) -> None:
+        """
+        Show a warning dialog when the user toggles auto-accept ON.
+
+        Explains that auto-accept will automatically approve all future
+        file-change cards from the named agent. User can confirm or cancel.
+        If canceled, the toggle snaps back to OFF. (Phase 5)
+
+        Args:
+            agent_name: Human-readable agent name for the dialog message.
+            on_confirm: Callback to invoke if user clicks "Turn On".
+            on_cancel: Callback to invoke if user clicks "Cancel".
+        """
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import Gtk
+
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.NONE,
+            text=f"Enable Auto-Accept for {agent_name}?",
+        )
+        dialog.format_secondary_text(
+            f"All future file-change cards from {agent_name} will be "
+            f"automatically accepted without review. This cannot be undone "
+            f"for cards already accepted."
+        )
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Turn On", Gtk.ResponseType.OK)
+        dialog.set_default_response(Gtk.ResponseType.CANCEL)
+
+        def _on_response(dialog, response):
+            if response == Gtk.ResponseType.OK:
+                on_confirm()
+            else:
+                on_cancel()
+            dialog.close()
+
+        dialog.connect("response", _on_response)
+        dialog.show()
 
     # ── Agent Builder integration ──────────────────────────────────────────
 
