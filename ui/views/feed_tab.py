@@ -486,15 +486,63 @@ class FeedTab(Gtk.Box):
         """
         self._agent_scope_callback = callback
 
+    def update_auto_accept_prefs(self, prefs_dict: dict) -> None:
+        """Reconcile all toolbar visuals from the v2 prefs dict.
+
+        Called by FeedHandler whenever prefs change. The view never owns state;
+        it only reflects what the handler tells it.
+
+        Args:
+            prefs_dict: A v2 prefs dict (as produced by AutoAcceptPrefs.to_dict()
+                or load_feed_prefs()). Must have version == 2.
+        """
+        auto = prefs_dict.get("auto_accept", {})
+        fc = auto.get("file_changes", {})
+
+        # Diffs toggle (covers "diff" type)
+        diff_enabled = fc.get("diff", {}).get("enabled", False)
+        self._diffs_toggle.set_active(diff_enabled)
+        self._diffs_toggle.set_label(f"Diffs: {'ON' if diff_enabled else 'OFF'}")
+
+        # Files toggle (covers file_created, file_modified, file_deleted)
+        files_enabled = any(
+            fc.get(ct, {}).get("enabled", False)
+            for ct in ("file_created", "file_modified", "file_deleted")
+        )
+        self._files_toggle.set_active(files_enabled)
+        self._files_toggle.set_label(f"Files: {'ON' if files_enabled else 'OFF'}")
+
+        # Exec toggle (3-state)
+        exec_mode = auto.get("exec_command", {}).get("mode", "off")
+        self._exec_mode = exec_mode
+        self._exec_toggle.set_label(f"Exec: {exec_mode.upper()}")
+
+        # Snooze count
+        snoozed = auto.get("snoozed_card_ids", [])
+        count = len(snoozed)
+        self._snooze_button.set_label(f"Snooze {count}")
+        self._snooze_button.set_visible(count > 0)
+
     def update_auto_accept_state(self, active: bool) -> None:
+        """Legacy bridge — constructs a prefs dict from the single-toggle state.
+
+        Deprecated: use update_auto_accept_prefs() directly. Preserves v1
+        semantics: ALL four file-change types enabled together with
+        agent_scope='all_agents'. New code should set per-type prefs via
+        update_auto_accept_prefs instead. (Phase 5 → Phase 6)
         """
-        Programmatically set the toggle visual state. set_active() does NOT
-        fire the 'toggled' signal (verified GTK4 behavior), so this is safe
-        to call from the main thread without triggering the user's callback.
-        Also updates the label to reflect the new state. (Phase 5)
-        """
-        self._auto_accept_toggle.set_active(active)
-        self._auto_accept_toggle.set_label("Auto-Accept: ON" if active else "Auto-Accept: OFF")
+        prefs = {
+            "version": 2,
+            "auto_accept": {
+                "file_changes": {
+                    ct: {"enabled": active, "agent_scope": "all_agents"}
+                    for ct in ("diff", "file_created", "file_modified", "file_deleted")
+                },
+                "exec_command": {"mode": "off", "agent_scope": "all_agents"},
+                "snoozed_card_ids": [],
+            },
+        }
+        self.update_auto_accept_prefs(prefs)
 
     def _on_auto_accept_toggled(self, button: Gtk.ToggleButton) -> None:
         """
