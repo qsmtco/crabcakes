@@ -147,6 +147,31 @@ class AgentRuntimeHandler:
         """
         self._on_command_output = cb
 
+    def set_check_exec_auto_accept_callback(
+        self, callback: Callable[[], str | None] | None
+    ) -> None:
+        """Install callback that returns the current exec auto-accept mode,
+        or None if exec auto-accept is off. (Phase 6 / v2)
+
+        Per SPEC-AUTO-ACCEPT-GRANULAR-1 §2.5 + GRANULAR-PHASE-6-INSTRUCTIONS
+        Sub-change A: AgentRuntimeHandler does NOT import FeedHandler
+        (§8.6 R2 no handler-to-handler imports). Instead, window.py wires
+        FeedHandler.get_exec_auto_accept_mode as the callback. When the
+        callback returns "silent", _do_approval_needed bypasses card
+        creation and approves directly via runtime.approve_exec().
+
+        The callback signature is `() -> str | None`:
+          - returns "off" | "show" | "silent" to indicate exec mode
+          - returns None if FeedHandler's _prefs is not yet initialized
+            (gracefully degrades to no-bypass — card is created normally)
+
+        Trigger: invoked at the top of _do_approval_needed() on every
+        approval request. The callback must be cheap (called once per
+        approval); FeedHandler.get_exec_auto_accept_mode is a single
+        attribute read on _prefs.exec_command.mode.
+        """
+        self._on_check_exec_auto_accept = callback
+
     def set_review_handler(self, review_handler) -> None:
         """Set ReviewHandler after construction (deferred to avoid circular deps with window._build)."""
         self._review_handler = review_handler
