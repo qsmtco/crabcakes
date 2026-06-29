@@ -144,10 +144,16 @@ class FeedTab(Gtk.Box):
         self._batch_accept_label = Gtk.Label(label="")
         self._batch_accept_label.add_css_class("feed-batch-bar-info")
 
-        self._toolbar.append(self._auto_accept_toggle)
-        self._toolbar.append(self._divider)
-        self._toolbar.append(self._batch_accept_button)
-        self._toolbar.append(self._batch_accept_label)
+        self._toolbar.append(self._diffs_toggle)
+        self._toolbar.append(self._files_toggle)
+        self._toolbar.append(self._exec_toggle)
+        self._toolbar.append(self._scope_divider)
+        self._toolbar.append(self._agent_dropdown)
+        self._toolbar.append(self._snooze_divider)
+        self._toolbar.append(self._snooze_button)
+        self._toolbar.append(self._divider)             # existing divider (between toolbar and batch-accept section)
+        self._toolbar.append(self._batch_accept_button)  # existing batch accept button
+        self._toolbar.append(self._batch_accept_label)   # existing batch accept label
 
         self.append(self._toolbar)
 
