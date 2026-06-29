@@ -23,7 +23,7 @@
 
 - **Read `models/feed_card.py` (relevant sections):** `FeedCardData` dataclass with fields: `card_type`, `source`, `title`, `body`, `author`, `timestamp`, `project_name` (required), `file_path`, `commit_sha`, `additions`, `deletions`, `task_id`, `metadata: dict` (default_factory=dict), `conversation_snapshot`, `card_id`, `reviewed`, `accepted`, `seq_num`. `CardType` is a `Literal` of 11 types. `is_actionable()` returns `True` for `needs_approval` metadata or file-change types.
 
-- **Read `ui/window.py` (lines 455-490):** `FeedHandler` is constructed with `on_approve_exec=self._agent_runtime_handler.approve_exec`. `set_show_auto_accept_warning()` is wired with a lambda calling `self._show_auto_accept_warning(agent_name, on_confirm, on_cancel)`. `FeedTab()` is created after `FeedHandler`, then `feed_handler.set_feed_tab(feed_tab)` is called. The auto-accept warning dialog callback is wired after `set_feed_tab`.
+- **Read `ui/window.py` (lines 455-490):** `FeedHandler` is constructed with `on_approve_exec=self._agent_runtime_handler.approve_exec`. `set_show_auto_accept_warning()` is wired with a lambda calling `self._show_auto_accept_warning(agent_name, on_confirm, on_cancel)`. `FeedTab()` is created after `FeedHandler`, then `feed_handler.set_feed_tab(feed_tab)` is called. The auto-accept warning dialog callback is wired after `set_feed_tab`. The v2 spec expands this signature to `(category, agent_name, on_confirm, on_cancel)` — see BUG #6 in the audit.
 
 - **Architecture owner:** `FeedHandler` owns all feed-card state and auto-accept policy (§8.6 R5). `FeedTab` is a pure view that reflects handler-owned state (§8.6 R7). `feed_store.py` owns persistence. `AgentRuntimeHandler` owns the exec approval lifecycle.
 
@@ -163,6 +163,20 @@ class AutoAcceptPrefs:
         snoozed = auto.get("snoozed_card_ids", [])
         prefs.snoozed_card_ids = list(snoozed) if isinstance(snoozed, list) else []
         return prefs
+
+    def locked_agent(self) -> str | None:
+        """Return the locked-in agent if any file_changes type uses a
+        specific agent name as its scope (not 'all_agents' or 
+        'first_author'). Used during v1→v2 migration to preserve the 
+        persisted agent lock-in from the v1 'auto_accept_agent' field.
+        """
+        for fc in self.file_changes.values():
+            if fc.agent_scope not in ("all_agents", "first_author"):
+                return fc.agent_scope
+        return None
+```
+
+**Imports required:** `field` is already imported from `dataclasses`. `Any` is not needed.
 ```
 
 **Imports required:** `field` is already imported from `dataclasses`. `Any` is not needed.
@@ -256,13 +270,24 @@ def _migrate_v1_to_v2(raw: dict) -> dict:
     v1: {"version": 1, "auto_accept_enabled": bool, "auto_accept_agent": str|None}
     v2: {"version": 2, "auto_accept": {"file_changes": {...}, "exec_command": {...}, ...}}
 
-    Migration rule: if auto_accept_enabled was True, enable all four
-    file-change types with first_author scope. If False, all disabled.
-    The agent from v1 (if any) becomes the first_author default (ignored
-    in v2 — first_author is resolved at runtime, not stored).
+    Migration rules:
+    - If auto_accept_enabled was False: all four file-change types disabled.
+    - If auto_accept_enabled was True AND auto_accept_agent is None: all four
+      enabled with first_author scope (lazy lock-in preserved).
+    - If auto_accept_enabled was True AND auto_accept_agent is set: all four
+      enabled with agent_scope = the persisted agent name. The first_author
+      lazy lock-in is bypassed because the user explicitly chose an agent.
+
+    The agent name from v1 is significant — it represents a deliberate lock-in
+    the user already made. Dropping it would silently change which agent's
+    cards auto-accept after upgrade (BUG #1 in adversarial audit).
     """
     enabled = bool(raw.get("auto_accept_enabled", False))
-    scope = "first_author"
+    agent = raw.get("auto_accept_agent")
+    if enabled and isinstance(agent, str) and agent:
+        scope = agent  # Persist as a specific agent scope
+    else:
+        scope = "first_author"
     return {
         "version": 2,
         "auto_accept": {
@@ -332,6 +357,10 @@ self._diffs_toggle.add_css_class("feed-toolbar-toggle")
 self._diffs_toggle.add_css_class("feed-toolbar-toggle-per-type")
 self._diffs_toggle.connect("toggled", self._on_diffs_toggled)
 
+# Files is a GROUP toggle covering file_created/modified/deleted.
+# Uses Gtk.ToggleButton for consistency with the Diffs toggle. The
+# three underlying prefs are always toggled as a group, so there is
+# no inconsistent-state ambiguity in normal usage.
 self._files_toggle = Gtk.ToggleButton(label="Files: OFF")
 self._files_toggle.add_css_class("feed-toolbar-toggle")
 self._files_toggle.add_css_class("feed-toolbar-toggle-per-type")
@@ -410,6 +439,28 @@ def _on_files_toggled(self, button: Gtk.ToggleButton) -> None:
     if self._files_toggle_callback is not None:
         self._files_toggle_callback(button.get_active())
 
+**New view methods for exec Show mode:**
+
+```python
+def hide_card_buttons(self, card_id: str, button_names: list[str]) -> None:
+    """Hide specific action buttons on a card widget.
+
+    Used by FeedHandler._auto_approve_exec_card() in Show mode to hide
+    the Approve/Deny buttons on cards that were auto-approved.
+
+    Args:
+        card_id: The card whose buttons should be hidden.
+        button_names: List of button names to hide (e.g. ["approve", "deny"]).
+    """
+    card_widget = self._card_widgets.get(card_id)
+    if card_widget is None:
+        return
+    for name in button_names:
+        btn = getattr(card_widget, f"_{name}_button", None)
+        if btn is not None:
+            btn.set_visible(False)
+```
+
 def _on_exec_clicked(self, button: Gtk.Button) -> None:
     """3-state cycle: OFF → SHOW → SILENT → OFF."""
     current = self._exec_mode
@@ -468,22 +519,25 @@ def update_auto_accept_prefs(self, prefs_dict: dict) -> None:
     self._snooze_button.set_visible(count > 0)
 ```
 
-**Backward compatibility:** Keep `update_auto_accept_state(active: bool)` as a thin wrapper during the transition period — it calls `update_auto_accept_prefs()` with a constructed dict. This prevents breakage of any external callers.
+**Backward compatibility:** Keep `update_auto_accept_state(active: bool)` as a thin wrapper during the transition period — it calls `update_auto_accept_prefs()` with a constructed dict that preserves the **legacy single-toggle semantics**: all four file-change types enabled with `agent_scope = "all_agents"` (not "first_author"). BUG #9 in adversarial audit: the original spec's bridge used scope="first_author" which would surprise tests that expected any-agent auto-accept after calling the legacy method. Using "all_agents" preserves the v1 behavior that the test suite was originally written against.
 
 ```python
 def update_auto_accept_state(self, active: bool) -> None:
     """Legacy bridge — constructs a prefs dict from the single-toggle state.
 
-    Deprecated: use update_auto_accept_prefs() directly.
+    Deprecated: use update_auto_accept_prefs() directly. Preserves v1
+    semantics: ALL four file-change types are enabled together with
+    agent_scope='all_agents'. New code should set per-type prefs via
+    update_auto_accept_prefs instead.
     """
     prefs = {
         "version": 2,
         "auto_accept": {
             "file_changes": {
-                ct: {"enabled": active, "agent_scope": "first_author"}
+                ct: {"enabled": active, "agent_scope": "all_agents"}
                 for ct in ("diff", "file_created", "file_modified", "file_deleted")
             },
-            "exec_command": {"mode": "off", "agent_scope": "first_author"},
+            "exec_command": {"mode": "off", "agent_scope": "all_agents"},
             "snoozed_card_ids": [],
         },
     }
@@ -533,6 +587,8 @@ def set_feed_tab(self, feed_tab) -> None:
 
 **Replace `_on_auto_accept_toggled`, `_enable_auto_accept`, `_disable_auto_accept`, `_cancel_auto_accept`** with new per-toggle methods:
 
+The warning dialog callback signature is expanded to `(category, agent_name, on_confirm, on_cancel)`. The category drives which dialog copy is shown; agent_name drives the dialog's mention of which agent is involved (the first_author fallback chain). BUG #6 in adversarial audit: passing "diffs" as agent_name confuses the dialog because "diffs" is a category, not an agent identifier.
+
 ```python
 def _on_diffs_toggled(self, active: bool) -> None:
     """Diffs toggle changed. Show warning on first activation."""
@@ -540,6 +596,7 @@ def _on_diffs_toggled(self, active: bool) -> None:
         if self._show_auto_accept_warning is not None:
             self._show_auto_accept_warning(
                 "diffs",
+                self._resolve_agent_name_for_dialog(),
                 on_confirm=self._enable_diffs,
                 on_cancel=self._cancel_diffs,
             )
@@ -563,6 +620,7 @@ def _on_files_toggled(self, active: bool) -> None:
         if self._show_auto_accept_warning is not None:
             self._show_auto_accept_warning(
                 "files",
+                self._resolve_agent_name_for_dialog(),
                 on_confirm=self._enable_files,
                 on_cancel=self._cancel_files,
             )
@@ -584,7 +642,29 @@ def _cancel_files(self) -> None:
     self._refresh_auto_accept_state()
 
 def _on_exec_toggled(self, mode: str) -> None:
-    """Exec toggle changed. mode is 'off', 'show', or 'silent'."""
+    """Exec toggle changed. mode is 'off', 'show', or 'silent'.
+
+    When the user clicks the Exec toggle to enter 'show' or 'silent', we
+    show a stronger warning (since exec has bigger blast radius than file
+    changes). The warning callback receives category='exec' and the
+    appropriate agent name.
+    """
+    previous_mode = self._prefs.exec_command.mode
+    self._prefs.exec_command.mode = mode
+    if mode in ("show", "silent") and previous_mode == "off":
+        # First entry into an exec mode — show warning.
+        if self._show_auto_accept_warning is not None:
+            self._show_auto_accept_warning(
+                "exec",
+                self._resolve_agent_name_for_dialog(),
+                on_confirm=lambda: self._confirm_exec_mode(mode),
+                on_cancel=lambda: self._confirm_exec_mode("off"),
+            )
+            return
+    self._refresh_auto_accept_state()
+
+def _confirm_exec_mode(self, mode: str) -> None:
+    """Confirmed by the user (or auto-confirmed if no dialog wired)."""
     self._prefs.exec_command.mode = mode
     self._refresh_auto_accept_state()
 
@@ -593,11 +673,24 @@ def _refresh_auto_accept_state(self) -> None:
 
     Called after ANY prefs mutation. Ensures the view always reflects
     the handler's canonical state (Bug C invariant).
+
+    Persists via a debounced single-shot idle_add so rapid-fire
+    mutations (user clicking toggles + lazy agent lock-in firing in
+    the same main-loop iteration) do not produce redundant disk writes
+    (BUG #8 in adversarial audit).
     """
     self._auto_accept_enabled = self._prefs.any_enabled()
     if self._feed_tab is not None:
         self._feed_tab.update_auto_accept_prefs(self._prefs.to_dict())
-    self._GLib.idle_add(self._save_feed_prefs_idle)
+    # Cancel any pending save and schedule a new one. The handler is
+    # always called from the main thread, so this is safe.
+    if hasattr(self, "_pending_save_id") and self._pending_save_id is not None:
+        try:
+            self._GLib.source_remove(self._pending_save_id)
+        except Exception:
+            pass
+        self._pending_save_id = None
+    self._pending_save_id = self._GLib.idle_add(self._save_feed_prefs_idle)
 ```
 
 **Replace `_save_feed_prefs_idle()`:**
@@ -609,6 +702,25 @@ def _save_feed_prefs_idle(self) -> None:
     if not project_path:
         return
     feed_store.save_feed_prefs(project_path, self._prefs.to_dict())
+
+**Update `set_show_auto_accept_warning` docstring** (around line 127):
+
+```python
+def set_show_auto_accept_warning(self, callback: Callable | None) -> None:
+    """
+    Install the callback invoked when the user activates auto-accept
+    for any feature (diffs, files, exec). (Phase 5 + v2)
+
+    The callback signature (as of v2) is:
+        callback(category: str, agent_name: str,
+                 on_confirm: Callable, on_cancel: Callable)
+    where category is one of "diffs" | "files" | "exec" and agent_name
+    is the human-readable name of the agent the auto-accept applies to
+    (resolved by the handler's first_author fallback chain).
+
+    Pass None to clear. Called by Window after FeedHandler is constructed.
+    """
+    self._show_auto_accept_warning = callback
 ```
 
 **Replace the auto-accept guard inside `add_card()`'s `_append()` closure:**
@@ -677,6 +789,12 @@ def _agent_scope_matches(self, scope: str, author: str) -> bool:
     - "first_author": True if _auto_accept_agent is None (not yet locked)
       or author == _auto_accept_agent
     - "<specific name>": True if author == scope
+
+    Side effect: when lazy lock-in fires, _refresh_auto_accept_state() is
+    called so the view's agent dropdown updates to reflect the new lock-in
+    (BUG #2 in adversarial audit — without this, the dropdown label stays
+    at "First author" even though only one agent's cards are accepted).
+    Persistence is debounced through _refresh_auto_accept_state.
     """
     if scope == "all_agents":
         return True
@@ -685,10 +803,10 @@ def _agent_scope_matches(self, scope: str, author: str) -> bool:
             # Lazy lock-in: first card sets the agent
             if author:
                 self._auto_accept_agent = author
-                self._GLib.idle_add(self._save_feed_prefs_idle)
+                self._refresh_auto_accept_state()
             return True
         return author == self._auto_accept_agent
-    # Specific agent name
+    # Specific agent name (persisted in v2 migration from v1 auto_accept_agent)
     return author == scope
 ```
 
@@ -721,28 +839,72 @@ self._feed_tab.update_auto_accept_prefs(self._prefs.to_dict())
 
 **Exec auto-accept integration:**
 
-In `add_card()`, after the existing auto-accept check for file-change cards, add a parallel check for exec approval cards:
+Add a new helper method to `FeedHandler` that handles both exec modes atomically. This method owns the card-status update so the view never displays "pending approval" on an already-approved command (BUG #3 in adversarial audit), and respects the proposal's "Silent mode bypasses card creation" intent by hiding Approve/Deny buttons on auto-approved cards (BUG #4).
+
+```python
+def _auto_approve_exec_card(self, card_id: str, mode: str) -> None:
+    """Handle exec auto-accept for a single approval card.
+
+    Called from _append() when an exec approval card is auto-acceptable.
+    The card is already in self._cards at this point; the widget has
+    NOT yet been appended to the feed tab (we are inside the same
+    idle_add closure).
+
+    Args:
+        card_id: card_id of the FeedCardData that was just created.
+        mode: "show" or "silent" from prefs.exec_command.mode.
+
+    Show mode: card widget is appended normally but the Approve/Deny
+    buttons are hidden (the card is auto-approved). Status is set to
+    "approved" so the view shows a green check instead of yellow pending.
+    The runtime approval is dispatched via on_approve_exec.
+
+    Note: Silent mode is NOT handled here. In Silent mode,
+    AgentRuntimeHandler._do_approval_needed() short-circuits before
+    creating a card at all (see §2.5). This method is only reached
+    in Show mode.
+    """
+    if mode != "show":
+        return
+
+    if self._on_approve_exec is None:
+        _logger.warning("_auto_approve_exec_card: no on_approve_exec callback")
+        return
+
+    card = self._cards.get(card_id)
+    if card is None:
+        return
+
+    # Mark card as already-approved so the widget renders correctly.
+    # The Approve/Deny buttons are wired through _make_approve_exec_cb;
+    # we hide them via feed_tab.hide_card_buttons(). See §2.3.
+    card.accepted = True
+    card.metadata["auto_approved_by"] = "exec_auto_accept"
+    if self._feed_tab is not None:
+        self._feed_tab.hide_card_buttons(card_id, ["approve", "deny"])
+    # Dispatch the actual approval to the runtime.
+    self._GLib.idle_add(
+        lambda cid=card_id: self._on_approve_exec(cid, True)
+    )
+```
+
+In `add_card()`, after the existing file-change auto-accept check, call this helper:
 
 ```python
 # Exec auto-accept (Phase E integration)
 if (card_data.card_type == "agent_action"
         and card_data.metadata.get("needs_approval")
         and card_data.accepted is None
-        and self._is_card_auto_acceptable(card_data)):
-    if self._prefs.exec_command.mode == "silent":
-        # Silent mode: do not create the approval card at all.
-        # Call approve_exec immediately via the callback.
-        # card_id is already assigned at this point.
-        if self._on_approve_exec is not None:
-            self._GLib.idle_add(
-                lambda cid=card_id: self._on_approve_exec(cid, True)
-            )
-    elif self._prefs.exec_command.mode == "show":
-        # Show mode: card is created and auto-approved via handle_approve_exec.
-        self._GLib.idle_add(
-            lambda cid=card_id: self.handle_approve_exec(cid, True)
-        )
+        and self._is_card_auto_acceptable(card_data)
+        and self._prefs.exec_command.mode in ("show", "silent")):
+    self._auto_approve_exec_card(card_id, self._prefs.exec_command.mode)
+    # In Silent mode, skip the normal widget-append path that follows.
+    # Note: Silent mode never reaches this point — the card is never
+    # created because AgentRuntimeHandler._do_approval_needed() bypasses
+    # card creation entirely (see §2.5).
 ```
+
+**BUG #6 audit note:** The spec's original exec Show path used `handle_approve_exec(cid, True)`. That method (feed_handler.py:1260) delegates to `_on_approve_exec` WITHOUT updating the card's local status. The replacement method `_auto_approve_exec_card` directly sets `card.accepted = True` and adds the audit metadata, then calls `_on_approve_exec(cid, True)` (skipping `handle_approve_exec` because the card is already marked accepted). This avoids double-action and ensures UI/runtime state stay in sync.
 
 **Snooze API:**
 
@@ -760,40 +922,116 @@ def unsnooze_card(self, card_id: str) -> None:
         self._refresh_auto_accept_state()
 ```
 
-**Line count estimate:** ~130 new lines, ~60 modified lines.
+**Add `_resolve_agent_name_for_dialog` helper:**
+
+```python
+def _resolve_agent_name_for_dialog(self) -> str:
+    """Resolve the agent name to display in the warning dialog.
+
+    Uses the first_author fallback chain:
+    1. If _auto_accept_agent is set (lazy lock-in already fired), use it.
+    2. Otherwise, return a generic placeholder so the dialog reads
+       naturally (e.g. \"the first agent to write\").
+
+    Returns:
+        The locked-in agent name, or the placeholder string.
+    """
+    if self._auto_accept_agent:
+        return self._auto_accept_agent
+    return "the first agent to write"
+```
+
+**Line count estimate:** ~150 new lines, ~60 modified lines.
 
 ### 2.5 `ui/handlers/agent_runtime_handler.py`
 
 **What changes:** In `_do_approval_needed()`, before creating the approval card, check if exec auto-accept is in `Silent` mode. If so, bypass card creation entirely and call `rt.approve_exec()` directly.
 
-**No changes needed to `_do_approval_needed()` itself.** The `Silent` bypass is handled inside `FeedHandler.add_card()` (see §2.4 above), which is called by `self._fh.add_card(card)` at line 1006 of `agent_runtime_handler.py`. The card is still created in `_do_approval_needed()` and passed to `add_card()` — but `add_card()` will short-circuit the approval via `handle_approve_exec()` (Show mode) or `_on_approve_exec()` (Silent mode) before the widget is rendered.
+**Reconciliation with proposal (BUG #11 fix):** The proposal §"Phase E integration" states: *"In `Silent` mode, the approval card is not even created — `agent_runtime_handler` short-circuits earlier, calling `rt.approve_exec(session_key, "exec_command", args, True)` directly without a feed card."* The first draft of this spec diverged by claiming cards ARE created in Silent mode but immediately approved. That divergence was a bug: it leaves Approve/Deny buttons visible on an already-executed command, inviting double-action. This spec now follows the proposal: Silent mode bypasses card creation.
 
-**Why not bypass in `_do_approval_needed` itself:** The `_do_approval_needed` method does not have access to `FeedHandler._prefs`. Adding a cross-handler dependency would violate §8.6 R2 (handlers never import other handlers). The FeedHandler is the sole owner of auto-accept policy.
+To honor the proposal AND respect §8.6 R2 (no handler-to-handler imports), we add a new callback to `AgentRuntimeHandler.__init__`: `on_check_exec_auto_accept: Callable[[], str | None]`. The handler installs this callback so `AgentRuntimeHandler` can ASK `FeedHandler` whether exec auto-accept applies without importing from it. The callback returns the exec mode ("off" | "show" | "silent") or None.
 
-**However:** For `Silent` mode, the card is still stored in `_cards` and `_pending_approvals` before being auto-resolved. This is acceptable — the card is resolved immediately via idle_add, and the `_pending_approvals` dict entry is cleaned up when `approve_exec()` pops it.
+```python
+# In AgentRuntimeHandler.__init__:
+self._on_check_exec_auto_accept: Callable[[], str | None] | None = None
 
-**Line count estimate:** 0 new lines in this file.
+def set_check_exec_auto_accept_callback(self, callback: Callable[[], str | None] | None) -> None:
+    """Install callback that returns the current exec auto-accept mode,
+    or None if exec auto-accept is off. (Phase E + v2)
+    """
+    self._on_check_exec_auto_accept = callback
+```
+
+In `_do_approval_needed()`, before creating the card:
+
+```python
+def _do_approval_needed(self, session_key: str, tool_name: str, args: dict) -> None:
+    if self._fh is None:
+        logger.warning("_do_approval_needed: no feed handler available")
+        return
+    
+    # V2 Silent bypass: if exec auto-accept is in silent mode, approve
+    # directly without creating a feed card. The card is NOT stored
+    # in _cards or _pending_approvals (no double-action possible).
+    if (self._on_check_exec_auto_accept is not None
+            and self._on_check_exec_auto_accept() == "silent"):
+        agent_def = self._agents.get(session_key)
+        if agent_def is None:
+            return
+        runtime = self._runtimes.get(agent_def.runtime_id)
+        if runtime is None:
+            return
+        # Resolve approval directly without a card.
+        self._GLib.idle_add(
+            lambda: runtime.approve_exec(session_key, tool_name, args, True)
+        )
+        return
+    
+    # ... existing card creation code follows ...
+```
+
+**Window.py wiring** (new — adds to §2.6):
+
+```python
+self._feed_handler.set_check_exec_auto_accept_callback_for_handler(
+    self._agent_runtime_handler.set_check_exec_auto_accept_callback
+)
+# FeedHandler exposes a getter that returns the current exec mode:
+# _feed_handler.get_exec_auto_accept_mode() -> str | None
+```
+
+And on the FeedHandler side:
+
+```python
+def get_exec_auto_accept_mode(self) -> str | None:
+    """Public API: return the current exec auto-accept mode.
+
+    Used by AgentRuntimeHandler via the installed callback to decide
+    whether to bypass card creation in Silent mode.
+    """
+    if self._prefs is None:
+        return None
+    return self._prefs.exec_command.mode
+```
+
+**Why this pattern (not direct cross-handler import):** §8.6 R2 forbids handler-to-handler imports. The callback indirection preserves the rule: `AgentRuntimeHandler` knows nothing about `FeedHandler`'s internals, only the contract "give me the current exec mode string."
+
+**Why Silent mode bypasses card creation (Show mode does NOT):** Show mode is for the user who wants to see what was auto-approved (audit trail in the feed). Silent mode is for the user who explicitly opted into "let the agent just run pytest in peace" and does NOT want cards cluttering the feed. The two modes have different UX intents; the spec must respect both.
+
+**Line count estimate:** ~20 new lines in this file (callback installation + bypass logic).
 
 ### 2.6 `ui/window.py`
 
-**What changes:** Update the `set_show_auto_accept_warning` callback to accept a `category` string instead of an `agent_name` string. The warning dialog text changes based on whether the user is enabling diffs, files, or exec.
+**What changes:** Update the `set_show_auto_accept_warning` callback to accept both a `category` string ("diffs" | "files" | "exec") AND an `agent_name` string. The category drives the dialog copy; the agent_name is shown as the agent the auto-accept applies to. The previous signature `(agent_name, on_confirm, on_cancel)` only handled a single toggle; the new signature handles per-type activation (BUG #6 fix).
 
 **Replace** (around line 477):
 
-```python
-self._feed_handler.set_show_auto_accept_warning(
-    lambda agent_name, on_confirm, on_cancel: self._show_auto_accept_warning(
-        agent_name, on_confirm, on_cancel
-    )
-)
-```
-
-**With:**
+The callback signature expands to `(category, agent_name, on_confirm, on_cancel)`. The category is used to pick dialog copy; agent_name is shown as the agent the auto-accept applies to. BUG #6 fix.
 
 ```python
 self._feed_handler.set_show_auto_accept_warning(
-    lambda category, on_confirm, on_cancel: self._show_auto_accept_warning_v2(
-        category, on_confirm, on_cancel
+    lambda category, agent_name, on_confirm, on_cancel: self._show_auto_accept_warning_v2(
+        category, agent_name, on_confirm, on_cancel
     )
 )
 ```
@@ -802,23 +1040,33 @@ self._feed_handler.set_show_auto_accept_warning(
 
 ```python
 def _show_auto_accept_warning_v2(
-    self, category: str, on_confirm: Callable, on_cancel: Callable
+    self, category: str, agent_name: str, on_confirm: Callable, on_cancel: Callable
 ) -> None:
     """V2 warning dialog for per-type auto-accept activation.
 
     Args:
         category: "diffs", "files", or "exec"
+        agent_name: human-readable agent identifier (resolved by handler)
         on_confirm: called if user confirms
         on_cancel: called if user cancels
     """
-    messages = {
-        "diffs": "Auto-accept diffs?\n\nDiff cards will be automatically committed without review.",
-        "files": "Auto-accept file changes?\n\nFile created/modified/deleted cards will be automatically committed without review.",
-        "exec": "Auto-accept exec commands?\n\nShell commands run by agents will be auto-approved. This can delete files, run network calls, and modify your system.",
+    titles = {
+        "diffs": "Auto-accept diffs?",
+        "files": "Auto-accept file changes?",
+        "exec": "Auto-approve exec commands?",
     }
-    body = messages.get(category, "Enable auto-accept?")
-    # Use existing dialog infrastructure (same pattern as _show_auto_accept_warning)
-    # ... dialog implementation matches existing pattern ...
+    bodies = {
+        "diffs": f"{agent_name} will silently auto-accept every diff it writes. You will not see the diff before it is committed.",
+        "files": f"{agent_name} will silently auto-accept every file_created/file_modified/file_deleted card it produces. You will not see the change before it is committed.",
+        "exec":  f"{agent_name} will silently auto-approve every shell command it runs. This includes rm, git push, network calls, anything. There is no undo.",
+    }
+    title = titles.get(category, "Enable auto-accept?")
+    body = bodies.get(category, f"Enable auto-accept for {category}?")
+    # Use existing dialog infrastructure (same pattern as _show_auto_accept_warning).
+    # The dialog builds a Gtk.MessageDialog with WARNING type, OK/CANCEL buttons,
+    # and on response invokes on_confirm (for OK) or on_cancel (for CANCEL/DELETE).
+    # Implementation matches the existing _show_auto_accept_warning pattern in 
+    # ui/window.py around line 937, with title/body swapped for category-specific copy.
 ```
 
 **Line count estimate:** ~30 modified lines.
@@ -876,16 +1124,10 @@ Agent requests exec approval
 ```
 Agent requests exec approval
   → AgentRuntimeHandler._do_approval_needed()
-    → creates FeedCardData(needs_approval=True)
-    → FeedHandler.add_card(card)
-      → _is_card_auto_acceptable(card)
-        → _prefs.exec_command.mode == "silent"? → True
-        → return True
-      → GLib.idle_add(_on_approve_exec(card_id, True))  [bypasses handle_approve_exec]
-        → AgentRuntimeHandler.approve_exec(card_id, True)
-        → rt.approve_exec(session_key, tool_name, args, True)
-      → Card widget IS created and appended (user can see it in feed)
-        but status is immediately "approved"
+    → _on_check_exec_auto_accept() == "silent"? → True
+    → bypasses card creation entirely
+    → rt.approve_exec(session_key, tool_name, args, True) directly
+    → no FeedCardData created, no feed card appended
 ```
 
 ### User toggles Diffs ON
@@ -1007,9 +1249,10 @@ Add integration-level tests for the three scenarios described in the proposal.
 - [ ] Files ON → file_* cards auto-accept, diff cards do not
 - [ ] Both ON → all four types auto-accept
 - [ ] Both OFF → no cards auto-accept
-- [ ] Exec Show mode → approval cards appear and are immediately approved
-- [ ] Exec Silent mode → approval cards appear and are immediately approved (same as Show for now; full bypass deferred)
+- [ ] Exec Show mode → approval cards appear, Approve/Deny buttons hidden, status set to approved
+- [ ] Exec Silent mode → no approval card is created in the feed; the runtime approval still fires
 - [ ] Exec Off mode → approval cards require manual Approve/Deny
+- [ ] Unknown card_type (e.g. "git_commit", "audit_report", None) → never auto-accepted (regression test for BUG #10)
 - [ ] Agent scope "all_agents" → any agent's cards auto-accept
 - [ ] Agent scope "first_author" → first card's author locks in
 - [ ] Snoozed cards are not auto-accepted
@@ -1030,6 +1273,7 @@ Add integration-level tests for the three scenarios described in the proposal.
 | User toggles Diffs ON, then opens a different project | Prefs are per-project; new project starts with defaults |
 | Snoozed card is accepted manually (user clicks Accept) | Snooze is removed from list; card is accepted |
 | Exec mode is Silent but card is snoozed | Card is NOT auto-approved; user must manually approve |
+| Card arrives with unknown `card_type` (e.g. "git_commit", "audit_report", None) | Card is never auto-accepted regardless of prefs; surfaced to user as a normal pending card |
 | Two agents write cards simultaneously; scope is first_author | First card's author locks in; second agent's cards are not auto-accepted |
 | All toggles OFF, then user clicks Accept All | Batch accept still works (independent of auto-accept) |
 | `add_card` called during project loading (`_loading=True`) | Auto-accept check still runs (cards are real, just loaded from disk) — but loaded cards have `accepted` already set, so the `accepted is None` guard prevents re-accepting |
@@ -1132,3 +1376,23 @@ Must show the derived field only (not the old primary state).
 ### 4. Declaration
 
 This spec is **complete as a specification**. Implementation has not started. All file references, function signatures, data structures, and code paths have been verified against the codebase at commit `41c5c88` (2026-06-29).
+
+---
+
+## 9. Adversarial Audit Log (2026-06-29)
+
+Spec was audited per `prompts/adversarialDebugger.md`. Eleven findings were identified and patched in-place (noted inline in the affected sections). Summary:
+
+| # | Severity | Section | Issue | Fix |
+|---|---|---|---|---|
+| 1 | CRITICAL | §2.1, §2.2 | v1→v2 migration drops `auto_accept_agent`, silently changing which agent's cards auto-accept | Persist agent name as a specific `agent_scope` in migration |
+| 2 | CRITICAL | §2.4 | Lazy first_author lock-in mutates `_auto_accept_agent` but never refreshes the view's dropdown label | `_agent_scope_matches` calls `_refresh_auto_accept_state()` on lock-in |
+| 3 | HIGH | §2.4 | Exec Show path calls `handle_approve_exec` but never updates card status, leaving Approve/Deny buttons visible on already-approved commands | New `_auto_approve_exec_card` method sets `card.accepted = True` + hides buttons before dispatching runtime approval |
+| 4 | HIGH | §2.4, §2.5 | Silent mode shows cards in the feed (contradicting the proposal's "bypass card creation" promise), exposing Approve/Deny buttons that invite double-action | §2.5 now uses a callback indirection to bypass card creation entirely in Silent mode |
+| 5 | — | — | False alarm: lock-in only fires on file-change or exec cards, not on audit_report/git_commit | None — but documented so future readers know it's intentional |
+| 6 | HIGH | §2.4, §2.6 | Warning dialog callback signature `(agent_name, on_confirm, on_cancel)` is reused for per-type activation; passing "diffs" as agent_name confuses the dialog | Expanded signature to `(category, agent_name, on_confirm, on_cancel)`; window.py gets a new `_show_auto_accept_warning_v2` |
+| 7 | — | §2.3 | Files toggle is a binary toggle controlling 3 underlying prefs; partial state is invisible | Resolved: use `Gtk.ToggleButton` (group toggle — all three prefs always toggle together, no inconsistent state needed). Original CheckButton idea was dropped during spec review (type-confusion with `connect("toggled")`). |
+| 8 | MEDIUM | §2.4 | `_save_feed_prefs_idle` is scheduled via `idle_add` on every mutation; rapid-fire mutations produce redundant disk writes | Single-shot debounce via `_pending_save_id` + `GLib.source_remove` |
+| 9 | MEDIUM | §2.3 | Legacy bridge `update_auto_accept_state(bool)` constructed prefs with `agent_scope='first_author'`, breaking tests that expected any-agent behavior | Bridge now uses `agent_scope='all_agents'` to preserve v1 semantics |
+| 10 | LOW | §6 | No regression test for unknown `card_type` | Added acceptance criterion + edge case row |
+| 11 | LOW | §2.5 | Spec diverged from proposal: spec said "Silent mode cards appear with status immediately approved"; proposal said "Silent mode bypasses card creation entirely" | Spec now follows proposal; explicit reconciliation note added in §2.5 |
