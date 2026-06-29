@@ -18,6 +18,11 @@ import time
 
 # MED-11: Validate git commit SHA to prevent argument injection
 _VALID_SHA_RE = re.compile(r"^(HEAD|[0-9a-fA-F]{4,40})$")
+
+# Phase 5: card types eligible for auto-accept. These are the file-change
+# cards that have git backing and can be accepted (committed) without
+# requiring user review of every card individually.
+_AUTO_ACCEPT_TYPES = {"diff", "file_created", "file_modified", "file_deleted"}
 import uuid
 from datetime import datetime, timezone
 
@@ -92,6 +97,16 @@ class FeedHandler:
         # to suppress these echoes. dict[file_path] → timestamp (time.monotonic()).
         self._recent_git_paths: dict[str, float] = {}
         self._echo_suppress_seconds = 3.0
+
+        # Phase 5: auto-accept toggle state
+        # _auto_accept_enabled: master toggle persisted in feed-prefs.json
+        # _auto_accept_agent: once set, only cards from this author are auto-accepted.
+        #   None = agent not yet locked-in (first matching card will lock it in).
+        # _show_auto_accept_warning: callback injected by Window; receives
+        #   (agent_name, on_confirm, on_cancel) and is expected to show a dialog.
+        self._auto_accept_enabled: bool = False
+        self._auto_accept_agent: str | None = None
+        self._show_auto_accept_warning: Callable | None = None  # callback injected by Window
 
     def set_feed_tab(self, feed_tab) -> None:
         """
