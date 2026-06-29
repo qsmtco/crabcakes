@@ -145,8 +145,9 @@ class TestShowAutoAcceptWarningResponseRouting:
             on_cancel=lambda: cancel_calls.append(True),
         )
         dialog = _find_dialog(harness)
-        # Simulate user clicking "Turn On"
-        dialog.response(Gtk.ResponseType.OK)
+        # Emit the 'response' signal — simulates user clicking a button
+        # (Gtk.MessageDialog.response() doesn't emit by itself in GTK4)
+        dialog.emit("response", Gtk.ResponseType.OK)
         assert confirm_calls == [True], (
             f"Expected on_confirm to be called once, got {confirm_calls}"
         )
@@ -163,8 +164,7 @@ class TestShowAutoAcceptWarningResponseRouting:
             on_cancel=lambda: cancel_calls.append(True),
         )
         dialog = _find_dialog(harness)
-        # Simulate user clicking "Cancel"
-        dialog.response(Gtk.ResponseType.CANCEL)
+        dialog.emit("response", Gtk.ResponseType.CANCEL)
         assert cancel_calls == [True], (
             f"Expected on_cancel to be called once, got {cancel_calls}"
         )
@@ -186,7 +186,7 @@ class TestShowAutoAcceptWarningResponseRouting:
             on_cancel=lambda: cancel_calls.append(True),
         )
         dialog = _find_dialog(harness)
-        dialog.response(Gtk.ResponseType.DELETE_EVENT)
+        dialog.emit("response", Gtk.ResponseType.DELETE_EVENT)
         assert cancel_calls == [True], (
             f"Expected on_cancel to be called on close, got {cancel_calls}"
         )
@@ -197,8 +197,12 @@ class TestShowAutoAcceptWarningResponseRouting:
     def test_default_response_is_cancel(self, harness):
         """
         Per Phase 5-4 spec: set_default_response(Gtk.ResponseType.CANCEL).
-        Verify default is Cancel (safety: accidental Enter goes to Cancel,
-        not Turn On).
+        Verify the Cancel button is the dialog's default action widget
+        (safety: accidental Enter goes to Cancel, not Turn On).
+
+        GTK4 has no `get_default_response()` — we read it back via the
+        Cancel button's `has_default()` property, which `set_default_response`
+        sets to True.
         """
         harness._show_auto_accept_warning(
             agent_name="coder",
@@ -206,7 +210,11 @@ class TestShowAutoAcceptWarningResponseRouting:
             on_cancel=lambda: None,
         )
         dialog = _find_dialog(harness)
-        assert dialog.get_default_response() == Gtk.ResponseType.CANCEL
+        cancel_widget = dialog.get_widget_for_response(Gtk.ResponseType.CANCEL)
+        assert cancel_widget is not None, "Cancel button must exist"
+        assert cancel_widget.has_default(), (
+            "Cancel button must be the dialog's default action widget"
+        )
 
 
 class TestShowAutoAcceptWarningDialogContent:
