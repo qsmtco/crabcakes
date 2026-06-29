@@ -64,6 +64,13 @@ class FeedTab(Gtk.Box):
         scroll.set_child(card_container)
         self.append(scroll)
 
+        # When the feed tab becomes visible (mapped), scroll to the bottom so
+        # the newest card is shown. This handles the case where GTK4 resets
+        # the ScrolledWindow's vadjustment to 0 during page hide/show cycles
+        # (Notebook tab switching) — without this, switching to the Feed tab
+        # shows the top of the feed even if the user had been at the bottom.
+        scroll.connect("map", self._on_scroll_mapped)
+
     # ── Public API ───────────────────────────────────────────────────────
 
     def get_card_container(self) -> Gtk.Box:
@@ -295,6 +302,25 @@ class FeedTab(Gtk.Box):
             return
         # User is near the bottom — defer the actual scroll until layout settles.
         self.schedule_scroll_to_bottom()
+
+    def _on_scroll_mapped(self, scroll_window):
+        """
+        Handler for the ScrolledWindow's 'map' signal — fires when the widget
+        becomes visible. Used to scroll to the bottom whenever the Feed tab
+        is shown, including after a notebook tab switch.
+
+        Why this exists: GTK4 may reset the ScrolledWindow's vadjustment to 0
+        when the widget goes hidden→visible (e.g. switching tabs in the
+        parent Notebook). Without this handler, the user lands at the top
+        of the feed even though they were just at the bottom.
+
+        Implementation: schedule_scroll_to_bottom() defers the actual scroll
+        via the vadjustment 'changed' signal so we read the post-layout
+        upper. Returning False from a 'map' handler is a no-op — the signal
+        handler return value is ignored.
+        """
+        self.schedule_scroll_to_bottom()
+        return False
 
     def update_batch_bar(self, pending_count: int) -> None:
         """
