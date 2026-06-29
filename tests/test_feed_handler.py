@@ -57,9 +57,11 @@ class MockFeedTab:
         self._batch_bar_visible = False
         self._batch_bar_count = 0
         self._batch_accept_callback = None
+        self.append_calls = []  # log of (widget, card_id) per append_card() call (for batch tests)
 
     def append_card(self, widget, card_id=None):
         self.cards.append((widget, card_id))
+        self.append_calls.append((widget, card_id))
 
     prepend_card = append_card  # backward compat
 
@@ -75,26 +77,18 @@ class MockFeedTab:
                 self.cards[i] = (card_id, new_widget)
                 break
 
-    def scroll_to_bottom(self):
-        pass  # no-op in tests
-
     def schedule_scroll_to_bottom(self):
-        # Mirror the real FeedTab: scroll after a simulated layout pass
-        self.scroll_to_bottom()
-
-    def smart_scroll_to_bottom(self):
-        """Mirror of FeedTab.smart_scroll_to_bottom() for test."""
-        vadj = self._vadjustment
-        current = vadj.get_value()
-        upper = vadj.get_upper()
-        page_size = vadj.get_page_size()
-        distance_from_bottom = upper - page_size - current
-        if distance_from_bottom < 80:
-            vadj.set_value(upper)
+        # Mirror the real FeedTab: scroll after a simulated layout pass.
+        # The real implementation uses vadj.set_value(vadj.get_upper())
+        # via the 'changed' signal; in tests we just set the value directly.
+        if self._vadjustment is not None:
+            self._vadjustment.set_value(self._vadjustment.get_upper())
 
     def schedule_smart_scroll_to_bottom(self):
         """Mirror of FeedTab.schedule_smart_scroll_to_bottom() for test.
         Proximity check + delegate to schedule_scroll_to_bottom."""
+        if self._vadjustment is None:
+            return
         vadj = self._vadjustment
         current = vadj.get_value()
         upper = vadj.get_upper()
@@ -777,22 +771,25 @@ class TestSeqNumHandler:
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  TestSmartScroll — Phase 4
-#  Verifies smart_scroll_to_bottom only scrolls when user is near bottom.
+#  TestSmartScroll — Phase 4 (consolidated: only schedule_smart_scroll_to_bottom
+#  and schedule_scroll_to_bottom remain in the public API; the old synchronous
+#  scroll_to_bottom() and smart_scroll_to_bottom() were removed during the
+#  4-scroll-sites → 1-funnel refactor).
 # ═══════════════════════════════════════════════════════════════════
 
 class TestSmartScroll:
-    """Phase 4: smart_scroll_to_bottom only scrolls when user is near the bottom."""
+    """Phase 4 + refactor: schedule_smart_scroll_to_bottom only scrolls when
+    the user is near the bottom (within 80px). If the user has scrolled up to
+    read older cards, the scroll is skipped so their reading position is
+    preserved. schedule_scroll_to_bottom is the unconditional variant."""
 
     def test_smart_scroll_when_near_bottom(self):
         """If user is within 80px of bottom, smart_scroll scrolls to bottom."""
-        from ui.views.feed_tab import FeedTab
-        # FeedTab requires GTK init — test the mock directly
         mock_tab = MockFeedTab()
         # Set user at upper-50 (50px from bottom, since page_size=600, upper=1000)
         mock_tab._vadjustment = MockVadjustment(value=950, upper=1000, page_size=600)
         # distance_from_bottom = 1000 - 600 - 950 = -450 → < 80, scrolls
-        mock_tab.smart_scroll_to_bottom()
+        mock_tab.schedule_smart_scroll_to_bottom()
         assert mock_tab._vadjustment.get_value() == 1000
 
     def test_smart_scroll_when_exactly_80px_from_bottom(self):
@@ -801,7 +798,7 @@ class TestSmartScroll:
         # upper=1000, page_size=600, so being 80px from bottom means value=1000-600-80=320
         mock_tab._vadjustment = MockVadjustment(value=320, upper=1000, page_size=600)
         # distance_from_bottom = 1000 - 600 - 320 = 80 → NOT < 80, no scroll
-        mock_tab.smart_scroll_to_bottom()
+        mock_tab.schedule_smart_scroll_to_bottom()
         assert mock_tab._vadjustment.get_value() == 320  # unchanged
 
     def test_smart_scroll_when_far_from_bottom(self):
@@ -810,7 +807,7 @@ class TestSmartScroll:
         # User scrolled to top: value=0
         mock_tab._vadjustment = MockVadjustment(value=0, upper=1000, page_size=600)
         # distance_from_bottom = 1000 - 600 - 0 = 400 → > 80, no scroll
-        mock_tab.smart_scroll_to_bottom()
+        mock_tab.schedule_smart_scroll_to_bottom()
         assert mock_tab._vadjustment.get_value() == 0  # unchanged
 
     def test_smart_scroll_when_mid_feed(self):
@@ -819,32 +816,35 @@ class TestSmartScroll:
         # User scrolled halfway: value=200
         mock_tab._vadjustment = MockVadjustment(value=200, upper=1000, page_size=600)
         # distance_from_bottom = 1000 - 600 - 200 = 200 → > 80, no scroll
-        mock_tab.smart_scroll_to_bottom()
+        mock_tab.schedule_smart_scroll_to_bottom()
         assert mock_tab._vadjustment.get_value() == 200  # unchanged
 
-    def test_scroll_to_bottom_unconditional_always_scrolls(self):
-        """The unconditional scroll_to_bottom() always scrolls to top when called."""
+    def test_schedule_scroll_to_bottom_always_scrolls(self):
+        """The unconditional schedule_scroll_to_bottom() always scrolls."""
         mock_tab = MockFeedTab()
         # User scrolled to top
         mock_tab._vadjustment = MockVadjustment(value=0, upper=1000, page_size=600)
-        mock_tab.scroll_to_bottom()
-        # scroll_to_bottom is a no-op in MockFeedTab, but we verify it doesn't raise
-        # The real FeedTab.scroll_to_bottom() always sets value=upper
-        # We test the real FeedTab directly
-        from ui.views.feed_tab import FeedTab
-        # Can't instantiate real FeedTab without GTK main context, but we can
-        # verify the method exists and has correct logic by checking the source
-        # This test verifies MockFeedTab.scroll_to_bottom is present (it is a no-op)
-        assert hasattr(mock_tab, 'scroll_to_bottom')
+        mock_tab.schedule_scroll_to_bottom()
+        assert mock_tab._vadjustment.get_value() == 1000
 
-    def test_add_card_uses_smart_scroll_not_unconditional(self, feed_handler, mock_feed_tab):
-        """add_card() calls schedule_smart_scroll_to_bottom, not scroll_to_bottom."""
+    def test_smart_scroll_no_vadjustment_is_noop(self):
+        """If _vadjustment is None, smart_scroll is a no-op (graceful)."""
+        mock_tab = MockFeedTab()
+        mock_tab._vadjustment = None
+        # Should not raise
+        mock_tab.schedule_smart_scroll_to_bottom()
+
+    def test_add_card_uses_smart_scroll_only(self, feed_handler, mock_feed_tab):
+        """add_card() calls schedule_smart_scroll_to_bottom exactly once.
+
+        This is the consolidation contract: all append paths funnel through
+        a single helper (_schedule_smart_scroll) which calls this one method.
+        """
         ts = datetime.now(timezone.utc)
         card = FeedCardData(
             card_type="diff", source="agent", title="Test card",
             body="", author="x", timestamp=ts, project_name="testproj",
         )
-        # Patch schedule_smart_scroll_to_bottom to track calls
         original_smart = mock_feed_tab.schedule_smart_scroll_to_bottom
         called = []
         def tracking_smart():
@@ -852,17 +852,147 @@ class TestSmartScroll:
             return original_smart()
         mock_feed_tab.schedule_smart_scroll_to_bottom = tracking_smart
 
-        original_unconditional = mock_feed_tab.scroll_to_bottom
-        unconditional_called = []
-        def tracking_unconditional():
-            unconditional_called.append(True)
-            return original_unconditional()
-        mock_feed_tab.scroll_to_bottom = tracking_unconditional
-
         feed_handler.add_card(card)
 
-        assert len(called) == 1, "schedule_smart_scroll_to_bottom should be called once in add_card"
-        assert len(unconditional_called) == 0, "scroll_to_bottom (unconditional) should NOT be called in add_card"
+        assert len(called) == 1, "schedule_smart_scroll_to_bottom should be called exactly once in add_card"
+
+
+class TestAddCardsBatch:
+    """Refactor: add_cards_batch() runs multiple cards through ONE idle
+    callback and ONE smart-scroll. Previously each add_card() enqueued its
+    own callback, racing the vadjustment when batches arrived faster than
+    GTK could lay them out."""
+
+    def test_add_cards_batch_returns_ids_in_input_order(self, feed_handler):
+        """Returns card_ids in the same order as the input cards list."""
+        ts = datetime.now(timezone.utc)
+        cards = [
+            FeedCardData(
+                card_type="diff", source="agent", title=f"Card {i}",
+                body="", author="x", timestamp=ts, project_name="batchproj",
+            )
+            for i in range(5)
+        ]
+        ids = feed_handler.add_cards_batch(cards)
+        assert len(ids) == 5
+        # Each id must match the corresponding card's assigned card_id
+        for i, cid in enumerate(ids):
+            assert cards[i].card_id == cid
+
+    def test_add_cards_batch_single_smart_scroll(self, feed_handler, mock_feed_tab):
+        """Batched cards trigger schedule_smart_scroll_to_bottom exactly once."""
+        ts = datetime.now(timezone.utc)
+        cards = [
+            FeedCardData(
+                card_type="diff", source="agent", title=f"Card {i}",
+                body="", author="x", timestamp=ts, project_name="batchproj",
+            )
+            for i in range(3)
+        ]
+        original = mock_feed_tab.schedule_smart_scroll_to_bottom
+        called = []
+        def tracking():
+            called.append(True)
+            return original()
+        mock_feed_tab.schedule_smart_scroll_to_bottom = tracking
+
+        feed_handler.add_cards_batch(cards)
+
+        assert len(called) == 1, (
+            f"add_cards_batch must call schedule_smart_scroll_to_bottom "
+            f"exactly once, got {len(called)} calls"
+        )
+
+    def test_add_cards_batch_assigns_monotonic_sequence_numbers(self, feed_handler):
+        """Each card in the batch gets a unique, increasing seq_num."""
+        ts = datetime.now(timezone.utc)
+        cards = [
+            FeedCardData(
+                card_type="diff", source="agent", title=f"Card {i}",
+                body="", author="x", timestamp=ts, project_name="seqproj",
+            )
+            for i in range(4)
+        ]
+        feed_handler.add_cards_batch(cards)
+        seqs = [c.seq_num for c in cards]
+        # Strictly increasing
+        assert seqs == sorted(set(seqs))
+        assert len(seqs) == 4
+
+    def test_add_cards_batch_empty_input_is_noop(self, feed_handler, mock_feed_tab):
+        """Empty list returns [] and does not call schedule_smart_scroll_to_bottom."""
+        called = []
+        original = mock_feed_tab.schedule_smart_scroll_to_bottom
+        def tracking():
+            called.append(True)
+            return original()
+        mock_feed_tab.schedule_smart_scroll_to_bottom = tracking
+
+        result = feed_handler.add_cards_batch([])
+        assert result == []
+        assert len(called) == 0
+
+    def test_add_cards_batch_indexes_all_under_project(self, feed_handler):
+        """All batched cards show up in get_cards_for_project."""
+        ts = datetime.now(timezone.utc)
+        cards = [
+            FeedCardData(
+                card_type="diff", source="agent", title=f"Card {i}",
+                body="", author="x", timestamp=ts, project_name="indexproj",
+            )
+            for i in range(3)
+        ]
+        feed_handler.add_cards_batch(cards)
+        listed = feed_handler.get_cards_for_project("indexproj")
+        assert len(listed) == 3
+
+    def test_add_cards_batch_widgets_appended_in_one_idle(self, feed_handler, mock_feed_tab):
+        """All batched cards are appended to feed_tab in a single idle callback."""
+        ts = datetime.now(timezone.utc)
+        cards = [
+            FeedCardData(
+                card_type="diff", source="agent", title=f"Card {i}",
+                body="", author="x", timestamp=ts, project_name="idleproj",
+            )
+            for i in range(3)
+        ]
+        # Snapshot append_card call count before batch
+        before = len(mock_feed_tab.append_calls)
+
+        feed_handler.add_cards_batch(cards)
+
+        # MockGLib.idle_add runs callbacks synchronously, so by the time
+        # add_cards_batch returns, the bulk _append_all callback has already
+        # fired and appended all 3 cards. No drain needed.
+        appended = len(mock_feed_tab.append_calls) - before
+        assert appended == 3, (
+            f"add_cards_batch should append all cards in one idle callback "
+            f"(3 append_card calls total), got {appended}"
+        )
+
+    def test_add_cards_batch_mixed_approval_and_normal(self, feed_handler):
+        """Approval cards and normal cards can be batched together."""
+        ts = datetime.now(timezone.utc)
+        cards = [
+            FeedCardData(
+                card_type="diff", source="agent", title="Normal",
+                body="", author="x", timestamp=ts, project_name="mixedproj",
+            ),
+            FeedCardData(
+                card_type="exec_approval", source="agent", title="Needs approval",
+                body="", author="x", timestamp=ts, project_name="mixedproj",
+                metadata={"needs_approval": True},
+            ),
+            FeedCardData(
+                card_type="diff", source="agent", title="Also normal",
+                body="", author="x", timestamp=ts, project_name="mixedproj",
+            ),
+        ]
+        ids = feed_handler.add_cards_batch(cards)
+        assert len(ids) == 3
+        # All three cards (normal + approval) should have widgets stored
+        for cid in ids:
+            assert cid in feed_handler._card_widgets
 
 
 # ═══════════════════════════════════════════════════════════════════

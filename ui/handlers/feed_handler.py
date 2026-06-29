@@ -185,7 +185,7 @@ class FeedHandler:
         def _append():
             if self._feed_tab is not None:
                 self._feed_tab.append_card(widget, card_id)
-                self._feed_tab.schedule_smart_scroll_to_bottom()  # Phase 4
+                self._schedule_smart_scroll()  # one funnel for all append paths
                 if self._on_card_added:
                     self._on_card_added(card_id)
 
@@ -212,6 +212,131 @@ class FeedHandler:
             t.start()
 
         return card_id
+
+    def add_cards_batch(self, cards: list[FeedCardData]) -> list[str]:
+        """Add multiple cards in a single main-thread pass.
+
+        Each card still goes through the same pipeline as add_card() (id,
+        sequence number, widget build, store, index, persist). The only
+        difference: all widgets are appended in ONE GLib.idle_add callback
+        and the smart scroll fires ONCE at the end.
+
+        Why this matters: a single LLM response can contain N crabcards.
+        Without batching, add_card() called N times enqueues N idle
+        callbacks, each connecting its own one-shot vadjustment 'changed'
+        handler and 150ms timeout. If cards arrive faster than GTK can
+        lay them out, the proximity check reads stale values and the
+        vadjustment 'changed' signal may already have fired before later
+        handlers attach — leaving the feed scrolled mid-batch instead of
+        at the newest card.
+
+        Returns: list of card_ids in input order.
+        """
+        if not cards:
+            return []
+
+        card_ids: list[str] = []
+        widget_by_id: dict[str, Gtk.Widget] = {}
+        persist_data: list[tuple[FeedCardData, str]] = []  # (card, project_path)
+
+        # Phase 1: assign ids, sequence numbers, build widgets (cheap, pure)
+        with self._lock:
+            for card_data in cards:
+                card_id = str(uuid.uuid4())
+                card_data.card_id = card_id
+
+                proj = card_data.project_name
+                if proj not in self._project_seq:
+                    self._project_seq[proj] = 0
+
+                # Sequence numbers stay monotonic per project even when
+                # batching across projects — same as add_card() per-card.
+                self._project_seq[proj] += 1
+                card_data.seq_num = self._project_seq[proj]
+
+                self._cards[card_id] = card_data
+                if proj not in self._project_cards:
+                    self._project_cards[proj] = []
+                self._project_cards[proj].insert(0, card_id)
+
+                card_ids.append(card_id)
+
+        # Phase 2: build widgets outside the lock (pure Python, no shared state)
+        for card_data, card_id in zip(cards, card_ids):
+            if card_data.metadata.get("needs_approval"):
+                on_approve, on_deny = self._make_approve_exec_cb(card_id)
+                widget = build_feed_card(
+                    card_data,
+                    on_review=self._make_review_cb(card_id),
+                    on_accept=on_approve,
+                    on_reject=on_deny,
+                    on_copy=self._make_copy_cb(card_data),
+                )
+            else:
+                widget = build_feed_card(
+                    card_data,
+                    on_review=self._make_review_cb(card_id),
+                    on_accept=self._make_accept_cb(card_id),
+                    on_reject=self._make_reject_cb(card_id),
+                    on_copy=self._make_copy_cb(card_data),
+                )
+            widget_by_id[card_id] = widget
+
+            # Cache project_path for the persistence phase
+            project_path = (
+                card_data.metadata.get("project_path", "")
+                or self._project_paths.get(card_data.project_name, "")
+            )
+            persist_data.append((card_data, project_path))
+
+            # Deferred snapshot per-card (same trick add_card uses)
+            _cid = card_id
+            self._GLib.idle_add(lambda: self._finalize_snapshot(_cid))
+
+        with self._lock:
+            for card_id, widget in widget_by_id.items():
+                self._card_widgets[card_id] = widget
+
+        # Phase 3: ONE main-thread pass to append all cards + ONE smart scroll
+        def _append_all():
+            if self._feed_tab is None:
+                return
+            for card_id in card_ids:
+                widget = widget_by_id.get(card_id)
+                if widget is not None:
+                    self._feed_tab.append_card(widget, card_id)
+            # Single scroll decision for the whole batch
+            self._schedule_smart_scroll()
+            if self._on_card_added:
+                for card_id in card_ids:
+                    self._on_card_added(card_id)
+
+        self._GLib.idle_add(_append_all)
+
+        # Phase 4: refresh batch bar once (cheap)
+        # Use the first card's project; in practice all batched cards
+        # come from the same agent response so they share project_name.
+        if cards:
+            self._update_batch_bar_for_active_project(cards[0].project_name)
+
+        # Phase 5: persist all cards in one background thread
+        if not self._loading:
+            def _persist_all():
+                for card_data, project_path in persist_data:
+                    if not (project_path and hasattr(card_data, 'to_dict')):
+                        continue
+                    if card_data.metadata.get("_snapshot_oversized"):
+                        saved = card_data.conversation_snapshot
+                        card_data.conversation_snapshot = None
+                        feed_store.append_feed_card(project_path, card_data)
+                        card_data.conversation_snapshot = saved
+                    else:
+                        feed_store.append_feed_card(project_path, card_data)
+
+            t = threading.Thread(target=_persist_all, daemon=True)
+            t.start()
+
+        return card_ids
 
     def remove_card(self, card_id: str) -> None:
         """Remove a card from the feed."""
@@ -304,8 +429,12 @@ class FeedHandler:
             if _old_widget is not None:
                 self._feed_tab.replace_card(_card_id, _new_widget)
             else:
-                # No old widget to replace — just append (edge case)
+                # No old widget to replace — just append (edge case).
+                # Scroll here: a brand-new card appeared at the bottom and
+                # the user wasn't looking at it, so smart-scroll handles
+                # the "they had scrolled up" case automatically.
                 self._feed_tab.append_card(_new_widget, _card_id)
+                self._schedule_smart_scroll()
 
         self._GLib.idle_add(_replace)
 
@@ -313,6 +442,18 @@ class FeedHandler:
         """Get all cards for a project, newest first."""
         card_ids = self._project_cards.get(project_name, [])
         return [self._cards[cid] for cid in card_ids if cid in self._cards]
+
+    def _schedule_smart_scroll(self) -> None:
+        """One funnel for all append paths. Only scrolls if the user is
+        already near the bottom (within 80px), so users reading older
+        cards are not yanked away.
+
+        Safe to call when _feed_tab is None (no-op) or when no cards
+        were actually appended (FeedTab handles that internally).
+        """
+        if self._feed_tab is None:
+            return
+        self._feed_tab.schedule_smart_scroll_to_bottom()
 
     def clear_project(self, project_name: str) -> None:
         """Remove all cards for a project (on project close)."""
@@ -453,8 +594,10 @@ class FeedHandler:
                     if widget:
                         self._feed_tab.append_card(widget, card.card_id)
 
-                # Schedule scroll for after layout settles
-                self._feed_tab.schedule_scroll_to_bottom()
+                # Smart scroll: respects reading position if user scrolled up.
+                # On project open the user has no prior position in this
+                # project's feed, so the proximity check trivially passes.
+                self._schedule_smart_scroll()
 
                 return False  # one-shot
 

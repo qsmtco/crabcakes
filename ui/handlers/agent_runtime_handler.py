@@ -1050,9 +1050,11 @@ class AgentRuntimeHandler:
             if full_text:
                 cleaned, cards = extract_crabcards(full_text, project_name, "Special Agent")
                 if cards:
+                    # Batch all cards from one response into a single main-thread
+                    # pass — avoids N idle callbacks racing the vadjustment.
                     for card_data in cards:
                         card_data.project_name = project_name
-                        self._fh.add_card(card_data)
+                    self._fh.add_cards_batch(cards)
                     # Overwrite streaming text with cleaned version so
                     # end_streaming._finalize renders the bubble without crabcard blocks
                     self._crh.set_streaming_text(session_key, cleaned)
@@ -1079,9 +1081,10 @@ class AgentRuntimeHandler:
                 from utils.crabcard_parser import extract_crabcards
                 cleaned, cards = extract_crabcards(text, project_name, "Special Agent")
                 if cards:
+                    # Batch: single idle callback, single smart scroll
                     for card_data in cards:
                         card_data.project_name = project_name
-                        self._fh.add_card(card_data)
+                    self._fh.add_cards_batch(cards)
                 text_for_bubble = cleaned if cards else text
             else:
                 text_for_bubble = text

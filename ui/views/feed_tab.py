@@ -7,7 +7,7 @@
 #       get_card_container() -> Gtk.Box
 #       append_card(card_widget: Gtk.Widget, card_id: str | None) -> None
 #       remove_card(card_id: str) -> None
-#       scroll_to_bottom() -> None
+#       schedule_smart_scroll_to_bottom() -> None
 #       show_empty_state() -> None
 
 import gi
@@ -193,22 +193,6 @@ class FeedTab(Gtk.Box):
             self._clear_widget_state_recursive(child)
             child = child.get_next_sibling()
 
-    def scroll_to_bottom(self) -> None:
-        """
-        Scroll the feed so the newest card (bottom of list) is visible.
-        Called after loading persisted cards on project open (unconditional).
-
-        Note: caller must ensure layout has settled before calling this.
-        For deferred scroll after pending appends, use schedule_scroll_to_bottom()
-        instead, which waits for the vadjustment 'changed' signal.
-        """
-        if self._feed_scroll is None:
-            return
-        vadj = self._feed_scroll.get_vadjustment()
-        if vadj is None:
-            return
-        vadj.set_value(vadj.get_upper())
-
     def schedule_scroll_to_bottom(self) -> None:
         """
         Schedule a one-shot scroll-to-bottom that fires AFTER GTK updates
@@ -292,10 +276,6 @@ class FeedTab(Gtk.Box):
         near the bottom (within 80px), BUT wait for the vadjustment 'changed'
         signal before scrolling so we read the post-layout upper.
 
-        This fixes the stale-upper bug in smart_scroll_to_bottom() where
-        append_card + smart_scroll run in the same idle callback, and GTK
-        hasn't updated vadjustment.upper yet.
-
         The proximity check uses the pre-append (stale) upper, which is fine:
         we're measuring 'where is the user right now?' not 'where will the
         new bottom be after layout?'. If the user was near the bottom before
@@ -315,27 +295,6 @@ class FeedTab(Gtk.Box):
             return
         # User is near the bottom — defer the actual scroll until layout settles.
         self.schedule_scroll_to_bottom()
-
-    def smart_scroll_to_bottom(self) -> None:
-        """
-        Only scroll to bottom if the user is already near the bottom (within 80px).
-        If the user has scrolled up to read old cards, do NOT auto-scroll -
-        preserve their reading position. (Phase 4)
-
-        Distinguishes from scroll_to_bottom() (unconditional) which is used
-        on project open where we always want to jump to the newest.
-        """
-        if self._feed_scroll is None:
-            return
-        vadj = self._feed_scroll.get_vadjustment()
-        if vadj is None:
-            return
-        current = vadj.get_value()
-        upper = vadj.get_upper()
-        page_size = vadj.get_page_size()
-        distance_from_bottom = upper - page_size - current
-        if distance_from_bottom < 80:
-            vadj.set_value(upper)
 
     def update_batch_bar(self, pending_count: int) -> None:
         """
