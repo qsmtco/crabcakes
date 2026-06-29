@@ -99,8 +99,15 @@ class FeedHandler:
         #   None = agent not yet locked-in (first matching card will lock it in).
         # _show_auto_accept_warning: callback injected by Window; receives
         #   (agent_name, on_confirm, on_cancel) and is expected to show a dialog.
-        self._auto_accept_enabled: bool = False
-        self._auto_accept_agent: str | None = None
+        # V2 auto-accept preferences (replaces _auto_accept_enabled + _auto_accept_agent
+        # as the canonical state; the legacy fields below remain as derived
+        # bookkeeping for the transition period and for legacy direct-set tests).
+        self._prefs: AutoAcceptPrefs = AutoAcceptPrefs()
+        self._auto_accept_enabled: bool = False  # derived: equals _prefs.any_enabled()
+        self._auto_accept_agent: str | None = None  # runtime lock-in (not persisted)
+        # Pending save-id for debounced _save_feed_prefs_idle() (set by
+        # _refresh_auto_accept_state; cleared after the idle callback runs).
+        self._pending_save_id = None
         self._show_auto_accept_warning: Callable | None = None  # callback injected by Window
 
     def set_feed_tab(self, feed_tab) -> None:
