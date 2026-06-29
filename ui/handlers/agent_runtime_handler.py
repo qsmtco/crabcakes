@@ -1030,9 +1030,17 @@ class AgentRuntimeHandler:
             # IMPORTANT: lambda captures session_key/tool_name/args by
             # closure. These are _do_approval_needed parameters (not loop
             # variables), so capture-by-closure is safe.
-            self._GLib.idle_add(
-                lambda: runtime.approve_exec(session_key, tool_name, args, True)
-            )
+            # Note: spec A3 doesn't guard `self._GLib is not None`, but
+            # every other call site in this class does (see _do_tool_call_start,
+            # _do_text_delta, _maybe_prompt_project_trust). We follow the
+            # same defensive pattern: in test mode without GTK, _GLib is None
+            # and we call approve_exec directly (no main-thread dispatch needed).
+            if self._GLib is not None:
+                self._GLib.idle_add(
+                    lambda: runtime.approve_exec(session_key, tool_name, args, True)
+                )
+            else:
+                runtime.approve_exec(session_key, tool_name, args, True)
             return
 
         agent_def = self._agents.get(session_key)
