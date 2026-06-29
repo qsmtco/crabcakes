@@ -21,7 +21,7 @@ _VALID_SHA_RE = re.compile(r"^(HEAD|[0-9a-fA-F]{4,40})$")
 import uuid
 from datetime import datetime, timezone
 
-from models.feed_card import FeedCardData
+from models.feed_card import AutoAcceptPrefs, FeedCardData
 from ui.views.feed_card import build_feed_card, update_card_badge
 from utils import git_ops
 from utils import feed_store
