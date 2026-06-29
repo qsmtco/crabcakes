@@ -86,6 +86,14 @@ class AgentRuntimeHandler:
         # exit_code + duration_ms for the exit badge and duration display
         # (per SPEC-activity-drawer §2.5).
         self._on_command_output: Callable[[str, str, str, int, int], None] | None = None
+        # V2 exec auto-accept callback (Phase 6): returns current exec mode
+        # ("off" | "show" | "silent") or None. Set by window.py wiring via
+        # set_check_exec_auto_accept_callback(). When the callback returns
+        # "silent", _do_approval_needed bypasses card creation and approves
+        # directly via runtime.approve_exec(). See SPEC-AUTO-ACCEPT-GRANULAR-1
+        # §2.5 (Silent bypass, BUG #11 fix) and GRANULAR-PHASE-6-INSTRUCTIONS.md
+        # Sub-change A.
+        self._on_check_exec_auto_accept: Callable[[], str | None] | None = None
         # Per-session pending exec_command text — captured in _do_tool_call_start,
         # consumed in _do_tool_call_result. Keyed by session_key (one in-flight
         # exec per session is the realistic case).
