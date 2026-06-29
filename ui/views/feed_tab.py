@@ -41,8 +41,17 @@ class FeedTab(Gtk.Box):
         # Phase 5 — Auto-accept toggle callback (set by FeedHandler via set_auto_accept_callback).
         # Stores the caller's function; invoked from _on_auto_accept_toggled when the user clicks
         # the toggle button. None means no callback is wired yet (toggling still updates the
-        # visual but does nothing externally).
+        # visual but does nothing externally). Legacy/Phase-5 compat: FeedHandler's Phase 4
+        # code still wires this for the legacy single-toggle path.
         self._auto_accept_callback: Callable[[bool], None] | None = None
+        # V2 — Per-type toggle callbacks (set by FeedHandler via set_*_toggle_callback).
+        self._diffs_toggle_callback: Callable[[bool], None] | None = None
+        self._files_toggle_callback: Callable[[bool], None] | None = None
+        self._exec_toggle_callback: Callable[[str], None] | None = None
+        # V2 — Agent scope callback (wired by FeedHandler in Phase 6).
+        self._agent_scope_callback: Callable[[str], None] | None = None
+        # V2 — Exec mode (3-state cycle: off → show → silent → off).
+        self._exec_mode: str = "off"
         # Phase 5 — Batch button label (read by tests for assertions; mirrors the actual
         # _batch_accept_button.get_label()).
         self._batch_button_label: str = ""
