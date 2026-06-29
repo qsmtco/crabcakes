@@ -484,6 +484,16 @@ class MainWindow(Gtk.ApplicationWindow):
             )
         )
 
+        # V2: wire exec auto-accept callback (Phase 6 / §2.5 + §2.6).
+        # FeedHandler.set_check_exec_auto_accept_callback_for_handler() takes
+        # ARTH's setter and connects it to FH's getter, breaking the import
+        # cycle (§8.6 R2 no handler-to-handler imports). When ARTH's
+        # _do_approval_needed runs, it queries FH.get_exec_auto_accept_mode()
+        # to decide whether to bypass card creation in Silent mode.
+        self._feed_handler.set_check_exec_auto_accept_callback_for_handler(
+            self._agent_runtime_handler.set_check_exec_auto_accept_callback
+        )
+
         # Inject FeedTab into LeftPanel's Projects notebook "Feed" sub-tab
         self._left_panel.set_feed_tab(self._feed_tab)
 
