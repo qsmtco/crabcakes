@@ -59,7 +59,31 @@ class _MainWindowTestHarness(Gtk.ApplicationWindow):
 @pytest.fixture
 def harness():
     """Provide a fresh MainWindowTestHarness for each test."""
-    return _MainWindowTestHarness()
+    h = _MainWindowTestHarness()
+    # Track all MessageDialogs created during this test so we can destroy
+    # them at teardown. Without this, dialogs accumulate across tests and
+    # Gtk.Window.list_toplevels() picks stale ones.
+    h._created_dialogs = []
+
+    return h
+
+
+@pytest.fixture(autouse=True)
+def cleanup_dialogs():
+    """
+    After each test, destroy any leftover Gtk.MessageDialog toplevels so the
+    GTK toplevel list doesn't accumulate across tests.
+    """
+    yield
+    # Best-effort cleanup — destroy dialogs we can find via list_toplevels.
+    import gc
+    gc.collect()
+    for w in list(Gtk.Window.list_toplevels()):
+        if isinstance(w, Gtk.MessageDialog):
+            try:
+                w.destroy()
+            except Exception:
+                pass
 
 
 def _find_dialog(window):
