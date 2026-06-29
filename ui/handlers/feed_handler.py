@@ -878,10 +878,13 @@ class FeedHandler:
             # Load persisted cards from .crabcakes/feed.json
             cards = feed_store.load_feed(project_path)
 
-            # Phase 5: load auto-accept prefs (separate file from feed.json)
-            prefs = feed_store.load_feed_prefs(project_path)
-            self._auto_accept_enabled = prefs.get("auto_accept_enabled", False)
-            self._auto_accept_agent = prefs.get("auto_accept_agent")
+            # Phase 5 + v2: load auto-accept prefs (separate file from feed.json).
+            # Phase 2 of utils/feed_store guarantees load_feed_prefs returns
+            # a v2-shaped dict (v1 files are migrated in-memory).
+            prefs_raw = feed_store.load_feed_prefs(project_path)
+            self._prefs = AutoAcceptPrefs.from_dict(prefs_raw)
+            self._auto_accept_enabled = self._prefs.any_enabled()
+            self._auto_accept_agent = None  # Reset runtime lock-in on project open
 
             if not cards:
                 self._GLib.idle_add(lambda: self._feed_tab.show_empty_state() if self._feed_tab else None)
