@@ -87,9 +87,51 @@ class FeedTab(Gtk.Box):
         self._toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self._toolbar.add_css_class("feed-toolbar")
 
-        self._auto_accept_toggle = Gtk.ToggleButton(label="Auto-Accept: OFF")
-        self._auto_accept_toggle.add_css_class("feed-toolbar-toggle")
-        self._auto_accept_toggle.connect("toggled", self._on_auto_accept_toggled)
+        # Group 1 — per-type toggles (v2 granular controls; replaces legacy
+        # _auto_accept_toggle per SPEC-AUTO-ACCEPT-GRANULAR-1.md §2.3).
+        self._diffs_toggle = Gtk.ToggleButton(label="Diffs: OFF")
+        self._diffs_toggle.add_css_class("feed-toolbar-toggle")
+        self._diffs_toggle.add_css_class("feed-toolbar-toggle-per-type")
+        self._diffs_toggle.connect("toggled", self._on_diffs_toggled)
+
+        # Files is a GROUP toggle covering file_created/modified/deleted.
+        # Uses Gtk.ToggleButton for consistency with the Diffs toggle. The
+        # three underlying prefs are always toggled as a group, so there is
+        # no inconsistent-state ambiguity in normal usage.
+        self._files_toggle = Gtk.ToggleButton(label="Files: OFF")
+        self._files_toggle.add_css_class("feed-toolbar-toggle")
+        self._files_toggle.add_css_class("feed-toolbar-toggle-per-type")
+        self._files_toggle.connect("toggled", self._on_files_toggled)
+
+        # Exec toggle is a 3-state cycle (off → show → silent → off), NOT a
+        # 2-state toggle. GTK has no native 3-state cycle button, so we use
+        # a plain Button with a "clicked" handler that computes the next
+        # state from the current self._exec_mode.
+        self._exec_toggle = Gtk.ToggleButton(label="Exec: OFF")
+        self._exec_toggle.add_css_class("feed-toolbar-toggle")
+        self._exec_toggle.add_css_class("feed-toolbar-toggle-per-type")
+        self._exec_toggle.connect("clicked", self._on_exec_clicked)
+
+        # Separator between toggle group and agent scope.
+        self._scope_divider = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        self._scope_divider.add_css_class("feed-toolbar-divider")
+
+        # Group 2 — agent scope (placeholder; populated in Phase 6).
+        # Gtk.DropDown is used as the widget; the StringList model + callback
+        # are wired in Phase 6 when the handler integrates with the agent
+        # registry. Phase 5 only constructs the empty dropdown.
+        self._agent_dropdown = Gtk.DropDown()
+        self._agent_dropdown.add_css_class("feed-toolbar-agent-dropdown")
+
+        # Separator between scope and snooze.
+        self._snooze_divider = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        self._snooze_divider.add_css_class("feed-toolbar-divider")
+
+        # Group 3 — snooze button. Hidden when count == 0; revealed by
+        # update_auto_accept_prefs() when the prefs dict carries snoozed ids.
+        self._snooze_button = Gtk.MenuButton(label="Snooze 0")
+        self._snooze_button.add_css_class("feed-toolbar-snooze")
+        self._snooze_button.set_visible(False)  # hidden until snooze count > 0
 
         self._divider = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
         self._divider.add_css_class("feed-toolbar-divider")
