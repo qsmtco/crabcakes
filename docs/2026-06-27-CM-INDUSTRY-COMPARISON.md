@@ -113,6 +113,7 @@ From `docs/research/context-management-comparison.md` — crabcakes vs. smaller 
 - **Audit rigor** — the only platform with a formal spec → implementation → adversarial audit → fix cycle (25 spec fixes + 8 audit-discovered bugs, 150 tests)
 - **Untrusted-data fences** — `<untrusted-project-data>` pattern for prompt injection defense (unique among coding agents)
 - **Self-improvement stack** — 5-layer learning system (bug journal → project rules → enforcement → structured feedback → dream consolidation)
+- **JIT context discovery (P10)** — per-provider `context_mode` (auto/preload/jit/hybrid) with `file_search` tool and compact file index, resolving the upfront preload problem. Only platform with configurable per-provider context strategy.
 
 **Cursor (Composer 2) leads in:**
 - **RL-trained self-summarization** — the model itself learns what to keep/drop during compaction, achieving ~80% token reduction with 50% fewer compaction errors. This is the one area where Crabcakes' rule-based summary is weaker.
