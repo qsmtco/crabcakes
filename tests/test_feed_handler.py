@@ -57,6 +57,11 @@ class MockFeedTab:
         self._batch_bar_visible = False
         self._batch_bar_count = 0
         self._batch_accept_callback = None
+        # Phase 5 — Auto-accept toggle state (for new test class)
+        self._auto_accept_active = False
+        self._auto_accept_callback = None
+        self._batch_button_label = ""
+        self._batch_button_visible = True
         self.append_calls = []  # log of (widget, card_id) per append_card() call (for batch tests)
 
     def append_card(self, widget, card_id=None):
@@ -101,9 +106,19 @@ class MockFeedTab:
     def update_batch_bar(self, pending_count: int):
         self._batch_bar_count = pending_count
         self._batch_bar_visible = pending_count >= 2
+        # Phase 5-2 — New mock attrs (mirror real FeedTab.update_batch_bar)
+        self._batch_button_label = f"Accept All ({pending_count})" if pending_count >= 2 else "Accept All"
+        self._batch_button_visible = pending_count >= 2
 
     def set_batch_accept_callback(self, callback):
         self._batch_accept_callback = callback
+
+    # Phase 5 — Auto-accept toggle mocks
+    def update_auto_accept_state(self, active: bool):
+        self._auto_accept_active = active
+
+    def set_auto_accept_callback(self, callback):
+        self._auto_accept_callback = callback
 
 
 # ── Mock GitResult ───────────────────────────────────────────────────────────
