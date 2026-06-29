@@ -18,7 +18,7 @@ from models.feed_card import FeedCardData
 
 FEED_FILENAME = "feed.json"
 FEED_PREFS_FILENAME = "feed-prefs.json"
-PREFS_VERSION = 1
+PREFS_VERSION = 2
 _LOCK_RETRIES = 5          # max attempts to acquire lock
 _LOCK_RETRY_DELAY = 0.05  # 50ms between retries
 _logger = logging.getLogger(__name__)
