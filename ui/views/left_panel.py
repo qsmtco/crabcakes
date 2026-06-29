@@ -224,12 +224,11 @@ class LeftPanel(Gtk.Box):
         self._projects_open_page.append(nested_nb)
         self._projects_stack.set_visible_child_name("open")
 
-        # When the user clicks the Feed sub-tab, smart-scroll the feed so the
-        # newest card is visible. Without this, switching to Feed preserves
-        # the vadjustment as it was — which can be 0 (top) after a previous
-        # hide/show cycle on the page, even if the user had been at the
-        # bottom in the chat-driven path.
-        nested_nb.connect("switch-page", self._on_projects_subtab_switched)
+        # Note: Feed tab scroll-on-show is handled by the FeedTab's own
+        # ScrolledWindow 'map' signal handler (see FeedTab.__init__).
+        # That fires whenever the Feed tab becomes visible, regardless of
+        # which mechanism made it visible (notebook tab switch, project
+        # open, etc.).
 
     def close_project_view(self) -> None:
         # Idempotency guard — if already closed, do nothing
@@ -280,25 +279,6 @@ class LeftPanel(Gtk.Box):
         """Switch the nested Notebook to the File Tree sub-tab. Safe to call even if no project open."""
         if self._projects_nested_notebook is not None:
             self._projects_nested_notebook.set_current_page(0)
-
-    def _on_projects_subtab_switched(self, notebook, page, page_num):
-        """switch-page handler for the nested projects notebook.
-
-        Page 0 = File Tree, Page 1 = Feed. When the user clicks Feed, scroll
-        to the bottom so the newest card is visible.
-
-        This is unconditional (not the proximity-checking smart scroll used
-        for card appends) because clicking the Feed tab is an explicit user
-        action meaning "show me the feed." The vadjustment can be reset to 0
-        when GTK4 hides/shows the notebook page, so any prior scroll
-        position is lost anyway. Better to land on the newest card than to
-        land somewhere arbitrary.
-        """
-        if page_num == 1 and self._feed_tab is not None:
-            # Defer one idle tick so the page is fully realized before we
-            # read the vadjustment. schedule_scroll_to_bottom already defers
-            # via the 'changed' signal; the idle_add lets layout settle first.
-            GLib.idle_add(self._feed_tab.schedule_scroll_to_bottom)
 
     def _refresh_agents_list(self):
         """
