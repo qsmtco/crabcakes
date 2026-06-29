@@ -281,11 +281,20 @@ def _prefs_path(project_path: str) -> str:
 
 
 def _default_prefs() -> dict:
-    """Return the canonical default prefs payload (used when file is missing/invalid)."""
+    """Return the canonical default v2 prefs payload."""
     return {
-        "version": PREFS_VERSION,
-        "auto_accept_enabled": False,
-        "auto_accept_agent": None,
+        "version": 2,
+        "auto_accept": {
+            "file_changes": {
+                ct: {"enabled": False, "agent_scope": "first_author"}
+                for ct in ("diff", "file_created", "file_modified", "file_deleted")
+            },
+            "exec_command": {
+                "mode": "off",
+                "agent_scope": "first_author",
+            },
+            "snoozed_card_ids": [],
+        },
     }
 
 
@@ -293,14 +302,9 @@ def load_feed_prefs(project_path: str) -> dict:
     """
     Load feed prefs from .crabcakes/feed-prefs.json.
 
-    Returns the canonical defaults if the file is missing, malformed, or
-    has an unexpected version. Missing optional keys fall back to defaults.
-    Logs warnings on parse/version errors instead of raising — callers
-    always get a usable dict.
-
-    Thread safety: uses atomic-write semantics for the write side (see
-    save_feed_prefs). The read side is best-effort — a concurrent writer
-    may produce a transient empty/torn read, which we treat as missing.
+    Handles v1 and v2 files. V1 files are migrated to v2 in-memory.
+    Returns canonical v2 defaults if file is missing, malformed,
+    or has an unrecognized version.
     """
     path = _prefs_path(project_path)
     if not os.path.isfile(path):
@@ -318,24 +322,83 @@ def load_feed_prefs(project_path: str) -> dict:
         return _default_prefs()
 
     version = raw.get("version")
-    if version != PREFS_VERSION:
-        _logger.warning("load_feed_prefs: unsupported version %r at %s, using defaults", version, path)
-        return _default_prefs()
 
-    # Build result with defaults, overlay known keys with validated values.
-    result = _default_prefs()
-    enabled = raw.get("auto_accept_enabled", False)
-    if isinstance(enabled, bool):
-        result["auto_accept_enabled"] = enabled
-    elif enabled is not None:
-        _logger.warning("load_feed_prefs: auto_accept_enabled must be bool or absent, got %r", type(enabled).__name__)
+    if version == 2:
+        # V2 file — validate structure, overlay defaults for missing keys
+        return _merge_v2_defaults(raw)
 
-    agent = raw.get("auto_accept_agent", None)
-    if agent is None or isinstance(agent, str):
-        result["auto_accept_agent"] = agent
+    if version == 1:
+        # V1 file — migrate to v2 in-memory
+        return _migrate_v1_to_v2(raw)
+
+    _logger.warning("load_feed_prefs: unknown version %r at %s, using defaults", version, path)
+    return _default_prefs()
+
+
+def _migrate_v1_to_v2(raw: dict) -> dict:
+    """Migrate a v1 prefs dict to v2 format.
+
+    v1: {"version": 1, "auto_accept_enabled": bool, "auto_accept_agent": str|None}
+    v2: {"version": 2, "auto_accept": {"file_changes": {...}, "exec_command": {...}, ...}}
+
+    Migration rules:
+    - If auto_accept_enabled was False: all four file-change types disabled.
+    - If auto_accept_enabled was True AND auto_accept_agent is None: all four
+      enabled with first_author scope (lazy lock-in preserved).
+    - If auto_accept_enabled was True AND auto_accept_agent is set: all four
+      enabled with agent_scope = the persisted agent name. The first_author
+      lazy lock-in is bypassed because the user explicitly chose an agent.
+
+    The agent name from v1 is significant — it represents a deliberate lock-in
+    the user already made. Dropping it would silently change which agent's
+    cards auto-accept after upgrade (BUG #1 in adversarial audit).
+    """
+    enabled = bool(raw.get("auto_accept_enabled", False))
+    agent = raw.get("auto_accept_agent")
+    if enabled and isinstance(agent, str) and agent:
+        scope = agent  # Persist as a specific agent scope
     else:
-        _logger.warning("load_feed_prefs: auto_accept_agent must be str/None or absent, got %r", type(agent).__name__)
+        scope = "first_author"
+    return {
+        "version": 2,
+        "auto_accept": {
+            "file_changes": {
+                ct: {"enabled": enabled, "agent_scope": scope}
+                for ct in ("diff", "file_created", "file_modified", "file_deleted")
+            },
+            "exec_command": {"mode": "off", "agent_scope": scope},
+            "snoozed_card_ids": [],
+        },
+    }
 
+
+def _merge_v2_defaults(raw: dict) -> dict:
+    """Overlay a v2 prefs dict onto defaults to fill missing keys."""
+    result = _default_prefs()
+    auto = raw.get("auto_accept", {})
+    if isinstance(auto, dict):
+        fc_raw = auto.get("file_changes", {})
+        if isinstance(fc_raw, dict):
+            for ct in result["auto_accept"]["file_changes"]:
+                fc = fc_raw.get(ct, {})
+                if isinstance(fc, dict):
+                    result["auto_accept"]["file_changes"][ct]["enabled"] = bool(
+                        fc.get("enabled", False)
+                    )
+                    result["auto_accept"]["file_changes"][ct]["agent_scope"] = str(
+                        fc.get("agent_scope", "first_author")
+                    )
+        exec_raw = auto.get("exec_command", {})
+        if isinstance(exec_raw, dict):
+            result["auto_accept"]["exec_command"]["mode"] = str(
+                exec_raw.get("mode", "off")
+            )
+            result["auto_accept"]["exec_command"]["agent_scope"] = str(
+                exec_raw.get("agent_scope", "first_author")
+            )
+        snoozed = auto.get("snoozed_card_ids", [])
+        if isinstance(snoozed, list):
+            result["auto_accept"]["snoozed_card_ids"] = list(snoozed)
     return result
 
 
