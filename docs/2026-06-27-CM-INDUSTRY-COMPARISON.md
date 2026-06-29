@@ -117,7 +117,6 @@ From `docs/research/context-management-comparison.md` — crabcakes vs. smaller 
 
 **Cursor (Composer 2) leads in:**
 - **RL-trained self-summarization** — the model itself learns what to keep/drop during compaction, achieving ~80% token reduction with 50% fewer compaction errors. This is the one area where Crabcakes' rule-based summary is weaker.
-- **Dynamic context discovery** — tool lookups on demand instead of upfront loading
 
 **Windsurf (Cascade) leads in:**
 - **Codebase indexing + retrieval** — M-Query similarity search over indexed project
