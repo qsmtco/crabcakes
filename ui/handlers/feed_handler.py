@@ -176,12 +176,19 @@ class FeedHandler:
 
     def _on_auto_accept_toggled(self, active: bool) -> None:
         """
-        Called when the user clicks the auto-accept toggle.
-        ON: show warning dialog (if callback wired), then enable.
-        OFF: disable immediately (no dialog needed). (Phase 5)
+        Legacy v1 toggle entry point (Phase 5).
+
+        Kept as a thin wrapper around the v2 toggle methods so existing
+        tests that bind to the old FeedTab.set_auto_accept_callback
+        setter continue to work during the v1→v2 transition.
+
+        ON: show warning dialog (legacy 3-arg signature), then enable all.
+        OFF: disable all immediately (no dialog needed).
         """
         if active:
             if self._show_auto_accept_warning is not None:
+                # Legacy 3-arg signature (agent_name, on_confirm, on_cancel).
+                # Window-supplied callback in current wiring still uses this.
                 self._show_auto_accept_warning(
                     self._resolve_agent_name_for_dialog(),
                     on_confirm=self._enable_auto_accept,
@@ -194,33 +201,48 @@ class FeedHandler:
             self._disable_auto_accept()
 
     def _enable_auto_accept(self) -> None:
-        """Enable auto-accept and persist state. (Phase 5)
+        """Legacy v1: enable auto-accept for all file-change types + exec.
 
         Bug B fix: also call update_auto_accept_state(True) so the toolbar
         toggle's label flips from "Auto-Accept: OFF" to "Auto-Accept: ON".
         Previously only the in-memory flag was set; the label was stuck on
         OFF because Gtk.ToggleButton.set_active(True) does not change
         set_label() text.
+
+        Phase 4 v2 migration: also populates self._prefs so the new
+        per-type policy method (_is_card_auto_acceptable) sees a consistent
+        state. Without this, a legacy test that sets _auto_accept_enabled
+        directly would not trigger v2 auto-accept because _prefs.file_changes
+        would still be all-False.
         """
         self._auto_accept_enabled = True
-        if self._feed_tab is not None:
-            self._feed_tab.update_auto_accept_state(True)
-        self._GLib.idle_add(self._save_feed_prefs_idle)
+        # Mirror into v2 prefs so per-type policy sees a consistent state.
+        for fc in self._prefs.file_changes.values():
+            fc.enabled = True
+        self._prefs.exec_command.mode = "show"
+        self._refresh_auto_accept_state()
 
     def _cancel_auto_accept(self) -> None:
-        """Snap the toggle back to OFF and reset in-memory state. (Phase 5)
+        """Legacy v1: snap the toggle back to OFF and reset in-memory state.
 
         Invariant fix: previously this only updated the visible toggle and
         left self._auto_accept_enabled at True, creating a silent-accept
         window where add_card() would auto-accept new cards with no
         user-visible cue. We now reset the in-memory flag so state and UI
         stay in sync.
+
+        Does NOT persist (preserve legacy behavior — the user cancelled, so
+        nothing to save).
         """
         self._auto_accept_enabled = False
-        self._GLib.idle_add(lambda: self._feed_tab.update_auto_accept_state(False) if self._feed_tab else None)
+        # Mirror into v2 prefs so per-type policy sees a consistent state.
+        for fc in self._prefs.file_changes.values():
+            fc.enabled = False
+        self._prefs.exec_command.mode = "off"
+        self._refresh_auto_accept_state()
 
     def _disable_auto_accept(self) -> None:
-        """Disable auto-accept and persist state. (Phase 5)
+        """Legacy v1: disable auto-accept and persist state.
 
         Mirrors the Bug B fix in `_enable_auto_accept`: any code path that
         mutates `_auto_accept_enabled` must also call
@@ -229,9 +251,11 @@ class FeedHandler:
         "Auto-Accept: ON" even though the flag and persisted prefs are OFF.
         """
         self._auto_accept_enabled = False
-        if self._feed_tab is not None:
-            self._feed_tab.update_auto_accept_state(False)
-        self._GLib.idle_add(self._save_feed_prefs_idle)
+        # Mirror into v2 prefs so per-type policy sees a consistent state.
+        for fc in self._prefs.file_changes.values():
+            fc.enabled = False
+        self._prefs.exec_command.mode = "off"
+        self._refresh_auto_accept_state()
 
     def _save_feed_prefs_idle(self) -> None:
         """
