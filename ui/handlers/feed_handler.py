@@ -132,6 +132,70 @@ class FeedHandler:
         """
         self._show_auto_accept_warning = callback
 
+    def _resolve_agent_name_for_dialog(self) -> str:
+        """
+        Return the best human-readable agent name for the warning dialog.
+        Fallback chain: _auto_accept_agent → most recent card's author → "the active agent".
+        Never returns None or the string "None". (Phase 5)
+        """
+        if self._auto_accept_agent:
+            return self._auto_accept_agent
+        # Iterate cards newest-first, find most recent card with an author
+        if self._active_project_name:
+            card_ids = self._project_cards.get(self._active_project_name, [])
+            for cid in card_ids:  # newest first
+                card = self._cards.get(cid)
+                if card and card.author:
+                    return card.author
+        return "the active agent"
+
+    def _on_auto_accept_toggled(self, active: bool) -> None:
+        """
+        Called when the user clicks the auto-accept toggle.
+        ON: show warning dialog (if callback wired), then enable.
+        OFF: disable immediately (no dialog needed). (Phase 5)
+        """
+        if active:
+            if self._show_auto_accept_warning is not None:
+                self._show_auto_accept_warning(
+                    self._resolve_agent_name_for_dialog(),
+                    on_confirm=self._enable_auto_accept,
+                    on_cancel=self._cancel_auto_accept,
+                )
+            else:
+                # No warning callback wired (tests, headless) — enable directly
+                self._enable_auto_accept()
+        else:
+            self._disable_auto_accept()
+
+    def _enable_auto_accept(self) -> None:
+        """Enable auto-accept and persist state. (Phase 5)"""
+        self._auto_accept_enabled = True
+        self._GLib.idle_add(self._save_feed_prefs_idle)
+
+    def _cancel_auto_accept(self) -> None:
+        """Visually snap the toggle back to OFF without persisting. (Phase 5)"""
+        self._GLib.idle_add(lambda: self._feed_tab.update_auto_accept_state(False) if self._feed_tab else None)
+
+    def _disable_auto_accept(self) -> None:
+        """Disable auto-accept and persist state. (Phase 5)"""
+        self._auto_accept_enabled = False
+        self._GLib.idle_add(self._save_feed_prefs_idle)
+
+    def _save_feed_prefs_idle(self) -> None:
+        """
+        Persist auto-accept state to .crabcakes/feed-prefs.json. (Phase 5)
+        Called via GLib.idle_add so it runs on the main thread.
+        """
+        project_path = self._project_paths.get(self._active_project_name or "")
+        if not project_path:
+            return
+        feed_store.save_feed_prefs(project_path, {
+            "version": 1,
+            "auto_accept_enabled": self._auto_accept_enabled,
+            "auto_accept_agent": self._auto_accept_agent,
+        })
+
     # ─────────────────────────────────────────────────────────────────
     # Card lifecycle
     # ─────────────────────────────────────────────────────────────────
