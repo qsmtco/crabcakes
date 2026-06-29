@@ -1869,15 +1869,27 @@ class TestFeedToolbarAutoAccept:
         assert feed_handler._auto_accept_enabled is False
 
     def test_cancel_auto_accept_resets_toggle(self, feed_handler, mock_glib, mock_feed_tab):
-        """Warning dialog cancel → toggle snaps back to OFF."""
+        """Warning dialog cancel → toggle snaps back to OFF AND state resets.
+
+        Invariant: when the user cancels, both the visible toggle AND the
+        in-memory _auto_accept_enabled flag must be cleared. Previously only
+        the toggle was reset, leaving a silent-accept window where add_card()
+        would auto-accept new cards with no user-visible cue.
+        """
         # Mock warning callback that immediately invokes on_cancel
         def mock_warning(agent_name, on_confirm, on_cancel):
             on_cancel()
 
         feed_handler.set_show_auto_accept_warning(mock_warning)
         feed_handler._on_auto_accept_toggled(True)
-        # _cancel_auto_accept idle_adds update_auto_accept_state(False)
-        # Drain the idle queue
+        # _cancel_auto_accept now resets _auto_accept_enabled synchronously
+        # and idle_adds update_auto_accept_state(False).
+        assert feed_handler._auto_accept_enabled is False, (
+            "Invariant regression: _cancel_auto_accept left _auto_accept_enabled "
+            "at True, creating a silent-accept window (auto-accept on in memory "
+            "but UI shows OFF)."
+        )
+        # Drain the idle queue to confirm the visual update also runs.
         for fn, args, kwargs in mock_glib._pending:
             fn(*args, **kwargs)
         assert mock_feed_tab._auto_accept_active is False
