@@ -195,8 +195,17 @@ class FeedHandler:
         self._GLib.idle_add(lambda: self._feed_tab.update_auto_accept_state(False) if self._feed_tab else None)
 
     def _disable_auto_accept(self) -> None:
-        """Disable auto-accept and persist state. (Phase 5)"""
+        """Disable auto-accept and persist state. (Phase 5)
+
+        Mirrors the Bug B fix in `_enable_auto_accept`: any code path that
+        mutates `_auto_accept_enabled` must also call
+        `update_auto_accept_state(...)` so the toolbar label tracks state.
+        Without this call, user-click-OFF leaves the label stuck on
+        "Auto-Accept: ON" even though the flag and persisted prefs are OFF.
+        """
         self._auto_accept_enabled = False
+        if self._feed_tab is not None:
+            self._feed_tab.update_auto_accept_state(False)
         self._GLib.idle_add(self._save_feed_prefs_idle)
 
     def _save_feed_prefs_idle(self) -> None:

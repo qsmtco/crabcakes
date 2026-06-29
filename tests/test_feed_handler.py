@@ -1868,6 +1868,25 @@ class TestFeedToolbarAutoAccept:
         feed_handler._on_auto_accept_toggled(False)
         assert feed_handler._auto_accept_enabled is False
 
+    def test_disable_auto_accept_updates_toggle_visual(self, feed_handler, mock_glib, mock_feed_tab):
+        """Label-bug regression: turning OFF must flip the toolbar label.
+
+        Previously `_disable_auto_accept` only cleared `_auto_accept_enabled`
+        and scheduled a save; the visible toggle stayed at 'Auto-Accept: ON'.
+        The fix calls `update_auto_accept_state(False)` so the label tracks
+        the underlying state. Symmetric with `test_enable_auto_accept_updates_toggle_visual`.
+        """
+        # Start from a known-enabled visual state (mirrors what _enable_auto_accept
+        # would have produced).
+        mock_feed_tab._auto_accept_active = True
+        feed_handler._auto_accept_enabled = True
+        feed_handler._disable_auto_accept()
+        assert mock_feed_tab._auto_accept_active is False, (
+            "Label-bug regression: _disable_auto_accept did not flip the visible "
+            "toggle to OFF. Label would stay 'Auto-Accept: ON' after user click."
+        )
+        assert feed_handler._auto_accept_enabled is False
+
     def test_cancel_auto_accept_resets_toggle(self, feed_handler, mock_glib, mock_feed_tab):
         """Warning dialog cancel → toggle snaps back to OFF AND state resets.
 
