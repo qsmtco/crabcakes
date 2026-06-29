@@ -284,18 +284,21 @@ class LeftPanel(Gtk.Box):
     def _on_projects_subtab_switched(self, notebook, page, page_num):
         """switch-page handler for the nested projects notebook.
 
-        Page 0 = File Tree, Page 1 = Feed. When the user clicks Feed, schedule
-        a smart scroll on the FeedTab so the newest card is visible — but only
-        if the user was already near the bottom (the 80px proximity check
-        inside schedule_smart_scroll_to_bottom handles that).
+        Page 0 = File Tree, Page 1 = Feed. When the user clicks Feed, scroll
+        to the bottom so the newest card is visible.
+
+        This is unconditional (not the proximity-checking smart scroll used
+        for card appends) because clicking the Feed tab is an explicit user
+        action meaning "show me the feed." The vadjustment can be reset to 0
+        when GTK4 hides/shows the notebook page, so any prior scroll
+        position is lost anyway. Better to land on the newest card than to
+        land somewhere arbitrary.
         """
         if page_num == 1 and self._feed_tab is not None:
-            # Defer one idle tick: the ScrolledWindow may not have its final
-            # vadjustment upper until layout settles after the page becomes
-            # visible. schedule_smart_scroll_to_bottom internally already
-            # defers via the 'changed' signal, but we add one idle tick so
-            # the page itself is fully realized first.
-            GLib.idle_add(self._feed_tab.schedule_smart_scroll_to_bottom)
+            # Defer one idle tick so the page is fully realized before we
+            # read the vadjustment. schedule_scroll_to_bottom already defers
+            # via the 'changed' signal; the idle_add lets layout settle first.
+            GLib.idle_add(self._feed_tab.schedule_scroll_to_bottom)
 
     def _refresh_agents_list(self):
         """
