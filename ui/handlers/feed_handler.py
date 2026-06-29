@@ -479,6 +479,64 @@ class FeedHandler:
         feed_store.save_feed_prefs(project_path, self._prefs.to_dict())
 
     # ─────────────────────────────────────────────────────────────────
+    # V2 exec auto-accept getter (Phase 6 / §2.5)
+    # ─────────────────────────────────────────────────────────────────
+
+    def get_exec_auto_accept_mode(self) -> str | None:
+        """Public API: return the current exec auto-accept mode. (Phase 6 / v2)
+
+        Used by AgentRuntimeHandler via the installed callback to decide
+        whether to bypass card creation in Silent mode. See
+        set_check_exec_auto_accept_callback_for_handler() for the wiring
+        pattern; window.py calls that method to install this getter as
+        ARTH's `_on_check_exec_auto_accept` callback.
+
+        Returns:
+            - "off" | "show" | "silent" — the current exec mode stored in
+              _prefs.exec_command.mode (see models/feed_card.py:210-215
+              ExecCommandPref definition).
+            - None if _prefs is not yet initialized. ARTH treats None as
+              "no bypass" and falls through to normal card creation. This
+              guards against the constructor-ordering race: window.py wires
+              the callback before FeedHandler.__init__ has set _prefs in
+              some test fixtures.
+
+        Cheap: single attribute read. Called once per approval request from
+        AgentRuntimeHandler._do_approval_needed (Phase 6 / §2.5 Silent bypass).
+        """
+        if self._prefs is None:
+            return None
+        return self._prefs.exec_command.mode
+
+    def set_check_exec_auto_accept_callback_for_handler(
+        self, handler_setter: Callable[[Callable[[], str | None] | None], None]
+    ) -> None:
+        """Wire the exec auto-accept callback to AgentRuntimeHandler. (Phase 6 / §2.5)
+
+        Per §8.6 R2 (no handler-to-handler imports), this indirection lets
+        AgentRuntimeHandler query the exec mode without importing FeedHandler.
+        Window.py calls this after both handlers are constructed.
+
+        Args:
+            handler_setter: AgentRuntimeHandler.set_check_exec_auto_accept_callback.
+                The argument is wrapped (NOT called directly) so the ARTH
+                setter receives our bound method `self.get_exec_auto_accept_mode`.
+                When ARTH later invokes the callback, the lookup is
+                `fh.get_exec_auto_accept_mode()` which returns
+                `self._prefs.exec_command.mode`.
+
+        Wiring pattern (called once at startup by window.py):
+            self._feed_handler.set_check_exec_auto_accept_callback_for_handler(
+                self._agent_runtime_handler.set_check_exec_auto_accept_callback
+            )
+            # Equivalent to:
+            self._agent_runtime_handler.set_check_exec_auto_accept_callback(
+                self._feed_handler.get_exec_auto_accept_mode
+            )
+        """
+        handler_setter(self.get_exec_auto_accept_mode)
+
+    # ─────────────────────────────────────────────────────────────────
     # Card lifecycle
     # ─────────────────────────────────────────────────────────────────
 
