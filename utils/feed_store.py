@@ -17,6 +17,8 @@ import time
 from models.feed_card import FeedCardData
 
 FEED_FILENAME = "feed.json"
+FEED_PREFS_FILENAME = "feed-prefs.json"
+PREFS_VERSION = 1
 _LOCK_RETRIES = 5          # max attempts to acquire lock
 _LOCK_RETRY_DELAY = 0.05  # 50ms between retries
 _logger = logging.getLogger(__name__)
@@ -267,3 +269,93 @@ def update_feed_card(project_path: str, card_id: str, updates: dict) -> bool:
         return False
     finally:
         _release_lock(fd, lock_path)
+
+
+# ── Phase 5: Feed prefs (auto-accept toggle) ──────────────────────────────────
+
+
+def _prefs_path(project_path: str) -> str:
+    """Return the path to .crabcakes/feed-prefs.json for a project."""
+    crabcakes = os.path.join(project_path, ".crabcakes")
+    return os.path.join(crabcakes, FEED_PREFS_FILENAME)
+
+
+def _default_prefs() -> dict:
+    """Return the canonical default prefs payload (used when file is missing/invalid)."""
+    return {
+        "version": PREFS_VERSION,
+        "auto_accept_enabled": False,
+        "auto_accept_agent": None,
+    }
+
+
+def load_feed_prefs(project_path: str) -> dict:
+    """
+    Load feed prefs from .crabcakes/feed-prefs.json.
+
+    Returns the canonical defaults if the file is missing, malformed, or
+    has an unexpected version. Missing optional keys fall back to defaults.
+    Logs warnings on parse/version errors instead of raising — callers
+    always get a usable dict.
+
+    Thread safety: uses atomic-write semantics for the write side (see
+    save_feed_prefs). The read side is best-effort — a concurrent writer
+    may produce a transient empty/torn read, which we treat as missing.
+    """
+    path = _prefs_path(project_path)
+    if not os.path.isfile(path):
+        return _default_prefs()
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        _logger.warning("load_feed_prefs: failed to read %s: %s", path, e)
+        return _default_prefs()
+
+    if not isinstance(raw, dict):
+        _logger.warning("load_feed_prefs: expected dict at %s, got %s", path, type(raw).__name__)
+        return _default_prefs()
+
+    version = raw.get("version")
+    if version != PREFS_VERSION:
+        _logger.warning("load_feed_prefs: unsupported version %r at %s, using defaults", version, path)
+        return _default_prefs()
+
+    # Build result with defaults, overlay known keys with validated values.
+    result = _default_prefs()
+    enabled = raw.get("auto_accept_enabled", False)
+    if isinstance(enabled, bool):
+        result["auto_accept_enabled"] = enabled
+    elif enabled is not None:
+        _logger.warning("load_feed_prefs: auto_accept_enabled must be bool or absent, got %r", type(enabled).__name__)
+
+    agent = raw.get("auto_accept_agent", None)
+    if agent is None or isinstance(agent, str):
+        result["auto_accept_agent"] = agent
+    else:
+        _logger.warning("load_feed_prefs: auto_accept_agent must be str/None or absent, got %r", type(agent).__name__)
+
+    return result
+
+
+def save_feed_prefs(project_path: str, prefs: dict) -> None:
+    """
+    Save feed prefs to .crabcakes/feed-prefs.json.
+
+    Creates .crabcakes/ directory if missing. Validates that prefs is a
+    dict with version == PREFS_VERSION. Writes atomically via
+    _atomic_write_json (chmod 0o600). Logs errors instead of raising.
+    """
+    if not isinstance(prefs, dict):
+        _logger.error("save_feed_prefs: prefs must be a dict, got %s", type(prefs).__name__)
+        return
+    if prefs.get("version") != PREFS_VERSION:
+        _logger.error("save_feed_prefs: prefs.version must be %d, got %r", PREFS_VERSION, prefs.get("version"))
+        return
+    try:
+        _ensure_crabcakes_dir(project_path)
+        path = _prefs_path(project_path)
+        _atomic_write_json(path, prefs)
+    except OSError as e:
+        _logger.error("save_feed_prefs: failed to write prefs: %s", e)

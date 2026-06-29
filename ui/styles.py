@@ -888,6 +888,39 @@ notebook > header > tabs > tab {
     background: rgba(16, 185, 129, 0.5);
 }
 
+/* Persistent feed toolbar (Phase 5 — auto-accept toggle + batch button) */
+.feed-toolbar {
+    background: rgba(30, 30, 40, 0.9);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 6px;
+    padding: 6px 12px;
+    margin-top: 8px;
+}
+.feed-toolbar-toggle {
+    background: rgba(99, 102, 241, 0.2);
+    color: #a5b4fc;
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-size: 12px;
+    border: none;
+}
+.feed-toolbar-toggle:checked {
+    background: rgba(16, 185, 129, 0.3);
+    color: #6ee7b7;
+}
+.feed-toolbar-batch {
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-size: 12px;
+    border: none;
+}
+.feed-toolbar-divider {
+    background: rgba(99, 102, 241, 0.4);
+    min-width: 1px;
+    min-height: 24px;
+    margin: 0 4px;
+}
+
 /* Load More card */
 .feed-card-load-more .feed-card-body {
     background: rgba(255, 255, 255, 0.02);
