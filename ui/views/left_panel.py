@@ -224,6 +224,13 @@ class LeftPanel(Gtk.Box):
         self._projects_open_page.append(nested_nb)
         self._projects_stack.set_visible_child_name("open")
 
+        # When the user clicks the Feed sub-tab, smart-scroll the feed so the
+        # newest card is visible. Without this, switching to Feed preserves
+        # the vadjustment as it was — which can be 0 (top) after a previous
+        # hide/show cycle on the page, even if the user had been at the
+        # bottom in the chat-driven path.
+        nested_nb.connect("switch-page", self._on_projects_subtab_switched)
+
     def close_project_view(self) -> None:
         # Idempotency guard — if already closed, do nothing
         if not self._is_project_view_open:
@@ -273,6 +280,22 @@ class LeftPanel(Gtk.Box):
         """Switch the nested Notebook to the File Tree sub-tab. Safe to call even if no project open."""
         if self._projects_nested_notebook is not None:
             self._projects_nested_notebook.set_current_page(0)
+
+    def _on_projects_subtab_switched(self, notebook, page, page_num):
+        """switch-page handler for the nested projects notebook.
+
+        Page 0 = File Tree, Page 1 = Feed. When the user clicks Feed, schedule
+        a smart scroll on the FeedTab so the newest card is visible — but only
+        if the user was already near the bottom (the 80px proximity check
+        inside schedule_smart_scroll_to_bottom handles that).
+        """
+        if page_num == 1 and self._feed_tab is not None:
+            # Defer one idle tick: the ScrolledWindow may not have its final
+            # vadjustment upper until layout settles after the page becomes
+            # visible. schedule_smart_scroll_to_bottom internally already
+            # defers via the 'changed' signal, but we add one idle tick so
+            # the page itself is fully realized first.
+            GLib.idle_add(self._feed_tab.schedule_smart_scroll_to_bottom)
 
     def _refresh_agents_list(self):
         """
