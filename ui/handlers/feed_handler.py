@@ -138,9 +138,22 @@ class FeedHandler:
 
     def set_show_auto_accept_warning(self, callback: Callable | None) -> None:
         """
-        Install the callback invoked when the user toggles auto-accept ON.
-        The callback receives (agent_name: str, on_confirm: Callable, on_cancel: Callable).
-        Pass None to clear. Called by Window after FeedHandler is constructed. (Phase 5)
+        Install the callback invoked when the user activates auto-accept
+        for any feature (diffs, files, exec). (Phase 5 + v2)
+
+        The callback signature (as of v2) is:
+            callback(category: str, agent_name: str,
+                     on_confirm: Callable, on_cancel: Callable)
+        where category is one of "diffs" | "files" | "exec" and agent_name
+        is the human-readable name of the agent the auto-accept applies to
+        (resolved by the handler's first_author fallback chain).
+
+        The legacy v1 3-arg signature `(agent_name, on_confirm, on_cancel)`
+        is still honored by the legacy wrapper `_on_auto_accept_toggled`
+        during the v1→v2 transition; new v2 toggles (_on_diffs_toggled
+        etc.) pass all four arguments.
+
+        Pass None to clear. Called by Window after FeedHandler is constructed.
         """
         self._show_auto_accept_warning = callback
 
