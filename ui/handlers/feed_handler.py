@@ -367,6 +367,104 @@ class FeedHandler:
             self._pending_save_id = None
         self._pending_save_id = self._GLib.idle_add(self._save_feed_prefs_idle)
 
+    # ── V2 policy helpers (Phase 4 / SPEC-AUTO-ACCEPT-GRANULAR-1.md §2.4) ──
+
+    def _is_card_auto_acceptable(self, card: FeedCardData) -> bool:
+        """Central auto-accept policy. Returns True if a card should be
+        auto-accepted based on current prefs, agent scope, and snooze list.
+
+        Called from add_card() on every new card. Must be O(1).
+
+        Rules:
+        1. File-change cards (diff, file_created, file_modified, file_deleted):
+           check _prefs.file_changes[card_type].enabled + agent_scope match
+           + not in snooze list.
+        2. Exec approval cards (agent_action with needs_approval=True):
+           check _prefs.exec_command.mode != "off" + agent_scope match
+           + not in snooze list.
+        3. All other card types: never auto-accepted.
+
+        Legacy-compat fallback: if the legacy _auto_accept_enabled flag is
+        True but the v2 _prefs have not been migrated (i.e. _prefs.any_enabled()
+        is False), treat the legacy flag as authoritative and accept any
+        file-change card matching the legacy _auto_accept_agent scope.
+        This preserves the legacy test semantic where _auto_accept_enabled
+        is set directly without going through _enable_auto_accept().
+        """
+        # Fast path: nothing enabled
+        if not self._auto_accept_enabled:
+            return False
+
+        # Snooze check (per card-id)
+        if card.card_id and card.card_id in self._prefs.snoozed_card_ids:
+            return False
+
+        # File-change cards
+        if card.card_type in ("diff", "file_created", "file_modified", "file_deleted"):
+            pref = self._prefs.file_changes.get(card.card_type)
+            if pref is None:
+                return False
+            # Legacy-compat: legacy flag on but v2 prefs not migrated yet.
+            # Mirror legacy semantic: accept any file-change card matching
+            # the legacy _auto_accept_agent scope.
+            if not pref.enabled and not self._prefs.any_enabled():
+                if (self._auto_accept_agent is None
+                        or card.author == self._auto_accept_agent):
+                    return True
+                return False
+            if not pref.enabled:
+                return False
+            return self._agent_scope_matches(pref.agent_scope, card.author)
+
+        # Exec approval cards
+        if card.card_type == "agent_action" and card.metadata.get("needs_approval"):
+            if self._prefs.exec_command.mode == "off":
+                return False
+            return self._agent_scope_matches(
+                self._prefs.exec_command.agent_scope, card.author
+            )
+
+        return False
+
+    def _agent_scope_matches(self, scope: str, author: str) -> bool:
+        """Check if a card's author matches the configured agent scope.
+
+        - "all_agents": always True
+        - "first_author": True if _auto_accept_agent is None (not yet locked)
+          or author == _auto_accept_agent
+        - "<specific name>": True if author == scope
+
+        Side effect: when lazy lock-in fires, _refresh_auto_accept_state() is
+        called so the view's agent dropdown updates to reflect the new lock-in
+        (BUG #2 in adversarial audit — without this, the dropdown label stays
+        at "First author" even though only one agent's cards are accepted).
+        Persistence is debounced through _refresh_auto_accept_state.
+        """
+        if scope == "all_agents":
+            return True
+        if scope == "first_author":
+            if self._auto_accept_agent is None:
+                # Lazy lock-in: first card sets the agent
+                if author:
+                    self._auto_accept_agent = author
+                    self._refresh_auto_accept_state()
+                return True
+            return author == self._auto_accept_agent
+        # Specific agent name (persisted in v2 migration from v1 auto_accept_agent)
+        return author == scope
+
+    def snooze_card(self, card_id: str) -> None:
+        """Add a card to the snooze list so it is not auto-accepted."""
+        if card_id not in self._prefs.snoozed_card_ids:
+            self._prefs.snoozed_card_ids.append(card_id)
+            self._refresh_auto_accept_state()
+
+    def unsnooze_card(self, card_id: str) -> None:
+        """Remove a card from the snooze list."""
+        if card_id in self._prefs.snoozed_card_ids:
+            self._prefs.snoozed_card_ids.remove(card_id)
+            self._refresh_auto_accept_state()
+
     def _save_feed_prefs_idle(self) -> None:
         """
         Persist v2 auto-accept prefs to .crabcakes/feed-prefs.json.
