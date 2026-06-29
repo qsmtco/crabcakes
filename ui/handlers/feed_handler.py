@@ -121,6 +121,16 @@ class FeedHandler:
             self._feed_tab.set_batch_accept_callback(
                 lambda: self._on_batch_accept_clicked()
             )
+            # Phase 5: wire auto-accept toggle callback
+            self._feed_tab.set_auto_accept_callback(self._on_auto_accept_toggled)
+
+    def set_show_auto_accept_warning(self, callback: Callable | None) -> None:
+        """
+        Install the callback invoked when the user toggles auto-accept ON.
+        The callback receives (agent_name: str, on_confirm: Callable, on_cancel: Callable).
+        Pass None to clear. Called by Window after FeedHandler is constructed. (Phase 5)
+        """
+        self._show_auto_accept_warning = callback
 
     # ─────────────────────────────────────────────────────────────────
     # Card lifecycle
@@ -201,6 +211,18 @@ class FeedHandler:
             if self._feed_tab is not None:
                 self._feed_tab.append_card(widget, card_id)
                 self._schedule_smart_scroll()  # one funnel for all append paths
+                # Phase 5: auto-accept check (runs on main thread via idle_add)
+                # Must run AFTER append_card so the widget exists in the tree
+                # before handle_accept starts git ops. (Phase 5)
+                if (self._auto_accept_enabled
+                        and card_data.accepted is None
+                        and card_data.card_type in _AUTO_ACCEPT_TYPES
+                        and (self._auto_accept_agent is None or card_data.author == self._auto_accept_agent)):
+                    # Lazy agent lock-in: first card after toggle ON sets the agent
+                    if self._auto_accept_agent is None and card_data.author:
+                        self._auto_accept_agent = card_data.author
+                        self._GLib.idle_add(self._save_feed_prefs_idle)
+                    self._GLib.idle_add(lambda cid=card_data.card_id: self.handle_accept(cid))
                 if self._on_card_added:
                     self._on_card_added(card_id)
 
