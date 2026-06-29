@@ -148,7 +148,7 @@ The research docs identify a phased roadmap for future context management improv
 |---|---|---|---|
 | **P8** | Recursive hierarchical summarization + structured summary schemas | Low | 🔴 High — stratified memory |
 | **P9** | Tool-output offloading to disk + per-tool retention policy | Low-Med | 🔴 High — lossless compaction |
-| **P10** | Just-in-time file context retrieval | Medium | 🟡 Medium — reduces token pressure |
+| **P10** | ~~Just-in-time file context retrieval~~ | ~~Medium~~ | ✅ **Done** — `context_mode` + `file_search` tool + `build_file_index` (P10)
 | **P11** | Conversation checkpointing + adaptive context pressure thresholds | Low-Med | 🟡 Medium — debugging + tuning |
 | **P12** | Conversation spine + position-aware context reordering | Medium | 🟡 Medium — persistent self-model |
 | **P13** | Dream consolidation (cross-session synthesis) | High | 🟡 Medium — ChatGPT-style memory |
