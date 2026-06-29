@@ -473,10 +473,14 @@ class MainWindow(Gtk.ApplicationWindow):
         # Tell FeedHandler about the FeedTab (FeedHandler needs it to add/remove cards)
         self._feed_handler.set_feed_tab(self._feed_tab)
 
-        # Phase 5: wire auto-accept warning dialog callback
+        # Phase 5 + Phase 6: wire auto-accept warning dialog callback.
+        # Phase 6: signature expanded to (category, agent_name, on_confirm,
+        # on_cancel) per SPEC-AUTO-ACCEPT-GRANULAR-1 §2.6 BUG #6 fix. The
+        # legacy 3-arg form is still honored by FeedHandler.set_show_auto_accept_warning
+        # (legacy wrapper _on_auto_accept_toggled) but no longer wired here.
         self._feed_handler.set_show_auto_accept_warning(
-            lambda agent_name, on_confirm, on_cancel: self._show_auto_accept_warning(
-                agent_name, on_confirm, on_cancel
+            lambda category, agent_name, on_confirm, on_cancel: self._show_auto_accept_warning_v2(
+                category, agent_name, on_confirm, on_cancel
             )
         )
 
