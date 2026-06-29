@@ -127,10 +127,13 @@ class TestFeedToolbarAutoAccept:
         )
         feed_handler.add_card(card)
 
-        pending = list(mock_glib._pending)
-        mock_glib._pending.clear()
-        for fn, args, kwargs in pending:
-            fn(*args, **kwargs)
+        for _ in range(10):
+            pending = list(mock_glib._pending)
+            mock_glib._pending.clear()
+            if not pending:
+                break
+            for fn, args, kwargs in pending:
+                fn(*args, **kwargs)
 
         assert len(accepted_ids) == 0, f"Expected 0 accepts for tool_result, got {len(accepted_ids)}"
 
@@ -162,10 +165,13 @@ class TestFeedToolbarAutoAccept:
         )
         feed_handler.add_card(card_coder)
 
-        pending = list(mock_glib._pending)
-        mock_glib._pending.clear()
-        for fn, args, kwargs in pending:
-            fn(*args, **kwargs)
+        for _ in range(10):
+            pending = list(mock_glib._pending)
+            mock_glib._pending.clear()
+            if not pending:
+                break
+            for fn, args, kwargs in pending:
+                fn(*args, **kwargs)
 
         assert len(accepted_ids) == 1, f"Expected 1 accept (coder only), got {len(accepted_ids)}"
 
@@ -188,10 +194,13 @@ class TestFeedToolbarAutoAccept:
         )
         feed_handler.add_card(card)
 
-        pending = list(mock_glib._pending)
-        mock_glib._pending.clear()
-        for fn, args, kwargs in pending:
-            fn(*args, **kwargs)
+        for _ in range(10):
+            pending = list(mock_glib._pending)
+            mock_glib._pending.clear()
+            if not pending:
+                break
+            for fn, args, kwargs in pending:
+                fn(*args, **kwargs)
 
         assert len(accepted_ids) == 0, f"Expected 0 accepts (auto-accept OFF), got {len(accepted_ids)}"
 ```
