@@ -64,35 +64,19 @@ def harness():
 
 def _find_dialog(window):
     """
-    Walk the dialog tree of `window` to find the most recent Gtk.MessageDialog.
+    Find the most recently constructed Gtk.MessageDialog in the test process.
 
-    Pre-condition: _show_auto_accept_warning was called on `window`, which
-    creates a transient dialog. We don't call dialog.show() — but
-    Gtk.MessageDialog's parent is set via transient_for=self, so the dialog
-    is still reachable as a child of `self`.
+    GTK4 MessageDialog is a Gtk.Window (toplevel). It is registered in
+    Gtk.Window.list_toplevels() as soon as it's constructed, even before
+    dialog.show(). Return the most recent one.
     """
-    # Gtk.MessageDialog objects created with transient_for=self become
-    # children of the transient parent in the GTK object hierarchy. Search
-    # recursively for any Gtk.MessageDialog descendant.
-    stack = list(window.get_children())
-    matches = []
-    while stack:
-        node = stack.pop()
-        if isinstance(node, Gtk.MessageDialog):
-            matches.append(node)
-        if hasattr(node, "get_children"):
-            try:
-                stack.extend(node.get_children())
-            except Exception:
-                # Some widget types don't support get_children in some
-                # bindings; ignore.
-                pass
+    matches = [w for w in Gtk.Window.list_toplevels()
+               if isinstance(w, Gtk.MessageDialog)]
     if not matches:
         raise AssertionError(
-            "No Gtk.MessageDialog found under parent window — "
-            "did _show_auto_accept_warning run?"
+            "No Gtk.MessageDialog found — did _show_auto_accept_warning run?"
         )
-    # Return the most recently created
+    # Return the most recent (last) — captures the latest created dialog
     return matches[-1]
 
 
