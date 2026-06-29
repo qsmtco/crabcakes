@@ -369,17 +369,16 @@ class FeedHandler:
 
     def _save_feed_prefs_idle(self) -> None:
         """
-        Persist auto-accept state to .crabcakes/feed-prefs.json. (Phase 5)
-        Called via GLib.idle_add so it runs on the main thread.
+        Persist v2 auto-accept prefs to .crabcakes/feed-prefs.json.
+
+        Called via GLib.idle_add so it runs on the main thread. The save is
+        debounced by _refresh_auto_accept_state() — rapid-fire mutations
+        coalesce into one disk write.
         """
         project_path = self._project_paths.get(self._active_project_name or "")
         if not project_path:
             return
-        feed_store.save_feed_prefs(project_path, {
-            "version": 1,
-            "auto_accept_enabled": self._auto_accept_enabled,
-            "auto_accept_agent": self._auto_accept_agent,
-        })
+        feed_store.save_feed_prefs(project_path, self._prefs.to_dict())
 
     # ─────────────────────────────────────────────────────────────────
     # Card lifecycle
