@@ -44,11 +44,12 @@ See `docs/proposals/PROPOSAL-pluggable-context-strategy.md` for the full archite
 | **Split Boundary Detection** | ✅ `_find_split_index` with CB-6 forward/backward scan, iteration cap, visited-set dedup | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Token-Based Summary Truncation** | ✅ `_fit_summary` truncates to fit budget (not char-based) | ⚠️ Approximate | ✅ RL-trained to ~1k tokens | ⚠️ Approximate | ⚠️ | ❌ | ❌ |
 | **Adaptive Compaction Threshold** | ✅ Provider-specific percentage of model max (15–25%) | ⚠️ Fixed at ~80% window | ⚠️ Fixed token trigger | ⚠️ Fixed at ~80% window | ⚠️ Fixed at ~80% | ❌ Manual | ❌ |
-| **Dynamic Context Discovery** | ❌ Not yet | ❌ | ✅ Tool lookup on demand | ✅ Selective file fetch | ❌ | ❌ | ✅ M-Query similarity retrieval |
+| **Dynamic Context Discovery** | ✅ `context_mode` (preload/jit/hybrid) + `file_search` tool (P10) | ❌ | ✅ Tool lookup on demand | ✅ Selective file fetch | ❌ | ❌ | ✅ M-Query similarity retrieval |
 | **RL-Trained Self-Summarization** | ❌ Summary is rule-based | ❌ | ✅ Model learns what to keep | ❌ | ❌ | ❌ | ❌ |
 | **Workspace Memory / Rules Files** | ❌ (handled by OpenClaw layer) | ✅ `CLAUDE.md` | ❌ | ✅ `.github/copilot-instructions.md` | ✅ `.clinerules` | ✅ `.aider.conf.yml` | ✅ `.windsurfrules` |
 | **Persistent Project Index** | ❌ (handled by OpenClaw layer) | ❌ | ❌ | ✅ Repo-aware | ❌ | ❌ | ✅ Full codebase index |
 | **Manual Compaction Trigger** | ❌ Automatic only | ✅ `/compact` | ❌ | ✅ `/compact` (CLI only) | ✅ Auto + manual | ✅ `/clear`, `/drop` | ⚠️ Pinning + selection |
+| **JIT Context Modes (per-provider)** | ✅ `ProviderConfig.context_mode`: auto/preload/jit/hybrid, resolved by model window size | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **No-Op Compaction Detection** | ✅ Guards against recording events when nothing was freed | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 ---
@@ -67,7 +68,7 @@ Crabcakes' research docs (`docs/research/`) survey 30+ academic papers and produ
 | **Recursive hierarchical summarization** | ❌ Future (T1.1 in research doc) | ⚠️ Wang et al. proven it works; Cursor's self-summarization approximates it |
 | **Structured summary schemas (PRISM)** | ❌ Future (T1.2) | ⚠️ PRISM shows 4× compression with better performance |
 | **Tool-output offloading to disk** | ❌ Future (T1.3) | ⚠️ Anthropic/Claude Code pattern; LangChain Deep Agents |
-| **Just-in-time retrieval over preloading** | ❌ Future (T1.4) | ✅ Cursor, Copilot, Windsurf all do this |
+| **Just-in-time retrieval over preloading** | ✅ Implemented (P10) — `context_mode` + `file_search` tool | ✅ Cursor, Copilot, Windsurf all do this |
 | **Per-tool retention policy** | ❌ Future (T1.5) | ⚠️ OpenCode `PRUNE_PROTECTED_TOOLS` |
 | **Conversation checkpointing** | ❌ Future (T2.1) | ⚠️ LangGraph MemorySaver, Letta MemFS |
 | **Position-aware context reordering** | ❌ Future (T2.3) | ⚠️ Anthropic recommends; nobody automates |
@@ -91,7 +92,7 @@ From `docs/research/context-management-comparison.md` — crabcakes vs. smaller 
 | **Summary-on-trim** | ✅ Budget-aware | ✅ Consolidation | ✅ Compaction | ❌ | ❌ |
 | **Mid-conversation compaction** | ✅ Layer 1+2+3 | ✅ Auto-consolidation | ✅ FCA protocol | ❌ | ❌ |
 | **Byte-cap output control** | ⚠️ Line-based (future: T1.3 offload) | ❌ | ❌ | ✅ `head -c 4000` | ❌ |
-| **Semantic file partial reads** | ❌ Future (T1.4) | ❌ | ❌ | ❌ | ✅ MCP symbol graph |
+| **Semantic file partial reads** | ⚠️ Partial — `file_search` does name + grep content matching (P10); full symbol graph still future | ❌ | ❌ | ❌ | ✅ MCP symbol graph |
 | **Self-improvement loop** | ✅ 5-layer stack | ❌ | ❌ | ❌ | ❌ |
 | **Untrusted-data fences** | ✅ `<untrusted-project-data>` | ❌ | ❌ | ❌ | ❌ |
 | **Multi-agent context coordination** | ✅ Thread-safe per-session isolation | ❌ | ❌ | ❌ | ❌ |
@@ -132,7 +133,7 @@ From `docs/research/context-management-comparison.md` — crabcakes vs. smaller 
 | Feature | Source Inspiration | Effort | Impact |
 |---|---|---|---|
 | RL-trained self-summarization | Cursor Composer 2 | High | 🔴 High — would make summaries smarter |
-| Dynamic tool/context discovery | Cursor, Copilot | Medium | 🟡 Medium — reduces upfront token pressure |
+| ~~Dynamic tool/context discovery~~ | ~~Cursor, Copilot~~ | ~~Medium~~ | ✅ **Done (P10)** — `context_mode` + `file_search` tool shipped |
 | Manual compaction API | Claude Code | Low | 🟢 Nice-to-have — user control |
 | Codebase indexing | Windsurf | High | 🟡 Medium — already handled by OpenClaw layer |
 | Workspace rules file | All competitors | Low | 🟢 Nice-to-have — already handled by OpenClaw AGENTS.md |
