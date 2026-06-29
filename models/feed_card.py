@@ -197,3 +197,96 @@ class FeedCardData:
             seq_num=data.get("seq_num"),
             conversation_snapshot=snapshot,
         )
+
+
+@dataclass
+class FileChangePref:
+    """Per-type auto-accept preference."""
+    enabled: bool = False
+    agent_scope: str = "first_author"  # "first_author" | "all_agents" | "<agent_name>"
+
+
+@dataclass
+class ExecCommandPref:
+    """Exec command auto-accept preference."""
+    mode: str = "off"  # "off" | "show" | "silent"
+    agent_scope: str = "first_author"
+
+
+@dataclass
+class AutoAcceptPrefs:
+    """V2 auto-accept preferences replacing the single toggle.
+
+    Serialized to feed-prefs.json as version 2. The FeedHandler owns
+    the canonical instance; FeedTab receives a copy via
+    update_auto_accept_prefs().
+    """
+    file_changes: dict[str, FileChangePref] = field(default_factory=lambda: {
+        "diff": FileChangePref(),
+        "file_created": FileChangePref(),
+        "file_modified": FileChangePref(),
+        "file_deleted": FileChangePref(),
+    })
+    exec_command: ExecCommandPref = field(default_factory=ExecCommandPref)
+    snoozed_card_ids: list[str] = field(default_factory=list)
+
+    def any_enabled(self) -> bool:
+        """True if any file-change type is enabled OR exec is not off."""
+        return (
+            any(fc.enabled for fc in self.file_changes.values())
+            or self.exec_command.mode != "off"
+        )
+
+    def is_file_type_enabled(self, card_type: str) -> bool:
+        """Check if a specific card type is auto-accept enabled."""
+        pref = self.file_changes.get(card_type)
+        return pref is not None and pref.enabled
+
+    def to_dict(self) -> dict:
+        """Serialize for feed-prefs.json persistence."""
+        return {
+            "version": 2,
+            "auto_accept": {
+                "file_changes": {
+                    ct: {"enabled": fc.enabled, "agent_scope": fc.agent_scope}
+                    for ct, fc in self.file_changes.items()
+                },
+                "exec_command": {
+                    "mode": self.exec_command.mode,
+                    "agent_scope": self.exec_command.agent_scope,
+                },
+                "snoozed_card_ids": list(self.snoozed_card_ids),
+            },
+        }
+
+    @staticmethod
+    def from_dict(raw: dict) -> "AutoAcceptPrefs":
+        """Deserialize from feed-prefs.json. Tolerates missing keys."""
+        prefs = AutoAcceptPrefs()
+        auto = raw.get("auto_accept", {})
+        fc_raw = auto.get("file_changes", {})
+        for ct in ("diff", "file_created", "file_modified", "file_deleted"):
+            fc = fc_raw.get(ct, {})
+            prefs.file_changes[ct] = FileChangePref(
+                enabled=bool(fc.get("enabled", False)),
+                agent_scope=str(fc.get("agent_scope", "first_author")),
+            )
+        exec_raw = auto.get("exec_command", {})
+        prefs.exec_command = ExecCommandPref(
+            mode=str(exec_raw.get("mode", "off")),
+            agent_scope=str(exec_raw.get("agent_scope", "first_author")),
+        )
+        snoozed = auto.get("snoozed_card_ids", [])
+        prefs.snoozed_card_ids = list(snoozed) if isinstance(snoozed, list) else []
+        return prefs
+
+    def locked_agent(self) -> str | None:
+        """Return the locked-in agent if any file_changes type uses a
+        specific agent name as its scope (not 'all_agents' or
+        'first_author'). Used during v1→v2 migration to preserve the
+        persisted agent lock-in from the v1 'auto_accept_agent' field.
+        """
+        for fc in self.file_changes.values():
+            if fc.agent_scope not in ("all_agents", "first_author"):
+                return fc.agent_scope
+        return None
