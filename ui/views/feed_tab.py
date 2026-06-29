@@ -498,13 +498,66 @@ class FeedTab(Gtk.Box):
 
     def _on_auto_accept_toggled(self, button: Gtk.ToggleButton) -> None:
         """
-        Handler for the toggle's 'toggled' signal. Fires when the user clicks
-        the toggle (programmatic set_active() does NOT emit 'toggled').
-        Forwards the new state to the callback installed via
-        set_auto_accept_callback(), if any. (Phase 5)
+        Handler for the legacy toggle's 'toggled' signal. (Phase 5)
+
+        Kept for legacy compat: the legacy _auto_accept_toggle widget was
+        removed in Phase 5, but this handler is preserved because:
+        (a) MockFeedTab mirrors the same signature,
+        (b) FeedHandler.set_auto_accept_callback() still wires to it,
+        (c) It is not called on real FeedTab (no widget emits 'toggled' for
+            it anymore), so it is effectively dead code on real FeedTab.
+        Fires when the user clicks the legacy toggle. (programmatic
+        set_active() does NOT emit 'toggled'). Forwards the new state to
+        the legacy callback installed via set_auto_accept_callback(), if any.
         """
         if self._auto_accept_callback is not None:
             self._auto_accept_callback(button.get_active())
+
+    def _on_diffs_toggled(self, button: Gtk.ToggleButton) -> None:
+        """
+        Handler for the Diffs toggle's 'toggled' signal. Fires when the user
+        clicks the Diffs toggle (programmatic set_active() in
+        update_auto_accept_prefs() does NOT emit 'toggled'). Forwards the new
+        active state to the callback installed via
+        set_diffs_toggle_callback(), if any. (Phase 5)
+        """
+        if self._diffs_toggle_callback is not None:
+            self._diffs_toggle_callback(button.get_active())
+
+    def _on_files_toggled(self, button: Gtk.ToggleButton) -> None:
+        """
+        Handler for the Files toggle's 'toggled' signal. Fires when the user
+        clicks the Files toggle (programmatic set_active() in
+        update_auto_accept_prefs() does NOT emit 'toggled'). Forwards the new
+        active state to the callback installed via
+        set_files_toggle_callback(), if any. (Phase 5)
+        """
+        if self._files_toggle_callback is not None:
+            self._files_toggle_callback(button.get_active())
+
+    def _on_exec_clicked(self, button: Gtk.Button) -> None:
+        """Handler for the Exec toggle's 'clicked' signal. (Phase 5)
+
+        3-state cycle: OFF → SHOW → SILENT → OFF. Updates self._exec_mode
+        to the new state, mirrors the new state into the widget label (so
+        the user sees the cycle), and forwards the new mode string to the
+        callback installed via set_exec_toggle_callback(), if any.
+
+        Note: this is a 'clicked' handler, not 'toggled', because the Exec
+        button is a plain Gtk.Button (Gtk.ToggleButton does not support 3-state).
+        Programmatic label changes in update_auto_accept_prefs() do NOT
+        emit 'clicked', so this handler only fires on real user clicks.
+        """
+        if self._exec_mode == "off":
+            new_mode = "show"
+        elif self._exec_mode == "show":
+            new_mode = "silent"
+        else:
+            new_mode = "off"
+        self._exec_mode = new_mode
+        self._exec_toggle.set_label(f"Exec: {new_mode.upper()}")
+        if self._exec_toggle_callback is not None:
+            self._exec_toggle_callback(new_mode)
 
     def _on_batch_button_clicked(self, button: Gtk.Button) -> None:
         """
