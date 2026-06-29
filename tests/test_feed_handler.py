@@ -2022,3 +2022,404 @@ class TestFeedToolbarAutoAccept:
         mock_glib._pending.clear()
 
         assert len(accepted_ids) == 0, f"Expected 0 accepts (auto-accept OFF), got {len(accepted_ids)}"
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  TestAutoAcceptPrefs — Phase 1
+#  Verifies FileChangePref, ExecCommandPref, AutoAcceptPrefs dataclasses.
+# ═══════════════════════════════════════════════════════════════════
+
+class TestAutoAcceptPrefs:
+    """Phase 1: AutoAcceptPrefs dataclass — defaults, enable/disable,
+    serialization, instance isolation, locked_agent()."""
+
+    def test_defaults_all_disabled(self):
+        """Fresh AutoAcceptPrefs() has any_enabled()==False, all four
+        file-change types disabled, exec mode=='off'."""
+        p = AutoAcceptPrefs()
+        assert p.any_enabled() is False
+        for ct in ("diff", "file_created", "file_modified", "file_deleted"):
+            assert p.file_changes[ct].enabled is False
+        assert p.exec_command.mode == "off"
+
+    def test_enable_file_change_type(self):
+        """Enabling one file-change type flips any_enabled() and
+        is_file_type_enabled() correctly."""
+        p = AutoAcceptPrefs()
+        p.file_changes["diff"].enabled = True
+        assert p.any_enabled() is True
+        assert p.is_file_type_enabled("diff") is True
+        assert p.is_file_type_enabled("file_created") is False
+        assert p.is_file_type_enabled("file_modified") is False
+        assert p.is_file_type_enabled("file_deleted") is False
+
+    def test_enable_exec_command(self):
+        """Setting exec mode to 'show' flips any_enabled()."""
+        p = AutoAcceptPrefs()
+        p.exec_command.mode = "show"
+        assert p.any_enabled() is True
+        # file_changes still all False
+        assert p.is_file_type_enabled("diff") is False
+        assert p.is_file_type_enabled("file_created") is False
+
+    def test_to_dict_round_trip(self):
+        """Create prefs with mixed state, to_dict() -> from_dict() preserves
+        all fields."""
+        p = AutoAcceptPrefs()
+        p.file_changes["diff"].enabled = True
+        p.file_changes["diff"].agent_scope = "claude"
+        p.file_changes["file_created"].enabled = True
+        p.exec_command.mode = "silent"
+        p.exec_command.agent_scope = "all_agents"
+        p.snoozed_card_ids.append("card-abc-123")
+        p.snoozed_card_ids.append("card-xyz-789")
+
+        raw = p.to_dict()
+        p2 = AutoAcceptPrefs.from_dict(raw)
+
+        assert p2.file_changes["diff"].enabled is True
+        assert p2.file_changes["diff"].agent_scope == "claude"
+        assert p2.file_changes["file_created"].enabled is True
+        assert p2.file_changes["file_modified"].enabled is False
+        assert p2.file_changes["file_deleted"].enabled is False
+        assert p2.exec_command.mode == "silent"
+        assert p2.exec_command.agent_scope == "all_agents"
+        assert p2.snoozed_card_ids == ["card-abc-123", "card-xyz-789"]
+        assert p2.any_enabled() is True
+
+    def test_to_dict_has_version_2(self):
+        """to_dict() emits version=2 at the top level."""
+        p = AutoAcceptPrefs()
+        raw = p.to_dict()
+        assert raw["version"] == 2
+        assert "auto_accept" in raw
+
+    def test_from_dict_empty(self):
+        """from_dict({}) returns all defaults (any_enabled False, exec off,
+        all file types disabled, empty snooze)."""
+        p = AutoAcceptPrefs.from_dict({})
+        assert p.any_enabled() is False
+        for ct in ("diff", "file_created", "file_modified", "file_deleted"):
+            assert p.file_changes[ct].enabled is False
+            assert p.file_changes[ct].agent_scope == "first_author"
+        assert p.exec_command.mode == "off"
+        assert p.exec_command.agent_scope == "first_author"
+        assert p.snoozed_card_ids == []
+
+    def test_from_dict_missing_keys(self):
+        """Partial dict with only some file_changes types: missing types
+        fall back to defaults; provided types preserve their values."""
+        raw = {
+            "version": 2,
+            "auto_accept": {
+                "file_changes": {
+                    "diff": {"enabled": True, "agent_scope": "claude"},
+                },
+            },
+        }
+        p = AutoAcceptPrefs.from_dict(raw)
+        # Provided type preserved
+        assert p.file_changes["diff"].enabled is True
+        assert p.file_changes["diff"].agent_scope == "claude"
+        # Other types defaulted
+        assert p.file_changes["file_created"].enabled is False
+        assert p.file_changes["file_created"].agent_scope == "first_author"
+        assert p.file_changes["file_modified"].enabled is False
+        assert p.file_changes["file_deleted"].enabled is False
+        # Exec defaults
+        assert p.exec_command.mode == "off"
+        # Snooze defaults
+        assert p.snoozed_card_ids == []
+
+    def test_instance_isolation(self):
+        """Two AutoAcceptPrefs() instances must not share mutable state
+        (file_changes dict, exec_command object, snoozed_card_ids list)."""
+        a = AutoAcceptPrefs()
+        b = AutoAcceptPrefs()
+        # Mutating a's file_changes must not affect b
+        a.file_changes["diff"].enabled = True
+        assert b.file_changes["diff"].enabled is False
+        # Mutating a's exec_command.mode must not affect b
+        a.exec_command.mode = "show"
+        assert b.exec_command.mode == "off"
+        # Mutating a's snooze list must not affect b
+        a.snoozed_card_ids.append("x")
+        assert b.snoozed_card_ids == []
+        # The containers themselves must be distinct objects
+        assert a.file_changes is not b.file_changes
+        assert a.snoozed_card_ids is not b.snoozed_card_ids
+
+    def test_locked_agent_none(self):
+        """Fresh prefs: locked_agent() returns None (no specific agent)."""
+        p = AutoAcceptPrefs()
+        assert p.locked_agent() is None
+
+    def test_locked_agent_specific(self):
+        """Setting one type's agent_scope to a specific agent name
+        surfaces that agent via locked_agent()."""
+        p = AutoAcceptPrefs()
+        p.file_changes["diff"].agent_scope = "claude"
+        assert p.locked_agent() == "claude"
+
+    def test_locked_agent_first_author(self):
+        """agent_scope = 'first_author' must NOT count as locked."""
+        p = AutoAcceptPrefs()
+        p.file_changes["diff"].agent_scope = "first_author"
+        assert p.locked_agent() is None
+
+    def test_locked_agent_all_agents(self):
+        """agent_scope = 'all_agents' must NOT count as locked."""
+        p = AutoAcceptPrefs()
+        p.file_changes["file_created"].agent_scope = "all_agents"
+        assert p.locked_agent() is None
+
+    def test_snoozed_card_ids_default_empty(self):
+        """Fresh prefs have empty snoozed_card_ids list."""
+        p = AutoAcceptPrefs()
+        assert p.snoozed_card_ids == []
+        assert isinstance(p.snoozed_card_ids, list)
+
+    def test_snoozed_card_ids_from_dict_non_list(self):
+        """from_dict with snoozed_card_ids = 'notalist' (non-list value)
+        must fall back to an empty list, not crash or propagate the bad value."""
+        raw = {
+            "version": 2,
+            "auto_accept": {
+                "snoozed_card_ids": "notalist",
+            },
+        }
+        p = AutoAcceptPrefs.from_dict(raw)
+        assert p.snoozed_card_ids == []
+        assert isinstance(p.snoozed_card_ids, list)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  TestPrefsMigration — Phase 2
+#  Verifies _default_prefs, _migrate_v1_to_v2, _merge_v2_defaults,
+#  load_feed_prefs (with real file I/O via tempfile).
+# ═══════════════════════════════════════════════════════════════════
+
+import json
+import os
+import tempfile
+
+
+class TestPrefsMigration:
+    """Phase 2: v1→v2 migration, v2 default merging, load_feed_prefs
+    file-I/O dispatch over v1/v2/missing/invalid/unknown."""
+
+    def test_default_prefs_is_v2(self):
+        """_default_prefs() returns a v2-shaped dict with all required
+        nested keys present."""
+        d = _default_prefs()
+        assert d["version"] == 2
+        assert "auto_accept" in d
+        auto = d["auto_accept"]
+        assert "file_changes" in auto
+        assert "exec_command" in auto
+        assert "snoozed_card_ids" in auto
+        # file_changes has all four types
+        for ct in ("diff", "file_created", "file_modified", "file_deleted"):
+            assert ct in auto["file_changes"]
+            assert auto["file_changes"][ct]["enabled"] is False
+            assert auto["file_changes"][ct]["agent_scope"] == "first_author"
+        # exec_command defaults
+        assert auto["exec_command"]["mode"] == "off"
+        assert auto["exec_command"]["agent_scope"] == "first_author"
+        # snoozed empty
+        assert auto["snoozed_card_ids"] == []
+
+    def test_default_prefs_independent_instances(self):
+        """Two _default_prefs() calls return independent dicts (mutating
+        one must not affect the other)."""
+        a = _default_prefs()
+        b = _default_prefs()
+        assert a is not b
+        # Mutate nested structure on a
+        a["auto_accept"]["snoozed_card_ids"].append("x")
+        a["auto_accept"]["file_changes"]["diff"]["enabled"] = True
+        # b must be unaffected
+        assert b["auto_accept"]["snoozed_card_ids"] == []
+        assert b["auto_accept"]["file_changes"]["diff"]["enabled"] is False
+
+    def test_migrate_v1_disabled(self):
+        """v1 with auto_accept_enabled=False migrates to v2 with all four
+        file types disabled and scope=first_author."""
+        v1 = {"version": 1, "auto_accept_enabled": False, "auto_accept_agent": None}
+        v2 = _migrate_v1_to_v2(v1)
+        assert v2["version"] == 2
+        for ct in ("diff", "file_created", "file_modified", "file_deleted"):
+            assert v2["auto_accept"]["file_changes"][ct]["enabled"] is False
+            assert v2["auto_accept"]["file_changes"][ct]["agent_scope"] == "first_author"
+        assert v2["auto_accept"]["exec_command"]["mode"] == "off"
+        assert v2["auto_accept"]["exec_command"]["agent_scope"] == "first_author"
+        assert v2["auto_accept"]["snoozed_card_ids"] == []
+
+    def test_migrate_v1_enabled_no_agent(self):
+        """v1 with auto_accept_enabled=True and auto_accept_agent=None
+        migrates with all four types enabled at first_author scope."""
+        v1 = {"version": 1, "auto_accept_enabled": True, "auto_accept_agent": None}
+        v2 = _migrate_v1_to_v2(v1)
+        for ct in ("diff", "file_created", "file_modified", "file_deleted"):
+            assert v2["auto_accept"]["file_changes"][ct]["enabled"] is True
+            assert v2["auto_accept"]["file_changes"][ct]["agent_scope"] == "first_author"
+        # exec scope tracks the same scope rule
+        assert v2["auto_accept"]["exec_command"]["agent_scope"] == "first_author"
+
+    def test_migrate_v1_enabled_with_agent(self):
+        """v1 with auto_accept_enabled=True and auto_accept_agent='claude'
+        preserves the agent lock-in across all four types (BUG #1 audit fix)."""
+        v1 = {"version": 1, "auto_accept_enabled": True, "auto_accept_agent": "claude"}
+        v2 = _migrate_v1_to_v2(v1)
+        for ct in ("diff", "file_created", "file_modified", "file_deleted"):
+            assert v2["auto_accept"]["file_changes"][ct]["enabled"] is True
+            assert v2["auto_accept"]["file_changes"][ct]["agent_scope"] == "claude"
+        assert v2["auto_accept"]["exec_command"]["agent_scope"] == "claude"
+
+    def test_migrate_v1_empty_dict(self):
+        """Migrating {} (no auto_accept_enabled key) treats it as
+        auto_accept_enabled=False — all disabled, scope=first_author."""
+        v2 = _migrate_v1_to_v2({})
+        assert v2["version"] == 2
+        for ct in ("diff", "file_created", "file_modified", "file_deleted"):
+            assert v2["auto_accept"]["file_changes"][ct]["enabled"] is False
+            assert v2["auto_accept"]["file_changes"][ct]["agent_scope"] == "first_author"
+        assert v2["auto_accept"]["exec_command"]["mode"] == "off"
+
+    def test_merge_v2_complete(self):
+        """A complete v2 dict passes through _merge_v2_defaults unchanged."""
+        full = {
+            "version": 2,
+            "auto_accept": {
+                "file_changes": {
+                    "diff": {"enabled": True, "agent_scope": "claude"},
+                    "file_created": {"enabled": True, "agent_scope": "all_agents"},
+                    "file_modified": {"enabled": False, "agent_scope": "first_author"},
+                    "file_deleted": {"enabled": False, "agent_scope": "first_author"},
+                },
+                "exec_command": {"mode": "silent", "agent_scope": "claude"},
+                "snoozed_card_ids": ["card-1", "card-2"],
+            },
+        }
+        merged = _merge_v2_defaults(full)
+        assert merged == full
+
+    def test_merge_v2_partial_missing_file_changes(self):
+        """v2 with only the diff file_changes entry → other three types
+        filled from defaults."""
+        partial = {
+            "version": 2,
+            "auto_accept": {
+                "file_changes": {
+                    "diff": {"enabled": True, "agent_scope": "claude"},
+                },
+            },
+        }
+        merged = _merge_v2_defaults(partial)
+        # Provided type preserved
+        assert merged["auto_accept"]["file_changes"]["diff"]["enabled"] is True
+        assert merged["auto_accept"]["file_changes"]["diff"]["agent_scope"] == "claude"
+        # Other three defaulted
+        for ct in ("file_created", "file_modified", "file_deleted"):
+            assert merged["auto_accept"]["file_changes"][ct]["enabled"] is False
+            assert merged["auto_accept"]["file_changes"][ct]["agent_scope"] == "first_author"
+        # exec_command defaults
+        assert merged["auto_accept"]["exec_command"]["mode"] == "off"
+        assert merged["auto_accept"]["exec_command"]["agent_scope"] == "first_author"
+        # snooze defaults
+        assert merged["auto_accept"]["snoozed_card_ids"] == []
+
+    def test_merge_v2_empty_auto_accept(self):
+        """v2 with auto_accept={} yields all defaults (isinstance guard)."""
+        merged = _merge_v2_defaults({"version": 2, "auto_accept": {}})
+        assert merged == _default_prefs()
+
+    def test_merge_v2_auto_accept_none(self):
+        """v2 with auto_accept=None yields all defaults (isinstance guard
+        catches None and skips the overlay branch entirely)."""
+        merged = _merge_v2_defaults({"version": 2, "auto_accept": None})
+        assert merged == _default_prefs()
+
+    def test_merge_v2_wrong_types(self):
+        """v2 with wrong types at every nested level — each isinstance
+        guard catches the wrong type and falls back to defaults for that
+        section. Overall structure still equals _default_prefs()."""
+        bad = {
+            "version": 2,
+            "auto_accept": {
+                "file_changes": "not a dict",
+                "exec_command": 42,
+                "snoozed_card_ids": "not a list",
+            },
+        }
+        merged = _merge_v2_defaults(bad)
+        assert merged == _default_prefs()
+
+    def test_load_v1_file_migrates(self):
+        """Write a v1 JSON file to .crabcakes/feed-prefs.json, call
+        load_feed_prefs(), assert it returns a v2-shaped dict."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crabcakes = os.path.join(tmpdir, ".crabcakes")
+            os.makedirs(crabcakes)
+            path = os.path.join(crabcakes, "feed-prefs.json")
+            v1 = {"version": 1, "auto_accept_enabled": True, "auto_accept_agent": None}
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(v1, f)
+            loaded = load_feed_prefs(tmpdir)
+            assert loaded["version"] == 2
+            assert loaded["auto_accept"]["file_changes"]["diff"]["enabled"] is True
+            assert loaded["auto_accept"]["file_changes"]["diff"]["agent_scope"] == "first_author"
+            assert loaded["auto_accept"]["exec_command"]["mode"] == "off"
+
+    def test_load_v2_file_preserves(self):
+        """Write a v2 JSON file, load_feed_prefs() returns the same data
+        (merged through defaults, but equals the source)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crabcakes = os.path.join(tmpdir, ".crabcakes")
+            os.makedirs(crabcakes)
+            path = os.path.join(crabcakes, "feed-prefs.json")
+            v2 = {
+                "version": 2,
+                "auto_accept": {
+                    "file_changes": {
+                        "diff": {"enabled": True, "agent_scope": "claude"},
+                        "file_created": {"enabled": False, "agent_scope": "first_author"},
+                        "file_modified": {"enabled": False, "agent_scope": "first_author"},
+                        "file_deleted": {"enabled": False, "agent_scope": "first_author"},
+                    },
+                    "exec_command": {"mode": "silent", "agent_scope": "claude"},
+                    "snoozed_card_ids": ["x"],
+                },
+            }
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(v2, f)
+            loaded = load_feed_prefs(tmpdir)
+            assert loaded == v2
+
+    def test_load_missing_file_returns_defaults(self):
+        """No .crabcakes/feed-prefs.json → _default_prefs()."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            loaded = load_feed_prefs(tmpdir)
+            assert loaded == _default_prefs()
+
+    def test_load_corrupt_file_returns_defaults(self):
+        """Invalid JSON in feed-prefs.json → _default_prefs()."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crabcakes = os.path.join(tmpdir, ".crabcakes")
+            os.makedirs(crabcakes)
+            path = os.path.join(crabcakes, "feed-prefs.json")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("{ invalid json }")
+            loaded = load_feed_prefs(tmpdir)
+            assert loaded == _default_prefs()
+
+    def test_load_unknown_version_returns_defaults(self):
+        """Unknown version (e.g. 99) → _default_prefs() with a warning."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crabcakes = os.path.join(tmpdir, ".crabcakes")
+            os.makedirs(crabcakes)
+            path = os.path.join(crabcakes, "feed-prefs.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"version": 99, "weird_field": True}, f)
+            loaded = load_feed_prefs(tmpdir)
+            assert loaded == _default_prefs()
