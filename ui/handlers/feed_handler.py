@@ -123,7 +123,17 @@ class FeedHandler:
             self._feed_tab.set_batch_accept_callback(
                 lambda: self._on_batch_accept_clicked()
             )
-            # Phase 5: wire auto-accept toggle callback
+            # V2: wire per-toggle callbacks (Phase 3 rebuild of the toolbar).
+            # These setters only exist on the rebuilt FeedTab; legacy tests
+            # using MockFeedTab don't define them, so guard with hasattr.
+            if hasattr(self._feed_tab, "set_diffs_toggle_callback"):
+                self._feed_tab.set_diffs_toggle_callback(self._on_diffs_toggled)
+            if hasattr(self._feed_tab, "set_files_toggle_callback"):
+                self._feed_tab.set_files_toggle_callback(self._on_files_toggled)
+            if hasattr(self._feed_tab, "set_exec_toggle_callback"):
+                self._feed_tab.set_exec_toggle_callback(self._on_exec_toggled)
+            # Keep legacy callback for backward compat during the v1→v2
+            # transition — legacy tests still call _on_auto_accept_toggled.
             self._feed_tab.set_auto_accept_callback(self._on_auto_accept_toggled)
 
     def set_show_auto_accept_warning(self, callback: Callable | None) -> None:
