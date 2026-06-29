@@ -984,8 +984,12 @@ class FeedHandler:
                 # project's feed, so the proximity check trivially passes.
                 self._schedule_smart_scroll()
 
-                # Phase 5: apply persisted auto-accept state to toggle visual
-                if self._auto_accept_enabled is not None:
+                # Phase 5 + v2: push persisted prefs to the FeedTab.
+                # V2 FeedTab has update_auto_accept_prefs(); legacy/mock has
+                # update_auto_accept_state(bool). Use whichever exists.
+                if hasattr(self._feed_tab, "update_auto_accept_prefs"):
+                    self._feed_tab.update_auto_accept_prefs(self._prefs.to_dict())
+                elif hasattr(self._feed_tab, "update_auto_accept_state"):
                     self._feed_tab.update_auto_accept_state(self._auto_accept_enabled)
 
                 return False  # one-shot
