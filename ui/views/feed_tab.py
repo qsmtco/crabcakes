@@ -438,8 +438,53 @@ class FeedTab(Gtk.Box):
         Install the callback invoked when the user clicks the auto-accept toggle.
         The callback receives the new active state (True = ON, False = OFF).
         Pass None to clear. Called by FeedHandler after set_feed_tab(). (Phase 5)
+
+        Legacy compatibility: kept on the rebuilt toolbar as a no-op-style
+        hook for any code that still passes a legacy callback. The wired
+        legacy callback still updates _auto_accept_active state in MockFeedTab
+        (used by ~10 existing tests); on the real FeedTab, the callback is
+        invoked and the new per-type toggles set the toggle visuals via
+        update_auto_accept_prefs(). See set_diffs_toggle_callback etc. for
+        the v2 wiring.
         """
         self._auto_accept_callback = callback
+
+    def set_diffs_toggle_callback(self, callback: Callable[[bool], None] | None) -> None:
+        """Install callback for the Diffs toggle. Receives new active state.
+
+        Triggered by: _on_diffs_toggled() (the widget's 'toggled' signal).
+        The callback is invoked synchronously from the GTK main loop when
+        the user clicks the Diffs toggle.
+        """
+        self._diffs_toggle_callback = callback
+
+    def set_files_toggle_callback(self, callback: Callable[[bool], None] | None) -> None:
+        """Install callback for the Files toggle. Receives new active state.
+
+        Triggered by: _on_files_toggled() (the widget's 'toggled' signal).
+        The callback is invoked synchronously from the GTK main loop when
+        the user clicks the Files toggle.
+        """
+        self._files_toggle_callback = callback
+
+    def set_exec_toggle_callback(self, callback: Callable[[str], None] | None) -> None:
+        """Install callback for the Exec toggle. Receives new mode string.
+
+        Triggered by: _on_exec_clicked() (the widget's 'clicked' signal).
+        The callback receives the new mode ("off" | "show" | "silent") after
+        the 3-state cycle computes it. Note: this is NOT a 'toggled' signal
+        because the Exec toggle is a 3-state cycle button, not a binary toggle.
+        """
+        self._exec_toggle_callback = callback
+
+    def set_agent_scope_callback(self, callback: Callable[[str], None] | None) -> None:
+        """Install callback for the agent dropdown. Receives new scope string.
+
+        Phase 6 wires the actual StringList model + 'notify::selected' signal
+        handler. This setter stores the callback so future integration code
+        can reach it. In Phase 5, the dropdown is constructed but empty.
+        """
+        self._agent_scope_callback = callback
 
     def update_auto_accept_state(self, active: bool) -> None:
         """
