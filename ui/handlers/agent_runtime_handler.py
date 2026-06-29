@@ -979,6 +979,29 @@ class AgentRuntimeHandler:
             logger.warning("_do_approval_needed: no feed handler available")
             return
 
+        # V2 Silent bypass: if exec auto-accept is in silent mode, approve
+        # directly without creating a feed card. The card is NOT stored
+        # in _cards or _pending_approvals (no double-action possible).
+        # Per SPEC-AUTO-ACCEPT-GRANULAR-1.md §2.5 BUG #11 fix: Silent mode
+        # bypasses card creation entirely (no Approve/Deny buttons visible
+        # on an already-executed command). Show mode still creates the
+        # card for audit-trail purposes (Phase 7).
+        if (self._on_check_exec_auto_accept is not None
+                and self._on_check_exec_auto_accept() == "silent"):
+            agent_def = self._agents.get(session_key)
+            if agent_def is None:
+                return
+            runtime = self._runtimes.get(agent_def.runtime_id)
+            if runtime is None:
+                return
+            # IMPORTANT: lambda captures session_key/tool_name/args by
+            # closure. These are _do_approval_needed parameters (not loop
+            # variables), so capture-by-closure is safe.
+            self._GLib.idle_add(
+                lambda: runtime.approve_exec(session_key, tool_name, args, True)
+            )
+            return
+
         agent_def = self._agents.get(session_key)
         agent_name = agent_def.display_name if agent_def else "Agent"
         project_name, _ = self._active_project
