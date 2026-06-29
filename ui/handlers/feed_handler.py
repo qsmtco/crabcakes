@@ -169,12 +169,29 @@ class FeedHandler:
             self._disable_auto_accept()
 
     def _enable_auto_accept(self) -> None:
-        """Enable auto-accept and persist state. (Phase 5)"""
+        """Enable auto-accept and persist state. (Phase 5)
+
+        Bug B fix: also call update_auto_accept_state(True) so the toolbar
+        toggle's label flips from "Auto-Accept: OFF" to "Auto-Accept: ON".
+        Previously only the in-memory flag was set; the label was stuck on
+        OFF because Gtk.ToggleButton.set_active(True) does not change
+        set_label() text.
+        """
         self._auto_accept_enabled = True
+        if self._feed_tab is not None:
+            self._feed_tab.update_auto_accept_state(True)
         self._GLib.idle_add(self._save_feed_prefs_idle)
 
     def _cancel_auto_accept(self) -> None:
-        """Visually snap the toggle back to OFF without persisting. (Phase 5)"""
+        """Snap the toggle back to OFF and reset in-memory state. (Phase 5)
+
+        Invariant fix: previously this only updated the visible toggle and
+        left self._auto_accept_enabled at True, creating a silent-accept
+        window where add_card() would auto-accept new cards with no
+        user-visible cue. We now reset the in-memory flag so state and UI
+        stay in sync.
+        """
+        self._auto_accept_enabled = False
         self._GLib.idle_add(lambda: self._feed_tab.update_auto_accept_state(False) if self._feed_tab else None)
 
     def _disable_auto_accept(self) -> None:
