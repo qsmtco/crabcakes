@@ -1845,6 +1845,23 @@ class TestFeedToolbarAutoAccept:
         feed_handler._on_auto_accept_toggled(True)
         assert feed_handler._auto_accept_enabled is True
 
+    def test_enable_auto_accept_updates_toggle_visual(self, feed_handler, mock_glib, mock_feed_tab):
+        """Bug B regression: enabling auto-accept must update the visible toggle.
+
+        Previously _enable_auto_accept only set _auto_accept_enabled and
+        scheduled a save; the toolbar toggle's label stayed at
+        'Auto-Accept: OFF' because Gtk.ToggleButton.set_active() does not
+        change set_label() text. The fix calls update_auto_accept_state(True)
+        so the toggle reflects the actual state.
+        """
+        assert mock_feed_tab._auto_accept_active is False
+        feed_handler._enable_auto_accept()
+        assert mock_feed_tab._auto_accept_active is True, (
+            "Bug B regression: _enable_auto_accept did not flip the visible "
+            "toggle to ON. Label would stay 'Auto-Accept: OFF' even though "
+            "state is enabled."
+        )
+
     def test_disable_auto_accept_sets_state(self, feed_handler, mock_feed_tab):
         """Toggling OFF → _auto_accept_enabled = False."""
         feed_handler._auto_accept_enabled = True

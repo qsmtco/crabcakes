@@ -172,12 +172,17 @@ class TestShowAutoAcceptWarningResponseRouting:
         # Emit the 'response' signal — simulates user clicking a button
         # (Gtk.MessageDialog.response() doesn't emit by itself in GTK4)
         dialog.emit("response", Gtk.ResponseType.OK)
-        # Note: the production _on_response handler also calls
-        # dialog.close() after dispatching, which may cascade additional
-        # response emissions. We assert the *first* dispatch target:
-        assert confirm_calls, (
-            f"Expected on_confirm to be invoked when user clicks Turn On; "
-            f"got confirm={confirm_calls}, cancel={cancel_calls}"
+        # Bug A regression: production _on_response calls dialog.close()
+        # after dispatching, which triggers a second response(DELETE_EVENT)
+        # emission. The one-shot flag must suppress the second dispatch so
+        # on_cancel is NOT invoked when the user clicked OK.
+        assert confirm_calls == [True], (
+            f"Expected exactly one on_confirm call after OK; "
+            f"got confirm={confirm_calls}"
+        )
+        assert cancel_calls == [], (
+            f"Expected on_cancel to NOT be invoked after OK "
+            f"(response cascade regression); got cancel={cancel_calls}"
         )
 
     def test_cancel_response_invokes_on_cancel(self, harness):
