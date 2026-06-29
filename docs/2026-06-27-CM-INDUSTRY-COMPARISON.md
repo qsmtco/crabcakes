@@ -1,6 +1,6 @@
 # Crabcakes Context Management vs. Industry Comparison
 
-**Date:** 2026-06-27
+**Date:** 2026-06-27 (updated 2026-06-29 — P10 JIT context discovery shipped)
 **Author:** Qaster
 **Sources:** Web research (Claude Code, Cursor Composer 2, GitHub Copilot, Cline, Aider, Windsurf) + internal research docs (`docs/research/context-management-survey-2026.md`, `docs/research/context-management-comparison.md`, `docs/research/crabcakes-future-context-strategies.md`)
 
