@@ -602,6 +602,11 @@ class FeedHandler:
             # Load persisted cards from .crabcakes/feed.json
             cards = feed_store.load_feed(project_path)
 
+            # Phase 5: load auto-accept prefs (separate file from feed.json)
+            prefs = feed_store.load_feed_prefs(project_path)
+            self._auto_accept_enabled = prefs.get("auto_accept_enabled", False)
+            self._auto_accept_agent = prefs.get("auto_accept_agent")
+
             if not cards:
                 self._GLib.idle_add(lambda: self._feed_tab.show_empty_state() if self._feed_tab else None)
                 self._loading = False
@@ -699,6 +704,10 @@ class FeedHandler:
                 # On project open the user has no prior position in this
                 # project's feed, so the proximity check trivially passes.
                 self._schedule_smart_scroll()
+
+                # Phase 5: apply persisted auto-accept state to toggle visual
+                if self._auto_accept_enabled is not None:
+                    self._feed_tab.update_auto_accept_state(self._auto_accept_enabled)
 
                 return False  # one-shot
 
