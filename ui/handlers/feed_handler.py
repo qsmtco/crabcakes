@@ -257,6 +257,116 @@ class FeedHandler:
         self._prefs.exec_command.mode = "off"
         self._refresh_auto_accept_state()
 
+    # ── V2 per-toggle methods (Phase 4 / SPEC-AUTO-ACCEPT-GRANULAR-1.md §2.4) ──
+
+    def _on_diffs_toggled(self, active: bool) -> None:
+        """Diffs toggle changed. Show warning on first activation."""
+        if active:
+            if self._show_auto_accept_warning is not None:
+                self._show_auto_accept_warning(
+                    "diffs",
+                    self._resolve_agent_name_for_dialog(),
+                    on_confirm=self._enable_diffs,
+                    on_cancel=self._cancel_diffs,
+                )
+            else:
+                self._enable_diffs()
+        else:
+            self._prefs.file_changes["diff"].enabled = False
+            self._refresh_auto_accept_state()
+
+    def _enable_diffs(self) -> None:
+        self._prefs.file_changes["diff"].enabled = True
+        self._refresh_auto_accept_state()
+
+    def _cancel_diffs(self) -> None:
+        self._prefs.file_changes["diff"].enabled = False
+        self._refresh_auto_accept_state()
+
+    def _on_files_toggled(self, active: bool) -> None:
+        """Files toggle changed. Controls file_created/modified/deleted as a group."""
+        if active:
+            if self._show_auto_accept_warning is not None:
+                self._show_auto_accept_warning(
+                    "files",
+                    self._resolve_agent_name_for_dialog(),
+                    on_confirm=self._enable_files,
+                    on_cancel=self._cancel_files,
+                )
+            else:
+                self._enable_files()
+        else:
+            for ct in ("file_created", "file_modified", "file_deleted"):
+                self._prefs.file_changes[ct].enabled = False
+            self._refresh_auto_accept_state()
+
+    def _enable_files(self) -> None:
+        for ct in ("file_created", "file_modified", "file_deleted"):
+            self._prefs.file_changes[ct].enabled = True
+        self._refresh_auto_accept_state()
+
+    def _cancel_files(self) -> None:
+        for ct in ("file_created", "file_modified", "file_deleted"):
+            self._prefs.file_changes[ct].enabled = False
+        self._refresh_auto_accept_state()
+
+    def _on_exec_toggled(self, mode: str) -> None:
+        """Exec toggle changed. mode is 'off', 'show', or 'silent'.
+
+        When the user clicks the Exec toggle to enter 'show' or 'silent', we
+        show a stronger warning (since exec has bigger blast radius than file
+        changes). The warning callback receives category='exec' and the
+        appropriate agent name.
+        """
+        previous_mode = self._prefs.exec_command.mode
+        self._prefs.exec_command.mode = mode
+        if mode in ("show", "silent") and previous_mode == "off":
+            # First entry into an exec mode — show warning.
+            if self._show_auto_accept_warning is not None:
+                self._show_auto_accept_warning(
+                    "exec",
+                    self._resolve_agent_name_for_dialog(),
+                    on_confirm=lambda: self._confirm_exec_mode(mode),
+                    on_cancel=lambda: self._confirm_exec_mode("off"),
+                )
+                return
+        self._refresh_auto_accept_state()
+
+    def _confirm_exec_mode(self, mode: str) -> None:
+        """Confirmed by the user (or auto-confirmed if no dialog wired)."""
+        self._prefs.exec_command.mode = mode
+        self._refresh_auto_accept_state()
+
+    def _refresh_auto_accept_state(self) -> None:
+        """Recompute derived state and push prefs to view + persistence.
+
+        Called after ANY prefs mutation. Ensures the view always reflects
+        the handler's canonical state (Bug C invariant).
+
+        Persists via a debounced single-shot idle_add so rapid-fire
+        mutations (user clicking toggles + lazy agent lock-in firing in
+        the same main-loop iteration) do not produce redundant disk writes
+        (BUG #8 in adversarial audit).
+        """
+        self._auto_accept_enabled = self._prefs.any_enabled()
+        if self._feed_tab is not None:
+            # V2 path: push full prefs to FeedTab (rebuilt toolbar).
+            if hasattr(self._feed_tab, "update_auto_accept_prefs"):
+                self._feed_tab.update_auto_accept_prefs(self._prefs.to_dict())
+            # Legacy path: push the boolean toggle visual for the v1 toolbar.
+            # MockFeedTab and any pre-rebuild FeedTab only have this setter.
+            if hasattr(self._feed_tab, "update_auto_accept_state"):
+                self._feed_tab.update_auto_accept_state(self._auto_accept_enabled)
+        # Cancel any pending save and schedule a new one. The handler is
+        # always called from the main thread, so this is safe.
+        if getattr(self, "_pending_save_id", None) is not None:
+            try:
+                self._GLib.source_remove(self._pending_save_id)
+            except Exception:
+                pass
+            self._pending_save_id = None
+        self._pending_save_id = self._GLib.idle_add(self._save_feed_prefs_idle)
+
     def _save_feed_prefs_idle(self) -> None:
         """
         Persist auto-accept state to .crabcakes/feed-prefs.json. (Phase 5)
