@@ -974,6 +974,102 @@ class MainWindow(Gtk.ApplicationWindow):
         dialog.connect("response", _on_response)
         dialog.show()
 
+    def _show_auto_accept_warning_v2(
+        self,
+        category: str,
+        agent_name: str,
+        on_confirm: Callable,
+        on_cancel: Callable,
+    ) -> None:
+        """V2 warning dialog for per-type auto-accept activation. (Phase 6 / §2.6)
+
+        Per SPEC-AUTO-ACCEPT-GRANULAR-1 §2.6 (BUG #6 fix): the v2 callback
+        signature is (category, agent_name, on_confirm, on_cancel). The
+        category drives the dialog title/body copy; agent_name is the
+        human-readable name of the agent the auto-accept applies to.
+
+        Args:
+            category: One of "diffs" | "files" | "exec". Drives the
+                title/body copy via the dicts below. Unknown categories
+                fall back to a generic title/body so future categories
+                don't break the dialog.
+            agent_name: Human-readable agent identifier (resolved by
+                FeedHandler._resolve_agent_name_for_dialog). Inserted
+                into the body to give the user context on what they
+                are enabling auto-accept FOR.
+            on_confirm: Called if user clicks "Turn On".
+            on_cancel: Called if user clicks "Cancel" or dismisses the
+                dialog.
+
+        Dialog infrastructure mirrors _show_auto_accept_warning (Phase 5):
+        Gtk4 MessageDialog with WARNING type, OK/CANCEL buttons, default
+        response CANCEL, _dispatched=[False] guard against double-emission
+        on close, dialog.connect("response", _on_response), dialog.show().
+
+        Why this method coexists with the legacy _show_auto_accept_warning:
+        FeedHandler.set_show_auto_accept_warning accepts both 3-arg and
+        4-arg callbacks. Phase 4 wired the legacy 3-arg lambda; Phase 6
+        rewires it to this 4-arg method. Tests in
+        tests/test_window_auto_accept_warning.py bind the legacy method
+        directly via MainWindow._show_auto_accept_warning(self, ...) and
+        continue to work without modification.
+        """
+        titles = {
+            "diffs": "Auto-accept diffs?",
+            "files": "Auto-accept file changes?",
+            "exec":  "Auto-approve exec commands?",
+        }
+        bodies = {
+            "diffs": (
+                f"{agent_name} will silently auto-accept every diff it "
+                f"writes. You will not see the diff before it is committed."
+            ),
+            "files": (
+                f"{agent_name} will silently auto-accept every "
+                f"file_created/file_modified/file_deleted card it produces. "
+                f"You will not see the change before it is committed."
+            ),
+            "exec": (
+                f"{agent_name} will silently auto-approve every shell "
+                f"command it runs. This includes rm, git push, network "
+                f"calls, anything. There is no undo."
+            ),
+        }
+        title = titles.get(category, "Enable auto-accept?")
+        body = bodies.get(category, f"Enable auto-accept for {category}?")
+
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import Gtk
+
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.NONE,
+            text=title,
+            secondary_text=body,
+        )
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Turn On", Gtk.ResponseType.OK)
+        dialog.set_default_response(Gtk.ResponseType.CANCEL)
+
+        # Same one-shot guard as _show_auto_accept_warning (Bug A fix).
+        _dispatched = [False]
+
+        def _on_response(dialog, response):
+            if _dispatched[0]:
+                return
+            _dispatched[0] = True
+            if response == Gtk.ResponseType.OK:
+                on_confirm()
+            else:
+                on_cancel()
+            dialog.close()
+
+        dialog.connect("response", _on_response)
+        dialog.show()
+
     # ── Agent Builder integration ──────────────────────────────────────────
 
     def _open_agent_builder(self, edit_name: str | None = None) -> None:
