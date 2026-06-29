@@ -38,8 +38,6 @@ class FeedTab(Gtk.Box):
         self._feed_scroll: Gtk.ScrolledWindow | None = None
         self._cards_by_id: dict[str, Gtk.Widget] = {}  # card_id → widget
         self._empty_widget: Gtk.Widget | None = None
-        # Batch accept bar (Phase 5): shown when ≥2 consecutive file-change cards are pending
-        self._batch_bar: Gtk.Box | None = None
         # Phase 5 — Auto-accept toggle callback (set by FeedHandler via set_auto_accept_callback).
         # Stores the caller's function; invoked from _on_auto_accept_toggled when the user clicks
         # the toggle button. None means no callback is wired yet (toggling still updates the
@@ -75,8 +73,8 @@ class FeedTab(Gtk.Box):
         # ── Persistent bottom toolbar (Phase 5 — auto-accept + batch accept) ──────
         # Always visible regardless of pending count. The batch button inside this
         # toolbar is shown only when count >= 2; the auto-accept toggle is always
-        # shown. Built eagerly in __init__ (not lazy like the old _batch_bar) because
-        # the toggle must exist before update_auto_accept_state() is ever called.
+        # shown. Built eagerly in __init__ so the toggle exists before
+        # update_auto_accept_state() is ever called.
         self._toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self._toolbar.add_css_class("feed-toolbar")
 
@@ -376,6 +374,45 @@ class FeedTab(Gtk.Box):
         self._batch_button_label = self._batch_accept_button.get_label()
         self._batch_accept_label.set_text("")
 
+    # ── Phase 5: Auto-accept toggle API ───────────────────────────────────────
+
+    def set_auto_accept_callback(self, callback: Callable[[bool], None] | None) -> None:
+        """
+        Install the callback invoked when the user clicks the auto-accept toggle.
+        The callback receives the new active state (True = ON, False = OFF).
+        Pass None to clear. Called by FeedHandler after set_feed_tab(). (Phase 5)
+        """
+        self._auto_accept_callback = callback
+
+    def update_auto_accept_state(self, active: bool) -> None:
+        """
+        Programmatically set the toggle visual state. set_active() does NOT
+        fire the 'toggled' signal (verified GTK4 behavior), so this is safe
+        to call from the main thread without triggering the user's callback.
+        Also updates the label to reflect the new state. (Phase 5)
+        """
+        self._auto_accept_toggle.set_active(active)
+        self._auto_accept_toggle.set_label("Auto-Accept: ON" if active else "Auto-Accept: OFF")
+
+    def _on_auto_accept_toggled(self, button: Gtk.ToggleButton) -> None:
+        """
+        Handler for the toggle's 'toggled' signal. Fires when the user clicks
+        the toggle (programmatic set_active() does NOT emit 'toggled').
+        Forwards the new state to the callback installed via
+        set_auto_accept_callback(), if any. (Phase 5)
+        """
+        if self._auto_accept_callback is not None:
+            self._auto_accept_callback(button.get_active())
+
+    def _on_batch_button_clicked(self, button: Gtk.Button) -> None:
+        """
+        Handler for the toolbar batch button's 'clicked' signal. Fires when the
+        user clicks the batch accept button. Forwards to the callback installed
+        via set_batch_accept_callback(), if any. (Phase 5)
+        """
+        if self._batch_accept_callback is not None:
+            self._batch_accept_callback()
+
     def _on_batch_accept_clicked(self) -> None:
         """
         Placeholder - overridden by FeedHandler when it wires the batch accept flow.
@@ -386,5 +423,11 @@ class FeedTab(Gtk.Box):
     def set_batch_accept_callback(self, callback: Callable[[], None]) -> None:
         """
         Install the real batch accept callback. Called by FeedHandler after construction. (Phase 5)
+
+        Stores the callback both on self._batch_accept_callback (used by the new
+        _on_batch_button_clicked toolbar handler) AND on self._on_batch_accept_clicked
+        (legacy placeholder; kept for backward compatibility with any external code
+        that still references the old attribute).
         """
+        self._batch_accept_callback = callback
         self._on_batch_accept_clicked = callback
