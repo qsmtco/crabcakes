@@ -18,11 +18,6 @@ import time
 
 # MED-11: Validate git commit SHA to prevent argument injection
 _VALID_SHA_RE = re.compile(r"^(HEAD|[0-9a-fA-F]{4,40})$")
-
-# Phase 5: card types eligible for auto-accept. These are the file-change
-# cards that have git backing and can be accepted (committed) without
-# requiring user review of every card individually.
-_AUTO_ACCEPT_TYPES = {"diff", "file_created", "file_modified", "file_deleted"}
 import uuid
 from datetime import datetime, timezone
 
