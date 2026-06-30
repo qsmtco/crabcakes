@@ -490,17 +490,6 @@ class FeedHandler:
         at "First author" even though only one agent's cards are accepted).
         Persistence is debounced through _refresh_auto_accept_state.
         """
-        if scope == "all_agents" or scope not in ("all_agents", "first_author") and scope not in self._valid_agent_names():
-            # Unknown scope (including stale "system") → treat as all_agents
-            # to avoid silently blocking all auto-accept.
-            if scope != "all_agents":
-                _logger = getattr(self, '_logger', None)
-                if _logger:
-                    _logger.warning(
-                        "Unknown agent_scope %r — treating as all_agents", scope
-                    )
-            if scope == "all_agents" or (scope not in ("all_agents", "first_author") and scope not in self._valid_agent_names()):
-                return True
         if scope == "all_agents":
             return True
         if scope == "first_author":
@@ -511,8 +500,11 @@ class FeedHandler:
                     self._refresh_auto_accept_state()
                 return True
             return author == self._auto_accept_agent
-        # Specific agent name (persisted in v2 migration from v1 auto_accept_agent)
-        return author == scope
+        # Unknown scope (e.g. stale "system" not caught by migration guard):
+        # treat as "all_agents" to avoid silently blocking all auto-accept.
+        # The migration guard in feed_store.py should have caught these,
+        # but this is a belt-and-suspenders safety net.
+        return True
 
     def snooze_card(self, card_id: str) -> None:
         """Add a card to the snooze list so it is not auto-accepted."""
