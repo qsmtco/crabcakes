@@ -490,11 +490,39 @@ class FeedTab(Gtk.Box):
     def set_agent_scope_callback(self, callback: Callable[[str], None] | None) -> None:
         """Install callback for the agent dropdown. Receives new scope string.
 
-        Phase 6 wires the actual StringList model + 'notify::selected' signal
-        handler. This setter stores the callback so future integration code
-        can reach it. In Phase 5, the dropdown is constructed but empty.
+        Called when the user changes the dropdown selection. The callback
+        receives the scope key ("all_agents", "first_author", or an agent name).
         """
         self._agent_scope_callback = callback
+
+    def set_agent_options(self, agent_names: list[str]) -> None:
+        """Populate the dropdown with additional agent name entries.
+
+        Keeps the first two entries ("All agents", "First author") fixed;
+        replaces entries at index 2+ with the supplied agent names.
+        Called by FeedHandler when agents are registered.
+        """
+        # Remove dynamic entries (index 2 onward)
+        while self._agent_scope_model.get_n_items() > 2:
+            self._agent_scope_model.remove(2)
+        self._agent_scope_keys = ["all_agents", "first_author"]
+        for name in agent_names:
+            self._agent_scope_model.append(name)
+            self._agent_scope_keys.append(name)
+
+    def _on_agent_dropdown_changed(self, dropdown, _param) -> None:
+        """Signal handler for notify::selected on the agent scope dropdown.
+
+        Suppresses callbacks during programmatic sync (update_auto_accept_prefs)
+        so only real user selections fire the callback chain.
+        """
+        if self._syncing_agent_dropdown:
+            return
+        idx = dropdown.get_selected()
+        if 0 <= idx < len(self._agent_scope_keys):
+            scope = self._agent_scope_keys[idx]
+            if self._agent_scope_callback is not None:
+                self._agent_scope_callback(scope)
 
     def update_auto_accept_prefs(self, prefs_dict: dict) -> None:
         """Reconcile all toolbar visuals from the v2 prefs dict.
