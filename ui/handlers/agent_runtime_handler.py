@@ -99,6 +99,10 @@ class AgentRuntimeHandler:
         # exec per session is the realistic case).
         self._pending_exec_commands: dict[str, str] = {}
 
+        # Per-session token usage cache: session_key → (total_tokens, total_cost)
+        # Populated by _on_token_usage, read by get_session_usage().
+        self._session_usage: dict[str, tuple[int, float]] = {}
+
         # Ensure KB provider is registered, then start KB HTTP server if KB index is available
         try:
             from utils.providers_store import ensure_kb_provider
@@ -1172,13 +1176,23 @@ class AgentRuntimeHandler:
             self._on_agent_end_cb(session_key)
 
     def _on_token_usage(self, session_key: str, total_tokens: int, cost: float) -> None:
-        """AgentRuntime token usage callback. Logged for now."""
+        """AgentRuntime token usage callback. Store and log."""
+        self._session_usage[session_key] = (total_tokens, cost)
         logger.info(
             "Special agent token usage for %s: %d tokens, $%.4f",
             session_key,
             total_tokens,
             cost,
         )
+
+    def get_session_usage(self) -> dict[str, tuple[int, float]]:
+        """Return the in-memory session usage cache.
+
+        Keyed by session_key. Values are (total_tokens, total_cost).
+        Used by /cost command as fallback for agents without conversation files.
+        Returns a defensive copy.
+        """
+        return dict(self._session_usage)
 
     def _on_token_breakdown(self, session_key: str, breakdown: dict) -> None:
         """§4.15 — Per-turn token budget breakdown. Logged for observability."""
