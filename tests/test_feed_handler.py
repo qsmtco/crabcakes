@@ -2814,3 +2814,194 @@ class TestExecAutoAcceptModeQuery:
         assert captured_callback[0]() == "silent"
         feed_handler._prefs.exec_command.mode = "show"
         assert captured_callback[0]() == "show"
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  TestAutoAcceptDialogCascadeRegression — Bug F
+#  Verifies that programmatic set_active() in update_auto_accept_prefs()
+#  does NOT trigger the toggled signal handlers (which would show the
+#  warning dialog even though the user never clicked anything).
+#
+#  Repro history:
+#    1. User has a v1 .crabcakes/feed-prefs.json with auto_accept_enabled: true.
+#    2. User opens the project.
+#    3. Prefs are loaded and migrated to v2 — all 4 file types enabled.
+#    4. FeedHandler._append_and_schedule_scroll calls
+#       feed_tab.update_auto_accept_prefs(prefs).
+#    5. Inside update_auto_accept_prefs, self._diffs_toggle.set_active(True)
+#       and self._files_toggle.set_active(True) are called.
+#    6. On GTK 4.14, set_active() emits the 'toggled' signal whenever the
+#       value changes (False→True or True→False). The inline comments in
+#       update_auto_accept_prefs() claim it does NOT emit, but that is
+#       incorrect on GTK 4.14 — my repro under Xvfb confirmed the signal
+#       fires.
+#    7. Each 'toggled' signal triggers _on_diffs_toggled(True) /
+#       _on_files_toggled(True), which show a warning dialog each.
+#    8. The user sees two stacked dialogs ("Auto-accept diffs?" on top,
+#       "Auto-accept file changes?" behind it). Clicking the top button
+#       closes that dialog but leaves the second one blocking input.
+#       The user reports "clicking does nothing" because the second dialog
+#       is still there, in focus, blocking clicks elsewhere.
+#
+#  Fix: feed_tab._syncing_toolbar flag is set during update_auto_accept_prefs
+#  and gates _on_diffs_toggled / _on_files_toggled so they short-circuit
+#  when the signal is caused by a programmatic update (not a real user click).
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestAutoAcceptDialogCascadeRegression:
+    """Bug F regression: programmatic set_active() in update_auto_accept_prefs()
+    must NOT fire the toggle handlers (which would show the warning dialog)."""
+
+    def _make_real_feed_tab(self):
+        """Build a real FeedTab for testing the set_active→toggled behavior.
+
+        The existing real_feed_tab fixture wires a fake _feed_scroll so
+        we don't need that — we only need the toolbar toggles.
+        """
+        from ui.views.feed_tab import FeedTab
+        return FeedTab()
+
+    def test_programmatic_set_active_does_not_fire_toggled_handler(self, real_feed_tab):
+        """Bug F regression: feed_tab.update_auto_accept_prefs() sets
+        _diffs_toggle.set_active(True) programmatically. GTK 4.14 emits
+        the 'toggled' signal on every state change. Without the
+        _syncing_toolbar guard, _on_diffs_toggled runs and the user-
+        installed diffs callback would fire — showing a warning dialog
+        even though the user never clicked anything.
+
+        Fix: _syncing_toolbar flag short-circuits _on_diffs_toggled
+        during the sync, so the callback only fires on real user clicks.
+        """
+        tab = real_feed_tab
+        # Sanity: toggle starts OFF, no handler installed
+        assert tab._diffs_toggle.get_active() is False
+        callback_fired = []
+        tab.set_diffs_toggle_callback(lambda active: callback_fired.append(active))
+
+        # Simulate the v1→v2 prefs loaded into the FeedTab
+        prefs_dict = {
+            "version": 2,
+            "auto_accept": {
+                "file_changes": {
+                    "diff": {"enabled": True, "agent_scope": "system"},
+                    "file_created": {"enabled": True, "agent_scope": "system"},
+                    "file_modified": {"enabled": True, "agent_scope": "system"},
+                    "file_deleted": {"enabled": True, "agent_scope": "system"},
+                },
+                "exec_command": {"mode": "off", "agent_scope": "system"},
+                "snoozed_card_ids": [],
+            },
+        }
+        tab.update_auto_accept_prefs(prefs_dict)
+
+        # Toggle should now be visually ON
+        assert tab._diffs_toggle.get_active() is True
+        # ...but the diffs_toggle_callback should NOT have fired
+        assert callback_fired == [], (
+            f"Bug F regression: programmatic set_active(True) fired the "
+            f"diffs_toggle_handler {len(callback_fired)} times "
+            f"(expected 0). On GTK 4.14, Gtk.ToggleButton.set_active() "
+            f"emits 'toggled' when the value changes — the "
+            f"_syncing_toolbar guard must suppress this during "
+            f"update_auto_accept_prefs(). Otherwise the warning dialog "
+            f"appears every time the user opens a project with auto-"
+            f"accept prefs persisted from a v1 install."
+        )
+
+    def test_programmatic_set_active_does_not_fire_files_handler(self, real_feed_tab):
+        """Same Bug F regression but for the Files toggle.
+
+        v1 prefs with auto_accept_enabled=true migrate to v2 with all
+        three file_created/file_modified/file_deleted types enabled.
+        update_auto_accept_prefs then calls _files_toggle.set_active(True)
+        which would emit 'toggled' and trigger _on_files_toggled, which
+        shows the second stacked dialog. The _syncing_toolbar guard
+        must suppress this too.
+        """
+        tab = real_feed_tab
+        assert tab._files_toggle.get_active() is False
+        callback_fired = []
+        tab.set_files_toggle_callback(lambda active: callback_fired.append(active))
+
+        prefs_dict = {
+            "version": 2,
+            "auto_accept": {
+                "file_changes": {
+                    "diff": {"enabled": False, "agent_scope": "first_author"},
+                    "file_created": {"enabled": True, "agent_scope": "system"},
+                    "file_modified": {"enabled": True, "agent_scope": "system"},
+                    "file_deleted": {"enabled": True, "agent_scope": "system"},
+                },
+                "exec_command": {"mode": "off", "agent_scope": "system"},
+                "snoozed_card_ids": [],
+            },
+        }
+        tab.update_auto_accept_prefs(prefs_dict)
+
+        assert tab._files_toggle.get_active() is True
+        assert callback_fired == [], (
+            f"Bug F regression: programmatic _files_toggle.set_active(True) "
+            f"fired the files_toggle_handler {len(callback_fired)} times "
+            f"(expected 0). The second warning dialog is the more obvious "
+            f"symptom because the Files dialog stacks behind the Diffs one — "
+            f"the user clicks 'Cancel' on Diffs and the Files dialog is "
+            f"still there blocking input."
+        )
+
+    def test_user_click_still_fires_toggled_handler(self, real_feed_tab):
+        """Sanity / negative test: when _syncing_toolbar is False (real
+        user click), the toggled handler MUST fire. This guards against
+        the fix being too aggressive (e.g. always short-circuiting)."""
+        tab = real_feed_tab
+        callback_fired = []
+        tab.set_diffs_toggle_callback(lambda active: callback_fired.append(active))
+
+        # Simulate a real user click — toggle.set_active(True) WITHOUT
+        # the _syncing_toolbar guard being set
+        assert tab._syncing_toolbar is False  # baseline
+        tab._diffs_toggle.set_active(True)
+
+        assert tab._diffs_toggle.get_active() is True
+        assert callback_fired == [True], (
+            f"Real user click must fire the diffs_toggle_handler "
+            f"(expected [True], got {callback_fired}). The _syncing_toolbar "
+            f"guard is set during update_auto_accept_prefs only — outside "
+            f"of that, the handler should always run."
+        )
+
+    def test_syncing_toolbar_clears_on_exception(self, real_feed_tab):
+        """Bug F robustness: if update_auto_accept_prefs raises mid-sync,
+        the _syncing_toolbar flag MUST be reset to False so subsequent
+        real user clicks still fire the handlers."""
+        tab = real_feed_tab
+        assert tab._syncing_toolbar is False
+
+        # Wrap set_active to throw before flipping the toggle
+        def boom(*args, **kwargs):
+            raise RuntimeError("simulated failure mid-sync")
+        tab._diffs_toggle.set_active = boom
+
+        prefs_dict = {
+            "version": 2,
+            "auto_accept": {
+                "file_changes": {
+                    "diff": {"enabled": True, "agent_scope": "first_author"},
+                },
+                "exec_command": {"mode": "off", "agent_scope": "first_author"},
+                "snoozed_card_ids": [],
+            },
+        }
+        raised = False
+        try:
+            tab.update_auto_accept_prefs(prefs_dict)
+        except RuntimeError:
+            raised = True
+
+        assert raised, "Test setup: boom() should have raised"
+        # Flag must be reset even though we raised
+        assert tab._syncing_toolbar is False, (
+            "Robustness: update_auto_accept_prefs must reset "
+            "_syncing_toolbar in a finally block so the flag doesn't "
+            "leak and disable all future toggle interactions."
+        )

@@ -52,6 +52,16 @@ class FeedTab(Gtk.Box):
         self._agent_scope_callback: Callable[[str], None] | None = None
         # V2 — Exec mode (3-state cycle: off → show → silent → off).
         self._exec_mode: str = "off"
+        # Bug F regression guard: programmatic set_active() in
+        # update_auto_accept_prefs() emits the 'toggled' signal on GTK 4.14
+        # (the inline comments claimed it does NOT, but my repro under Xvfb
+        # confirmed the signal fires whenever the value changes False→True
+        # or True→False). Without this guard, loading v1 prefs with
+        # auto_accept_enabled=true and then opening a project would
+        # trigger the warning dialog even though the user never clicked the
+        # toggle. See .crabcakes/coder-bugs.md Bug #11 (auto-accept dialog
+        # cascade on project open).
+        self._syncing_toolbar: bool = False
         # Phase 5 — Batch button label (read by tests for assertions; mirrors the actual
         # _batch_accept_button.get_label()).
         self._batch_button_label: str = ""
@@ -495,33 +505,52 @@ class FeedTab(Gtk.Box):
         Args:
             prefs_dict: A v2 prefs dict (as produced by AutoAcceptPrefs.to_dict()
                 or load_feed_prefs()). Must have version == 2.
+
+        Bug F regression guard: GTK 4.14's Gtk.ToggleButton.set_active()
+        emits the 'toggled' signal whenever the value actually changes
+        (False→True or True→False), contrary to the GTK 3 documentation
+        and the inline comments in this file that claimed it does NOT.
+        Without the _syncing_toolbar flag, loading v1 prefs with
+        auto_accept_enabled=true and then opening a project would trigger
+        two warning dialogs (one for Diffs, one for Files) even though the
+        user never clicked the toolbar. The flag short-circuits
+        _on_diffs_toggled / _on_files_toggled for the duration of the
+        programmatic sync so only real user clicks reach the FeedHandler
+        and its warning-dialog callback chain. See
+        .crabcakes/coder-bugs.md Bug #11.
         """
-        auto = prefs_dict.get("auto_accept", {})
-        fc = auto.get("file_changes", {})
+        self._syncing_toolbar = True
+        try:
+            auto = prefs_dict.get("auto_accept", {})
+            fc = auto.get("file_changes", {})
 
-        # Diffs toggle (covers "diff" type)
-        diff_enabled = fc.get("diff", {}).get("enabled", False)
-        self._diffs_toggle.set_active(diff_enabled)
-        self._diffs_toggle.set_label(f"Diffs: {'ON' if diff_enabled else 'OFF'}")
+            # Diffs toggle (covers "diff" type)
+            diff_enabled = fc.get("diff", {}).get("enabled", False)
+            self._diffs_toggle.set_active(diff_enabled)
+            self._diffs_toggle.set_label(f"Diffs: {'ON' if diff_enabled else 'OFF'}")
 
-        # Files toggle (covers file_created, file_modified, file_deleted)
-        files_enabled = any(
-            fc.get(ct, {}).get("enabled", False)
-            for ct in ("file_created", "file_modified", "file_deleted")
-        )
-        self._files_toggle.set_active(files_enabled)
-        self._files_toggle.set_label(f"Files: {'ON' if files_enabled else 'OFF'}")
+            # Files toggle (covers file_created, file_modified, file_deleted)
+            files_enabled = any(
+                fc.get(ct, {}).get("enabled", False)
+                for ct in ("file_created", "file_modified", "file_deleted")
+            )
+            self._files_toggle.set_active(files_enabled)
+            self._files_toggle.set_label(f"Files: {'ON' if files_enabled else 'OFF'}")
 
-        # Exec toggle (3-state)
-        exec_mode = auto.get("exec_command", {}).get("mode", "off")
-        self._exec_mode = exec_mode
-        self._exec_toggle.set_label(f"Exec: {exec_mode.upper()}")
+            # Exec toggle (3-state). set_label does NOT emit 'clicked', so
+            # no signal-block guard is needed here (only set_active on the
+            # Diffs/Files toggles triggers the cascade).
+            exec_mode = auto.get("exec_command", {}).get("mode", "off")
+            self._exec_mode = exec_mode
+            self._exec_toggle.set_label(f"Exec: {exec_mode.upper()}")
 
-        # Snooze count
-        snoozed = auto.get("snoozed_card_ids", [])
-        count = len(snoozed)
-        self._snooze_button.set_label(f"Snooze {count}")
-        self._snooze_button.set_visible(count > 0)
+            # Snooze count
+            snoozed = auto.get("snoozed_card_ids", [])
+            count = len(snoozed)
+            self._snooze_button.set_label(f"Snooze {count}")
+            self._snooze_button.set_visible(count > 0)
+        finally:
+            self._syncing_toolbar = False
 
     def update_auto_accept_state(self, active: bool) -> None:
         """Legacy bridge — constructs a prefs dict from the single-toggle state.
@@ -564,22 +593,31 @@ class FeedTab(Gtk.Box):
     def _on_diffs_toggled(self, button: Gtk.ToggleButton) -> None:
         """
         Handler for the Diffs toggle's 'toggled' signal. Fires when the user
-        clicks the Diffs toggle (programmatic set_active() in
-        update_auto_accept_prefs() does NOT emit 'toggled'). Forwards the new
-        active state to the callback installed via
-        set_diffs_toggle_callback(), if any. (Phase 5)
+        clicks the Diffs toggle OR when update_auto_accept_prefs() does a
+        programmatic set_active() with a value change (Bug F regression —
+        GTK 4.14 emits 'toggled' on every state change, contrary to the
+        GTK 3 documented behavior). The _syncing_toolbar guard short-
+        circuits the second case so the warning dialog is only shown on
+        real user clicks. Forwards the new active state to the callback
+        installed via set_diffs_toggle_callback(), if any. (Phase 5)
         """
+        if self._syncing_toolbar:
+            return
         if self._diffs_toggle_callback is not None:
             self._diffs_toggle_callback(button.get_active())
 
     def _on_files_toggled(self, button: Gtk.ToggleButton) -> None:
         """
         Handler for the Files toggle's 'toggled' signal. Fires when the user
-        clicks the Files toggle (programmatic set_active() in
-        update_auto_accept_prefs() does NOT emit 'toggled'). Forwards the new
-        active state to the callback installed via
-        set_files_toggle_callback(), if any. (Phase 5)
+        clicks the Files toggle OR when update_auto_accept_prefs() does a
+        programmatic set_active() with a value change (Bug F regression —
+        see _on_diffs_toggled for the full diagnosis). The _syncing_toolbar
+        guard short-circuits the second case. Forwards the new active state
+        to the callback installed via set_files_toggle_callback(), if any.
+        (Phase 5)
         """
+        if self._syncing_toolbar:
+            return
         if self._files_toggle_callback is not None:
             self._files_toggle_callback(button.get_active())
 
