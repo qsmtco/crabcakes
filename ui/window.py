@@ -494,6 +494,9 @@ class MainWindow(Gtk.ApplicationWindow):
             self._agent_runtime_handler.set_check_exec_auto_accept_callback
         )
 
+        # Populate agent scope dropdown with registered agent names.
+        self._feed_handler.set_agent_options_for_dropdown()
+
         # Inject FeedTab into LeftPanel's Projects notebook "Feed" sub-tab
         self._left_panel.set_feed_tab(self._feed_tab)
 
