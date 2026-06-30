@@ -132,6 +132,9 @@ class FeedHandler:
                 self._feed_tab.set_files_toggle_callback(self._on_files_toggled)
             if hasattr(self._feed_tab, "set_exec_toggle_callback"):
                 self._feed_tab.set_exec_toggle_callback(self._on_exec_toggled)
+            # V2: wire agent scope dropdown callback.
+            if hasattr(self._feed_tab, "set_agent_scope_callback"):
+                self._feed_tab.set_agent_scope_callback(self._on_agent_scope_changed)
             # Keep legacy callback for backward compat during the v1→v2
             # transition — legacy tests still call _on_auto_accept_toggled.
             self._feed_tab.set_auto_accept_callback(self._on_auto_accept_toggled)
