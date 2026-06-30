@@ -68,6 +68,9 @@ __all__ = [
     "_cost_for_model",
     "_PROVIDER_CALLERS",
     "_PROVIDER_STREAMERS",
+    "_stream_with_ssl_retry",
+    "_is_retryable_ssl_error",
+    "_friendly_error_message",
 ]
 
 logger = logging.getLogger(__name__)
@@ -441,6 +444,7 @@ for _pk, _caller in _PROVIDER_CALLERS.items():
 # ── SSE Streaming (Phase 1.3b) ─────────────────────────────────────────────────
 
 import ssl
+import urllib.error
 import urllib.request
 from collections import namedtuple
 
@@ -506,38 +510,164 @@ def _parse_sse_delta(d: dict) -> list[SSEEvent]:
 
 
 # Transient SSL/network errors that warrant a retry.
+# Includes EOF-on-TLS-shutdown (common with MiniMax and other providers that
+# drop long-lived streaming connections) and the classic alert tokens.
 _RETRYABLE_SSL_ERRORS = frozenset({
     "SSLV3_ALERT_BAD_RECORD_MAC",
     "SSLV3_ALERT_BAD_RECORD_MD5",
     "TLSV1_ALERT_DECRYPTION_FAILED",
     "TLSV1_ALERT_RECORD_OVERFLOW",
     "SSL_ERROR_SYSCALL",
+    "EOF occurred in violation of protocol",
+    "UNEXPECTED_EOF_WHILE_READING",
 })
+
+# Also retry on these bare OSError subtypes that indicate a mid-stream
+# TCP/TLS reset.  These are NOT ssl.SSLError subclasses, so the SSLError
+# catch below won't fire — we check them separately.
+_RETRYABLE_OSERROR_TYPES: tuple[type[Exception], ...] = (
+    ConnectionResetError,
+    BrokenPipeError,
+)
 
 _MAX_SSL_RETRIES = 3
 _SSL_RETRY_BASE_MS = 500
 
 
+def _is_retryable_ssl_error(exc: BaseException) -> bool:
+    """Return True if *exc* (or its ``__cause__`` / ``reason`` chain) is a
+    transient SSL/network error worth retrying."""
+    candidates: list[BaseException] = [exc]
+    # urllib.request.do_open wraps OSError in URLError during the request-send
+    # phase.  Unwrap to inspect the original SSL error.
+    if isinstance(exc, urllib.error.URLError) and exc.reason is not None:
+        candidates.append(exc.reason)  # type: ignore[arg-type]
+    # http.client may wrap things too.
+    cause = exc.__cause__
+    if cause is not None:
+        candidates.append(cause)
+
+    for cand in candidates:
+        if isinstance(cand, ssl.SSLError):
+            reason = str(cand)
+            if any(tok in reason for tok in _RETRYABLE_SSL_ERRORS):
+                return True
+        if isinstance(cand, _RETRYABLE_OSERROR_TYPES):
+            return True
+    return False
+
+
+def _friendly_error_message(exc: Exception) -> str:
+    """Translate raw exceptions into user-facing messages.
+
+    SSL/network errors get a concise, non-jargony description so the user
+    sees something actionable rather than cryptic TLS internals.
+    """
+    raw = str(exc)
+    # Check the exception chain for SSL/network errors.
+    chain: list[BaseException] = [exc]
+    if isinstance(exc, urllib.error.URLError) and exc.reason is not None:
+        chain.append(exc.reason)  # type: ignore[arg-type]
+    cause = exc.__cause__
+    if cause is not None:
+        chain.append(cause)
+
+    for cand in chain:
+        if isinstance(cand, ssl.SSLError):
+            if "EOF" in raw or "shutdown" in raw:
+                return "Connection to the AI provider was lost mid-response. Please try sending your message again."
+            return f"Secure connection error: {raw}. Please try again."
+        if isinstance(cand, (ConnectionResetError, BrokenPipeError)):
+            return "Connection to the AI provider was reset. Please try sending your message again."
+    return raw
+
+
 def _urlopen_with_ssl_retry(req, timeout, *, max_retries=_MAX_SSL_RETRIES):
-    """Like urllib.request.urlopen but retries on transient SSL errors."""
-    last_exc = None
+    """Like urllib.request.urlopen but retries on transient SSL/network errors.
+
+    Handles three failure modes:
+    1. Raw ``ssl.SSLError`` raised during response-header read.
+    2. ``urllib.error.URLError`` wrapping an ``ssl.SSLError`` in ``.reason``
+       (happens during request-send phase inside ``do_open``).
+    3. ``ConnectionResetError`` / ``BrokenPipeError`` (TCP-level resets).
+    """
+    last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
             return urllib.request.urlopen(req, timeout=timeout)
         except ssl.SSLError as e:
-            reason = str(e)
-            # Only retry on known transient errors
-            is_retryable = any(tok in reason for tok in _RETRYABLE_SSL_ERRORS)
-            if not is_retryable or attempt == max_retries:
+            if not _is_retryable_ssl_error(e) or attempt == max_retries:
                 raise
             last_exc = e
+        except urllib.error.URLError as e:
+            # do_open wraps OSError (including SSLError) in URLError during
+            # the request-send phase.  Check whether the wrapped error is
+            # retryable; if not (e.g. DNS failure, HTTP 4xx) re-raise.
+            if not _is_retryable_ssl_error(e) or attempt == max_retries:
+                raise
+            last_exc = e
+        except _RETRYABLE_OSERROR_TYPES as e:
+            if attempt == max_retries:
+                raise
+            last_exc = e
+
+        wait_s = (_SSL_RETRY_BASE_MS / 1000) * (2 ** attempt)
+        logger.warning(
+            "[ssl-retry] attempt %d/%d for %s — %s; retrying in %.1fs",
+            attempt + 1, max_retries, req.full_url, last_exc, wait_s,
+        )
+        time.sleep(wait_s)
+    assert last_exc is not None
+    raise last_exc  # should not reach here
+
+
+# ── Mid-stream SSL retry ─────────────────────────────────────────────
+# When a provider drops the TLS connection mid-stream (common with MiniMax
+# on long responses), the raw ``ssl.SSLEOFError`` propagates out of the
+# SSE body iterator — past the point where ``_urlopen_with_ssl_retry`` can
+# help (that wrapper only covers the initial ``urlopen()`` call).
+#
+# We wrap the *entire* streaming call (request + body read) so that a
+# transient drop during body iteration triggers a fresh request.  To avoid
+# duplicate text in the UI, retries are allowed only while *no* text_delta
+# events have been yielded.  Once the user has seen streamed text, a retry
+# would produce garbled output (two partial responses concatenated), so we
+# let the error propagate.
+
+
+def _stream_with_ssl_retry(streamer, *, max_retries=_MAX_SSL_RETRIES, **kwargs):
+    """Generator wrapper: call *streamer* and retry on transient mid-stream SSL errors.
+
+    Retries are suppressed once any ``text_delta`` event has been yielded
+    (partial text is already visible in the UI — a retry would duplicate it).
+    In that case the error is re-raised so the caller can surface a message.
+    """
+    for attempt in range(max_retries + 1):
+        streamed_text = False
+        try:
+            for ev in streamer(**kwargs):
+                if ev.type == "text_delta":
+                    streamed_text = True
+                yield ev
+            return  # stream completed normally
+        except (ssl.SSLError, ConnectionResetError, BrokenPipeError) as exc:
+            if streamed_text or attempt == max_retries or not _is_retryable_ssl_error(exc):
+                raise
             wait_s = (_SSL_RETRY_BASE_MS / 1000) * (2 ** attempt)
             logger.warning(
-                "[ssl-retry] attempt %d/%d for %s — %s; retrying in %.1fs",
-                attempt + 1, max_retries, req.full_url, reason, wait_s,
+                "[ssl-retry-stream] attempt %d/%d — mid-stream %s; retrying in %.1fs",
+                attempt + 1, max_retries, exc, wait_s,
             )
             time.sleep(wait_s)
-    raise last_exc  # should not reach here
+        except urllib.error.URLError as exc:
+            if streamed_text or attempt == max_retries or not _is_retryable_ssl_error(exc):
+                raise
+            wait_s = (_SSL_RETRY_BASE_MS / 1000) * (2 ** attempt)
+            logger.warning(
+                "[ssl-retry-stream] attempt %d/%d — mid-stream URLError: %s; retrying in %.1fs",
+                attempt + 1, max_retries, exc.reason, wait_s,
+            )
+            time.sleep(wait_s)
 
 
 def _stream_openai_events(
@@ -2073,7 +2203,8 @@ class AgentRuntime:
 
         except Exception as e:
             logger.exception("Error in tool loop for %s", session_key)
-            self._dispatch(self._on_error, session_key, str(e))
+            msg = _friendly_error_message(e)
+            self._dispatch(self._on_error, session_key, msg)
 
     def _dispatch_approval(self, session_key: str, tool_name: str, args: dict) -> bool | None:
         """
@@ -2278,7 +2409,16 @@ class AgentRuntime:
         # Phase CB-3: usage captured from SSE "usage" event (BUG #3 fix).
         captured_usage: dict = {}
 
-        for ev in streamer(base_url, api_key, model, messages, tools, timeout, x_title=x_title):
+        for ev in _stream_with_ssl_retry(
+            streamer,
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            messages=messages,
+            tools=tools,
+            timeout=timeout,
+            x_title=x_title,
+        ):
             if ev.type == "text_delta":
                 text = ev.data.get("content") or ""
                 full_content += text
