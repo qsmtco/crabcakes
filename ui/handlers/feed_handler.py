@@ -340,6 +340,39 @@ class FeedHandler:
         self._prefs.exec_command.mode = mode
         self._refresh_auto_accept_state()
 
+    def _on_agent_scope_changed(self, scope: str) -> None:
+        """Agent scope dropdown changed.
+
+        Applies the new scope to ALL auto-accept categories (file changes
+        and exec command) since the dropdown is a single global selector.
+        Resets _auto_accept_agent to None when switching to 'first_author'
+        so lazy lock-in starts fresh.
+        """
+        for fc in self._prefs.file_changes.values():
+            fc.agent_scope = scope
+        self._prefs.exec_command.agent_scope = scope
+        # Reset lazy lock-in when user explicitly changes scope
+        if scope == "first_author":
+            self._auto_accept_agent = None
+        elif scope == "all_agents":
+            self._auto_accept_agent = None
+        self._refresh_auto_accept_state()
+
+    def set_agent_options_for_dropdown(self) -> None:
+        """Populate the dropdown with registered agent names.
+
+        Called by Window after agents are loaded and FeedTab is wired.
+        """
+        if self._feed_tab is None:
+            return
+        try:
+            from agent.special_agents import get_special_agents
+            names = [a.display_name for a in get_special_agents()]
+        except Exception:
+            names = []
+        if hasattr(self._feed_tab, "set_agent_options"):
+            self._feed_tab.set_agent_options(names)
+
     def _refresh_auto_accept_state(self) -> None:
         """Recompute derived state and push prefs to view + persistence.
 
