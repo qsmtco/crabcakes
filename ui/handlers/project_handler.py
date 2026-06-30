@@ -598,7 +598,7 @@ class ProjectHandler:
         for member_sk in members:
             name = (self._agent_mgr.get_name(member_sk) if self._agent_mgr else "") or self._extract_display_name(member_sk)
             tokens, cost = self._read_agent_usage(member_sk, mem_usage)
-            lines.append(f"  @{name:<13}  {tokens:>7,}  ${cost:>8.4f}")
+            lines.append(f"  @{name}  {tokens:,} tokens  ${cost:.4f}")
         lines.extend([
             "─────────────────────────────────────",
         ])
