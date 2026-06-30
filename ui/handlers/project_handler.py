@@ -75,6 +75,12 @@ class ProjectHandler:
         # AgentRuntimeHandler.clear_conversation(session_key). None means
         # the runtime handler hasn't been wired yet (e.g. test fixtures).
         self._clear_callback: Callable[[str], bool] | None = None
+        # /cost runtime usage callback — injected by window.py to call
+        # AgentRuntimeHandler.get_session_usage() for gateway agents.
+        # Returns a dict mapping session_key -> (total_tokens, total_cost).
+        # None means the runtime handler hasn't been wired yet (e.g. test
+        # fixtures); the in-memory cache path is then skipped.
+        self._runtime_usage_fn: Callable[[], dict] | None = None
 
     # ── Public API — for window / other handlers ───────────────────────────
 
@@ -404,6 +410,24 @@ class ProjectHandler:
         can succeed.
         """
         self._clear_callback = fn
+
+    def set_runtime_usage_fn(self, fn: Callable[[], dict] | None) -> None:
+        """Inject callback for /cost command's in-memory usage cache.
+
+        Spec: docs/specs/SPEC-token-tracking-fix.md AC-4 / AC-5.
+
+        Wired by window.py to AgentRuntimeHandler.get_session_usage. The
+        callback takes no arguments and returns a dict mapping
+        session_key -> (total_tokens, total_cost) for the current
+        process's runtime. cmd_cost uses this as a fallback for gateway
+        agents (which do not have persisted conversation files).
+
+        Trigger: invoked synchronously from cmd_cost for every project
+        member at most once per /cost invocation. set_runtime_usage_fn
+        MUST be called before the /cost command can read gateway-agent
+        usage; until then, gateway agents display (0, 0.0).
+        """
+        self._runtime_usage_fn = fn
 
     # ── Phase 5: Project Onboarding ─────────────────────────────────────
 
