@@ -480,9 +480,11 @@ class FeedHandler:
           or author == _auto_accept_agent
         - "<specific name>": True if author == scope
 
-        Unknown scope values (including stale "system" from legacy data)
-        default to "all_agents" behavior to avoid silently breaking
-        auto-accept. See deep-dive report 2026-06-30.
+        Belt-and-suspenders: stale "system" scope (from v1 migration or
+        test artifacts) is treated as "all_agents" to avoid silently
+        blocking all auto-accept. The migration guard in feed_store.py
+        should catch this at load time; this is the runtime safety net.
+        See deep-dive report 2026-06-30.
 
         Side effect: when lazy lock-in fires, _refresh_auto_accept_state() is
         called so the view's agent dropdown updates to reflect the new lock-in
@@ -490,7 +492,7 @@ class FeedHandler:
         at "First author" even though only one agent's cards are accepted).
         Persistence is debounced through _refresh_auto_accept_state.
         """
-        if scope == "all_agents":
+        if scope == "all_agents" or scope == "system":
             return True
         if scope == "first_author":
             if self._auto_accept_agent is None:
@@ -500,11 +502,8 @@ class FeedHandler:
                     self._refresh_auto_accept_state()
                 return True
             return author == self._auto_accept_agent
-        # Unknown scope (e.g. stale "system" not caught by migration guard):
-        # treat as "all_agents" to avoid silently blocking all auto-accept.
-        # The migration guard in feed_store.py should have caught these,
-        # but this is a belt-and-suspenders safety net.
-        return True
+        # Specific agent name (persisted in v2 migration from v1 auto_accept_agent)
+        return author == scope
 
     def snooze_card(self, card_id: str) -> None:
         """Add a card to the snooze list so it is not auto-accepted."""
