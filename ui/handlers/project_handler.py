@@ -563,7 +563,15 @@ class ProjectHandler:
 
 
     def cmd_cost(self, cmd: Command, session_key: str | None = None) -> CommandResult:
-        """/cost — spending summary for current project"""
+        """/cost — spending summary for current project
+
+        Spec: docs/specs/SPEC-token-tracking-fix.md AC-1/2/3/5.
+
+        Reads each project member's accumulated `total_tokens` and
+        `total_cost` from the persisted conversation file (special agents)
+        or the in-memory runtime usage cache (gateway agents). Falls back
+        to (0, 0.0) when neither source has data.
+        """
         sk = cmd.source_session_key
         if not sk.startswith("project:"):
             return CommandResult(handled=True, response_text="Open a project tab to check cost.")
@@ -571,21 +579,73 @@ class ProjectHandler:
         members = self.get_project_members(project_name)
         if not members:
             return CommandResult(handled=True, response_text="No members in this project.")
-        agent_names = [((self._agent_mgr.get_name(sk) if self._agent_mgr else "") or self._extract_display_name(sk)) for sk in members]
+
+        # Get in-memory usage cache if available (set by window.py wiring)
+        mem_usage: dict = {}
+        if self._runtime_usage_fn is not None:
+            try:
+                mem_usage = self._runtime_usage_fn() or {}
+            except Exception:
+                _logger.exception("cmd_cost: runtime_usage_fn raised; falling back to files only")
+                mem_usage = {}
+
         lines = [
             f"Spending summary for {project_name}:",
-            "(last 7 days)",
             "",
-            "Agent      Tokens   Cost",
-            "────────────────────────",
+            "Agent           Tokens      Cost",
+            "─────────────────────────────────────",
         ]
-        for name in agent_names:
-            lines.append(f"  @{name}  (contact gateway for usage API)")
+        for member_sk in members:
+            name = (self._agent_mgr.get_name(member_sk) if self._agent_mgr else "") or self._extract_display_name(member_sk)
+            tokens, cost = self._read_agent_usage(member_sk, mem_usage)
+            lines.append(f"  @{name:<13}  {tokens:>7,}  ${cost:>8.4f}")
         lines.extend([
-            "────────────────────────",
-            "Note: Cost data requires OpenClaw usage tracking to be enabled.",
+            "─────────────────────────────────────",
         ])
         return CommandResult(handled=True, response_text="\n".join(lines))
+
+    def _read_agent_usage(self, session_key: str, mem_usage: dict) -> tuple[int, float]:
+        """Read token usage for an agent from conversation file or in-memory cache.
+
+        Spec: docs/specs/SPEC-token-tracking-fix.md AC-2/3/5.
+
+        Authoritative source: the persisted conversation file at
+        ``<config_dir>/conversations/<session_key>.json`` (which the
+        runtime updates via `record_usage` and saves to disk after every
+        turn). Used for special:* session keys.
+
+        Fallback: the in-memory ``_session_usage`` dict injected via
+        ``set_runtime_usage_fn`` from the runtime handler. Used for
+        gateway agents (agent:*) that do not persist conversation files.
+
+        Returns (total_tokens, total_cost). Returns (0, 0.0) when neither
+        source is available or both fail to parse — never raises.
+        """
+        # Authoritative: persisted conversation file
+        try:
+            from utils.config import get_config_dir
+            import json, os
+            conv_path = os.path.join(
+                get_config_dir(), "conversations", f"{session_key}.json"
+            )
+            with open(conv_path, encoding="utf-8") as f:
+                data = json.load(f)
+            tokens = int(data.get("total_tokens", 0) or 0)
+            cost = float(data.get("total_cost", 0.0) or 0.0)
+            return (tokens, cost)
+        except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError, TypeError):
+            pass
+
+        # Fallback: in-memory cache (gateway agents)
+        if session_key in mem_usage:
+            entry = mem_usage[session_key]
+            if isinstance(entry, tuple) and len(entry) == 2:
+                try:
+                    return (int(entry[0]), float(entry[1]))
+                except (TypeError, ValueError):
+                    pass
+
+        return (0, 0.0)
 
     def cmd_clear(self, cmd: Command, session_key: str | None = None) -> CommandResult:
         """/clear — reset the current special agent's conversation.
