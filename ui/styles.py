@@ -893,15 +893,17 @@ notebook > header > tabs > tab {
     background: rgba(30, 30, 40, 0.9);
     border: 1px solid rgba(99, 102, 241, 0.3);
     border-radius: 6px;
-    padding: 6px 12px;
+    padding: 4px 8px;
     margin-top: 8px;
 }
 .feed-toolbar-toggle {
     background: rgba(99, 102, 241, 0.2);
     color: #a5b4fc;
     border-radius: 4px;
-    padding: 4px 12px;
-    font-size: 12px;
+    padding: 2px 8px;
+    font-size: 11px;
+    min-height: 22px;
+    min-width: 0;
     border: none;
 }
 .feed-toolbar-toggle:checked {
@@ -910,15 +912,26 @@ notebook > header > tabs > tab {
 }
 .feed-toolbar-batch {
     border-radius: 4px;
-    padding: 4px 12px;
-    font-size: 12px;
+    padding: 2px 8px;
+    font-size: 11px;
+    min-height: 22px;
     border: none;
 }
-.feed-toolbar-divider {
-    background: rgba(99, 102, 241, 0.4);
-    min-width: 1px;
-    min-height: 24px;
-    margin: 0 4px;
+.feed-toolbar-snooze {
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    min-height: 22px;
+    border: none;
+}
+.feed-toolbar-agent-dropdown {
+    padding: 0 6px;
+    min-height: 22px;
+    font-size: 11px;
+}
+.feed-toolbar > Gtk.Button,
+.feed-toolbar > Gtk.MenuButton {
+    margin: 0 2px;
 }
 
 /* Load More card */

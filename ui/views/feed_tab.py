@@ -122,10 +122,6 @@ class FeedTab(Gtk.Box):
         self._exec_toggle.add_css_class("feed-toolbar-toggle-per-type")
         self._exec_toggle.connect("clicked", self._on_exec_clicked)
 
-        # Separator between toggle group and agent scope.
-        self._scope_divider = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        self._scope_divider.add_css_class("feed-toolbar-divider")
-
         # Group 2 — agent scope (placeholder; populated in Phase 6).
         # Gtk.DropDown is used as the widget; the StringList model + callback
         # are wired in Phase 6 when the handler integrates with the agent
@@ -133,18 +129,11 @@ class FeedTab(Gtk.Box):
         self._agent_dropdown = Gtk.DropDown()
         self._agent_dropdown.add_css_class("feed-toolbar-agent-dropdown")
 
-        # Separator between scope and snooze.
-        self._snooze_divider = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        self._snooze_divider.add_css_class("feed-toolbar-divider")
-
         # Group 3 — snooze button. Hidden when count == 0; revealed by
         # update_auto_accept_prefs() when the prefs dict carries snoozed ids.
         self._snooze_button = Gtk.MenuButton(label="Snooze 0")
         self._snooze_button.add_css_class("feed-toolbar-snooze")
         self._snooze_button.set_visible(False)  # hidden until snooze count > 0
-
-        self._divider = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        self._divider.add_css_class("feed-toolbar-divider")
 
         self._batch_accept_button = Gtk.Button(label="Accept All")
         self._batch_accept_button.add_css_class("feed-btn-batch-accept")
@@ -154,14 +143,15 @@ class FeedTab(Gtk.Box):
         self._batch_accept_label = Gtk.Label(label="")
         self._batch_accept_label.add_css_class("feed-batch-bar-info")
 
+        # Group separators previously rendered as Gtk.Separator widgets
+        # (with CSS class feed-toolbar-divider) took up ~26px of horizontal
+        # room each and didn't help legibility. Removed in Phase 7 cleanup
+        # to reclaim toolbar space; the tool CSS class is also removed.
         self._toolbar.append(self._diffs_toggle)
         self._toolbar.append(self._files_toggle)
         self._toolbar.append(self._exec_toggle)
-        self._toolbar.append(self._scope_divider)
         self._toolbar.append(self._agent_dropdown)
-        self._toolbar.append(self._snooze_divider)
         self._toolbar.append(self._snooze_button)
-        self._toolbar.append(self._divider)             # existing divider (between toolbar and batch-accept section)
         self._toolbar.append(self._batch_accept_button)  # existing batch accept button
         self._toolbar.append(self._batch_accept_label)   # existing batch accept label
 
