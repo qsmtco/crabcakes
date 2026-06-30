@@ -480,12 +480,27 @@ class FeedHandler:
           or author == _auto_accept_agent
         - "<specific name>": True if author == scope
 
+        Unknown scope values (including stale "system" from legacy data)
+        default to "all_agents" behavior to avoid silently breaking
+        auto-accept. See deep-dive report 2026-06-30.
+
         Side effect: when lazy lock-in fires, _refresh_auto_accept_state() is
         called so the view's agent dropdown updates to reflect the new lock-in
         (BUG #2 in adversarial audit — without this, the dropdown label stays
         at "First author" even though only one agent's cards are accepted).
         Persistence is debounced through _refresh_auto_accept_state.
         """
+        if scope == "all_agents" or scope not in ("all_agents", "first_author") and scope not in self._valid_agent_names():
+            # Unknown scope (including stale "system") → treat as all_agents
+            # to avoid silently blocking all auto-accept.
+            if scope != "all_agents":
+                _logger = getattr(self, '_logger', None)
+                if _logger:
+                    _logger.warning(
+                        "Unknown agent_scope %r — treating as all_agents", scope
+                    )
+            if scope == "all_agents" or (scope not in ("all_agents", "first_author") and scope not in self._valid_agent_names()):
+                return True
         if scope == "all_agents":
             return True
         if scope == "first_author":
