@@ -1601,6 +1601,40 @@ class FeedHandler:
         else:
             _logger.warning("handle_approve_exec: no on_approve_exec callback registered")
 
+    def _auto_approve_exec_card(self, card_id: str) -> None:
+        """Auto-approve an exec card in Show mode.
+
+        Called from add_card() via GLib.idle_add when _is_card_auto_acceptable
+        returns True for an exec approval card. Does three things:
+        1. Calls handle_approve_exec(card_id, True) to approve the command
+           via AgentRuntimeHandler.approve_exec().
+        2. Hides the Approve/Deny buttons on the card widget via
+           feed_tab.hide_card_buttons() so the user can't double-act.
+        3. Updates the card visual to show "approved" state.
+
+        Silent mode never reaches here — AgentRuntimeHandler._do_approval_needed
+        bypasses card creation entirely when mode == "silent".
+
+        Args:
+            card_id: The card to auto-approve.
+        """
+        # 1. Approve the command via the registered callback
+        self.handle_approve_exec(card_id, True)
+
+        # 2. Hide Approve/Deny buttons on the card widget
+        if self._feed_tab is not None:
+            try:
+                self._feed_tab.hide_card_buttons(card_id, ["approve", "deny"])
+            except AttributeError:
+                # MockFeedTab or legacy FeedTab without hide_card_buttons
+                pass
+
+        # 3. Update visual to show approved state
+        card = self._cards.get(card_id)
+        if card is not None:
+            card.accepted = True
+            self._update_card_visual(card_id, accepted=True)
+
     def _make_approve_exec_cb(self, card_id: str) -> tuple[Callable, Callable]:
         """
         Phase E: Return (approve_cb, deny_cb) for an approval card.
