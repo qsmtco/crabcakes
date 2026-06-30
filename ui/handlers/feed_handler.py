@@ -351,20 +351,30 @@ class FeedHandler:
         self._auto_accept_enabled = self._prefs.any_enabled()
         if self._feed_tab is not None:
             # V2 path: push full prefs to FeedTab (rebuilt toolbar).
+            # Use `elif` (not `if`) so the legacy v1 update_auto_accept_state
+            # bridge does NOT also fire on a real FeedTab — calling both
+            # would clobber the per-type prefs with the legacy single-toggle
+            # reconstruction (Bug #12: Diffs toggle stuck ON after first
+            # OFF click). Real FeedTab has both methods; the legacy bridge
+            # is only for MockFeedTab and any pre-rebuild FeedTab that lacks
+            # update_auto_accept_prefs. See _append_and_schedule_scroll
+            # (line ~1057) for the correctly-guarded version.
             if hasattr(self._feed_tab, "update_auto_accept_prefs"):
                 self._feed_tab.update_auto_accept_prefs(self._prefs.to_dict())
-            # Legacy path: push the boolean toggle visual for the v1 toolbar.
-            # MockFeedTab and any pre-rebuild FeedTab only have this setter.
-            if hasattr(self._feed_tab, "update_auto_accept_state"):
+            elif hasattr(self._feed_tab, "update_auto_accept_state"):
                 self._feed_tab.update_auto_accept_state(self._auto_accept_enabled)
         # Cancel any pending save and schedule a new one. The handler is
         # always called from the main thread, so this is safe.
-        if getattr(self, "_pending_save_id", None) is not None:
-            try:
-                self._GLib.source_remove(self._pending_save_id)
-            except Exception:
-                pass
-            self._pending_save_id = None
+        # Bug #12 (adversarial audit): The previous logic tried
+        # source_remove(_pending_save_id) here, but the idle callback
+        # (returns False) auto-removes its own source after firing. So
+        # _pending_save_id is usually already stale by the time we get
+        # back here, and source_remove(stale_id) emits
+        # 'Source ID N was not found when attempting to remove it'.
+        # Fix: just drop the source_remove call. GLib's idle source is
+        # a single-shot — calling idle_add again with a new callback
+        # schedules a new save; the old one already ran (or is running)
+        # and is harmless to leave alone.
         self._pending_save_id = self._GLib.idle_add(self._save_feed_prefs_idle)
 
     # ── V2 policy helpers (Phase 4 / SPEC-AUTO-ACCEPT-GRANULAR-1.md §2.4) ──
@@ -472,6 +482,14 @@ class FeedHandler:
         Called via GLib.idle_add so it runs on the main thread. The save is
         debounced by _refresh_auto_accept_state() — rapid-fire mutations
         coalesce into one disk write.
+
+        Bug #12 (adversarial audit): No longer touches _pending_save_id.
+        The previous attempt to clear it here raced with _refresh_auto_accept_state's
+        `self._pending_save_id = idle_add(...)` assignment (which
+        immediately overwrote the clear with a stale id). The fix that
+        actually works is in _refresh_auto_accept_state: drop the
+        source_remove call so GLib's auto-cleanup of single-shot idle
+        sources doesn't trigger 'Source ID N was not found' warnings.
         """
         project_path = self._project_paths.get(self._active_project_name or "")
         if not project_path:

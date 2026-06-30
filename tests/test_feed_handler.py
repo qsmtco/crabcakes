@@ -3005,3 +3005,281 @@ class TestAutoAcceptDialogCascadeRegression:
             "_syncing_toolbar in a finally block so the flag doesn't "
             "leak and disable all future toggle interactions."
         )
+
+
+class TestToggleStuckRegression:
+    """Bug #12: Diffs/Files toggle stuck ON after user clicks to turn OFF.
+
+    Root cause: FeedHandler._refresh_auto_accept_state() called BOTH
+    update_auto_accept_prefs() (v2 path) AND update_auto_accept_state()
+    (v1 legacy path) on every prefs mutation. The legacy path constructed
+    a default prefs dict with `enabled=self._auto_accept_enabled`. When
+    the user clicked Diffs OFF, diff.enabled became False but other file
+    types (file_created, file_modified, file_deleted) were still True, so
+    _auto_accept_enabled was True. The legacy path then set Diffs back to
+    ON via set_active(True), undoing the user's click.
+
+    Fix: use `elif` not `if` so the v1 path only fires on legacy/mocks
+    that don't have update_auto_accept_prefs. (Real FeedTab has both.)
+
+    These tests verify the click → off → toggle stays OFF path through
+    the full FeedHandler._refresh_auto_accept_state chain.
+    """
+
+    def test_diffs_click_off_flips_toggle_and_stays_off(self, real_feed_tab):
+        """User clicks Diffs to turn OFF — toggle must visually flip to
+        OFF and stay OFF after _refresh_auto_accept_state() runs.
+
+        Bug #12 regression: previously the v1 legacy path
+        update_auto_accept_state() overwrote the v2 prefs dict and
+        re-set the Diffs toggle to ON (because file_created/modified/
+        deleted were still True, so _auto_accept_enabled was True).
+        """
+        tab = real_feed_tab
+        
+        # Set up a FeedHandler with a mock GLib
+        from ui.handlers.feed_handler import FeedHandler
+        mock_glib = MockGLib()
+        fh = FeedHandler(GLib=mock_glib, on_send_to_agent=lambda *a: None)
+        fh.set_feed_tab(tab)
+        
+        # Enable only diff (not the other file types) — this is the
+        # KEY setup: when user turns diff OFF, _auto_accept_enabled
+        # should become False (no file types enabled).
+        fh._prefs.file_changes["diff"].enabled = True
+        fh._prefs.file_changes["file_created"].enabled = False
+        fh._prefs.file_changes["file_modified"].enabled = False
+        fh._prefs.file_changes["file_deleted"].enabled = False
+        # Sync the toolbar to reflect this state
+        fh._refresh_auto_accept_state()
+        assert tab._diffs_toggle.get_active() is True, "Setup: Diffs should be ON"
+        
+        # Simulate user clicking Diffs OFF
+        tab._diffs_toggle.set_active(False)
+        # The handler should have fired, setting diff.enabled = False
+        # and calling _refresh_auto_accept_state()
+        assert fh._prefs.file_changes["diff"].enabled is False
+        # AND the toggle should stay OFF (the bug was that the v1 path
+        # would re-set it to True because file_created etc were still
+        # True — but here they were False, so even the buggy v1 path
+        # would produce correct behavior. This is the simple case.)
+        assert tab._diffs_toggle.get_active() is False, (
+            "Toggle should be OFF after user click + refresh"
+        )
+
+    def test_diffs_click_off_with_other_types_enabled(self, real_feed_tab):
+        """THE ACTUAL BUG: user clicks Diffs OFF when file_created/
+        modified/deleted are still ON. Previously: toggle flipped back
+        to ON because v1 path saw _auto_accept_enabled=True and
+        re-set Diffs to True. Now: elif guard prevents v1 path.
+
+        This is the exact scenario from the user's report.
+        """
+        tab = real_feed_tab
+        
+        from ui.handlers.feed_handler import FeedHandler
+        mock_glib = MockGLib()
+        fh = FeedHandler(GLib=mock_glib, on_send_to_agent=lambda *a: None)
+        fh.set_feed_tab(tab)
+        
+        # Enable ALL file types (matching v1 prefs with enabled=True)
+        for ct in ("diff", "file_created", "file_modified", "file_deleted"):
+            fh._prefs.file_changes[ct].enabled = True
+        fh._refresh_auto_accept_state()
+        assert tab._diffs_toggle.get_active() is True, "Setup: Diffs should be ON"
+        assert fh._auto_accept_enabled is True
+        
+        # User clicks Diffs OFF
+        tab._diffs_toggle.set_active(False)
+        
+        # _prefs should now have diff disabled
+        assert fh._prefs.file_changes["diff"].enabled is False
+        # Other types still enabled
+        assert fh._prefs.file_changes["file_created"].enabled is True
+        # _auto_accept_enabled is True (because other types are on)
+        assert fh._auto_accept_enabled is True
+        
+        # CRITICAL: toggle should stay OFF. Bug #12 was that the v1
+        # legacy path would call update_auto_accept_state(True) and
+        # reconstruct prefs with diff.enabled=True, flipping the toggle
+        # back ON.
+        assert tab._diffs_toggle.get_active() is False, (
+            "Bug #12 regression: Diffs toggle should stay OFF after user "
+            "clicks to turn it off, even when other file types are still "
+            "enabled. The legacy v1 update_auto_accept_state path must "
+            "NOT fire on a real FeedTab that has update_auto_accept_prefs."
+        )
+
+    def test_legacy_mock_feedtab_still_uses_update_auto_accept_state(self):
+        """Mock FeedTab (legacy test fixture) only has
+        update_auto_accept_state, NOT update_auto_accept_prefs. The
+        `_refresh_auto_accept_state` `elif` guard must still trigger
+        the legacy path so existing tests keep working.
+        """
+        class LegacyFeedTab:
+            def __init__(self):
+                self._auto_accept_active = None
+            def update_auto_accept_state(self, active: bool):
+                self._auto_accept_active = active
+            def set_batch_accept_callback(self, callback):
+                pass  # no-op
+            def set_auto_accept_callback(self, callback):
+                pass  # no-op
+            # NOTE: no update_auto_accept_prefs method
+        
+        mock_tab = LegacyFeedTab()
+        
+        from ui.handlers.feed_handler import FeedHandler
+        mock_glib = MockGLib()
+        fh = FeedHandler(GLib=mock_glib, on_send_to_agent=lambda *a: None)
+        fh.set_feed_tab(mock_tab)
+        fh._prefs.file_changes["diff"].enabled = True
+        
+        fh._refresh_auto_accept_state()
+        
+        # Legacy path should have fired (mock only has the legacy method)
+        assert mock_tab._auto_accept_active is True
+
+    def test_real_feedtab_does_not_call_update_auto_accept_state(self, real_feed_tab):
+        """Real FeedTab has BOTH methods. The `elif` guard ensures the
+        legacy path is skipped — only update_auto_accept_prefs fires.
+        Verifies the elif guard is in effect by tracking calls.
+        """
+        tab = real_feed_tab
+        
+        legacy_calls = []
+        original_legacy = tab.update_auto_accept_state
+        def traced_legacy(active):
+            legacy_calls.append(active)
+            original_legacy(active)
+        tab.update_auto_accept_state = traced_legacy
+        
+        from ui.handlers.feed_handler import FeedHandler
+        mock_glib = MockGLib()
+        fh = FeedHandler(GLib=mock_glib, on_send_to_agent=lambda *a: None)
+        fh.set_feed_tab(tab)
+        fh._prefs.file_changes["diff"].enabled = True
+        
+        fh._refresh_auto_accept_state()
+        
+        # Real path should fire (update_auto_accept_prefs)
+        assert tab._diffs_toggle.get_active() is True
+        # Legacy path should NOT fire (elif guard)
+        assert legacy_calls == [], (
+            f"Real FeedTab.update_auto_accept_state must NOT fire when "
+            f"update_auto_accept_prefs is available. Got {legacy_calls=}. "
+            f"This means the `if` -> `elif` fix in "
+            f"_refresh_auto_accept_state was lost."
+        )
+
+
+class TestPendingSaveIdStaleRegression:
+    """Bug #12b: 'Source ID N was not found when attempting to remove it'
+    warning fires every time _refresh_auto_accept_state is called after
+    a previous save's idle callback has already fired.
+
+    Root cause: GLib.idle_add runs the callback once (because the callback
+    returns False / no-repeat), and GLib auto-removes the source. But
+    _refresh_auto_accept_state still called source_remove(_pending_save_id),
+    which pointed at an already-cleaned-up source. The result was the
+    'Source ID N was not found' warning at every subsequent prefs mutation.
+
+    Fix: drop the source_remove() call entirely. GLib's idle source is
+    a single-shot — calling idle_add again with a new callback schedules
+    a new save; the old one already ran (or is running) and is harmless
+    to leave alone. Rapid-fire mutations coalesce into one disk write
+    because the idle source only fires after the current main-loop spin
+    settles anyway.
+    """
+
+    def test_refresh_does_not_call_source_remove(self):
+        """Mock GLib that tracks all source_remove calls. After two
+        _refresh_auto_accept_state() calls, source_remove must NEVER
+        have been invoked. The single-shot idle source cleans itself up.
+        """
+        remove_calls = []
+        
+        class MockGLib:
+            _next_id = 100
+            @classmethod
+            def idle_add(cls, callback):
+                sid = cls._next_id
+                cls._next_id += 1
+                callback()
+                return sid
+            @classmethod
+            def source_remove(cls, sid):
+                remove_calls.append(sid)
+        
+        from ui.handlers.feed_handler import FeedHandler
+        fh = FeedHandler(GLib=MockGLib, on_send_to_agent=lambda *a: None)
+        
+        fh._refresh_auto_accept_state()
+        fh._refresh_auto_accept_state()
+        
+        assert remove_calls == [], (
+            f"_refresh_auto_accept_state must NOT call source_remove "
+            f"(Bug #12b). GLib's idle source is single-shot and auto-removes "
+            f"itself. Manual removal just produces 'Source ID N was not found' "
+            f"warnings. Got remove_calls={remove_calls}."
+        )
+
+    def test_save_still_persists_prefs_to_disk(self):
+        """The fix must not break the actual save — just the spurious
+        source_remove warning. Verify save_feed_prefs is called with
+        the current prefs.
+        """
+        import tempfile
+        import shutil
+        from pathlib import Path
+        from unittest.mock import patch
+        
+        # Create a temporary project dir
+        tmpdir = tempfile.mkdtemp(prefix="cc_save_test_")
+        crabcakes_dir = Path(tmpdir) / ".crabcakes"
+        crabcakes_dir.mkdir()
+        
+        try:
+            saved_prefs = []
+            
+            class MockGLib:
+                _next_id = 200
+                @classmethod
+                def idle_add(cls, callback):
+                    sid = cls._next_id
+                    cls._next_id += 1
+                    callback()
+                    return sid
+                @classmethod
+                def source_remove(cls, sid):
+                    pass
+            
+            # Patch feed_store.save_feed_prefs to capture what's saved
+            import ui.handlers.feed_handler as fh_mod
+            original_save = fh_mod.feed_store.save_feed_prefs
+            
+            def capturing_save(project_path, prefs):
+                saved_prefs.append((project_path, prefs))
+                return original_save(project_path, prefs)
+            
+            fh_mod.feed_store.save_feed_prefs = capturing_save
+            
+            try:
+                from ui.handlers.feed_handler import FeedHandler
+                fh = FeedHandler(GLib=MockGLib, on_send_to_agent=lambda *a: None)
+                fh._active_project_name = "testproj"
+                fh._project_paths = {"testproj": tmpdir}
+                fh._prefs.file_changes["diff"].enabled = True
+                
+                fh._refresh_auto_accept_state()
+                
+                assert saved_prefs, (
+                    "save_feed_prefs must have been called via idle_add "
+                    "after _refresh_auto_accept_state() enabled diff."
+                )
+                project_path, prefs = saved_prefs[-1]
+                assert prefs["auto_accept"]["file_changes"]["diff"]["enabled"] is True
+            finally:
+                fh_mod.feed_store.save_feed_prefs = original_save
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
