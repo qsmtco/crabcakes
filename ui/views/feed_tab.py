@@ -572,6 +572,26 @@ class FeedTab(Gtk.Box):
             self._exec_mode = exec_mode
             self._exec_toggle.set_label(f"Exec: {exec_mode.upper()}")
 
+            # Agent scope dropdown — sync selection from prefs.
+            # Uses exec_command.agent_scope as the representative scope
+            # (all categories share the same scope in practice; the handler
+            # applies scope changes to all categories uniformly).
+            scope = auto.get("exec_command", {}).get("agent_scope", "first_author")
+            # Guard: normalize stale "system" to "all_agents"
+            if scope == "system":
+                scope = "all_agents"
+            self._syncing_agent_dropdown = True
+            try:
+                if scope in self._agent_scope_keys:
+                    self._agent_dropdown.set_selected(
+                        self._agent_scope_keys.index(scope)
+                    )
+                else:
+                    # Unknown scope name — default to "First author" (index 1)
+                    self._agent_dropdown.set_selected(1)
+            finally:
+                self._syncing_agent_dropdown = False
+
             # Snooze count
             snoozed = auto.get("snoozed_card_ids", [])
             count = len(snoozed)
