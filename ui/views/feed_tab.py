@@ -122,12 +122,22 @@ class FeedTab(Gtk.Box):
         self._exec_toggle.add_css_class("feed-toolbar-toggle-per-type")
         self._exec_toggle.connect("clicked", self._on_exec_clicked)
 
-        # Group 2 — agent scope (placeholder; populated in Phase 6).
-        # Gtk.DropDown is used as the widget; the StringList model + callback
-        # are wired in Phase 6 when the handler integrates with the agent
-        # registry. Phase 5 only constructs the empty dropdown.
-        self._agent_dropdown = Gtk.DropDown()
+        # Group 2 — agent scope dropdown.
+        # Lets the user pick which agents' cards get auto-accepted:
+        #   "All agents"  → agent_scope = "all_agents"
+        #   "First author" → agent_scope = "first_author" (lazy lock-in)
+        #   "<agent name>" → agent_scope = that specific name
+        # Additional entries are appended dynamically via set_agent_options().
+        self._agent_scope_model = Gtk.StringList()
+        self._agent_scope_model.append("All agents")
+        self._agent_scope_model.append("First author")
+        self._agent_dropdown = Gtk.DropDown(model=self._agent_scope_model)
         self._agent_dropdown.add_css_class("feed-toolbar-agent-dropdown")
+        # Map: dropdown index → scope string. Index 0 = "all_agents", 1 = "first_author",
+        # 2+ = specific agent names (dynamic).
+        self._agent_scope_keys: list[str] = ["all_agents", "first_author"]
+        self._agent_dropdown.connect("notify::selected", self._on_agent_dropdown_changed)
+        self._syncing_agent_dropdown = False
 
         # Group 3 — snooze button. Hidden when count == 0; revealed by
         # update_auto_accept_prefs() when the prefs dict carries snoozed ids.
