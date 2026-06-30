@@ -242,3 +242,178 @@ class TestUpdateAgentSession:
         # No change
         members = fake_projects.load_members("proj")
         assert members == ["agent:other:main"]
+
+
+# ── /cost command (Phase 2 — token tracking) ────────────────────────────────
+
+class TestCmdCost:
+    """Spec: docs/specs/SPEC-token-tracking-fix.md AC-1/2/3/5.
+
+    cmd_cost reads each member's (tokens, cost) from a persisted
+    conversation file (special:*) or the injected in-memory cache
+    (agent:*) and formats a table. Falls back to (0, 0.0) when neither
+    source is available.
+    """
+
+    def _make_cmd(self, project_name: str):
+        from models.command import Command
+        return Command(name="cost", source_session_key=f"project:{project_name}")
+
+    def test_reads_total_tokens_and_cost_from_conversation_file(
+        self, handler, fake_projects, tmp_path, monkeypatch
+    ):
+        """AC-1/AC-2: special agent conversation file with real usage data."""
+        import json
+        import os
+        from utils.config import get_config_dir
+
+        # Arrange: configure to use tmp config dir, write a conversation file
+        config_dir = tmp_path / "crabcakes"
+        (config_dir / "conversations").mkdir(parents=True)
+        monkeypatch.setattr(
+            "utils.config.get_config_dir", lambda: str(config_dir)
+        )
+        # Also patch where the handler imports from (deferred import inside the
+        # function pulls the live `get_config_dir` symbol each call).
+        monkeypatch.setattr(
+            "ui.handlers.project_handler.get_config_dir", lambda: str(config_dir),
+            raising=False,
+        )
+
+        # Write a realistic conversation file
+        conv_data = {
+            "session_key": "special:coder",
+            "agent_name": "coder",
+            "total_tokens": 5000,
+            "total_cost": 0.15,
+            "step_count": 3,
+            "messages": [],
+            "system_prompt": "",
+        }
+        (config_dir / "conversations" / "special:coder.json").write_text(
+            json.dumps(conv_data)
+        )
+
+        # Project has one special member
+        fake_projects.save_members("myproj", ["special:coder"])
+        handler.open_project("myproj", "/p")
+
+        # Act
+        result = handler.cmd_cost(self._make_cmd("myproj"))
+
+        # Assert: real numbers, not zeros
+        assert result.handled is True
+        text = result.response_text
+        assert "5,000 tokens" in text, f"expected 5,000 tokens in output, got: {text!r}"
+        assert "$0.1500" in text, f"expected $0.1500 in output, got: {text!r}"
+        # Old stub text must be gone
+        assert "contact gateway" not in text
+        assert "usage API" not in text
+
+    def test_missing_conversation_file_shows_zeros(
+        self, handler, fake_projects, tmp_path, monkeypatch
+    ):
+        """AC-3: no file, no cache → 0 tokens / $0.0000."""
+        from utils.config import get_config_dir
+        config_dir = tmp_path / "crabcakes"
+        (config_dir / "conversations").mkdir(parents=True)
+        monkeypatch.setattr(
+            "utils.config.get_config_dir", lambda: str(config_dir)
+        )
+        monkeypatch.setattr(
+            "ui.handlers.project_handler.get_config_dir", lambda: str(config_dir),
+            raising=False,
+        )
+
+        # No conversation file written. _runtime_usage_fn is None (default).
+        fake_projects.save_members("myproj", ["special:coder"])
+        handler.open_project("myproj", "/p")
+
+        result = handler.cmd_cost(self._make_cmd("myproj"))
+
+        assert result.handled is True
+        text = result.response_text
+        assert "0 tokens" in text, f"expected 0 tokens in output, got: {text!r}"
+        assert "$0.0000" in text, f"expected $0.0000 in output, got: {text!r}"
+        assert "contact gateway" not in text
+
+    def test_corrupted_conversation_file_falls_back_to_zeros(
+        self, handler, fake_projects, tmp_path, monkeypatch
+    ):
+        """Sad path: malformed JSON must NOT crash — return (0, 0.0)."""
+        from utils.config import get_config_dir
+        config_dir = tmp_path / "crabcakes"
+        (config_dir / "conversations").mkdir(parents=True)
+        monkeypatch.setattr(
+            "utils.config.get_config_dir", lambda: str(config_dir)
+        )
+        monkeypatch.setattr(
+            "ui.handlers.project_handler.get_config_dir", lambda: str(config_dir),
+            raising=False,
+        )
+
+        # Write a corrupted conversation file
+        (config_dir / "conversations" / "special:coder.json").write_text(
+            "{this is not valid json"
+        )
+
+        fake_projects.save_members("myproj", ["special:coder"])
+        handler.open_project("myproj", "/p")
+
+        # Must not raise
+        result = handler.cmd_cost(self._make_cmd("myproj"))
+
+        assert result.handled is True
+        text = result.response_text
+        assert "0 tokens" in text, f"expected graceful 0 tokens fallback, got: {text!r}"
+        assert "$0.0000" in text, f"expected graceful $0.0000 fallback, got: {text!r}"
+
+    def test_in_memory_cache_used_for_gateway_agents(
+        self, handler, fake_projects
+    ):
+        """AC-5: gateway agent (agent:*) uses injected in-memory cache."""
+        # Gateway agent — no conversation file path
+        fake_projects.save_members("myproj", ["agent:qtr:telegram:1"])
+        handler.open_project("myproj", "/p")
+
+        # Wire the runtime usage callback with cached data
+        handler.set_runtime_usage_fn(
+            lambda: {"agent:qtr:telegram:1": (12345, 0.0234)}
+        )
+
+        result = handler.cmd_cost(self._make_cmd("myproj"))
+
+        assert result.handled is True
+        text = result.response_text
+        assert "12,345 tokens" in text, f"expected 12,345 tokens, got: {text!r}"
+        assert "$0.0234" in text, f"expected $0.0234, got: {text!r}"
+
+    def test_runtime_usage_fn_exception_falls_back_gracefully(
+        self, handler, fake_projects
+    ):
+        """Sad path: misbehaving callback must not crash cmd_cost."""
+        fake_projects.save_members("myproj", ["agent:qtr:telegram:1"])
+        handler.open_project("myproj", "/p")
+
+        def boom():
+            raise RuntimeError("runtime handler exploded")
+        handler.set_runtime_usage_fn(boom)
+
+        # Must not raise
+        result = handler.cmd_cost(self._make_cmd("myproj"))
+        assert result.handled is True
+        # No file + broken cache → zeros
+        assert "0 tokens" in result.response_text
+        assert "$0.0000" in result.response_text
+
+    def test_non_project_session_returns_hint(self, handler, fake_projects):
+        """Guard: /cost outside a project tab returns the hint message."""
+        from models.command import Command
+        fake_projects.save_members("myproj", ["special:coder"])
+        handler.open_project("myproj", "/p")
+
+        # Simulate /cost in an agent tab (not a project tab)
+        cmd = Command(name="cost", source_session_key="special:coder")
+        result = handler.cmd_cost(cmd)
+        assert result.handled is True
+        assert "Open a project tab" in result.response_text
