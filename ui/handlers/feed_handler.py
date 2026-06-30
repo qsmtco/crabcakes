@@ -620,7 +620,16 @@ class FeedHandler:
                 # before handle_accept starts git ops. The lazy agent lock-in
                 # is now handled inside _agent_scope_matches().
                 if card_data.accepted is None and self._is_card_auto_acceptable(card_data):
-                    self._GLib.idle_add(lambda cid=card_data.card_id: self.handle_accept(cid))
+                    # Exec approval cards in Show mode: auto-approve (not git accept)
+                    # and hide the Approve/Deny buttons so the user can't double-act.
+                    # Silent mode never reaches here (bypassed in AgentRuntimeHandler).
+                    if (card_data.card_type == "agent_action"
+                            and card_data.metadata.get("needs_approval")):
+                        self._GLib.idle_add(
+                            lambda cid=card_data.card_id: self._auto_approve_exec_card(cid)
+                        )
+                    else:
+                        self._GLib.idle_add(lambda cid=card_data.card_id: self.handle_accept(cid))
                 if self._on_card_added:
                     self._on_card_added(card_id)
 
