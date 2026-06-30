@@ -621,7 +621,7 @@ class FeedTab(Gtk.Box):
         if self._files_toggle_callback is not None:
             self._files_toggle_callback(button.get_active())
 
-    def _on_exec_clicked(self, button: Gtk.Button) -> None:
+    def _on_exec_clicked(self, button: Gtk.ToggleButton) -> None:
         """Handler for the Exec toggle's 'clicked' signal. (Phase 5)
 
         3-state cycle: OFF → SHOW → SILENT → OFF. Updates self._exec_mode
@@ -629,10 +629,15 @@ class FeedTab(Gtk.Box):
         the user sees the cycle), and forwards the new mode string to the
         callback installed via set_exec_toggle_callback(), if any.
 
-        Note: this is a 'clicked' handler, not 'toggled', because the Exec
-        button is a plain Gtk.Button (Gtk.ToggleButton does not support 3-state).
-        Programmatic label changes in update_auto_accept_prefs() do NOT
-        emit 'clicked', so this handler only fires on real user clicks.
+        Implementation note: this is a 'clicked' handler (not 'toggled').
+        The Exec widget IS a `Gtk.ToggleButton` (see __init__ at line 120),
+        but we keep its state in self._exec_mode and cycle manually because
+        Gtk.ToggleButton is binary — it cannot represent the third
+        'silent' state natively. We deliberately bind 'clicked' rather than
+        'toggled' so the handler fires exactly once per user click and
+        never from programmatic state changes. Programmatic label changes
+        in update_auto_accept_prefs() do NOT emit 'clicked', so this
+        handler only fires on real user clicks.
         """
         if self._exec_mode == "off":
             new_mode = "show"
@@ -677,28 +682,67 @@ class FeedTab(Gtk.Box):
         """Hide specific action buttons on a card widget. (Phase 5)
 
         Used by FeedHandler._auto_approve_exec_card() in Show mode to hide
-        the Approve/Deny buttons on cards that were auto-approved. Walks
-        the card widget's children looking for attributes named
-        `_<name>_button` (where <name> is each entry in `button_names`)
-        and calls `set_visible(False)` on each.
+        the Approve/Deny buttons on cards that were auto-approved.
+
+        Bug #13 (Phase 7 follow-up): the original implementation looked up
+        `_<name>_button` attributes on the card widget, but `build_feed_card`
+        never stored those (it constructs local `btn_accept` / `btn_reject`
+        variables and appends them inline). The result was a silent no-op:
+        buttons stayed visible after auto-approve and the user could click
+        Approve/Deny again, triggering a double-action in ARTH.
+
+        Fix: map each button name to its CSS class and hide matching
+        buttons in the card widget subtree.
 
         Args:
             card_id: The card whose buttons should be hidden. If the card
                 is not currently in self._cards_by_id (e.g. user navigated
                 away from it), the method is a no-op.
-            button_names: List of button names to hide (e.g. ["approve", "deny"]).
-                Each name is mapped to an attribute `_approve_button` /
-                `_deny_button` on the card widget. Names without a matching
-                attribute are silently skipped.
+            button_names: List of button names to hide. Supported names:
+                "approve" | "deny" | "accept" | "reject" | "review".
+                Each is mapped to the CSS class set by `build_feed_card()`
+                on the corresponding button. Unknown names are skipped.
 
         Idempotent: calling twice with the same args has the same effect as
-        calling once. The view never owns card state, so we don't track
-        which buttons have already been hidden.
+        calling once.
         """
         card_widget = self._cards_by_id.get(card_id)
         if card_widget is None:
             return
-        for name in button_names:
-            btn = getattr(card_widget, f"_{name}_button", None)
-            if btn is not None:
-                btn.set_visible(False)
+        # Map hide-card-buttons names to CSS classes used in build_feed_card().
+        # Source of truth: ui/views/feed_card.py:431,438,443.
+        name_to_css = {
+            "approve": "feed-btn-accept",
+            "deny": "feed-btn-reject",
+            "accept": "feed-btn-accept",
+            "reject": "feed-btn-reject",
+            "review": "feed-btn-review",
+        }
+        target_classes = {
+            name_to_css[n] for n in button_names if n in name_to_css
+        }
+        if not target_classes:
+            return
+        for btn in self._find_buttons_by_css(card_widget, target_classes):
+            btn.set_visible(False)
+
+    def _find_buttons_by_css(
+        self, widget: Gtk.Widget, css_classes: set[str]
+    ) -> list[Gtk.Widget]:
+        """Walk the widget subtree and return every Gtk.Button whose CSS
+        classes intersect `css_classes`. Recursive via get_first_child +
+        get_next_sibling (GTK 4 widget tree API; GTK 3's get_children is gone).
+        Returns a flat list; duplicates are possible if a button somehow
+        carries multiple target classes (callers handle idempotently).
+        """
+        matches: list[Gtk.Widget] = []
+        if isinstance(widget, Gtk.Button):
+            for cls in css_classes:
+                if widget.has_css_class(cls):
+                    matches.append(widget)
+                    break  # only add once per button
+        child = widget.get_first_child()
+        while child is not None:
+            matches.extend(self._find_buttons_by_css(child, css_classes))
+            child = child.get_next_sibling()
+        return matches

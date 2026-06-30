@@ -3283,3 +3283,138 @@ class TestPendingSaveIdStaleRegression:
                 fh_mod.feed_store.save_feed_prefs = original_save
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+class TestHideCardButtonsBug:
+    """Bug #13: hide_card_buttons() was a silent no-op.
+
+    The original implementation looked up `_<name>_button` attributes on
+    the card widget. But `build_feed_card()` constructs local `btn_accept`
+    and `btn_reject` variables and appends them inline — it NEVER stores
+    them as named attributes on the returned card widget. So
+    `getattr(card_widget, "_approve_button", None)` returned None every
+    time, and the buttons stayed visible after auto-approve.
+
+    User-visible symptom: in Show mode, an exec card auto-approved via
+    `_auto_approve_exec_card()` still showed its Approve/Deny buttons.
+    Clicking Approve again called `handle_approve_exec(cid, True)` → ARTH
+    a second time. Not idempotent → double-action risk.
+
+    Fix: map each hide_card_buttons arg name to its CSS class
+    (`build_feed_card` sets `feed-btn-accept` / `feed-btn-reject` / 
+    `feed-btn-review`) and walk the widget subtree.
+    """
+
+    def _make_card_widget(self, button_labels=("Approve", "Deny")):
+        """Build a minimal Gtk.Box mimicking build_feed_card's structure:
+        a root card box with a children Btns row containing the given
+        buttons. Returns the root box."""
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import Gtk
+
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        actions.add_css_class("feed-card-actions")
+
+        css_classes = {
+            "Approve": "feed-btn-accept",
+            "Deny": "feed-btn-reject",
+            "Accept": "feed-btn-accept",
+            "Reject": "feed-btn-reject",
+            "Review": "feed-btn-review",
+        }
+        for label in button_labels:
+            btn = Gtk.Button(label=label)
+            btn.add_css_class(css_classes.get(label, "feed-btn-custom"))
+            actions.append(btn)
+        card.append(actions)
+        return card
+
+    def test_hide_card_buttons_hides_approve(self):
+        """hide_card_buttons(['approve']) hides an Approve button."""
+        from ui.views.feed_tab import FeedTab
+        tab = FeedTab()  # FeedTab.__init__() takes no args
+        
+        card = self._make_card_widget(button_labels=("Approve", "Deny"))
+        tab._cards_by_id["test_card"] = card
+        
+        tab.hide_card_buttons("test_card", ["approve"])
+        
+        # Find the Approve button in the subtree
+        approve_btn = None
+        deny_btn = None
+        for child in [c for c in card.get_first_child().get_first_child().__iter__()] if False else []:
+            pass
+        # Simpler: walk via known structure
+        actions_box = card.get_first_child()
+        first_button = actions_box.get_first_child()
+        second_button = first_button.get_next_sibling()
+        assert first_button.get_visible() is False, (
+            "Approve button must be hidden after hide_card_buttons(['approve'])"
+        )
+        assert second_button.get_visible() is True, (
+            "Deny button must remain visible — only 'approve' was requested"
+        )
+
+    def test_hide_card_buttons_hides_deny(self):
+        """hide_card_buttons(['deny']) hides a Deny button."""
+        from ui.views.feed_tab import FeedTab
+        tab = FeedTab()
+        
+        card = self._make_card_widget(button_labels=("Approve", "Deny"))
+        tab._cards_by_id["test_card"] = card
+        
+        tab.hide_card_buttons("test_card", ["deny"])
+        
+        actions_box = card.get_first_child()
+        first_button = actions_box.get_first_child()
+        second_button = first_button.get_next_sibling()
+        assert first_button.get_visible() is True, (
+            "Approve button must remain visible — only 'deny' was requested"
+        )
+        assert second_button.get_visible() is False, (
+            "Deny button must be hidden after hide_card_buttons(['deny'])"
+        )
+
+    def test_hide_card_buttons_hides_both(self):
+        """hide_card_buttons(['approve', 'deny']) hides both."""
+        from ui.views.feed_tab import FeedTab
+        tab = FeedTab()
+        
+        card = self._make_card_widget(button_labels=("Approve", "Deny"))
+        tab._cards_by_id["test_card"] = card
+        
+        tab.hide_card_buttons("test_card", ["approve", "deny"])
+        
+        actions_box = card.get_first_child()
+        first_button = actions_box.get_first_child()
+        second_button = first_button.get_next_sibling()
+        assert first_button.get_visible() is False
+        assert second_button.get_visible() is False
+
+    def test_hide_card_buttons_unknown_card_is_noop(self):
+        """Unknown card_id is a no-op (no exception)."""
+        from ui.views.feed_tab import FeedTab
+        tab = FeedTab()
+        
+        # Should not raise
+        tab.hide_card_buttons("nonexistent_card_id", ["approve", "deny"])
+
+    def test_hide_card_buttons_accept_alias_hides_approve(self):
+        """Both 'approve' (needs_approval label) and 'accept' (file_change
+        label) should map to feed-btn-accept CSS class. The caller may
+        pass either depending on card_type — both must work."""
+        from ui.views.feed_tab import FeedTab
+        tab = FeedTab()
+        
+        card = self._make_card_widget(button_labels=("Accept",))
+        tab._cards_by_id["test_card"] = card
+        
+        tab.hide_card_buttons("test_card", ["accept"])
+        
+        btn = card.get_first_child().get_first_child()
+        assert btn.get_visible() is False, (
+            "Accept button (file-change label) must be hidden when "
+            "passed as 'accept' to hide_card_buttons"
+        )
