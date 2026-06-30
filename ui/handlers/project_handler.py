@@ -592,15 +592,15 @@ class ProjectHandler:
         lines = [
             f"Spending summary for {project_name}:",
             "",
-            "Agent           Tokens      Cost",
-            "─────────────────────────────────────",
+            "Agent      Tokens   Cost",
+            "────────────────────────",
         ]
         for member_sk in members:
             name = (self._agent_mgr.get_name(member_sk) if self._agent_mgr else "") or self._extract_display_name(member_sk)
             tokens, cost = self._read_agent_usage(member_sk, mem_usage)
             lines.append(f"  @{name}  {tokens:,} tokens  ${cost:.4f}")
         lines.extend([
-            "─────────────────────────────────────",
+            "────────────────────────",
         ])
         return CommandResult(handled=True, response_text="\n".join(lines))
 
