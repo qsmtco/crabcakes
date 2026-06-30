@@ -164,10 +164,17 @@ class TestExecAutoAccept:
         assert len(approved_calls) == 1  # still only 1
         assert feed_handler._cards[cid_b].accepted is None
 
-    def test_exec_auto_accept_snoozed_card_not_approved(self, feed_handler, mock_glib, mock_feed_tab):
-        """A snoozed exec card should NOT be auto-approved."""
+    def test_exec_auto_accept_snoozed_card_not_approved(self, feed_handler, mock_glib, mock_feed_tab, monkeypatch):
+        """A snoozed exec card should NOT be auto-approved.
+
+        Uses monkeypatch to predict the UUID that add_card will assign,
+        so we can pre-snooze it before the auto-accept check fires.
+        (MockGLib.idle_add runs synchronously, so auto-accept fires inside
+        add_card before we can read the returned card_id.)"""
+        monkeypatch.setattr("ui.handlers.feed_handler.uuid.uuid4", lambda: "snoozed-uuid")
         feed_handler._prefs.exec_command.mode = "show"
         feed_handler._auto_accept_enabled = True
+        feed_handler._prefs.snoozed_card_ids.append("snoozed-uuid")
         approved_calls = []
         feed_handler._on_approve_exec = lambda cid, approved: approved_calls.append((cid, approved))
 
@@ -177,8 +184,6 @@ class TestExecAutoAccept:
             timestamp=datetime.now(timezone.utc), project_name="testproject",
             metadata={"needs_approval": True},
         )
-        # Snooze it before adding
-        feed_handler._prefs.snoozed_card_ids.append(card.card_id)
         card_id = feed_handler.add_card(card)
 
         assert len(approved_calls) == 0
@@ -343,11 +348,16 @@ class TestAutoAcceptScenario:
         cid_b = feed_handler.add_card(card_b)
         assert feed_handler._cards[cid_b].accepted is None
 
-    def test_scenario_snoozed_card_not_auto_accepted(self, feed_handler, mock_glib, mock_feed_tab):
-        """Snoozed cards are not auto-accepted."""
+    def test_scenario_snoozed_card_not_auto_accepted(self, feed_handler, mock_glib, mock_feed_tab, monkeypatch):
+        """Snoozed cards are not auto-accepted.
+
+        Uses monkeypatch to predict the UUID that add_card will assign,
+        so we can pre-snooze it before the auto-accept check fires."""
+        monkeypatch.setattr("ui.handlers.feed_handler.uuid.uuid4", lambda: "snoozed-scenario-uuid")
         feed_handler._prefs.file_changes["diff"].enabled = True
         feed_handler._prefs.file_changes["diff"].agent_scope = "all_agents"
         feed_handler._auto_accept_enabled = True
+        feed_handler._prefs.snoozed_card_ids.append("snoozed-scenario-uuid")
 
         card = FeedCardData(
             card_type="diff", source="agent", title="snoozed diff",
@@ -355,7 +365,6 @@ class TestAutoAcceptScenario:
             timestamp=datetime.now(timezone.utc), project_name="proj",
             file_path="foo.py",
         )
-        feed_handler._prefs.snoozed_card_ids.append(card.card_id)
         cid = feed_handler.add_card(card)
         assert feed_handler._cards[cid].accepted is None
 
