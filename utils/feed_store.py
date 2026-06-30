@@ -385,17 +385,24 @@ def _merge_v2_defaults(raw: dict) -> dict:
                     result["auto_accept"]["file_changes"][ct]["enabled"] = bool(
                         fc.get("enabled", False)
                     )
-                    result["auto_accept"]["file_changes"][ct]["agent_scope"] = str(
-                        fc.get("agent_scope", "first_author")
-                    )
+                    scope = str(fc.get("agent_scope", "first_author"))
+                    # Guard: migrate stale "system" scope (from v1 migration
+                    # or test artifacts) to "all_agents". "system" is not a
+                    # valid scope value — _agent_scope_matches treats it as a
+                    # literal agent name, causing every auto-accept check to
+                    # silently fail. See deep-dive report 2026-06-30.
+                    if scope == "system":
+                        scope = "all_agents"
+                    result["auto_accept"]["file_changes"][ct]["agent_scope"] = scope
         exec_raw = auto.get("exec_command", {})
         if isinstance(exec_raw, dict):
             result["auto_accept"]["exec_command"]["mode"] = str(
                 exec_raw.get("mode", "off")
             )
-            result["auto_accept"]["exec_command"]["agent_scope"] = str(
-                exec_raw.get("agent_scope", "first_author")
-            )
+            exec_scope = str(exec_raw.get("agent_scope", "first_author"))
+            if exec_scope == "system":
+                exec_scope = "all_agents"
+            result["auto_accept"]["exec_command"]["agent_scope"] = exec_scope
         snoozed = auto.get("snoozed_card_ids", [])
         if isinstance(snoozed, list):
             result["auto_accept"]["snoozed_card_ids"] = list(snoozed)
