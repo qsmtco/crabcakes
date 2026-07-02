@@ -220,19 +220,24 @@ class AgentRuntimeHandler:
             # the .crabcakes/ files anyway (fail-secure default).
             pass
 
-        # Update project_path on all existing conversations
+        # Update project_path on all existing conversations.
+        # For hot agents (already in memory) this updates the in-memory
+        # Conversation directly. For cold agents (loaded from disk only when
+        # the user sends a message) we leave the on-disk project_path in
+        # place — the lazy reconciliation in _rebuild_conversation_context
+        # fires the next time the agent is loaded for a send. The lazy
+        # path always wins because it knows the current active project.
         for sk, agent_def in self._agents.items():
             rt = self._runtimes.get(agent_def.display_name)
             if rt is None:
                 continue
             conv = rt.get_conversation(sk)
-            if conv is not None and conv.project_path != project_path:
-                conv.project_path = project_path
-                # Rebuild system prompt with new project context
-                from agent.context import build_system_prompt
-                tool_names = agent_def.tools
-                conv.system_prompt = build_system_prompt(
-                    agent_def.display_name, project_path, tool_names,
+            if conv is None:
+                continue  # Cold agent — lazy path handles it on next send.
+            if conv.project_path != project_path:
+                rt._rebuild_conversation_context(
+                    sk,
+                    project_path,
                     agent_role=agent_def.role,
                 )
         logger.info("AgentRuntimeHandler: active project set to %s (%s)", project_name, project_path)
@@ -609,6 +614,15 @@ class AgentRuntimeHandler:
             loaded = rt.load_conversation(session_key)
             if loaded:
                 logger.info("send_to_special_agent: loaded persisted conversation for %s", session_key)
+                # Re-apply the active project to the loaded conversation. The
+                # persisted project_path and system_prompt may be stale (from a
+                # previous project the user had open). This is a no-op when
+                # the persisted values already match the active project.
+                rt._rebuild_conversation_context(
+                    session_key,
+                    project_path,
+                    agent_role=agent_def.role,
+                )
 
         if rt.get_conversation(session_key) is None:
             rt.create_conversation(

@@ -2739,6 +2739,81 @@ class AgentRuntime:
             self._conversations[session_key] = conv
         return True
 
+    def _rebuild_conversation_context(
+        self,
+        session_key: str,
+        project_path: str | None,
+        agent_role: str = "",
+    ) -> None:
+        """Re-apply the active project to a loaded conversation and rebuild its system prompt.
+
+        Fix for the stale-project-context bug: conversations persisted to disk
+        carry a `project_path` and `system_prompt` snapshot from the session
+        that last wrote them. If the user switched projects between sessions,
+        those persisted values are stale — the agent would see the wrong
+        project's docs and tools would be sandboxed to the wrong directory.
+
+        This method is idempotent and cheap (one build_system_prompt call +
+        one attribute write). It is called from:
+          - load_conversation: after restoring from disk, before any send
+          - send_message: lazy reconciliation on first send after a project switch
+          - AgentRuntimeHandler.set_active_project: eager reconciliation for
+            all agents when the user opens a project
+
+        Args:
+            session_key: The conversation to reconcile.
+            project_path: The currently-active project path. If None, the
+                conversation's project_path is cleared and the system prompt
+                is rebuilt without project context.
+            agent_role: Role identifier (e.g. "coder", "debugger", "helper").
+                Used to select the right per-role template in build_system_prompt.
+        """
+        with self._lock:
+            conv = self._conversations.get(session_key)
+        if conv is None:
+            return  # Nothing to rebuild; load_conversation not called yet.
+
+        if conv.project_path == project_path and conv.system_prompt:
+            return  # Already in sync; skip the rebuild (cheap short-circuit).
+
+        # Resolve model context window for the system prompt budget.
+        # Mirrors the logic in create_conversation() — keep these in sync
+        # so create and rebuild produce equivalent prompts.
+        default_provider_name = self._config.default_provider
+        default_provider_cfg = self._config.providers.get(default_provider_name) if default_provider_name else None
+        if default_provider_cfg and getattr(default_provider_cfg, "max_tokens", None):
+            model_max_for_budget = int(default_provider_cfg.max_tokens)
+        else:
+            model_max_for_budget = 128_000  # fallback per CB-1
+        context_mode = getattr(default_provider_cfg, "context_mode", "auto") or "auto"
+
+        try:
+            from agent.context import build_system_prompt
+            new_prompt = build_system_prompt(
+                conv.agent_name,
+                project_path,
+                conv.allowed_tools or [],
+                agent_role=agent_role or conv.agent_role or "",
+                model_max_tokens=model_max_for_budget,
+                context_mode=context_mode,
+            )
+        except Exception:
+            # build_system_prompt is non-critical — fall back to whatever
+            # was persisted, with a logged warning. The agent still works
+            # (just with a potentially stale prompt) instead of crashing.
+            logger.exception(
+                "Failed to rebuild system prompt for %s; keeping persisted prompt",
+                session_key,
+            )
+            new_prompt = conv.system_prompt
+
+        conv.project_path = project_path
+        conv.system_prompt = new_prompt
+        logger.info(
+            "Reconciled conversation context for %s: project_path=%r",
+            session_key, project_path,
+        )
+
     def list_conversations(self) -> list[tuple[str, str]]:
         """List all saved conversations: [(session_key, agent_name)]."""
         d = _conversations_dir()
