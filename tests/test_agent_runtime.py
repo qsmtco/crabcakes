@@ -2341,3 +2341,354 @@ class TestSystemPromptPlacement:
         # parameters not a dict (string)
         result = _convert_tools_for_anthropic([{"function": {"name": "f", "parameters": "bad"}}])
         assert result == [{"name": "f", "description": "", "input_schema": {}}], result
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Stale project context reconciliation (Option C+)
+# ═══════════════════════════════════════════════════════════════════
+#
+# The original bug: a special agent conversation persisted to disk carries
+# the `project_path` and `system_prompt` snapshot from the session that
+# last wrote it. If the user opens a different project in a future
+# session, the conversation loads with the STALE project_path — the
+# agent's tools are sandboxed to the wrong directory and the system
+# prompt is the wrong project's docs.
+#
+# Fix: the runtime rebuilds the project context on every load + every
+# send. _load_conversation_from_disk always sets project_path=None and
+# system_prompt="" (the persisted values are kept on disk for audit but
+# are not trusted). _rebuild_conversation_context re-applies the active
+# project and rebuilds the system prompt against it.
+#
+# These tests pin the new contract: load() returns a stale-tolerant
+# Conversation, and _rebuild_conversation_context correctly re-applies
+# the active project.
+
+import json as _json
+import os as _os
+import tempfile as _tempfile
+
+
+def _make_runtime():
+    """Build a minimal AgentRuntime for testing the reconciliation helpers.
+
+    Mirrors the construction in TestLifecycle above (which is the
+    canonical pattern in this file). Returns (rt, sk, tmp_conv_dir).
+    """
+    from agent.config import AgentConfig, LLMProviderConfig
+    from agent.runtime import _conversations_dir
+    cfg = AgentConfig(
+        providers={
+            "openai": LLMProviderConfig(
+                name="openai", base_url="https://api.openai.com/v1",
+                api_key="test", default_model="gpt-4o",
+            )
+        },
+        default_provider="openai",
+        default_model="openai/gpt-4o",
+        max_tool_iterations=5,
+        tool_timeout_seconds=30,
+        auto_save_conversations=False,
+    )
+    rt = AgentRuntime(cfg)
+    rt.start()
+    return rt
+
+
+class TestLoadConversationStaleTolerance:
+    """Option C+ load contract: persisted project_path/system_prompt are
+    never trusted. They are kept on disk for audit, but load() always
+    returns a Conversation with project_path=None and system_prompt="".
+    The lazy reconciliation in _rebuild_conversation_context re-applies
+    the active project on first send.
+    """
+
+    def test_loaded_conversation_has_no_project_path(self, tmp_path, monkeypatch):
+        """A conversation persisted under project A loads with project_path=None
+        even if the file on disk says project_path=/A. This is the failure-case
+        reproduction for the original bug: the old load() copied the stale value
+        verbatim and the agent saw project A's docs and tools.
+        """
+        # Arrange: write a conversation file as if the user had project A open
+        d = tmp_path / "conversations"
+        d.mkdir()
+        monkeypatch.setattr("agent.runtime.get_config_dir", lambda: str(tmp_path))
+        # The file says project_path=/old/project and the system_prompt is the
+        # one that was rendered against /old/project. New load() must ignore both.
+        persisted = {
+            "session_key": "special:debugger",
+            "agent_name": "Debugger",
+            "project_path": "/old/project",
+            "model": "openai/gpt-4o",
+            "provider": "openai",
+            "messages": [],
+            "system_prompt": "<rendered against /old/project, contains 'You are working on /old/project'>",
+            "total_tokens": 0,
+            "total_cost": 0.0,
+            "step_count": 0,
+        }
+        (d / "special:debugger.json").write_text(_json.dumps(persisted))
+
+        # Act
+        from agent.runtime import _load_conversation_from_disk
+        result = _load_conversation_from_disk("special:debugger")
+        assert result is not None, "load() should still find the file"
+        conv, _ = result
+
+        # Assert: stale values are NOT applied
+        assert conv.project_path is None, (
+            f"FAILURE-CASE REPRO: loaded conv.project_path={conv.project_path!r}; "
+            "expected None so the active project is applied on first send"
+        )
+        assert conv.system_prompt == "", (
+            f"FAILURE-CASE REPRO: loaded conv.system_prompt={conv.system_prompt!r}; "
+            "expected empty so the active project's prompt is rebuilt"
+        )
+
+    def test_loaded_conversation_preserves_other_fields(self, tmp_path, monkeypatch):
+        """Loading with the new contract must still restore messages, model,
+        total_tokens, total_cost, step_count, agent_role, fallback_provider,
+        etc. — only project_path and system_prompt are zeroed.
+        """
+        d = tmp_path / "conversations"
+        d.mkdir()
+        monkeypatch.setattr("agent.runtime.get_config_dir", lambda: str(tmp_path))
+        persisted = {
+            "session_key": "special:debugger",
+            "agent_name": "Debugger",
+            "agent_role": "debugger",
+            "project_path": "/old/project",
+            "model": "openai/gpt-4o",
+            "provider": "openai",
+            "messages": [{"role": "user", "content": "old question", "tool_calls": [], "tool_call_id": None, "tokens_used": 0}],
+            "system_prompt": "stale prompt",
+            "total_tokens": 80069,
+            "total_cost": 1.23,
+            "step_count": 18,
+            "agent_role": "debugger",
+            "fallback_provider": "openrouter",
+            "fallback_model": "openrouter/owl-alpha",
+        }
+        (d / "special:debugger.json").write_text(_json.dumps(persisted))
+
+        from agent.runtime import _load_conversation_from_disk
+        conv, _ = _load_conversation_from_disk("special:debugger")
+
+        assert conv is not None
+        assert conv.agent_name == "Debugger"
+        assert conv.agent_role == "debugger"
+        assert conv.model == "openai/gpt-4o"
+        assert conv.total_tokens == 80069
+        assert conv.total_cost == 1.23
+        assert conv.step_count == 18
+        assert conv.fallback_provider == "openrouter"
+        assert conv.fallback_model == "openrouter/owl-alpha"
+        assert len(conv.messages) == 1
+        assert conv.messages[0].content == "old question"
+
+
+class TestRebuildConversationContext:
+    """Option C+ rebuild contract: _rebuild_conversation_context re-applies
+    the active project and rebuilds the system prompt. The method must be
+    idempotent, safe to call on partially-initialized conversations, and
+    never raise.
+    """
+
+    def test_rebuild_updates_project_path_and_system_prompt(self):
+        """Happy path: cold agent's stale conversation has project_path=None
+        after load; after rebuild, it matches the active project.
+        """
+        rt = _make_runtime()
+        sk = rt.create_conversation(
+            agent_name="Debugger", session_key="special:debugger",
+            project_path=None,  # simulates load() — no project applied yet
+        )
+        conv = rt.get_conversation(sk)
+        assert conv.project_path is None
+        assert conv.system_prompt == ""
+
+        # Act
+        rt._rebuild_conversation_context(sk, "/home/q/projects/new", "debugger")
+
+        conv = rt.get_conversation(sk)
+        assert conv.project_path == "/home/q/projects/new"
+        assert conv.system_prompt != "", "system_prompt must be rebuilt with project context"
+        # The system prompt should reflect the active project, not the old one.
+        # (build_system_prompt includes the project path in the awareness block.)
+        assert "/home/q/projects/new" in conv.system_prompt or "new" in conv.system_prompt, (
+            f"rebuilt prompt should mention the active project; got: {conv.system_prompt[:200]!r}"
+        )
+        rt.stop()
+
+    def test_rebuild_is_idempotent_noop_when_already_in_sync(self):
+        """If conv.project_path already matches the active project AND
+        system_prompt is non-empty, rebuild is a no-op (cheap short-circuit).
+        """
+        rt = _make_runtime()
+        sk = rt.create_conversation(
+            agent_name="Debugger", session_key="special:debugger",
+            project_path="/home/q/projects/active",
+        )
+        # Snapshot the current system_prompt — rebuild should leave it untouched
+        original_prompt = rt.get_conversation(sk).system_prompt
+
+        rt._rebuild_conversation_context(sk, "/home/q/projects/active", "debugger")
+        assert rt.get_conversation(sk).system_prompt == original_prompt, (
+            "idempotent rebuild must not touch system_prompt when already in sync"
+        )
+        rt.stop()
+
+    def test_rebuild_clears_project_when_active_is_none(self):
+        """Passing project_path=None clears the conversation's project
+        context. This happens when the user closes the active project.
+        """
+        rt = _make_runtime()
+        sk = rt.create_conversation(
+            agent_name="Debugger", session_key="special:debugger",
+            project_path="/home/q/projects/old",
+        )
+        assert rt.get_conversation(sk).project_path == "/home/q/projects/old"
+
+        rt._rebuild_conversation_context(sk, None, "debugger")
+        assert rt.get_conversation(sk).project_path is None
+        rt.stop()
+
+    def test_rebuild_unknown_session_key_is_silent_noop(self):
+        """If the session_key isn't loaded in memory, rebuild is a no-op
+        (the cold path handles it on next load). This is critical because
+        the eager reconciliation in set_active_project calls rebuild for
+        every registered agent, including those that have never been
+        instantiated.
+        """
+        rt = _make_runtime()
+        # Should not raise
+        rt._rebuild_conversation_context("special:never-instantiated", "/x", "")
+        rt.stop()
+
+    def test_rebuild_falls_back_to_persisted_prompt_on_build_failure(self):
+        """If build_system_prompt raises (e.g. project path is gone,
+        awareness_dict fails), the conversation keeps the OLD persisted
+        system_prompt and the agent still works — just with a stale prompt.
+        The bug is logged but never crashes the runtime.
+        """
+        rt = _make_runtime()
+        sk = rt.create_conversation(
+            agent_name="Debugger", session_key="special:debugger",
+            project_path=None,
+        )
+        conv = rt.get_conversation(sk)
+        conv.system_prompt = "the OLD prompt (do not lose this)"
+
+        # Force build_system_prompt to raise by patching it
+        from unittest.mock import patch
+        with patch("agent.context.build_system_prompt", side_effect=RuntimeError("boom")):
+            rt._rebuild_conversation_context(sk, "/some/path", "debugger")
+
+        # Assert: the old prompt is preserved (fallback), and project_path
+        # was NOT updated (because the rebuild failed atomically — we don't
+        # half-apply).
+        conv = rt.get_conversation(sk)
+        assert conv.system_prompt == "the OLD prompt (do not lose this)", (
+            f"on rebuild failure, the persisted prompt must be preserved; got: {conv.system_prompt!r}"
+        )
+        rt.stop()
+
+    def test_rebuild_replaces_stale_project_path_with_active(self):
+        """FAILURE-CASE REPRO for the original bug: conversation was
+        persisted under project A; user opens project B; rebuild must
+        replace project_path with B, not keep A.
+        """
+        rt = _make_runtime()
+        sk = rt.create_conversation(
+            agent_name="Debugger", session_key="special:debugger",
+            project_path="/A",
+        )
+        # Simulate the original bug state: conversation was just loaded from
+        # disk, project_path is still /A (the load() method's old behavior).
+        assert rt.get_conversation(sk).project_path == "/A"
+
+        # Act: rebuild against the actually-open project B
+        rt._rebuild_conversation_context(sk, "/B", "debugger")
+
+        # Assert: project_path is now B
+        conv = rt.get_conversation(sk)
+        assert conv.project_path == "/B", (
+            f"FAILURE-CASE REPRO: rebuild did not replace stale /A with active /B; "
+            f"got project_path={conv.project_path!r}"
+        )
+        # Assert: system_prompt mentions B, not A
+        # (The prompt's awareness block includes the project path; if A is
+        # still in the prompt, the rebuild didn't actually rebuild.)
+        assert "/A" not in conv.system_prompt or "/B" in conv.system_prompt, (
+            f"rebuilt prompt should reflect /B, not /A; got: {conv.system_prompt[:300]!r}"
+        )
+        rt.stop()
+
+
+class TestAgentRuntimeContextReconciliationFullPath:
+    """Integration test for the full load → rebuild → send path. This is
+    the end-to-end behavior the original bug violated: a cold agent
+    conversation must reconcile against the active project before any
+    send.
+    """
+
+    def test_loaded_conversation_reconciles_to_active_project(self, tmp_path, monkeypatch):
+        """End-to-end: write a conversation file as if the user had project A
+        open. Then "open" project B (call _rebuild_conversation_context with
+        /B). The conversation's project_path and system_prompt must reflect
+        /B, not /A. This is the exact scenario the user hit with the
+        debugger agent in production.
+        """
+        d = tmp_path / "conversations"
+        d.mkdir()
+        monkeypatch.setattr("agent.runtime.get_config_dir", lambda: str(tmp_path))
+        persisted = {
+            "session_key": "special:debugger",
+            "agent_name": "Debugger",
+            "project_path": "/A",
+            "model": "openai/gpt-4o",
+            "provider": "openai",
+            "messages": [
+                {"role": "user", "content": "old question from /A session",
+                 "tool_calls": [], "tool_call_id": None, "tokens_used": 0},
+                {"role": "assistant", "content": "old answer",
+                 "tool_calls": [], "tool_call_id": None, "tokens_used": 0},
+            ],
+            "system_prompt": "STALE PROMPT for /A",
+            "total_tokens": 0,
+            "total_cost": 0.0,
+            "step_count": 0,
+            "agent_role": "debugger",
+        }
+        (d / "special:debugger.json").write_text(_json.dumps(persisted))
+
+        rt = _make_runtime()
+        # Simulate the production path: load() restores the conversation,
+        # then the handler (or build_system_prompt) calls rebuild with the
+        # active project.
+        ok = rt.load_conversation("special:debugger")
+        assert ok
+        conv = rt.get_conversation("special:debugger")
+        assert conv is not None
+
+        # After load: project_path is None, system_prompt is empty
+        # (Option C+ load contract)
+        assert conv.project_path is None
+        assert conv.system_prompt == ""
+
+        # Conversation history is preserved
+        assert len(conv.messages) == 2
+        assert conv.messages[0].content == "old question from /A session"
+        assert conv.messages[1].content == "old answer"
+
+        # Now reconcile against the active project /B
+        rt._rebuild_conversation_context("special:debugger", "/B", "debugger")
+
+        # After rebuild: project_path is /B, system_prompt is freshly built
+        assert conv.project_path == "/B"
+        assert conv.system_prompt != "STALE PROMPT for /A"
+        assert conv.system_prompt != "", "rebuild must produce a real prompt"
+        # The old messages are STILL there (rebuild doesn't touch history)
+        assert len(conv.messages) == 2
+
+        rt.stop()

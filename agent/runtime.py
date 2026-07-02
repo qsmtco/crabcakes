@@ -1723,6 +1723,15 @@ class AgentRuntime:
         4. If tool calls: execute (with approval gating for exec_command)
         5. If text: fire on_response_complete
         6. Check cost_limit / step_limit
+
+        Option C+ lazy reconciliation: the runtime does not know the active
+        project. The handler (AgentRuntimeHandler.send_to_special_agent)
+        calls _rebuild_conversation_context BEFORE this method, so by the
+        time we get here the in-memory conversation is already in sync.
+        If the handler is bypassed (tests, future callers), the conversation
+        may have a stale project_path. In that case the FIRST call from a
+        cold context fires _rebuild_conversation_context here — the
+        short-circuit in that method makes this O(1) when already in sync.
         """
         # Reset fallback flag for this new user message
         conv = self._conversations.get(session_key)
