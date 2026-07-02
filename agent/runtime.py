@@ -1343,10 +1343,16 @@ def _load_conversation_from_disk(session_key: str) -> tuple["Conversation", dict
 
     conv = Conversation(
         agent_name=data["agent_name"],
-        project_path=data.get("project_path"),
+        # Option C+: project_path and system_prompt are NOT loaded from disk.
+        # The persisted values may be stale (from a previous project the user
+        # had open). They are re-applied by _rebuild_conversation_context
+        # on first send, against the currently-active project. The persisted
+        # values are still written on save so a manual audit can read them
+        # back, but the runtime never trusts them.
+        project_path=None,
         model=data.get("model", ""),
         provider=data.get("provider"),  # HIGH-3: stored so we can re-resolve api_key
-        system_prompt=data.get("system_prompt", ""),
+        system_prompt="",
         messages=messages,
         total_tokens=data.get("total_tokens", 0),
         total_cost=data.get("total_cost", 0.0),
