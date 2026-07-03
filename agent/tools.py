@@ -1159,6 +1159,7 @@ def execute_tool(
     session_key: str = "_unknown",
     approval_callback: Callable[[str, str, dict], bool] | None = None,
     scratch_dir: str | None = None,
+    allowed_tools: list[str] | None = None,
 ) -> ToolResult:
     """
     Execute a tool by name with the given arguments.
@@ -1172,6 +1173,12 @@ def execute_tool(
             over the global _approval_callback.
         scratch_dir: Deprecated/ignored. Previously used as exec_command cwd.
             All tools now use project_path. Retained for API compatibility.
+        allowed_tools: If provided, only tools whose name is in this list are
+            permitted. Tools outside the list are denied with a ToolResult
+            (success=False) BEFORE the handler runs. If None (default), all
+            registered tools are permitted (back-compat). This is the
+            enforcement gate; the API-schema filter in
+            get_tool_definitions_for_api() is advisory only.
 
     Returns:
         ToolResult with output or error.
