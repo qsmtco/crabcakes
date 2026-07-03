@@ -66,6 +66,10 @@ class FakeMainContent:
         self._messages = []       # (role, text) appended to current tab
         # Chat bubble rendering (Phase 2 refactor — ChatRenderHandler calls get_chat_box())
         self._fake_chat_box = FakeChatBox()
+        # ChatRenderHandler mock — production code calls render_async(role, text, ...)
+        # or render_sync(role, text, ...) to display bubbles. Tests assert on these
+        # call args to verify the right (role, text) was sent for display.
+        self._chat_render_handler = MagicMock()
         # Tab management for switch_to_tab tests
         self._notebook_mock = MagicMock()
         self._notebook_mock.get_n_pages.return_value = 0
