@@ -1219,6 +1219,20 @@ def execute_tool(
     if entry is None:
         return ToolResult(success=False, error=f"Unknown tool: {name}")
 
+    # §3.21n — allowed_tools enforcement gate.
+    # When the caller (agent runtime) supplies an explicit allow-list,
+    # we honor it here. The API-schema filter in get_tool_definitions_for_api()
+    # is advisory only; this gate is the law.
+    # allowed_tools=None retains back-compat (any registered tool runs).
+    if allowed_tools is not None and name not in allowed_tools:
+        return ToolResult(
+            success=False,
+            error=(
+                f"Tool '{name}' is not in the agent's allowed_tools "
+                f"(permitted: {sorted(allowed_tools)})"
+            ),
+        )
+
     defn, handler = entry
     start = time.monotonic()
 
