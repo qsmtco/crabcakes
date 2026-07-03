@@ -304,15 +304,29 @@ class TestSendProjectFanOut:
         assert gw.get_sent() == []
 
     def test_fan_out_sends_your_message_to_tab(self):
-        """Fan-out: your message still appears in the project tab."""
+        """Fan-out: your message is rendered to the project tab.
+
+        The (role, text) "You"/"broadcast" goes through render_async on
+        the chat render handler. Replaces pre-fix assertion on dead
+        chat_box.record() path.
+        """
         gw = FakeGatewayClient(connected=True)
         mc = FakeMainContent(session_key="project:foo", input_text="broadcast")
         projects = FakeProjectsModule(members={"foo": ["agent:qaster:1"]})
         handler = make_handler(mc, gw, projects_module=projects)
+        handler.set_chat_render_handler(mc._chat_render_handler)
 
         handler.on_send()
 
-        assert ("You", "broadcast") in mc.get_messages()
+        # The fan-out path renders the You message to the project tab.
+        # It may also send via gw.send_message to each member, but that's
+        # covered by the FakeGatewayClient._sent log — not under test here.
+        render_calls = mc._chat_render_handler.render_async.call_args_list
+        you_calls = [c for c in render_calls if c[0][0] == "You" and c[0][1] == "broadcast"]
+        assert len(you_calls) >= 1, (
+            f"expected at least one render_async('You', 'broadcast', ...) call; "
+            f"got render_async calls: {render_calls}"
+        )
 
 
 # ── Tests: on_chat_event — routing ─────────────────────────────────────────────
