@@ -250,13 +250,27 @@ class TestSendDm:
         assert mc.get_buffer()._text == ""
 
     def test_sends_and_displays_message(self):
-        """After send: message appears in chat tab."""
+        """After send: message is rendered via ChatRenderHandler.render_async.
+
+        Replaces a pre-fix test that asserted on the dead chat_box.record()
+        path. The real rendering goes through self._chat_render_handler
+        (a MagicMock on FakeMainContent).
+        """
         gw = FakeGatewayClient(connected=True)
         mc = FakeMainContent(session_key="agent:main", input_text="hello")
         handler = make_handler(mc, gw)
+        # Wire the chat render handler mock so render_async gets called.
+        handler.set_chat_render_handler(mc._chat_render_handler)
+
         handler.on_send()
 
-        assert ("You", "hello") in mc.get_messages()
+        # render_async is the path for echo (You) bubbles. The first two
+        # positional args are (role, text). Other args (session_key,
+        # forward callbacks, etc.) are exercised by lower-level tests.
+        mc._chat_render_handler.render_async.assert_called_once()
+        call_args = mc._chat_render_handler.render_async.call_args
+        assert call_args[0][0] == "You"
+        assert call_args[0][1] == "hello"
 
 
 # ── Tests: on_send — Project fan-out ───────────────────────────────────────────
