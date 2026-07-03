@@ -29,10 +29,24 @@ class FakeChatBox:
     Tests that need to assert on displayed messages should inspect the
     FakeMainContent._chat_render_handler mock (render_async / render_sync
     call args), not this object.
+
+    append() is the actual API the production code calls (chat_handler.py
+    `_handle_final_response`: `chat_box.append(bubble)`). It accepts a widget
+    and stores it. The pre-fix `record()` method is gone.
     """
 
     def __init__(self):
         self.bubbles = []  # list of widgets appended (for smoke tests)
+
+    def append(self, widget):
+        """Append a bubble widget to this chat box.
+
+        Production: chat_handler.py:_handle_final_response calls this
+        after render_sync produces a bubble. The bubble is a Gtk.Widget
+        in production; in tests it's whatever render_sync returns
+        (a MagicMock by default).
+        """
+        self.bubbles.append(widget)
 
 
 class FakeTextBuffer:
