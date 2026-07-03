@@ -703,3 +703,106 @@ class TestApprovalCallback:
         assert r.success is False
         assert "approval" in r.error.lower()
         set_approval_callback(None)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Allowed-tools enforcement (§3.21n)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestAllowedToolsGate:
+    """The allowed_tools parameter on execute_tool() is the single
+    authorization gate for non-default agents. Without it, the API-schema
+    filter in get_tool_definitions_for_api is advisory only."""
+
+    def test_disallowed_tool_returns_denied(self):
+        """Agent without write_file in allowed_tools cannot invoke it."""
+        with tempfile.TemporaryDirectory() as proj:
+            r = execute_tool(
+                "write_file",
+                {"path": "x.txt", "content": "evil"},
+                proj,
+                allowed_tools=["read_file", "list_files"],
+            )
+        assert r.success is False
+        assert "write_file" in r.error
+        assert "allowed_tools" in r.error
+
+    def test_disallowed_tool_creates_no_file(self):
+        """Side-effect-free denial — no file written even on disallowed call."""
+        with tempfile.TemporaryDirectory() as proj:
+            execute_tool(
+                "write_file",
+                {"path": "should_not_exist.txt", "content": "leaked"},
+                proj,
+                allowed_tools=["read_file"],
+            )
+            full = os.path.join(proj, "should_not_exist.txt")
+            assert not os.path.exists(full), "disallowed write_file leaked to disk"
+
+    def test_allowed_tool_succeeds(self):
+        """Tools in the allow-list still execute normally."""
+        with tempfile.TemporaryDirectory() as proj:
+            r = execute_tool(
+                "write_file",
+                {"path": "ok.txt", "content": "hello"},
+                proj,
+                allowed_tools=["write_file", "read_file"],
+            )
+        assert r.success is True
+        assert os.path.exists(os.path.join(proj, "ok.txt"))
+
+    def test_none_allowed_tools_permits_all(self):
+        """Back-compat: allowed_tools=None permits any registered tool."""
+        with tempfile.TemporaryDirectory() as proj:
+            r = execute_tool(
+                "write_file",
+                {"path": "x.txt", "content": "hi"},
+                proj,
+                allowed_tools=None,
+            )
+        assert r.success is True
+
+    def test_default_arg_permits_all(self):
+        """Back-compat: omitting allowed_tools entirely permits any tool."""
+        with tempfile.TemporaryDirectory() as proj:
+            r = execute_tool("write_file", {"path": "x.txt", "content": "hi"}, proj)
+        assert r.success is True
+
+    def test_empty_allowed_list_denies_everything(self):
+        """An explicit empty list denies everything (not None)."""
+        with tempfile.TemporaryDirectory() as proj:
+            r = execute_tool(
+                "read_file",
+                {"path": "x.txt"},
+                proj,
+                allowed_tools=[],
+            )
+        assert r.success is False
+        assert "read_file" in r.error
+
+    def test_unknown_tool_still_rejected_before_gate(self):
+        """The 'Unknown tool' check fires before the allowed_tools gate."""
+        with tempfile.TemporaryDirectory() as proj:
+            r = execute_tool(
+                "nonexistent_tool",
+                {},
+                proj,
+                allowed_tools=["read_file"],
+            )
+        assert r.success is False
+        assert "Unknown tool" in r.error
+
+    def test_realistic_special_agent_config(self):
+        """Mirror the actual failing scenario: special:coder-style tools
+        without write/edit should deny those tools."""
+        # Approximates a 'read-only investigator' agent.
+        readonly_tools = ["read_file", "list_files", "search_files", "file_search"]
+        with tempfile.TemporaryDirectory() as proj:
+            r = execute_tool(
+                "edit_file",
+                {"path": "x.py", "old_text": "a", "new_text": "b"},
+                proj,
+                allowed_tools=readonly_tools,
+            )
+        assert r.success is False
+        assert "edit_file" in r.error
