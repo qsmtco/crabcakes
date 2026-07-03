@@ -1579,7 +1579,10 @@ when merging filename and content matches.
 
 def get_all_tools() -> list[ToolDefinition]
 def get_tool_definitions_for_api() -> list[dict]    # OpenAI function-calling format
-def execute_tool(name, arguments, project_path) -> ToolResult
+def execute_tool(name, arguments, project_path, allowed_tools=None) -> ToolResult
+# When allowed_tools is provided, only tools in the list are executable.
+# The API-schema filter (get_tool_definitions_for_api) is advisory;
+# this execution gate is the law.
 def set_approval_callback(cb) -> None              # cb(session_key, tool_name, args) → bool
 ```
 
@@ -1600,6 +1603,18 @@ def set_approval_callback(cb) -> None              # cb(session_key, tool_name, 
 **Sandbox:** All paths resolved relative to `project_path`. Escape attempt (`realpath` outside `project_path`) rejected with error result.
 
 **Blocklist:** `rm -rf /`, `mkfs`, `dd if=/dev/zero of=/dev/sda` — always denied before approval callback fires.
+
+**Allowed-tools enforcement gate:** `execute_tool` accepts an
+`allowed_tools: list[str] | None` parameter. When non-None, only tools in
+the list are executable; any other tool returns a denial `ToolResult`
+without running the handler. The single caller in `agent/runtime.py`
+forwards `conv.allowed_tools`, which is set on conversation creation from
+the agent definition's `tools:` field. When `allowed_tools=None` (default),
+all registered tools are permitted — preserves back-compat.
+
+The API-schema filter in `get_tool_definitions_for_api(allowed_tools)`
+remains as a *prompt-level* optimization. It is no longer the sole
+authorization mechanism.
 
 ### 3.21o `agent/config.py` — LLM Provider Config (Phase 1.1)
 
