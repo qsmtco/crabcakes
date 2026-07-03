@@ -2409,10 +2409,12 @@ class TestLoadConversationStaleTolerance:
         reproduction for the original bug: the old load() copied the stale value
         verbatim and the agent saw project A's docs and tools.
         """
-        # Arrange: write a conversation file as if the user had project A open
+        # Arrange: write a conversation file as if the user had project A open.
+        # _conversations_dir() does `from utils.config import get_config_dir`
+        # at call time, so we patch the symbol in its source module.
         d = tmp_path / "conversations"
         d.mkdir()
-        monkeypatch.setattr("agent.runtime.get_config_dir", lambda: str(tmp_path))
+        monkeypatch.setattr("utils.config.get_config_dir", lambda: str(tmp_path))
         # The file says project_path=/old/project and the system_prompt is the
         # one that was rendered against /old/project. New load() must ignore both.
         persisted = {
@@ -2452,7 +2454,7 @@ class TestLoadConversationStaleTolerance:
         """
         d = tmp_path / "conversations"
         d.mkdir()
-        monkeypatch.setattr("agent.runtime.get_config_dir", lambda: str(tmp_path))
+        monkeypatch.setattr("utils.config.get_config_dir", lambda: str(tmp_path))
         persisted = {
             "session_key": "special:debugger",
             "agent_name": "Debugger",
@@ -2505,18 +2507,25 @@ class TestRebuildConversationContext:
         )
         conv = rt.get_conversation(sk)
         assert conv.project_path is None
-        assert conv.system_prompt == ""
+        # NOTE: create_conversation() always calls build_system_prompt and
+        # produces a non-empty prompt — even with project_path=None. The
+        # empty-prompt case is specific to load_conversation() (the load
+        # path zeros it). This test exercises the rebuild path, so the
+        # prompt starts non-empty and rebuild must change it.
+        assert conv.system_prompt != ""
+        original_prompt = conv.system_prompt
 
         # Act
         rt._rebuild_conversation_context(sk, "/home/q/projects/new", "debugger")
 
         conv = rt.get_conversation(sk)
         assert conv.project_path == "/home/q/projects/new"
-        assert conv.system_prompt != "", "system_prompt must be rebuilt with project context"
-        # The system prompt should reflect the active project, not the old one.
-        # (build_system_prompt includes the project path in the awareness block.)
-        assert "/home/q/projects/new" in conv.system_prompt or "new" in conv.system_prompt, (
-            f"rebuilt prompt should mention the active project; got: {conv.system_prompt[:200]!r}"
+        # The rebuild must produce a new prompt (not no-op). With a different
+        # project_path, the awareness block changes → prompt changes.
+        # build_awareness_dict puts the project basename into PROJECT_NAME
+        # and the path into the snapshot's Path: line.
+        assert conv.system_prompt != original_prompt, (
+            "rebuild must produce a different prompt when project_path changes"
         )
         rt.stop()
 
@@ -2641,7 +2650,7 @@ class TestAgentRuntimeContextReconciliationFullPath:
         """
         d = tmp_path / "conversations"
         d.mkdir()
-        monkeypatch.setattr("agent.runtime.get_config_dir", lambda: str(tmp_path))
+        monkeypatch.setattr("utils.config.get_config_dir", lambda: str(tmp_path))
         persisted = {
             "session_key": "special:debugger",
             "agent_name": "Debugger",

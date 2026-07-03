@@ -198,8 +198,17 @@ class AgentRuntimeHandler:
               lambda n, p: self._agent_runtime_handler.set_active_project(n, p)
           )
 
-        This injects project_path into all existing conversations and ensures
-        new conversations get the correct project context (fixes Phase A root cause).
+        This injects project_path into all existing (hot) conversations and
+        ensures new conversations get the correct project context.
+
+        Cold agents (those that have never been instantiated in this session)
+        are NOT updated here — their conversations are loaded from disk on
+        first send, and the lazy reconciliation in
+        `AgentRuntime._rebuild_conversation_context` fires at that point.
+        See option-C+ design in
+        `.crabcakes/feed.json` / the production debugger incident: the
+        original bug was a cold agent seeing a stale project_path; the fix
+        is to rebuild on first send, against the currently-active project.
 
         HIGH-5 (Phase 6): If the project has a `.crabcakes/` directory with
         rule/bug files AND is not yet trusted, show a confirmation dialog

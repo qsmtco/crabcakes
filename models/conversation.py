@@ -143,9 +143,24 @@ class Conversation:
     """
     agent_name: str
     agent_role: str = ""          # "helper" for Auxilium, "" for other agents
+    # project_path: The directory the agent is "working in". Written to disk
+    # by _save_conversation_to_disk for audit, but NOT authoritative at load
+    # time — see _load_conversation_from_disk (which always sets it to None)
+    # and AgentRuntime._rebuild_conversation_context (which re-applies the
+    # currently-active project). The on-disk value may be stale if the
+    # user switched projects between sessions. Touching this field directly
+    # will not re-apply the change to tool sandboxing or the system prompt;
+    # always go through _rebuild_conversation_context for those.
     project_path: str | None = None
     allowed_tools: list[str] | None = None  # filtered tool set — None means all tools
     mcp_servers: list[str] = field(default_factory=list)  # MCP servers for this conversation
+    # system_prompt: The fully-rendered prompt sent as the first message
+    # in every LLM call. Written to disk for audit, but NOT authoritative
+    # at load time — _load_conversation_from_disk always sets this to ""
+    # and AgentRuntime._rebuild_conversation_context rebuilds it against
+    # the currently-active project. Same persistence-is-not-authoritative
+    # invariant as `project_path` above (audit-only on disk; runtime rebuilds
+    # via `_rebuild_conversation_context`).
     system_prompt: str = ""
     messages: list[Message] = field(default_factory=list)
     model: str = ""                      # e.g. "openai/gpt-4o"

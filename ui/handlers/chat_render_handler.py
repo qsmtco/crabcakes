@@ -537,11 +537,21 @@ class ChatRenderHandler:
         container.append(bubble)
         return container
 
-    def end_streaming(self, session_key: str):
+    def end_streaming(self, session_key: str, agent_name: str = None):
         """
         End streaming for session_key: remove cursor and replace with final bubble.
 
         The streaming bubble is replaced with a proper rendered final bubble.
+
+        Args:
+            session_key: The conversation key whose streaming bubble to finalize.
+            agent_name: Optional explicit display name (e.g. "Coder", "Debugger")
+                to bypass the agent_mgr.get_name() lookup. Pass this when the
+                caller (e.g. AgentRuntimeHandler for local special agents) knows
+                the display name from the agent registry and the agent is NOT
+                in AgentManager. When None, the existing agent_mgr fallback
+                runs (which works for gateway agents that ARE registered in
+                AgentManager via gateway_handler.on_connected).
         """
         if session_key not in self._streaming_bubbles:
             return
@@ -559,19 +569,30 @@ class ChatRenderHandler:
             if sb.bubble in sb.container:
                 sb.container.remove(sb.bubble)
 
-            # Look up agent name for header
-            agent_name = None
-            if sb.role == "Agent" and self._main_content is not None:
+            # Resolve display name for header. Priority:
+            #   1. Explicit agent_name arg (caller knows the name from a
+            #      registry AgentManager does not see — used for local
+            #      special agents that are NOT in AgentManager).
+            #   2. agent_mgr.get_name(session_key) — works for gateway
+            #      agents that are registered in AgentManager via
+            #      gateway_handler.on_connected().
+            #   3. None — build_role_bubble's header condition
+            #      `if agent_name or role == "You":` hides the header
+            #      when both are falsy. That is the original bug for local
+            #      agents; passing agent_name explicitly (priority 1)
+            #      prevents the header from being hidden.
+            resolved_name = agent_name
+            if resolved_name is None and sb.role == "Agent" and self._main_content is not None:
                 agent_mgr = getattr(self._main_content, '_agent_mgr', None)
                 if agent_mgr is not None:
-                    agent_name = agent_mgr.get_name(session_key)
+                    resolved_name = agent_mgr.get_name(session_key)
 
             # Build and append final bubble
             final_bubble = build_role_bubble(
                 sb.role, full_text,
                 on_forward_click=self._on_forward_message,
                 session_key=session_key,
-                agent_name=agent_name,
+                agent_name=resolved_name,
             )
             sb.container.append(final_bubble)
             if self._main_content is not None:

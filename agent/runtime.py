@@ -2782,6 +2782,19 @@ class AgentRuntime:
                 is rebuilt without project context.
             agent_role: Role identifier (e.g. "coder", "debugger", "helper").
                 Used to select the right per-role template in build_system_prompt.
+
+        Concurrency contract (BUG #2 audit, 2026-07-02): `self._lock` is a
+        `threading.Lock`, not an RLock — it is NOT re-entrant. The locked
+        block below is intentionally narrow (a single dict.get on
+        `self._conversations`). Do NOT widen it: do not call other
+        AgentRuntime methods from inside the block, do not write to
+        `self._conversations[session_key]` here, and do not invoke any
+        callback that might re-enter the runtime. If you need to mutate
+        `_conversations` under the lock, do the lookup here and the
+        mutation outside (the existing pattern in `get_conversation`,
+        `load_conversation`, `send_message`, etc.). Changing `self._lock`
+        to `threading.RLock` would require auditing every lock site for
+        correctness — out of scope for this fix.
         """
         with self._lock:
             conv = self._conversations.get(session_key)
