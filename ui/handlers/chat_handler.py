@@ -216,7 +216,6 @@ class ChatHandler:
             def _show_and_route_to_agent():
                 chat_box = self._mc.get_chat_box()
                 if chat_box is not None:
-# chat_box.record() removed — dead call (chat_box has no record method). See clear-ui-fix.md.
                     if self._chat_render_handler is not None:
                         def _on_bubble(bubble):
                             if bubble is not None:
@@ -243,7 +242,6 @@ class ChatHandler:
                 def _show_offline_error():
                     chat_box = self._mc.get_chat_box()
                     if chat_box is not None:
-# chat_box.record() removed — dead call (chat_box has no record method). See clear-ui-fix.md.
                         if self._chat_render_handler is not None:
                             def _on_echo(bubble):
                                 if bubble is not None:
@@ -282,7 +280,6 @@ class ChatHandler:
                     def _show_echo_and_forward():
                         chat_box = self._mc.get_chat_box()
                         if chat_box is not None:
-# chat_box.record() removed — dead call (chat_box has no record method). See clear-ui-fix.md.
                             if self._chat_render_handler is not None:
                                 def _on_bubble(bubble):
                                     if bubble is not None:
@@ -308,7 +305,6 @@ class ChatHandler:
                     def _show_broadcast_and_forward():
                         chat_box = self._mc.get_chat_box()
                         if chat_box is not None:
-# chat_box.record() removed — dead call (chat_box has no record method). See clear-ui-fix.md.
                             if self._chat_render_handler is not None:
                                 def _on_bubble(bubble):
                                     if bubble is not None:
@@ -365,7 +361,6 @@ class ChatHandler:
                 def _show_and_route_solo():
                     chat_box = self._mc.get_chat_box()
                     if chat_box is not None:
-# chat_box.record() removed — dead call (chat_box has no record method). See clear-ui-fix.md.
                         if self._chat_render_handler is not None:
                             def _on_bubble(bubble):
                                 if bubble is not None:
@@ -397,7 +392,6 @@ class ChatHandler:
                 def _show_and_route_broadcast():
                     chat_box = self._mc.get_chat_box()
                     if chat_box is not None:
-# chat_box.record() removed — dead call (chat_box has no record method). See clear-ui-fix.md.
                         if self._chat_render_handler is not None:
                             def _on_bubble(bubble):
                                 if bubble is not None:
@@ -433,7 +427,6 @@ class ChatHandler:
         def _show_and_send():
             chat_box = self._mc.get_chat_box()
             if chat_box is not None:
-# chat_box.record() removed — dead call (chat_box has no record method). See clear-ui-fix.md.
                 if self._chat_render_handler is not None:
                     def _on_bubble(bubble):
                         if bubble is not None:
@@ -605,7 +598,6 @@ class ChatHandler:
         chat_box = self._mc.get_chat_box_for_session(tab)
         # Always record the message in the chat box (data plane), regardless of
         # render handler state. render_sync / end_streaming are presentation.
-# chat_box.record() removed — dead call (chat_box has no record method). See clear-ui-fix.md.
         # If this tab is not currently visible, increment unread count so the
         # tab label dot turns yellow to signal pending messages.
         if tab != current_sk:
