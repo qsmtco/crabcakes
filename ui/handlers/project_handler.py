@@ -75,6 +75,11 @@ class ProjectHandler:
         # AgentRuntimeHandler.clear_conversation(session_key). None means
         # the runtime handler hasn't been wired yet (e.g. test fixtures).
         self._clear_callback: Callable[[str], bool] | None = None
+        # /clear — UI side effect callback. After the data-plane clear
+        # (self._clear_callback) succeeds, the chat box for this session
+        # is emptied so the user doesn't see stale bubbles. Wired by
+        # window.py to a closure over self._main_content. Callable[[str], None].
+        self._clear_chat_callback: Callable[[str], None] | None = None
         # /cost runtime usage callback — injected by window.py to call
         # AgentRuntimeHandler.get_session_usage() for gateway agents.
         # Returns a dict mapping session_key -> (total_tokens, total_cost).
