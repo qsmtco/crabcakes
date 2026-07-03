@@ -96,10 +96,6 @@ class FakeMainContent:
     def append_message_to_current_tab(self, role, text, session_key=None):
         self._messages.append((role, text))
 
-    def get_messages(self):
-        # Delegate to FakeChatBox for test compatibility
-        return self._fake_chat_box.get_messages()
-
     def set_current_session(self, key):
         self._current_session_key = key
 
