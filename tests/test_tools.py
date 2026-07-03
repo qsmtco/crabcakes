@@ -742,14 +742,18 @@ class TestAllowedToolsGate:
     def test_allowed_tool_succeeds(self):
         """Tools in the allow-list still execute normally."""
         with tempfile.TemporaryDirectory() as proj:
+            target = os.path.join(proj, "ok.txt")
             r = execute_tool(
                 "write_file",
                 {"path": "ok.txt", "content": "hello"},
                 proj,
                 allowed_tools=["write_file", "read_file"],
             )
-        assert r.success is True
-        assert os.path.exists(os.path.join(proj, "ok.txt"))
+            # Assertions inside the with-block: tempfile.TemporaryDirectory
+            # cleans up on exit, so checking the file after the with-block
+            # would fail (the temp dir no longer exists).
+            assert r.success is True
+            assert os.path.exists(target)
 
     def test_none_allowed_tools_permits_all(self):
         """Back-compat: allowed_tools=None permits any registered tool."""
