@@ -2893,3 +2893,185 @@ class TestEndStreamingFallbackForGatewayAgents:
             f"FAILURE-CASE REPRO: end_streaming fallback should have resolved "
             f"'Qaster' via agent_mgr; got {actual!r}"
         )
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  allowed_tools fallback (allowed-tools-fallback-spec.md)
+# ═══════════════════════════════════════════════════════════════════
+#
+# Regression tests for the stale-state bug: pre-fix conversations had
+# allowed_tools: null on disk, which bypassed the execute_tool gate
+# entirely. The fix: in _load_conversation_from_disk, if persisted
+# allowed_tools is None, fall back to the live agent definition's
+# tools list via get_special_agent(). Mirrors the HIGH-3 api_key
+# re-resolution pattern and the Option C+ project_path pattern.
+
+
+class TestAllowedToolsFallback:
+    """Spec: allowed-tools-fallback-spec.md (Edit 2).
+
+    The persisted allowed_tools field may be None for conversations
+    created before the execute_tool gate shipped. The fallback fires
+    at load time and re-populates conv.allowed_tools from the live
+    SpecialAgentDef so the gate is a no-op ONLY when the live config
+    also has no allow-list.
+    """
+
+    def test_persisted_none_falls_back_to_live_agent_definition(
+        self, tmp_path, monkeypatch
+    ):
+        """A conversation persisted with allowed_tools: null gets the
+        live agent's tools list. Failure-case reproduction: without
+        this, the Debugger agent's pre-fix conversation has no
+        allow-list and the gate is a no-op.
+        """
+        # Arrange: write a conversation with allowed_tools: null
+        d = tmp_path / "conversations"
+        d.mkdir()
+        monkeypatch.setattr("utils.config.get_config_dir", lambda: str(tmp_path))
+        persisted = {
+            "session_key": "special:debugger",
+            "agent_name": "Debugger",
+            "agent_role": "debugger",
+            "project_path": None,
+            "model": "openai/gpt-4o",
+            "provider": "openai",
+            "messages": [],
+            "system_prompt": "",
+            "total_tokens": 0,
+            "total_cost": 0.0,
+            "step_count": 0,
+            # KEY: allowed_tools: null — the bug condition.
+            "allowed_tools": None,
+        }
+        (d / "special:debugger.json").write_text(_json.dumps(persisted))
+
+        # Patch get_special_agent to return a read-only Debugger def.
+        # Mirrors the production Debugger YAML (read-only).
+        debugger_def = SpecialAgentDef(
+            conv_id_prefix="special:debugger",
+            display_name="Debugger",
+            role="debugger",
+            emoji="🐛",
+            tools=["read_file", "list_files", "search_files"],
+            can_write=False,
+        )
+        monkeypatch.setattr(
+            "agent.special_agents.get_special_agent",
+            lambda sk: debugger_def if sk == "special:debugger" else None,
+        )
+
+        # Act
+        from agent.runtime import _load_conversation_from_disk
+        result = _load_conversation_from_disk("special:debugger")
+        assert result is not None
+        conv, _ = result
+
+        # Assert: fallback fired — conv.allowed_tools is the live list,
+        # not None. The execute_tool gate will now deny write_file /
+        # edit_file for this conversation.
+        assert conv.allowed_tools == ["read_file", "list_files", "search_files"], (
+            f"FAILURE-CASE REPRO: conv.allowed_tools={conv.allowed_tools!r}; "
+            "expected live fallback list. The Debugger agent's pre-fix "
+            "conversation would have allowed_tools=None, and the gate "
+            "would be a no-op — letting write_file/edit_file through."
+        )
+
+    def test_persisted_list_wins_over_fallback(
+        self, tmp_path, monkeypatch
+    ):
+        """Happy path: persisted allowed_tools is a real list — fallback
+        does NOT override it. The persisted list is the source of
+        truth when present (e.g., the Coder agent's conversation has
+        the correct list persisted).
+        """
+        # Arrange: write a conversation with a real list
+        d = tmp_path / "conversations"
+        d.mkdir()
+        monkeypatch.setattr("utils.config.get_config_dir", lambda: str(tmp_path))
+        persisted_tools = ["read_file", "write_file"]
+        persisted = {
+            "session_key": "special:coder",
+            "agent_name": "Coder",
+            "agent_role": "coder",
+            "project_path": None,
+            "model": "openai/gpt-4o",
+            "provider": "openai",
+            "messages": [],
+            "system_prompt": "",
+            "total_tokens": 100,
+            "total_cost": 0.01,
+            "step_count": 1,
+            "allowed_tools": persisted_tools,  # real list, not None
+        }
+        (d / "special:coder.json").write_text(_json.dumps(persisted))
+
+        # Patch get_special_agent to return a DIFFERENT live list.
+        # If the fallback fires, conv.allowed_tools would be overwritten
+        # with this list. The persisted list must win.
+        live_def = SpecialAgentDef(
+            conv_id_prefix="special:coder",
+            display_name="Coder",
+            role="coder",
+            emoji="🛠️",
+            tools=["read_file"],  # different from persisted
+            can_write=True,
+        )
+        fallback_called = MagicMock(return_value=live_def)
+        monkeypatch.setattr(
+            "agent.special_agents.get_special_agent", fallback_called
+        )
+
+        # Act
+        from agent.runtime import _load_conversation_from_disk
+        result = _load_conversation_from_disk("special:coder")
+        assert result is not None
+        conv, _ = result
+
+        # Assert: persisted list is preserved
+        assert conv.allowed_tools == persisted_tools, (
+            f"persisted allowed_tools was overwritten by fallback: "
+            f"got {conv.allowed_tools!r}, expected {persisted_tools!r}"
+        )
+        # The fallback lookup was NOT called (the early return at
+        # `if conv.allowed_tools is None:` skipped it).
+        fallback_called.assert_not_called()
+
+    def test_persisted_none_with_unregistered_agent_leaves_none(
+        self, tmp_path, monkeypatch
+    ):
+        """Edge case: persisted None + agent not in registry → stays None.
+
+        This is the "agent no longer registered" case (e.g., the YAML
+        was deleted between sessions). The fallback is best-effort;
+        leaving None means the gate is skipped — same as today.
+        """
+        d = tmp_path / "conversations"
+        d.mkdir()
+        monkeypatch.setattr("utils.config.get_config_dir", lambda: str(tmp_path))
+        persisted = {
+            "session_key": "special:deleted_agent",
+            "agent_name": "DeletedAgent",
+            "project_path": None,
+            "model": "openai/gpt-4o",
+            "messages": [],
+            "system_prompt": "",
+            "total_tokens": 0,
+            "total_cost": 0.0,
+            "step_count": 0,
+            "allowed_tools": None,
+        }
+        (d / "special:deleted_agent.json").write_text(_json.dumps(persisted))
+
+        # Agent not in registry
+        monkeypatch.setattr(
+            "agent.special_agents.get_special_agent", lambda sk: None
+        )
+
+        from agent.runtime import _load_conversation_from_disk
+        result = _load_conversation_from_disk("special:deleted_agent")
+        assert result is not None
+        conv, _ = result
+
+        # Stays None — the gate is skipped, same as before the fallback
+        assert conv.allowed_tools is None
