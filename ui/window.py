@@ -853,6 +853,33 @@ class MainWindow(Gtk.ApplicationWindow):
         """Handle file tree selection — no-op; project card clicks route via ProjectHandler."""
         pass
 
+    def _clear_chat_box(self, session_key: str) -> None:
+        """Empty the chat box for a session. /clear UI side effect.
+
+        Handoff: .crabcakes/handoffs/clear-ui-fix.md.
+
+        Resolves the chat box via _main_content.get_chat_box_for_session
+        and removes all its children. No-ops if the session has no open
+        tab (the user may have closed the tab before /clear ran, or the
+        session is for an agent whose tab was never created).
+
+        Runs on the main thread (the caller is cmd_clear, dispatched via
+        CommandHandler which is on the main thread when called from the
+        chat input). GTK widget removal is safe here.
+        """
+        chat_box = self._main_content.get_chat_box_for_session(session_key)
+        if chat_box is None:
+            logger.debug("_clear_chat_box: no chat box for session %s", session_key)
+            return
+        # Gtk.Box children iteration: get_first_child() returns the first
+        # child or None when empty. Remove until None.
+        while True:
+            child = chat_box.get_first_child()
+            if child is None:
+                break
+            chat_box.remove(child)
+        logger.info("Cleared chat box for session %s", session_key)
+
     # ── Auxilium wizard completion ───────────────────────────────────────────
 
     def _on_auxilium_wizard_complete(self) -> None:
