@@ -1121,6 +1121,13 @@ class AgentRuntimeHandler:
         _finalize() renders the bubble without crabcard blocks.
 
         When streaming was not active: extract from the text arg (non-streaming path).
+
+        Header fix: local special agents are NOT in AgentManager (only gateway
+        agents are — see gateway_handler.on_connected). Their display name
+        comes from self._agents, populated by add_special_agent(). We resolve
+        it once here and thread it into both end_streaming and render_sync so
+        build_role_bubble's header condition (chat_bubble.py:284) is satisfied.
+        Without this, local agent bubbles render the body but no name/dot/timestamp.
         """
         if self._crh is None:
             return
@@ -1133,6 +1140,13 @@ class AgentRuntimeHandler:
 
         logger.debug("[handler] _do_response_complete: sk=%s was_streaming=%s text_len=%d",
                      session_key, was_streaming, len(text or ""))
+
+        # Resolve the agent's display name from the local agent registry.
+        # None for unregistered session_keys (defensive — fallback in
+        # end_streaming / render_sync uses agent_mgr.get_name which works
+        # for gateway agents).
+        agent_def = self._agents.get(session_key)
+        resolved_name = agent_def.display_name if agent_def else None
 
         # Phase C: Extract crabcards from streaming text before end_streaming
         if was_streaming and project_name and self._fh is not None:
@@ -1150,8 +1164,9 @@ class AgentRuntimeHandler:
                     # end_streaming._finalize renders the bubble without crabcard blocks
                     self._crh.set_streaming_text(session_key, cleaned)
 
-        # Phase B: end_streaming() finalizes the bubble (uses current sb.plain_text)
-        self._crh.end_streaming(session_key)
+        # Phase B: end_streaming() finalizes the bubble (uses current sb.plain_text).
+        # Pass resolved_name so local special agents get their header.
+        self._crh.end_streaming(session_key, agent_name=resolved_name)
 
         # Non-streaming fallback: render from text argument with crabcard extraction
         # Defensive: if response completed with empty text and no streaming bubble,
@@ -1183,7 +1198,7 @@ class AgentRuntimeHandler:
             chat_box = self._resolve_chat_box(session_key)
             if chat_box is not None:
                 bubble = self._crh.render_sync(
-                    "Agent", text_for_bubble, session_key, agent_name="Agent"
+                    "Agent", text_for_bubble, session_key, agent_name=resolved_name or "Agent"
                 )
                 if bubble is not None:
                     chat_box.append(bubble)
@@ -1265,12 +1280,17 @@ class AgentRuntimeHandler:
         """Main-thread portion of _on_error."""
         logger.debug("[handler] _do_error: sk=%s msg=%s", session_key, message)
         self._streaming_text.pop(session_key, None)
+        # Resolve agent display name from the local registry so the error
+        # bubble header shows "Coder" / "Debugger" / etc. instead of "Agent".
+        # Mirrors the resolution in _do_response_complete.
+        agent_def = self._agents.get(session_key)
+        resolved_name = agent_def.display_name if agent_def else None
         if self._crh is not None:
-            self._crh.end_streaming(session_key)
+            self._crh.end_streaming(session_key, agent_name=resolved_name)
             chat_box = self._resolve_chat_box(session_key)
             if chat_box is not None:
                 bubble = self._crh.render_sync(
-                    "Agent", f"[Error] {message}", session_key, agent_name="Agent"
+                    "Agent", f"[Error] {message}", session_key, agent_name=resolved_name or "Agent"
                 )
                 if bubble is not None:
                     chat_box.append(bubble)
