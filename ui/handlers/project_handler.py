@@ -416,6 +416,24 @@ class ProjectHandler:
         """
         self._clear_callback = fn
 
+    def set_clear_chat_callback(self, fn: Callable[[str], None] | None) -> None:
+        """Inject callback to empty the chat box after a /clear succeeds.
+
+        Handoff: .crabcakes/handoffs/clear-ui-fix.md.
+
+        Wired by window.py to a closure that resolves the chat box via
+        self._main_content.get_chat_box_for_session(sk) and removes all
+        its children. The callback takes a session_key (e.g. "special:coder")
+        and returns None. cmd_clear invokes this AFTER the data-plane
+        clear (self._clear_callback) succeeds, so a UI failure cannot
+        roll back the data reset.
+
+        Errors raised by the callback are caught and logged inside
+        cmd_clear (the wrapper try/except) so a GTK exception does not
+        break the /clear success path.
+        """
+        self._clear_chat_callback = fn
+
     def set_runtime_usage_fn(self, fn: Callable[[], dict] | None) -> None:
         """Inject callback for /cost command's in-memory usage cache.
 
