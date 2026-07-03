@@ -417,3 +417,147 @@ class TestCmdCost:
         result = handler.cmd_cost(cmd)
         assert result.handled is True
         assert "Open a project tab" in result.response_text
+
+# ═══════════════════════════════════════════════════════════════════
+#  /clear UI side-effect (clear-ui-fix.md)
+# ═══════════════════════════════════════════════════════════════════
+#
+# Regression tests for the bug where /clear reset the data plane
+# (messages, step_count, tokens, cost) but left the visible chat box
+# full of stale bubbles. The fix adds a clear_chat callback that
+# empties the chat box after the data-plane clear succeeds.
+
+from unittest.mock import MagicMock, call
+from models.command import Command
+
+
+def _make_clear_cmd(session_key: str) -> Command:
+    """Build a /clear command targeting the given session_key."""
+    return Command(name="clear", source_session_key=session_key)
+
+
+class TestCmdClearChatSideEffect:
+    """Tests A and B: /clear invokes the clear_chat callback exactly once
+    for special: session_keys, AFTER the data-plane clear succeeds. If
+    the clear_chat callback raises, the data-plane clear is not rolled
+    back (the user still gets the success response_text).
+    """
+
+    def test_cmd_clear_invokes_clear_chat_callback(self, handler, lp, fake_projects, fake_glib):
+        """Test A: after cmd_clear runs for a special: session, the
+        clear_chat callback was invoked once with the session key.
+        """
+        from models.command import CommandResult
+
+        # Wire the data-plane clear (returns True = success)
+        handler.set_clear_callback(lambda sk: True)
+        # Wire the UI side-effect clear with a spy
+        clear_chat_spy = MagicMock()
+        handler.set_clear_chat_callback(clear_chat_spy)
+
+        result = handler.cmd_clear(_make_clear_cmd("special:coder"))
+
+        # Data-plane clear returned True → cmd_clear returned success
+        assert result.handled is True
+        assert "Cleared coder's conversation" in result.response_text
+        # UI side effect ran exactly once with the session key
+        clear_chat_spy.assert_called_once_with("special:coder")
+
+    def test_cmd_clear_does_not_invoke_clear_chat_on_data_plane_failure(self, handler, fake_projects, fake_glib):
+        """If the data-plane clear returns False, the UI side effect
+        must NOT run — the conversation wasn't actually cleared, so
+        emptying the chat box would create state-view divergence.
+        """
+        # Data-plane clear returns False
+        handler.set_clear_callback(lambda sk: False)
+        clear_chat_spy = MagicMock()
+        handler.set_clear_chat_callback(clear_chat_spy)
+
+        result = handler.cmd_clear(_make_clear_cmd("special:coder"))
+
+        assert result.handled is True
+        assert "Could not clear" in result.response_text
+        # UI side effect did NOT run
+        clear_chat_spy.assert_not_called()
+
+    def test_cmd_clear_does_not_invoke_clear_chat_on_data_plane_exception(self, handler, fake_projects, fake_glib):
+        """If the data-plane clear RAISES, cmd_clear returns the
+        'Clear failed for X' error and the UI side effect must NOT run.
+        """
+        def boom(_sk):
+            raise RuntimeError("data plane exploded")
+        handler.set_clear_callback(boom)
+        clear_chat_spy = MagicMock()
+        handler.set_clear_chat_callback(clear_chat_spy)
+
+        result = handler.cmd_clear(_make_clear_cmd("special:coder"))
+
+        assert result.handled is True
+        assert "Clear failed for coder" in result.response_text
+        clear_chat_spy.assert_not_called()
+
+    def test_cmd_clear_swallows_clear_chat_exception(self, handler, fake_projects, fake_glib):
+        """Test B: if the clear_chat callback raises, cmd_clear still
+        returns handled=True with a success message — the data-plane
+        reset already succeeded and must not be rolled back.
+        """
+        def clear_chat_boom(_sk):
+            raise RuntimeError("GTK exploded")
+        handler.set_clear_callback(lambda sk: True)
+        handler.set_clear_chat_callback(clear_chat_boom)
+
+        result = handler.cmd_clear(_make_clear_cmd("special:coder"))
+
+        # The user still gets the success message — the data-plane clear
+        # already happened, and a UI failure must not block the response.
+        assert result.handled is True
+        assert "Cleared coder's conversation" in result.response_text
+
+    def test_cmd_clear_does_not_invoke_clear_chat_for_project_tabs(self, handler, fake_projects, fake_glib):
+        """/clear in a project tab returns the 'use in an agent tab' hint
+        and must not run either callback (the data plane isn't even called
+        for project tabs because each member has their own conversation).
+        """
+        clear_data_spy = MagicMock()
+        clear_chat_spy = MagicMock()
+        handler.set_clear_callback(clear_data_spy)
+        handler.set_clear_chat_callback(clear_chat_spy)
+
+        result = handler.cmd_clear(_make_clear_cmd("project:crabcakes"))
+
+        assert result.handled is True
+        assert "Use /clear in an agent tab" in result.response_text
+        clear_data_spy.assert_not_called()
+        clear_chat_spy.assert_not_called()
+
+    def test_cmd_clear_does_not_invoke_clear_chat_for_unknown_prefix(self, handler, fake_projects, fake_glib):
+        """/clear with a session_key prefix we don't recognize returns
+        a 'Cannot clear session' hint and runs neither callback.
+        """
+        clear_data_spy = MagicMock()
+        clear_chat_spy = MagicMock()
+        handler.set_clear_callback(clear_data_spy)
+        handler.set_clear_chat_callback(clear_chat_spy)
+
+        result = handler.cmd_clear(_make_clear_cmd("foo:bar"))
+
+        assert result.handled is True
+        assert "Cannot clear session" in result.response_text
+        clear_data_spy.assert_not_called()
+        clear_chat_spy.assert_not_called()
+
+
+class TestSetClearChatCallback:
+    """Direct test of the setter contract: set_clear_chat_callback
+    stores the callback so cmd_clear can invoke it later.
+    """
+
+    def test_setter_stores_callback(self, handler):
+        cb = MagicMock()
+        handler.set_clear_chat_callback(cb)
+        assert handler._clear_chat_callback is cb
+
+    def test_setter_accepts_none_to_unregister(self, handler):
+        handler.set_clear_chat_callback(MagicMock())
+        handler.set_clear_chat_callback(None)
+        assert handler._clear_chat_callback is None
