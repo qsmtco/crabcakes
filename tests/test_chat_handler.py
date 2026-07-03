@@ -23,25 +23,16 @@ class FakeTextIter:
 
 
 class FakeChatBox:
-    """Fake chat box that records appended bubbles."""
+    """Fake chat box — tracks appended bubble widgets only.
+
+    Note: production chat_box is a plain Gtk.Box with no record() method.
+    Tests that need to assert on displayed messages should inspect the
+    FakeMainContent._chat_render_handler mock (render_async / render_sync
+    call args), not this object.
+    """
 
     def __init__(self):
-        self.bubbles = []       # list of widgets appended
-        self._roles_texts = []  # parallel list of (role, text) for assertion convenience
-
-    def append(self, widget, role=None, text=None):
-        self.bubbles.append(widget)
-        # Record (role, text) if provided — allows tests to assert on message content
-        if role is not None and text is not None:
-            self._roles_texts.append((role, text))
-
-    def record(self, role, text):
-        """Explicitly record a (role, text) pair for test assertions."""
-        self._roles_texts.append((role, text))
-
-    def get_messages(self):
-        """Returns the list of (role, text) pairs recorded."""
-        return list(self._roles_texts)
+        self.bubbles = []  # list of widgets appended (for smoke tests)
 
 
 class FakeTextBuffer:
