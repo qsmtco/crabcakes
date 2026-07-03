@@ -619,6 +619,15 @@ class MainWindow(Gtk.ApplicationWindow):
         # resets a special agent's in-memory conversation + deletes the
         # persisted JSON so step_count starts fresh.
         self._project_handler.set_clear_callback(self._agent_runtime_handler.clear_conversation)
+        # Wire the /clear UI side effect: empty the chat box after the
+        # data-plane clear succeeds. Handoff: clear-ui-fix.md. The closure
+        # resolves the chat box via _main_content.get_chat_box_for_session
+        # and removes all its children. Runs on the main thread (cmd_clear
+        # is dispatched via CommandHandler which is on the main thread
+        # when called from the chat input).
+        self._project_handler.set_clear_chat_callback(
+            lambda sk: self._clear_chat_box(sk)
+        )
         # Wire local agent lifecycle → ActivityHandler (offline mode progress bar)
         self._agent_runtime_handler.set_on_agent_start(
             lambda sk: self._activity_handler.on_agent_start(sk)
