@@ -346,7 +346,8 @@ class TestChatEventRouting:
 
         Replaces pre-fix assertion on dead chat_box.record(). The real
         rendering for a final-state chat event goes through
-        ChatRenderHandler.render_sync (see chat_handler.py:613).
+        ChatRenderHandler.render_sync (see chat_handler.py:_handle_final_response
+        "no streaming bubble" branch).
         """
         gw = FakeGatewayClient()
         mc = FakeMainContent(session_key="project:myproj")
@@ -355,6 +356,12 @@ class TestChatEventRouting:
         agent_to_project = {"agent:qaster:1": "myproj"}
         handler = make_handler(mc, gw, agent_to_project=agent_to_project)
         handler.set_chat_render_handler(mc._chat_render_handler)
+        # Force the "no streaming bubble" branch in _handle_final_response
+        # so render_sync is called. A MagicMock's is_streaming() returns a
+        # truthy MagicMock by default, which would take the end_streaming
+        # branch instead. Mirror the production code path that fires for
+        # the first message of a session (no streaming bubble yet).
+        mc._chat_render_handler.is_streaming.return_value = False
 
         handler.on_chat_event("chat", self.make_final_payload("agent:qaster:1", "got it"))
 
@@ -374,6 +381,7 @@ class TestChatEventRouting:
         agent_to_project = {}  # no project mapping
         handler = make_handler(mc, gw, agent_to_project=agent_to_project)
         handler.set_chat_render_handler(mc._chat_render_handler)
+        mc._chat_render_handler.is_streaming.return_value = False
 
         handler.on_chat_event("chat", self.make_final_payload("agent:main", "direct reply"))
 
@@ -397,6 +405,7 @@ class TestChatEventRouting:
         }
         handler = make_handler(mc, gw, agent_to_project=agent_to_project)
         handler.set_chat_render_handler(mc._chat_render_handler)
+        mc._chat_render_handler.is_streaming.return_value = False
 
         handler.on_chat_event("chat", self.make_final_payload("agent:shared:1", "reply"))
 
@@ -416,6 +425,7 @@ class TestChatEventRouting:
         agent_to_project = {}  # completely empty
         handler = make_handler(mc, gw, agent_to_project=agent_to_project)
         handler.set_chat_render_handler(mc._chat_render_handler)
+        mc._chat_render_handler.is_streaming.return_value = False
 
         # Must not crash — routing falls back to agent tab
         handler.on_chat_event("chat", self.make_final_payload("agent:unknown", "who?"))
@@ -428,16 +438,19 @@ class TestChatEventRouting:
     def test_empty_content_does_not_appear(self):
         """chat.final with empty content: must not render a bubble.
 
-        Replaces pre-fix assertion on dead chat_box.record(). The real
-        rendering is render_sync — for empty content, it must not be called.
+        Replaces pre-fix assertion on dead chat_box.record(). For empty
+        content, _handle_final_response returns early (line: "if not
+        final_text: return") before render_sync is called.
         """
         gw = FakeGatewayClient()
         mc = FakeMainContent(session_key="agent:main")
         handler = make_handler(mc, gw)
         handler.set_chat_render_handler(mc._chat_render_handler)
+        mc._chat_render_handler.is_streaming.return_value = False
 
         handler.on_chat_event("chat", self.make_final_payload("agent:main", ""))
 
+        # Empty content → early return → no render call
         mc._chat_render_handler.render_sync.assert_not_called()
 
     def test_non_final_state_ignored(self):
@@ -449,6 +462,7 @@ class TestChatEventRouting:
         mc = FakeMainContent(session_key="agent:main")
         handler = make_handler(mc, gw)
         handler.set_chat_render_handler(mc._chat_render_handler)
+        mc._chat_render_handler.is_streaming.return_value = False
 
         handler.on_chat_event("chat", {
             "state": "partial",
@@ -456,6 +470,8 @@ class TestChatEventRouting:
             "message": {"content": "partial text"},
         })
 
+        # state="partial" → falls through the if/elif in on_chat_event
+        # without firing the final handler. No render call.
         mc._chat_render_handler.render_sync.assert_not_called()
 
     def test_content_as_list_text_blocks_extracted(self):
@@ -468,6 +484,7 @@ class TestChatEventRouting:
         mc.set_tab_sessions({0: "agent:main"})
         handler = make_handler(mc, gw)
         handler.set_chat_render_handler(mc._chat_render_handler)
+        mc._chat_render_handler.is_streaming.return_value = False
 
         handler.on_chat_event("chat", {
             "state": "final",
@@ -495,6 +512,7 @@ class TestChatEventRouting:
         mc.set_tab_sessions({0: "agent:main"})
         handler = make_handler(mc, gw)
         handler.set_chat_render_handler(mc._chat_render_handler)
+        mc._chat_render_handler.is_streaming.return_value = False
 
         # Must not raise — falls back to str() or empty
         handler.on_chat_event("chat", {
