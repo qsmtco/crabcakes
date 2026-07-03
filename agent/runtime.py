@@ -2293,8 +2293,14 @@ class AgentRuntime:
                     # project_path is the sandbox base for all tools AND exec_command cwd.
                     # scratch_dir (workspace) is resolved for future use but no longer
                     # overrides exec_command CWD — see exec-cwd-fix spec.
+                    # Allowed-tools enforcement gate (§3.21n).
+                    # Forward conv.allowed_tools so execute_tool can deny tools the agent
+                    # was configured without. conv.allowed_tools is the single source of
+                    # truth — set in create_conversation() from agent_def["tools"] and
+                    # persisted on the conversation object.
                     result = execute_tool(tool_name, args, conv.project_path, session_key,
-                                          approval_callback=per_call_cb)
+                                          approval_callback=per_call_cb,
+                                          allowed_tools=conv.allowed_tools)
                     logger.debug("[tool-loop] sk=%s tool %s result: success=%s output_len=%d",
                                  session_key, tool_name, result.success, len(result.output or ""))
 
