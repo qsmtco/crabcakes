@@ -2701,3 +2701,195 @@ class TestAgentRuntimeContextReconciliationFullPath:
         assert len(conv.messages) == 2
 
         rt.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Local agent chat-bubble header (Bug #8)
+# ═══════════════════════════════════════════════════════════════════
+#
+# Regression tests for the missing-name/dot/timestamp header on local
+# special-agent bubbles. The fix threads the display name from
+# AgentRuntimeHandler into end_streaming/render_sync as an optional
+# parameter so build_role_bubble's header condition is satisfied for
+# local agents (which are NOT in AgentManager).
+
+from unittest.mock import MagicMock, patch
+from agent.special_agents import SpecialAgentDef
+
+
+def _make_handler():
+    """Build a minimal AgentRuntimeHandler with mock ChatRenderHandler
+    and MainContent. The crh is a MagicMock so we can assert call args
+    and stub is_streaming without instantiating real GTK widgets.
+    """
+    from ui.handlers.agent_runtime_handler import AgentRuntimeHandler
+    crh = MagicMock()
+    mc = MagicMock()
+    return AgentRuntimeHandler(main_content=mc, chat_render_handler=crh, GLib_module=None), crh, mc
+
+
+def _register_coder(handler):
+    """Register a Coder special agent and return its conv_id_prefix."""
+    coder = SpecialAgentDef(
+        conv_id_prefix="special:coder",
+        display_name="Coder",
+        role="coder",
+        emoji="🛠️",
+        tools=["read_file", "write_file", "edit_file", "exec_command",
+               "list_files", "search_files", "web_search", "web_fetch"],
+        can_write=True,
+        llm_name="minimax",
+    )
+    handler.add_special_agent(coder)
+    return coder
+
+
+class TestLocalAgentHeaderStreaming:
+    """Test A: _do_response_complete streaming path passes real display name."""
+
+    def test_streaming_passes_display_name_to_end_streaming(self):
+        handler, crh, _mc = _make_handler()
+        _register_coder(handler)
+
+        crh.is_streaming.return_value = True
+        # _do_response_complete writes to self._crh — call directly
+        handler._do_response_complete("special:coder", "hello world")
+
+        crh.end_streaming.assert_called_once()
+        # The new fix: agent_name kwarg is the display name, not None
+        call_kwargs = crh.end_streaming.call_args.kwargs
+        call_args = crh.end_streaming.call_args.args
+        # Signature is end_streaming(session_key, agent_name=None)
+        # — verify agent_name kwarg or positional[1] is "Coder"
+        if "agent_name" in call_kwargs:
+            assert call_kwargs["agent_name"] == "Coder", (
+                f"FAILURE-CASE REPRO: end_streaming was called with "
+                f"agent_name={call_kwargs['agent_name']!r}; expected 'Coder' "
+                "so the local-agent header renders"
+            )
+        else:
+            assert len(call_args) >= 2 and call_args[1] == "Coder", (
+                f"FAILURE-CASE REPRO: end_streaming positional args were "
+                f"{call_args!r}; expected ('special:coder', 'Coder')"
+            )
+
+
+class TestLocalAgentHeaderNonStreaming:
+    """Test B: _do_response_complete non-streaming path uses real name, not hardcoded 'Agent'."""
+
+    def test_non_streaming_passes_display_name_to_render_sync(self):
+        handler, crh, _mc = _make_handler()
+        _register_coder(handler)
+
+        crh.is_streaming.return_value = False
+        handler._do_response_complete("special:coder", "hello world")
+
+        crh.render_sync.assert_called_once()
+        call_kwargs = crh.render_sync.call_args.kwargs
+        call_args = crh.render_sync.call_args.args
+        # render_sync(role, text, session_key, agent_name=...)
+        if "agent_name" in call_kwargs:
+            assert call_kwargs["agent_name"] == "Coder", (
+                f"FAILURE-CASE REPRO: render_sync was called with "
+                f"agent_name={call_kwargs['agent_name']!r}; expected 'Coder' "
+                "instead of the hardcoded 'Agent' that the bug shipped with"
+            )
+        else:
+            assert len(call_args) >= 4 and call_args[3] == "Coder", (
+                f"FAILURE-CASE REPRO: render_sync positional args were "
+                f"{call_args!r}; expected (..., 'Coder')"
+            )
+
+
+class TestEndStreamingExplicitNameTakesPriority:
+    """Test C: end_streaming honors an explicitly passed agent_name
+    over the agent_mgr lookup path (which returns '' for special: keys).
+
+    Patches build_role_bubble so the test does not need a working GTK
+    display. The real build_role_bubble (chat_bubble.py:240) is GTK-dependent
+    and segfaults in headless test environments.
+    """
+
+    def test_explicit_agent_name_reaches_build_role_bubble(self):
+        """Patch build_role_bubble and assert it received agent_name='Coder'.
+        This is the unit-level check that the priority logic is correct.
+        """
+        from ui.handlers.chat_render_handler import ChatRenderHandler
+        from models.streaming import StreamingBubble
+
+        with patch("ui.handlers.chat_render_handler.Gtk"):
+            crh = ChatRenderHandler(GLib_module=None)
+        # mock main_content with empty _agent_mgr (simulates AgentManager miss
+        # for a special: key — the original bug condition)
+        mc = MagicMock()
+        mc._agent_mgr.get_name.return_value = ""
+        crh._main_content = mc
+        # dispatch is a no-op without GLib, so _finalize runs synchronously
+        crh._dispatch = lambda fn: fn()
+
+        sb = StreamingBubble(container=MagicMock(), label=MagicMock(),
+                             role="Agent", bubble=MagicMock())
+        sb.plain_text = "hello"
+        sb.container.__contains__.return_value = False
+        crh._streaming_bubbles["special:coder"] = sb
+
+        with patch("ui.handlers.chat_render_handler.build_role_bubble") as brb:
+            brb.return_value = MagicMock(name="bubble")
+            crh.end_streaming("special:coder", agent_name="Coder")
+
+        # build_role_bubble was called once; agent_name is the 8th positional
+        # arg or the agent_name kwarg.
+        assert brb.call_count == 1
+        call_kwargs = brb.call_args.kwargs
+        call_args = brb.call_args.args
+        # Signature: build_role_bubble(role, text, on_forward_click=..., tight=...,
+        # forwarded_from=..., session_key=..., agent_name=...)
+        if "agent_name" in call_kwargs:
+            actual = call_kwargs["agent_name"]
+        else:
+            actual = call_args[7] if len(call_args) >= 8 else None
+        assert actual == "Coder", (
+            f"FAILURE-CASE REPRO: build_role_bubble received agent_name={actual!r}; "
+            "expected 'Coder' so the header (name+dot+timestamp) renders"
+        )
+
+
+class TestEndStreamingFallbackForGatewayAgents:
+    """Test D: end_streaming with no agent_name arg falls back to agent_mgr
+    (gateway compatibility — gateway agents ARE in AgentManager).
+    """
+
+    def test_no_agent_name_falls_back_to_agent_mgr(self):
+        from ui.handlers.chat_render_handler import ChatRenderHandler
+        from models.streaming import StreamingBubble
+
+        with patch("ui.handlers.chat_render_handler.Gtk"):
+            crh = ChatRenderHandler(GLib_module=None)
+        mc = MagicMock()
+        mc._agent_mgr.get_name.return_value = "Qaster"  # gateway agent registered
+        crh._main_content = mc
+        crh._dispatch = lambda fn: fn()
+
+        sb = StreamingBubble(container=MagicMock(), label=MagicMock(),
+                             role="Agent", bubble=MagicMock())
+        sb.plain_text = "hello"
+        sb.container.__contains__.return_value = False
+        crh._streaming_bubbles["agent:qaster:main"] = sb
+
+        with patch("ui.handlers.chat_render_handler.build_role_bubble") as brb:
+            brb.return_value = MagicMock(name="bubble")
+            crh.end_streaming("agent:qaster:main")  # NO agent_name arg
+
+        # agent_mgr.get_name was called for the session key
+        mc._agent_mgr.get_name.assert_called_with("agent:qaster:main")
+        # build_role_bubble received "Qaster" (the gateway name)
+        call_kwargs = brb.call_args.kwargs
+        call_args = brb.call_args.args
+        if "agent_name" in call_kwargs:
+            actual = call_kwargs["agent_name"]
+        else:
+            actual = call_args[7] if len(call_args) >= 8 else None
+        assert actual == "Qaster", (
+            f"FAILURE-CASE REPRO: end_streaming fallback should have resolved "
+            f"'Qaster' via agent_mgr; got {actual!r}"
+        )
