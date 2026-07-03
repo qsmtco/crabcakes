@@ -1366,6 +1366,21 @@ def _load_conversation_from_disk(session_key: str) -> tuple["Conversation", dict
         fallback_provider=data.get("fallback_provider"),
         fallback_model=data.get("fallback_model"),
     )
+    # allowed_tools fallback: if the persisted conversation has no
+    # allowed_tools (pre-fix conversations or post-YAML-edit), fall back
+    # to the live agent definition's tools list. Mirrors the HIGH-3
+    # api_key re-resolution pattern: do not trust persisted state when
+    # live config is available. Without this, the execute_tool gate is
+    # a no-op for any conversation created before the gate shipped.
+    if conv.allowed_tools is None:
+        try:
+            from agent.special_agents import get_special_agent
+            agent_def = get_special_agent(session_key)
+            if agent_def is not None and agent_def.tools:
+                conv.allowed_tools = list(agent_def.tools)
+        except Exception:
+            pass  # Best-effort: leave None if lookup fails (gate skips)
+
     return conv, data
 
 
