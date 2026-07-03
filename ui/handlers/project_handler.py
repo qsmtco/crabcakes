@@ -717,6 +717,19 @@ class ProjectHandler:
                     response_text=f"Clear failed for {agent_name}: {exc}",
                 )
             if ok:
+                # UI side effect: empty the chat box for this session so the
+                # user doesn't see stale bubbles after the model was reset.
+                # Wrapped in try/except so a GTK failure cannot roll back the
+                # data-plane clear that already succeeded above.
+                if self._clear_chat_callback is not None:
+                    try:
+                        self._clear_chat_callback(sk)
+                    except Exception:
+                        _logger.exception(
+                            "cmd_clear: clear_chat_callback raised for %s; "
+                            "data-plane clear already succeeded, continuing",
+                            sk,
+                        )
                 return CommandResult(
                     handled=True,
                     response_text=(
