@@ -2104,6 +2104,11 @@ class AgentRuntime:
                     except Exception as e:
                         logger.warning(f"Failed to load MCP tools for {session_key}: {e}")
 
+                # Build API messages AFTER compact so the wire payload reflects
+                # the trimmed conversation. Bug fix: was captured before compact().
+                from models.conversation import MessageRole
+                messages = conv.to_api_messages()
+
                 # KB synthesis (Tier 2): prepare messages with KB context if applicable.
                 # The helper is called once per tool-loop iteration, but kb_lookup itself
                 # only runs once per _run_loop invocation (gated by the per-turn cache
