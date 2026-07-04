@@ -577,3 +577,79 @@ class TestTestProviderCallerValidation:
         assert "Invalid caller 'poolside'" in result.error
         # The invalid-caller branch returns before calling test_connection.
         assert test_connection_called == []
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Empty-caller gap fix (caller-validation.md, rework)
+# ═══════════════════════════════════════════════════════════════════
+#
+# If default_model has no "/" AND caller is empty, neither the slash-guarded
+# auto-detect nor the taxonomy check fires, and caller="" gets saved → runtime
+# "No streaming caller" error. Surface a clear error at save time instead.
+
+class TestAddOrUpdateEmptyCallerGap:
+    """default_model without '/' + caller='' must raise at save time."""
+
+    def test_add_or_update_no_slash_no_caller_raises(self, tmp_config_dir):
+        """The exact failure mode the gap fix addresses."""
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name="p", base_url="https://x", api_key="k",
+            default_model="gpt-4o",  # no slash — auto-detect cannot derive
+            caller="",                # caller not set
+        )
+        with pytest.raises(ValueError, match="Cannot auto-detect caller"):
+            h.add_or_update(p)
+
+    def test_add_or_update_no_slash_does_not_save(self, tmp_config_dir):
+        """The empty-caller raise must NOT half-save the provider."""
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name="p", base_url="https://x", api_key="k",
+            default_model="gpt-4o", caller="",
+        )
+        with pytest.raises(ValueError):
+            h.add_or_update(p)
+        assert h.list_providers() == []
+
+    def test_add_or_update_explicit_valid_caller_with_no_slash_works(self, tmp_config_dir):
+        """If caller is explicitly set to a valid value, the slash guard
+        is irrelevant — the explicit value is trusted (per spec).
+        """
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name="p", base_url="https://x", api_key="k",
+            default_model="gpt-4o",  # no slash, but caller is set
+            caller="openai",
+        )
+        h.add_or_update(p)  # must NOT raise
+        assert h.list_providers()[0].caller == "openai"
+
+
+class TestTestProviderEmptyCallerGap:
+    """test_provider must return a failed TestResult (NOT raise) on the
+    empty-caller gap. Same daemon-thread exception-swallowing concern.
+    """
+
+    def test_test_provider_returns_failed_result_on_no_slash_no_caller(
+        self, tmp_config_dir, monkeypatch
+    ):
+        """default_model='gpt-4o' + caller='' triggers the gap-fail path."""
+        from ui.handlers import settings_handler as sh
+        test_connection_called = []
+        def fake_test_connection(**_kw):
+            test_connection_called.append(_kw)
+            return TestResult(ok=True, latency_ms=0, error=None, model_used=_kw["model"])
+        monkeypatch.setattr(sh, "test_connection", fake_test_connection)
+
+        callback = threading.Event()
+        captured_result: list = []
+        h = SettingsHandler()
+        p = _make_provider("bad", default_model="gpt-4o", caller="")
+        h.test_provider(p, lambda r: (captured_result.append(r), callback.set()))
+        assert callback.wait(timeout=2.0), "test_provider callback never fired"
+        assert len(captured_result) == 1
+        result = captured_result[0]
+        assert result.ok is False
+        assert "Cannot auto-detect caller" in result.error
+        assert test_connection_called == []
