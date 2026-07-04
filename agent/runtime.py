@@ -886,7 +886,7 @@ def _stream_openai_events(
             e.code, req.full_url, model, body[:500],
         )
         raise
-    with resp:
+    with resp as resp:
         for line in _sse_lines(resp):
             ev = _parse_sse_line(line)
             if ev is None:
