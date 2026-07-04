@@ -192,34 +192,7 @@ class SettingsHandler:
                     ),
                     model_used=provider.default_model,
                 )
-                # Stamp the failure on the provider, save, and dispatch the result.
-                providers = load_providers()
-                for i, p in enumerate(providers):
-                    if p.name == provider.name:
-                        providers[i] = ProviderConfig(
-                            name=p.name, base_url=p.base_url, api_key=p.api_key,
-                            default_model=p.default_model,
-                            caller=p.caller,                # PRESERVE — was missing, caused regression
-                            enabled=p.enabled, supports_tools=p.supports_tools,
-                            supports_streaming=p.supports_streaming,
-                            max_tokens=p.max_tokens, default_max_tokens=p.default_max_tokens,
-                            last_verified_at=p.last_verified_at,
-                            last_error=result.error or "unknown",
-                        )
-                        break
-                save_providers(providers)
-                # Dispatch result back to main thread.
-                def _dispatch_invalid():
-                    try:
-                        on_result(result)
-                    except Exception:
-                        logger.exception("test_provider on_result callback raised")
-                    if self._on_status_changed:
-                        self._on_status_changed(has_any_verified_provider(load_providers()))
-                if self._GLib is not None and hasattr(self._GLib, "idle_add"):
-                    self._GLib.idle_add(_dispatch_invalid)
-                else:
-                    _dispatch_invalid()
+                self._dispatch_test_result(provider, result, on_result)
                 return  # do not call test_connection with an invalid caller
 
             try:
