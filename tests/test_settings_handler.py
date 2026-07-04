@@ -280,7 +280,7 @@ class TestTestProvider:
         assert callback.wait(timeout=2.0), "test_provider callback never fired"
 
         providers = h.list_providers()
-        assert providers[0].caller == "minimax-M3", (
+        assert providers[0].caller == "minimax", (
             f"test_provider did not auto-detect caller; got {providers[0].caller!r}"
         )
 
