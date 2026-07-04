@@ -26,7 +26,7 @@ def _make_provider_cfg(name="openrouter", api_key="sk-test"):
         name=name,
         base_url=f"https://example.com/v1",
         api_key=api_key,
-        default_model=f"{name}/test-model",
+        default_model=f"openai/{name}-model",
         caller="openai",
     )
 
