@@ -22,6 +22,17 @@ from models.providers import ProviderConfig
 
 _logger = logging.getLogger(__name__)
 
+
+# DUPLICATION INVARIANT: this set must match agent.runtime._PROVIDER_CALLERS.keys().
+# Layer rule: utils/* cannot import from agent/*, so the set is duplicated here.
+# Enforced by a regression test in tests/test_providers_store.py
+# (TestValidCallersDuplicationInvariant). If you add a new adapter to
+# agent.runtime._PROVIDER_CALLERS, you MUST also add the key here and update
+# the regression test. See .crabcakes/task-specs/caller-validation.md.
+_VALID_CALLERS: frozenset[str] = frozenset({
+    "anthropic", "minimax", "openai", "openrouter", "zai",
+})
+
 _FILENAME = "providers.yaml"
 
 
