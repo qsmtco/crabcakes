@@ -124,7 +124,9 @@ class TestSaveFlow:
         new_card._name_entry.set_text("newprov")
         new_card._base_url_entry.set_text("https://x.example.com/v1")
         new_card._api_key_entry.set_text("test-api-key")
-        new_card._model_entry.set_text("newprov/model-v1")
+        # caller-validation spec: default_model must be "<vendor>/<model>"
+        # so the auto-detect can derive a caller.
+        new_card._model_entry.set_text("openai/newprov-model")
         new_card._on_save_clicked(None)
         names = [p.name for p in h.list_providers()]
         assert "newprov" in names
