@@ -484,3 +484,119 @@ class TestMigrateFromAgentJson:
             raw = json.load(f)
         assert "providers" not in raw  # but key should be stripped
         assert raw.get("default_provider") == "openai"  # other keys preserved
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  _from_dict caller validation (caller-validation.md)
+# ═══════════════════════════════════════════════════════════════════
+#
+# Adversarial tests for the load-time path. _from_dict must:
+#   - Log a warning on invalid non-empty caller (warn-and-keep, do NOT mutate)
+#   - Stay silent on empty caller (auto-detect happens at save time)
+#   - Stay silent on valid caller
+#   - Match the agent.runtime._PROVIDER_CALLERS taxonomy (duplication invariant)
+
+
+import logging
+import pytest
+
+
+class TestFromDictCallerValidation:
+    """_from_dict must validate caller but NEVER mutate the value (warn-and-keep)."""
+
+    def test_warns_and_keeps_invalid_caller(self, tmp_config_dir, caplog):
+        """A non-empty caller NOT in the taxonomy: log a warning, keep the value."""
+        from utils.providers_store import _from_dict
+        d = {
+            "name": "broken",
+            "base_url": "https://x",
+            "api_key": "k",
+            "default_model": "openai/gpt-4o",
+            "caller": "poolside",  # not in taxonomy
+        }
+        with caplog.at_level(logging.WARNING, logger="utils.providers_store"):
+            cfg = _from_dict(d)
+        assert cfg.caller == "poolside", (
+            "FAILURE-CASE REPRO: _from_dict mutated invalid caller — should "
+            "warn-and-keep, not silently rewrite"
+        )
+        # The warning must name the invalid value AND the valid set.
+        warnings = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("poolside" in str(w) for w in warnings), (
+            f"warning must name the invalid caller; got: {warnings}"
+        )
+        assert any("anthropic" in str(w) and "minimax" in str(w) for w in warnings), (
+            f"warning must list valid callers; got: {warnings}"
+        )
+
+    def test_silent_on_empty_caller(self, tmp_config_dir, caplog):
+        """Empty caller is allowed (auto-detect happens at save time)."""
+        from utils.providers_store import _from_dict
+        d = {
+            "name": "p",
+            "base_url": "https://x",
+            "api_key": "k",
+            "default_model": "openai/gpt-4o",
+            "caller": "",
+        }
+        with caplog.at_level(logging.WARNING, logger="utils.providers_store"):
+            cfg = _from_dict(d)
+        assert cfg.caller == ""
+        # No warnings for empty caller.
+        warnings = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not any("caller" in str(w).lower() for w in warnings), (
+            f"empty caller must not warn; got: {warnings}"
+        )
+
+    def test_silent_on_valid_caller(self, tmp_config_dir, caplog):
+        """A valid caller: no warning, value preserved."""
+        from utils.providers_store import _from_dict
+        d = {
+            "name": "p",
+            "base_url": "https://x",
+            "api_key": "k",
+            "default_model": "openai/gpt-4o",
+            "caller": "openai",
+        }
+        with caplog.at_level(logging.WARNING, logger="utils.providers_store"):
+            cfg = _from_dict(d)
+        assert cfg.caller == "openai"
+        warnings = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not any("caller" in str(w).lower() for w in warnings), (
+            f"valid caller must not warn; got: {warnings}"
+        )
+
+    def test_silent_on_missing_caller_key(self, tmp_config_dir, caplog):
+        """Missing caller key entirely (default '') — same as empty."""
+        from utils.providers_store import _from_dict
+        d = {
+            "name": "p",
+            "base_url": "https://x",
+            "api_key": "k",
+            "default_model": "openai/gpt-4o",
+        }
+        with caplog.at_level(logging.WARNING, logger="utils.providers_store"):
+            cfg = _from_dict(d)
+        assert cfg.caller == ""
+        warnings = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not any("caller" in str(w).lower() for w in warnings), (
+            f"missing caller must not warn; got: {warnings}"
+        )
+
+
+class TestValidCallersDuplicationInvariant:
+    """utils/_VALID_CALLERS must match agent.runtime._PROVIDER_CALLERS.keys().
+
+    This is the duplication invariant the spec explicitly carves out for
+    the utils-layer rule. If a new adapter is added to agent.runtime, this
+    test fails and the engineer must update utils/providers_store.py too.
+    """
+
+    def test_valid_callers_set_matches_runtime_taxonomy(self):
+        from agent.runtime import get_valid_callers
+        from utils.providers_store import _VALID_CALLERS
+        assert _VALID_CALLERS == get_valid_callers(), (
+            f"DUPLICATION DRIFT: utils._VALID_CALLERS={sorted(_VALID_CALLERS)} "
+            f"but agent.runtime._PROVIDER_CALLERS.keys()={sorted(get_valid_callers())}. "
+            f"Update _VALID_CALLERS in utils/providers_store.py to match the runtime."
+        )
