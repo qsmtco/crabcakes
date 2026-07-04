@@ -258,6 +258,8 @@ class TestTestProvider:
         """Self-heal: when caller is empty and default_model has a slash,
         the worker auto-fills caller from the prefix. This lets broken YAML
         entries (post-regression state) recover on next Test Connection.
+        Caller validation (caller-validation spec) also lowercases the
+        prefix to match the taxonomy.
         """
         from ui.handlers import settings_handler as sh
         monkeypatch.setattr(sh, "test_connection", lambda **kw:
@@ -266,10 +268,11 @@ class TestTestProvider:
         callback = threading.Event()
         h = SettingsHandler()
         # Note: caller defaults to "" (ProviderConfig default). Mimics a broken YAML entry.
-        p = _make_provider("minimax-M3")  # default_model = "minimax-M3/model-v1"
+        p = _make_provider("minimax-M3", default_model="minimax-M3/model-v1")
         h.add_or_update(p)
-        # Sanity: add_or_update's auto-detect should already have set caller.
-        assert h.list_providers()[0].caller == "minimax-M3"
+        # Sanity: add_or_update's auto-detect should already have set caller,
+        # lowercased to match the taxonomy (caller-validation spec).
+        assert h.list_providers()[0].caller == "minimax"
 
         # Now simulate the broken-state scenario: caller explicitly empty.
         broken = _make_provider("minimax-M3", caller="")
