@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from models.providers import ProviderConfig
+from agent.runtime import get_valid_callers
 from utils.providers_store import (
     load_providers,
     save_providers,
@@ -90,9 +91,20 @@ class SettingsHandler:
         if not provider.default_model or not provider.default_model.strip():
             raise ValueError("Default model is required")
 
-        # PHASE-10: auto-detect caller from default_model prefix when not set
+        # PHASE-10: auto-detect caller from default_model prefix when not set.
+        # Strict caller validation: the prefix MUST lowercased and the result
+        # MUST be in the valid-caller taxonomy. The same check applies to
+        # explicitly-set callers (user may have hand-typed a bad value).
+        # See .crabcakes/task-specs/caller-validation.md for the design.
         if not provider.caller and provider.default_model and "/" in provider.default_model:
-            provider.caller = provider.default_model.split("/")[0]
+            provider.caller = provider.default_model.split("/")[0].lower()
+        if provider.caller and provider.caller not in get_valid_callers():
+            valid = sorted(get_valid_callers())
+            raise ValueError(
+                f"Invalid caller {provider.caller!r}. "
+                f"Valid callers: {', '.join(valid)}. "
+                f"Set the caller field explicitly or use a model with a recognized prefix."
+            )
 
         providers = load_providers()
         # Replace existing or append
