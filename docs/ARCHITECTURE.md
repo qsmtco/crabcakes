@@ -1542,6 +1542,14 @@ class AgentRuntime:
     def save_conversation(session_key) -> str    # → <config_dir>/conversations/<session_key>.json
     def load_conversation(session_key) -> bool
     def list_conversations() -> list[(session_key, agent_name)]
+
+def get_valid_callers() -> frozenset[str]     # §caller-validation — single source of truth for ProviderConfig.caller taxonomy
+# Returns frozenset of keys in _PROVIDER_CALLERS ({"anthropic", "minimax",
+# "openai", "openrouter", "zai"}). Used by settings_handler.add_or_update
+# (save-time validation) and test_provider._worker (Test Connection gate).
+# Layer rule: utils/* cannot import from agent/*, so utils/providers_store.py
+# DUPLICATES this set as a module-level constant — enforced by
+# TestValidCallersDuplicationInvariant regression test.
 ```
 
 **Tool loop:** Append user message → build API messages → call LLM → if tool calls: execute each tool → append results → call LLM again → if text: append assistant message → fire callbacks → check cost/step limits.
