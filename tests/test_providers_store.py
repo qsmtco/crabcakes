@@ -67,7 +67,8 @@ class TestLoadSave:
         assert loaded[0].name == "openrouter"
         assert loaded[0].base_url == "https://api.openrouter.example.com/v1"
         assert loaded[0].api_key == "sk-openrouter-key"
-        assert loaded[0].default_model == "openrouter/model-v1"
+        # caller-validation spec: default_model uses "openai/{name}-model" format
+        assert loaded[0].default_model == "openai/openrouter-model"
         assert loaded[1].name == "minimax"
 
     def test_round_trip_preserves_all_fields(self, tmp_config_dir):
