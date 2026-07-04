@@ -237,12 +237,13 @@ class TestRefreshProvidersPreservesUnsavedEdits:
         # Card is clean — no edits
         assert not d._cards[0]._is_dirty()
 
-        # Externally update the provider
-        h.add_or_update(_make_provider("alpha", default_model="updated-model"))
+        # Externally update the provider. caller-validation spec: default_model
+        # must be "<vendor>/<model>" so auto-detect can derive a caller.
+        h.add_or_update(_make_provider("alpha", default_model="openai/updated-model"))
         d.refresh_providers(h.list_providers())
 
         # Clean card reflects the new data
-        assert d._cards[0]._model_entry.get_text() == "updated-model"
+        assert d._cards[0]._model_entry.get_text() == "openai/updated-model"
 
 
 class TestMaxTokensSpinButton:
