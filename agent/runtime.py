@@ -874,7 +874,19 @@ def _stream_openai_events(
         headers=headers,
         method="POST",
     )
-    with _urlopen_with_ssl_retry(req, timeout=timeout) as resp:
+    try:
+        resp = _urlopen_with_ssl_retry(req, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = "(could not read body)"
+        logger.error(
+            "Provider HTTP %d from %s (model=%s): %s",
+            e.code, req.full_url, model, body[:500],
+        )
+        raise
+    with resp:
         for line in _sse_lines(resp):
             ev = _parse_sse_line(line)
             if ev is None:
