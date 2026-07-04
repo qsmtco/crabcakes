@@ -2038,10 +2038,6 @@ class AgentRuntime:
                 iteration += 1
                 logger.debug("[tool-loop] sk=%s iteration=%d/%d", session_key, iteration, max_iter)
 
-                # Build API messages
-                from models.conversation import MessageRole
-                messages = conv.to_api_messages()
-
                 # §0: Pluggable context strategy — compaction before each LLM call.
                 # The strategy lives in agent/context_strategy.py and replaces the
                 # old conv.trim_to_token_limit() call. The delegation shim on
