@@ -283,6 +283,54 @@ class SettingsHandler:
         t = threading.Thread(target=_worker, daemon=True, name=f"test-{provider.name}")
         t.start()
 
+    def _dispatch_test_result(
+        self,
+        provider: ProviderConfig,
+        result: TestResult,
+        on_result: Callable[[TestResult], None],
+    ) -> None:
+        """Stamp the result on the provider, save, and dispatch the callback.
+
+        Used by test_provider._worker for failure paths (invalid caller, empty
+        caller gap, etc.) where we need to short-circuit BEFORE test_connection
+        runs. Shared between branches to keep the dispatch logic in one place.
+
+        Stamps `last_error` on the persisted provider (so the red-dot indicator
+        reflects the bad state), saves, then dispatches on_result and
+        on_status_changed via the main thread.
+
+        Preserves `caller=p.caller` per the Bug #2/#3 fix — caller must
+        round-trip through save unchanged.
+        """
+        providers = load_providers()
+        for i, p in enumerate(providers):
+            if p.name == provider.name:
+                providers[i] = ProviderConfig(
+                    name=p.name, base_url=p.base_url, api_key=p.api_key,
+                    default_model=p.default_model,
+                    caller=p.caller,                # PRESERVE — was missing, caused regression
+                    enabled=p.enabled, supports_tools=p.supports_tools,
+                    supports_streaming=p.supports_streaming,
+                    max_tokens=p.max_tokens, default_max_tokens=p.default_max_tokens,
+                    last_verified_at=p.last_verified_at,
+                    last_error=result.error or "unknown",
+                )
+                break
+        save_providers(providers)
+
+        def _dispatch():
+            try:
+                on_result(result)
+            except Exception:
+                logger.exception("test_provider on_result callback raised")
+            if self._on_status_changed:
+                self._on_status_changed(has_any_verified_provider(load_providers()))
+
+        if self._GLib is not None and hasattr(self._GLib, "idle_add"):
+            self._GLib.idle_add(_dispatch)
+        else:
+            _dispatch()
+
     def status_has_verified(self) -> bool:
         """Return True if any provider is verified (drives the red dot)."""
         return has_any_verified_provider(load_providers())
