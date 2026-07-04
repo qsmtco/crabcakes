@@ -25,7 +25,7 @@ def _make_provider(name: str = "test", **overrides) -> ProviderConfig:
         name=name,
         base_url=f"https://api.{name}.example.com/v1",
         api_key="test-key",
-        default_model=f"{name}/model-v1",
+        default_model=f"openai/{name}-model",
     )
     defaults.update(overrides)
     return ProviderConfig(**defaults)
