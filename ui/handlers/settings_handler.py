@@ -98,6 +98,15 @@ class SettingsHandler:
         # See .crabcakes/task-specs/caller-validation.md for the design.
         if not provider.caller and provider.default_model and "/" in provider.default_model:
             provider.caller = provider.default_model.split("/")[0].lower()
+        elif not provider.caller:
+            # Gap fix: default_model has no "/" (e.g. "gpt-4o") and caller
+            # is empty — auto-detect cannot derive a caller. Surface a clear
+            # error at save time rather than letting the empty string through
+            # to runtime where it manifests as opaque "No streaming caller".
+            raise ValueError(
+                "Cannot auto-detect caller: default_model must be '<vendor>/<model>'. "
+                "Set caller explicitly or use a prefixed model."
+            )
         if provider.caller and provider.caller not in get_valid_callers():
             valid = sorted(get_valid_callers())
             raise ValueError(
