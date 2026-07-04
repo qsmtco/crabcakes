@@ -63,13 +63,29 @@ def _to_dict(p: ProviderConfig) -> dict[str, Any]:
 
 
 def _from_dict(d: dict[str, Any]) -> ProviderConfig:
-    """Convert a plain dict to a ProviderConfig. Tolerates missing optional fields."""
+    """Convert a plain dict to a ProviderConfig. Tolerates missing optional fields.
+
+    Caller validation (caller-validation spec): if a non-empty caller field
+    is present but is NOT in _VALID_CALLERS, log a warning and keep the value
+    unchanged. Do NOT mutate — the load-time path is for surfacing legacy
+    bad data, not for silent rewrites. Save-time validation in
+    settings_handler.add_or_update prevents NEW bad data.
+    """
+    caller = d.get("caller", "")
+    if caller and caller not in _VALID_CALLERS:
+        _logger.warning(
+            "providers.yaml: provider %r has invalid caller %r. "
+            "Valid callers: %s. Auto-detect at save time will lower-case and "
+            "validate, but load-time keeps the value unchanged. Fix the YAML "
+            "or set caller explicitly via settings dialog.",
+            d.get("name", "<unnamed>"), caller, sorted(_VALID_CALLERS),
+        )
     return ProviderConfig(
         name=d.get("name", ""),
         base_url=d.get("base_url", ""),
         api_key=d.get("api_key", ""),
         default_model=d.get("default_model", ""),
-        caller=d.get("caller", ""),
+        caller=caller,
         enabled=d.get("enabled", True),
         supports_tools=d.get("supports_tools", True),
         supports_streaming=d.get("supports_streaming", True),
