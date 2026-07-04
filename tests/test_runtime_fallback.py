@@ -228,7 +228,9 @@ class TestFallbackModelDerivation:
 
         # Primary call uses local-kb model
         assert captured_models[0] == "local-kb/local-kb"
-        # Fallback call uses the provider card's default_model (derived, not stored)
-        assert captured_models[1] == "openrouter/test-model"
+        # Fallback call uses the provider card's default_model (derived, not stored).
+        # Fixture was updated for caller-validation spec — model now uses
+        # 'openai/{name}-model' format to satisfy the auto-detect prefix check.
+        assert captured_models[1] == "openai/openrouter-model"
         # Model was restored after fallback
         assert conv.model == "local-kb/local-kb"
