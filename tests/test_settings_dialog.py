@@ -271,7 +271,9 @@ class TestMaxTokensSpinButton:
         card._name_entry.set_text("p1")
         card._base_url_entry.set_text("https://x.example.com/v1")
         card._api_key_entry.set_text("test-key")
-        card._model_entry.set_text("p1/model-v1")
+        # caller-validation spec: default_model must be "<vendor>/<model>"
+        # so the auto-detect can derive a caller.
+        card._model_entry.set_text("openai/p1-model")
         card._max_tokens_spin.set_value(500_000)
         card._on_save_clicked(None)
         saved = h.list_providers()
