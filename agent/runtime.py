@@ -429,6 +429,30 @@ _PROVIDER_CALLERS: dict[str, Any] = {
 }
 
 
+def get_valid_callers() -> frozenset[str]:
+    """Return the frozenset of valid caller keys for ProviderConfig.caller.
+
+    Single source of truth for the provider-caller taxonomy. The set is
+    derived from _PROVIDER_CALLERS.keys() at module level — adding a new
+    adapter to the dict automatically extends the valid set.
+
+    Used by:
+      - ui/handlers/settings_handler.py (save-time validation, Test Connection)
+      - tests/test_settings_handler.py (regression coverage)
+      - tests/test_providers_store.py (verify duplication invariant)
+
+    Layer rule: utils/* cannot import from agent/*, so utils/providers_store.py
+    DUPLICATES this set as a module-level constant. The duplication is enforced
+    by a regression test in tests/test_providers_store.py
+    (TestValidCallersDuplicationInvariant).
+
+    Returns:
+        frozenset of strings: {"anthropic", "minimax", "openai",
+        "openrouter", "zai"} (alphabetically sorted; order is irrelevant).
+    """
+    return frozenset(_PROVIDER_CALLERS.keys())
+
+
 # Response format families — derived from caller configuration.
 # Any provider using _call_openai or _call_minimax returns OpenAI-format responses.
 # Used by _extract_text_content, _extract_tool_calls, _extract_usage to avoid
