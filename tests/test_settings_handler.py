@@ -268,14 +268,16 @@ class TestTestProvider:
         callback = threading.Event()
         h = SettingsHandler()
         # Note: caller defaults to "" (ProviderConfig default). Mimics a broken YAML entry.
-        p = _make_provider("minimax-M3", default_model="minimax-M3/model-v1")
+        # Use 'minimax/M3' (valid taxonomy prefix) to test the auto-detect
+        # path: prefix gets lowercased to "minimax" and matches the taxonomy.
+        p = _make_provider("minimax-test", default_model="minimax/M3", caller="")
         h.add_or_update(p)
         # Sanity: add_or_update's auto-detect should already have set caller,
         # lowercased to match the taxonomy (caller-validation spec).
         assert h.list_providers()[0].caller == "minimax"
 
         # Now simulate the broken-state scenario: caller explicitly empty.
-        broken = _make_provider("minimax-M3", caller="")
+        broken = _make_provider("minimax-test", default_model="minimax/M3", caller="")
         h.test_provider(broken, lambda r: callback.set())
         assert callback.wait(timeout=2.0), "test_provider callback never fired"
 
