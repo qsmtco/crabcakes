@@ -147,8 +147,52 @@ class SettingsHandler:
             # PHASE-10: auto-detect caller from default_model prefix when not set.
             # Mirrors add_or_update (lines 93-95); lets us self-heal providers whose
             # YAML entry has an empty/absent caller (the post-regression state).
+            # Caller validation (caller-validation spec): same lowercase + taxonomy
+            # check as add_or_update. On invalid caller, return a failed TestResult
+            # instead of raising (this is a daemon thread — exceptions get swallowed).
             if not provider.caller and provider.default_model and "/" in provider.default_model:
-                provider.caller = provider.default_model.split("/")[0]
+                provider.caller = provider.default_model.split("/")[0].lower()
+            if provider.caller and provider.caller not in get_valid_callers():
+                valid = sorted(get_valid_callers())
+                result = TestResult(
+                    ok=False,
+                    latency_ms=0,
+                    error=(
+                        f"Invalid caller {provider.caller!r}. "
+                        f"Valid callers: {', '.join(valid)}. "
+                        f"Set the caller field explicitly or use a model with a recognized prefix."
+                    ),
+                    model_used=provider.default_model,
+                )
+                # Stamp the failure on the provider, save, and dispatch the result.
+                providers = load_providers()
+                for i, p in enumerate(providers):
+                    if p.name == provider.name:
+                        providers[i] = ProviderConfig(
+                            name=p.name, base_url=p.base_url, api_key=p.api_key,
+                            default_model=p.default_model,
+                            caller=p.caller,                # PRESERVE — was missing, caused regression
+                            enabled=p.enabled, supports_tools=p.supports_tools,
+                            supports_streaming=p.supports_streaming,
+                            max_tokens=p.max_tokens, default_max_tokens=p.default_max_tokens,
+                            last_verified_at=p.last_verified_at,
+                            last_error=result.error or "unknown",
+                        )
+                        break
+                save_providers(providers)
+                # Dispatch result back to main thread.
+                def _dispatch_invalid():
+                    try:
+                        on_result(result)
+                    except Exception:
+                        logger.exception("test_provider on_result callback raised")
+                    if self._on_status_changed:
+                        self._on_status_changed(has_any_verified_provider(load_providers()))
+                if self._GLib is not None and hasattr(self._GLib, "idle_add"):
+                    self._GLib.idle_add(_dispatch_invalid)
+                else:
+                    _dispatch_invalid()
+                return  # do not call test_connection with an invalid caller
 
             try:
                 result = test_connection(
