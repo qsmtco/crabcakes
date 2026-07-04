@@ -19,12 +19,21 @@ import utils.providers_store as ps
 
 
 def _make_provider(name: str = "test", **overrides) -> ProviderConfig:
-    """Create a test ProviderConfig with sensible defaults."""
+    """Create a test ProviderConfig with sensible defaults.
+
+    caller-validation spec: default_model must be "<vendor>/<model>" so the
+    auto-detect can derive a valid caller. This fixture is used by tests
+    that go through save_providers (not add_or_update) so the caller
+    validation doesn't fire, but we use a real taxonomy prefix anyway for
+    consistency with sibling fixtures in test_settings_handler.py,
+    test_settings_dialog.py, test_window_settings_wiring.py, and
+    test_agent_config_yaml_fallback.py.
+    """
     defaults = dict(
         name=name,
         base_url=f"https://api.{name}.example.com/v1",
         api_key=f"sk-{name}-key",
-        default_model=f"{name}/model-v1",
+        default_model=f"openai/{name}-model",
     )
     defaults.update(overrides)
     return ProviderConfig(**defaults)
