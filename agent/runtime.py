@@ -949,7 +949,7 @@ def _stream_minimax_events(
             e.code, req.full_url, model, body[:500],
         )
         raise
-    with resp:
+    with resp as resp:
         # MiniMax may return a body-level error with HTTP 200 (not SSE).
         # Check the first non-empty line before entering SSE parsing.
         first_line = None
