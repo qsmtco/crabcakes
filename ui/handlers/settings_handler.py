@@ -161,6 +161,25 @@ class SettingsHandler:
             # instead of raising (this is a daemon thread — exceptions get swallowed).
             if not provider.caller and provider.default_model and "/" in provider.default_model:
                 provider.caller = provider.default_model.split("/")[0].lower()
+            elif not provider.caller:
+                # Gap fix: default_model has no "/" and caller is empty — auto-detect
+                # cannot derive a caller. Return a failed TestResult (do NOT raise —
+                # this is a daemon thread; exceptions get swallowed).
+                self._dispatch_test_result(
+                    provider,
+                    TestResult(
+                        ok=False,
+                        latency_ms=0,
+                        error=(
+                            "Cannot auto-detect caller: default_model must be "
+                            "'<vendor>/<model>'. Set caller explicitly or use a "
+                            "prefixed model."
+                        ),
+                        model_used=provider.default_model,
+                    ),
+                    on_result=on_result,
+                )
+                return
             if provider.caller and provider.caller not in get_valid_callers():
                 valid = sorted(get_valid_callers())
                 result = TestResult(
