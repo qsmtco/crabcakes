@@ -420,3 +420,160 @@ class TestTestProviderPrefillsMaxTokens:
         assert providers[0].max_tokens == 128_000, (
             f"BUG #7: wizard default was overwritten: max_tokens={providers[0].max_tokens}"
         )
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Strict caller validation (caller-validation.md)
+# ═══════════════════════════════════════════════════════════════════
+#
+# Adversarial tests for the auto-detect + validation logic. The OLD code
+# trusted whatever prefix was on default_model and the whatever value the
+# user hand-set on caller. The NEW code lowercases auto-detected prefixes
+# and validates both auto-detected and hand-set callers against the
+# taxonomy in agent.runtime._PROVIDER_CALLERS.
+
+import pytest
+
+
+class TestAddOrUpdateCallerValidation:
+    """add_or_update must reject unknown callers (auto-detected OR hand-set)."""
+
+    def test_add_or_update_lowercases_capitalized_prefix(self, tmp_config_dir):
+        """OpenRouter/x → caller 'openrouter' (lowercased, accepted).
+
+        Pre-fix bug: 'OpenRouter' was NOT in the taxonomy lookup (the dict
+        has 'openrouter' lowercase). The call would silently fail at runtime.
+        """
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name="p", base_url="https://x", api_key="k",
+            default_model="OpenRouter/free", caller="",
+        )
+        h.add_or_update(p)
+        assert h.list_providers()[0].caller == "openrouter"
+
+    def test_add_or_update_raises_on_capitalized_prefix(self, tmp_config_dir):
+        """OpenRouter/x with a name that has 'OpenRouter' as the prefix
+        AND nothing in caller. The lowercased form 'openrouter' IS valid,
+        so the test verifies the lowercasing happens, not that it raises.
+        But Poolside/x (a non-taxonomy prefix) MUST raise.
+        """
+        # The non-taxonomy case: this is the actual rejection path.
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name="p", base_url="https://x", api_key="k",
+            default_model="poolside/free", caller="",
+        )
+        with pytest.raises(ValueError, match="Invalid caller 'poolside'"):
+            h.add_or_update(p)
+
+    def test_add_or_update_raises_on_unknown_vendor_prefix(self, tmp_config_dir):
+        """poolside/x is not in the taxonomy — must raise."""
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name="p", base_url="https://x", api_key="k",
+            default_model="poolside/free", caller="",
+        )
+        with pytest.raises(ValueError, match="Invalid caller 'poolside'"):
+            h.add_or_update(p)
+
+    def test_add_or_update_raises_on_explicitly_invalid_caller(self, tmp_config_dir):
+        """User hand-sets caller='foo' — must raise even though auto-detect
+        would have produced a valid caller.
+        """
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name="p", base_url="https://x", api_key="k",
+            default_model="openai/gpt-4o", caller="foo",
+        )
+        with pytest.raises(ValueError, match="Invalid caller 'foo'"):
+            h.add_or_update(p)
+
+    @pytest.mark.parametrize("caller", ["anthropic", "minimax", "openai", "openrouter", "zai"])
+    def test_add_or_update_accepts_all_valid_callers(self, tmp_config_dir, caller):
+        """All 5 valid callers must be accepted (explicitly set)."""
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name=f"p-{caller}", base_url="https://x", api_key="k",
+            default_model=f"{caller}/model-v1", caller=caller,
+        )
+        h.add_or_update(p)  # must NOT raise
+        assert h.list_providers()[0].caller == caller
+
+    def test_add_or_update_lowercases_valid_capitalized_prefix(self, tmp_config_dir):
+        """Openai/x → caller 'openai' (lowercased, valid)."""
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name="p", base_url="https://x", api_key="k",
+            default_model="Openai/gpt-4o", caller="",
+        )
+        h.add_or_update(p)
+        assert h.list_providers()[0].caller == "openai"
+
+    def test_add_or_update_does_not_save_on_invalid_caller(self, tmp_config_dir):
+        """If validation raises, the provider is NOT saved (no half-saved state)."""
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name="p", base_url="https://x", api_key="k",
+            default_model="poolside/free", caller="",
+        )
+        with pytest.raises(ValueError):
+            h.add_or_update(p)
+        assert h.list_providers() == []  # nothing was saved
+
+    def test_add_or_update_existing_valid_provider_still_works(self, tmp_config_dir):
+        """Regression: the Bug #2/#3 fix that preserves caller=p.caller
+        in test_provider._worker must NOT be affected by caller validation.
+        A valid existing provider must still save and re-save without error.
+        """
+        h = SettingsHandler()
+        # Save a valid provider first
+        p1 = ProviderConfig(
+            name="p", base_url="https://x", api_key="k1",
+            default_model="openai/gpt-4o", caller="openai",
+        )
+        h.add_or_update(p1)
+        # Re-save with a different API key
+        p2 = ProviderConfig(
+            name="p", base_url="https://x", api_key="k2",
+            default_model="openai/gpt-4o", caller="openai",
+        )
+        h.add_or_update(p2)
+        assert h.list_providers()[0].api_key == "k2"
+
+
+class TestTestProviderCallerValidation:
+    """test_provider must return a failed TestResult (NOT raise) when the
+    resolved caller is invalid. The worker runs in a daemon thread — raising
+    would silently swallow the error.
+    """
+
+    def test_test_provider_returns_failed_result_on_invalid_caller(
+        self, tmp_config_dir, monkeypatch
+    ):
+        """Auto-detect from 'poolside/x' fails validation. The worker must
+        return a failed TestResult with a clear error message and dispatch it
+        via the on_result callback.
+        """
+        # The worker uses test_connection internally — but we want the
+        # validation to fire BEFORE that call. Mock it to assert it was
+        # NOT called when the caller is invalid.
+        from ui.handlers import settings_handler as sh
+        test_connection_called = []
+        def fake_test_connection(**_kw):
+            test_connection_called.append(_kw)
+            return TestResult(ok=True, latency_ms=0, error=None, model_used=_kw["model"])
+        monkeypatch.setattr(sh, "test_connection", fake_test_connection)
+
+        callback = threading.Event()
+        captured_result: list = []
+        h = SettingsHandler()
+        p = _make_provider("bad", default_model="poolside/free", caller="")
+        h.test_provider(p, lambda r: (captured_result.append(r), callback.set()))
+        assert callback.wait(timeout=2.0), "test_provider callback never fired"
+        assert len(captured_result) == 1
+        result = captured_result[0]
+        assert result.ok is False
+        assert "Invalid caller 'poolside'" in result.error
+        # The invalid-caller branch returns before calling test_connection.
+        assert test_connection_called == []
