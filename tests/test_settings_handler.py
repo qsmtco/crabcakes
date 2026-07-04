@@ -17,12 +17,18 @@ from utils.providers_store import load_providers
 
 
 def _make_provider(name: str = "test", **overrides) -> ProviderConfig:
-    """Create a test ProviderConfig with sensible defaults."""
+    """Create a test ProviderConfig with sensible defaults.
+
+    Default model uses the 'openai' prefix so the auto-detect
+    caller-validation (caller-validation spec) accepts it. Callers
+    that need to exercise different prefixes should pass
+    `default_model=...` explicitly.
+    """
     defaults = dict(
         name=name,
         base_url=f"https://api.{name}.example.com/v1",
         api_key=f"sk-{name}-key",
-        default_model=f"{name}/model-v1",
+        default_model="openai/test-model-v1",
     )
     defaults.update(overrides)
     return ProviderConfig(**defaults)
