@@ -172,11 +172,13 @@ class TestRefreshProviders:
         h.add_or_update(_make_provider("a"))
         d = SettingsDialog(parent=None, handler=h)
         assert d._cards[0]._name_entry.get_text() == "a"
-        # Update the provider via handler (simulates external change)
-        h.add_or_update(_make_provider("a", default_model="new-model"))
+        # Update the provider via handler (simulates external change).
+        # caller-validation spec: default_model must be "<vendor>/<model>" so
+        # the auto-detect can derive a caller. Use openai/ prefix.
+        h.add_or_update(_make_provider("a", default_model="openai/new-model"))
         d.refresh_providers(h.list_providers())
         # Clean card should reflect the new data
-        assert d._cards[0]._model_entry.get_text() == "new-model"
+        assert d._cards[0]._model_entry.get_text() == "openai/new-model"
 
 
 class TestRefreshProvidersPreservesUnsavedEdits:
