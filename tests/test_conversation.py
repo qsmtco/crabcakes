@@ -221,6 +221,83 @@ class TestConversationToApiMessages:
         assert msgs[3]["role"] == "tool"
         assert msgs[4]["role"] == "assistant"
 
+    def test_empty_assistant_message_substitutes_placeholder(self):
+        """Empty assistant message (no content, no tool_calls) is replaced with placeholder at the wire boundary.
+
+        This is defense-in-depth: a corrupt Message in conv.messages (created before
+        the write-side guard landed at agent/runtime.py:2222) should never produce
+        an empty {"role":"assistant","content":""} entry, because strict providers
+        (Cohere, strict OpenAI tool-loop, Anthropic strict mode) reject that with
+        HTTP 400 "must have non-empty content or tool calls".
+        """
+        c = Conversation(agent_name="Coder")
+        c.add_assistant_message("", [])
+        msgs = c.to_api_messages()
+        assert msgs == [
+            {
+                "role": "assistant",
+                "content": "[assistant returned no content — placeholder]",
+            }
+        ]
+
+    def test_empty_assistant_message_logs_warning(self, caplog):
+        """Empty assistant message substitution emits a warning log with idx info."""
+        import logging
+        c = Conversation(agent_name="Coder")
+        c.add_user_message("hello")
+        c.add_assistant_message("", [])  # corrupt
+        with caplog.at_level(logging.WARNING, logger="models.conversation"):
+            c.to_api_messages()
+        assert any(
+            "empty assistant message" in rec.message
+            and "idx=1" in rec.message
+            and rec.levelno == logging.WARNING
+            for rec in caplog.records
+        ), f"Expected WARNING with 'empty assistant message' and 'idx=1'. Got: {[r.message for r in caplog.records]}"
+
+    def test_assistant_message_with_only_tool_calls_does_not_substitute(self):
+        """Empty content + non-empty tool_calls is VALID; placeholder must NOT fire.
+
+        Strict providers reject empty content with NO tool_calls, but they accept
+        empty content WITH tool_calls (the content is optional when there are
+        tool_calls). The Phase 1 guard must only fire when both are falsy.
+        """
+        c = Conversation(agent_name="Coder")
+        tc = ToolCall(call_id="call_abc", tool_name="read_file", arguments={"path": "a.py"})
+        c.add_assistant_message("", [tc])
+        msgs = c.to_api_messages()
+        assert msgs[0]["role"] == "assistant"
+        assert msgs[0]["content"] == ""  # unchanged, not the placeholder
+        assert msgs[0]["tool_calls"][0]["id"] == "call_abc"
+        assert "[placeholder]" not in msgs[0]["content"]
+
+    def test_assistant_message_with_only_content_does_not_substitute(self):
+        """Non-empty content + no tool_calls is the normal text-only path; placeholder must NOT fire."""
+        c = Conversation(agent_name="Coder")
+        c.add_assistant_message("Here is the answer", [])
+        msgs = c.to_api_messages()
+        assert msgs == [{"role": "assistant", "content": "Here is the answer"}]
+
+    def test_corrupt_message_mid_sequence_uses_correct_index_in_warning(self, caplog):
+        """Corrupt message at non-zero position: warning reports output-list index, not input-list index.
+
+        Sequence: [user('a'), user('b'), corrupt assistant, user('c')]
+        Output: 0='a', 1='b', 2=corrupt, 3='c' → warning must say idx=2.
+        """
+        import logging
+        c = Conversation(agent_name="Coder")
+        c.add_user_message("a")
+        c.add_user_message("b")
+        c.add_assistant_message("", [])  # corrupt, will be at output index 2
+        c.add_user_message("c")
+        with caplog.at_level(logging.WARNING, logger="models.conversation"):
+            c.to_api_messages()
+        assert any(
+            "empty assistant message" in rec.message
+            and "idx=2" in rec.message
+            for rec in caplog.records
+        ), f"Expected WARNING with 'idx=2'. Got: {[r.message for r in caplog.records]}"
+
 
 class TestConversationTokenEstimate:
     """Phase CB-4: tests use tolerance-based assertions because tiktoken counts differ from chars // 4.
