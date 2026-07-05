@@ -1,4 +1,5 @@
 import json
+import logging
 # models/conversation.py
 # Conversation and Message data models for the agent runtime.
 #
@@ -21,6 +22,8 @@ from typing import Callable
 # See SPEC-CONTEXT-BLOAT-PHASE-4.md §2.2.
 
 _DEFAULT_ENCODING_NAME = "cl100k_base"  # GPT-4 / GPT-3.5-turbo encoding; reasonable proxy for non-OpenAI models
+
+_logger = logging.getLogger(__name__)
 
 
 def _tiktoken_encoding_for(model) -> object | None:
@@ -245,19 +248,40 @@ class Conversation:
                 result.append({"role": "user", "content": msg.content})
 
             elif msg.role == MessageRole.ASSISTANT:
-                entry: dict = {"role": "assistant", "content": msg.content}
-                if msg.tool_calls:
-                    entry["tool_calls"] = [
-                        {
-                            "id": tc.call_id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.tool_name,
-                                "arguments": json.dumps(tc.arguments),
-                            },
-                        }
-                        for tc in msg.tool_calls
-                    ]
+                # Defense in depth: strict providers (Cohere, OpenAI tool-loop,
+                # Anthropic strict mode) reject {"role":"assistant","content":""}
+                # with HTTP 400 "must have non-empty content or tool calls".
+                # A corrupt message can exist in conv.messages if it was created
+                # before the write-side guard landed, or via some other path we
+                # haven't audited. Substitute a descriptive placeholder at the
+                # wire boundary so the call succeeds. The original Message stays
+                # in conv.messages (audit trail preserved); only the serialized
+                # form changes.
+                if not msg.content and not msg.tool_calls:
+                    _logger.warning(
+                        "to_api_messages: empty assistant message at idx=%d "
+                        "(role=ASSISTANT, content='', tool_calls=[]) — "
+                        "substituting placeholder to satisfy strict providers",
+                        len(result),
+                    )
+                    entry = {
+                        "role": "assistant",
+                        "content": "[assistant returned no content — placeholder]",
+                    }
+                else:
+                    entry = {"role": "assistant", "content": msg.content}
+                    if msg.tool_calls:
+                        entry["tool_calls"] = [
+                            {
+                                "id": tc.call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.tool_name,
+                                    "arguments": json.dumps(tc.arguments),
+                                },
+                            }
+                            for tc in msg.tool_calls
+                        ]
                 result.append(entry)
 
             elif msg.role == MessageRole.TOOL_RESULT:
