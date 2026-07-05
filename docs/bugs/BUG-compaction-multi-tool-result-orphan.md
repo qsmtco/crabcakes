@@ -138,6 +138,47 @@ def _remove_orphan_tool_results(conv):
 _remove_orphan_tool_results(conv)
 ```
 
+## Stopgap: heal the already-corrupted on-disk conversation
+
+The deployed compaction has already written orphan TRs into `~/.config/crabcakes/conversations/special:coder.json`. After the runtime fix lands, the **next** compaction will sweep orphans correctly, but **this saved conversation will still send orphans on every turn** until it heals.
+
+A one-shot script can strip orphans from the on-disk file **without** triggering a compaction. Run once, then back up `special:coder.json` to e.g. `special:coder.heal-pre.bak.json`:
+
+```python
+#!/usr/bin/env python3
+"""One-shot: strip orphan tool_results from special:coder.json."""
+import json, sys
+from pathlib import Path
+
+path = Path.home() / ".config/crabcakes/conversations/special:coder.json"
+data = json.loads(path.read_text())
+
+msgs = data["messages"]
+valid_ids = set()
+for m in msgs:
+    if m["role"] == "assistant":
+        for tc in m.get("tool_calls") or []:
+            valid_ids.add(tc["call_id"])
+
+before = len(msgs)
+msgs[:] = [
+    m for m in msgs
+    if m["role"] != "tool" or m.get("tool_call_id") in valid_ids
+]
+removed = before - len(msgs)
+data["messages"] = msgs
+
+path.write_text(json.dumps(data, indent=2))
+print(f"stripped {removed} orphan tool message(s) from {path}")
+```
+
+Run order after fix deployment:
+
+1. Back up `special:coder.json`.
+2. Apply the runtime fix (`compact()` change + test).
+3. Run the heal script above against the saved conversation.
+4. Restart the agent.
+
 ## Verification
 
 Add a test in `tests/test_context_strategy.py`:
