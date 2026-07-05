@@ -90,9 +90,9 @@ A 1-line stopgap command repairs the supervisor's on-disk conversation file in t
 
 1. Add `import logging` at the top of the file (after `import json`).
 2. Add module-level logger: `_logger = logging.getLogger(__name__)` after the imports block.
-3. In `to_api_messages()`, replace the ASSISTANT branch (lines 244–258) with a version that substitutes a placeholder for empty-content+no-tool-calls messages and logs a warning at serialization time.
+3. In `to_api_messages()`, replace the ASSISTANT branch (lines 246–260 pre-Phase-1, lines 250–284 post-Phase-1) with a version that substitutes a placeholder for empty-content+no-tool-calls messages and logs a warning at serialization time.
 
-**Exact change (anchor lines: 244–258, current):**
+**Exact change (anchor lines: 250–284, post-Phase-1):**
 
 ```python
             elif msg.role == MessageRole.ASSISTANT:
