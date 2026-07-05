@@ -754,3 +754,142 @@ class TestFindSplitIndexCB6Hardening:
                 assert parent_found, (
                     f"Orphaned TOOL_RESULT at index {i} in tail (split={split})"
                 )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Regression test helpers (spec §8)
+# ─────────────────────────────────────────────────────────────────────────
+
+def _build_conversation(spec, *, system_prompt="", model="test/x"):
+    """Build a Conversation from a compact spec."""
+    from models.conversation import Conversation, MessageRole, ToolCall, Message
+    conv = Conversation(agent_name="t", model=model, system_prompt=system_prompt)
+    for entry in spec:
+        role = entry[0]
+        content = entry[1] if len(entry) > 1 else ""
+        if role == "user":
+            conv.add_user_message(content)
+        elif role == "assistant":
+            tcs = []
+            opts = entry[2] if len(entry) > 2 else {}
+            for tc_spec in opts.get("tool_calls", []):
+                tcs.append(ToolCall(call_id=tc_spec["call_id"], tool_name="x", arguments={}))
+            conv.add_assistant_message(content, tcs)
+        elif role == "tool":
+            conv.add_tool_result(content, "stub")
+    return conv
+
+
+def _count_orphan_tool_results(conv):
+    """Count TRs whose tool_call_id has no matching ASSISTANT tool_call."""
+    valid_ids = set()
+    for m in conv.messages:
+        if m.role == MessageRole.ASSISTANT and m.tool_calls:
+            for tc in m.tool_calls:
+                valid_ids.add(tc.call_id)
+    return sum(
+        1 for m in conv.messages
+        if m.role == MessageRole.TOOL_RESULT and m.tool_call_id not in valid_ids
+    )
+
+
+class TestMultiToolCallOrphanRegression:
+    """Regression tests for the multi-tool-call orphan fix (spec §8)."""
+
+    def test_compact_pops_all_sibling_tool_results_for_multi_tc_assistant(self):
+        """When trimming an ASSISTANT-with-tool-calls, pop ALL sibling TRs."""
+        conv = _build_conversation(
+            [
+                ("user", "u1"),
+                ("assistant", "a1"),
+                ("assistant", "plan", {"tool_calls": [
+                    {"call_id": "c1"}, {"call_id": "c2"}, {"call_id": "c3"},
+                ]}),
+                ("tool", "c1"), ("tool", "c2"), ("tool", "c3"),
+                ("user", "u2"), ("assistant", "a2"),
+                ("user", "u3"), ("assistant", "a3"),
+            ],
+            system_prompt="S" * 200,
+        )
+        # Pad TRs to push over budget
+        for i, m in enumerate(conv.messages):
+            if m.role == MessageRole.TOOL_RESULT:
+                m.content = "X " * 400
+        DefaultContextStrategy().compact(conv, token_budget=600, keep_first=2)
+        orphans = _count_orphan_tool_results(conv)
+        assert orphans == 0, f"expected 0 orphans, got {orphans}"
+        assert len(conv.messages) == 6, f"expected 6 messages, got {len(conv.messages)}"
+
+    def test_compact_skips_straddle_group_no_orphans_no_hang(self):
+        """When TRs straddle tail_preserve boundary, skip the group."""
+        conv = _build_conversation(
+            [
+                ("user", "u1"),
+                ("assistant", "a1"),
+                ("assistant", "plan", {"tool_calls": [
+                    {"call_id": "c1"}, {"call_id": "c2"}, {"call_id": "c3"},
+                ]}),
+                ("tool", "c1"), ("tool", "c2"), ("tool", "c3"),
+                ("user", "u2"), ("assistant", "a2"),
+            ],
+            system_prompt="S" * 200,
+        )
+        # Pad to push over budget
+        for i, m in enumerate(conv.messages):
+            if m.role == MessageRole.TOOL_RESULT:
+                m.content = "X " * 400
+        # This MUST terminate, not hang
+        import signal
+        def _handler(signum, frame): raise TimeoutError("compact hung")
+        signal.signal(signal.SIGALRM, _handler)
+        signal.alarm(5)  # 5-second cap
+        try:
+            DefaultContextStrategy().compact(conv, token_budget=300, keep_first=2)
+        finally:
+            signal.alarm(0)
+        orphans = _count_orphan_tool_results(conv)
+        assert orphans == 0, f"expected 0 orphans, got {orphans}"
+
+    def test_post_trim_sweep_strips_residual_orphans(self):
+        """Sweep catches orphans introduced by other code paths."""
+        conv = _build_conversation(
+            [
+                ("user", "u1"),
+                ("assistant", "a1"),
+                ("tool", "orphan_tcid"),  # TR with no parent — orphan from start
+                ("user", "u2"),
+                ("assistant", "a2"),
+            ],
+            system_prompt="S" * 200,
+        )
+        # Run with a budget that triggers the trim loop but won't remove orphan
+        DefaultContextStrategy().compact(conv, token_budget=10, keep_first=2)
+        orphans = _count_orphan_tool_results(conv)
+        assert orphans == 0, f"sweep should strip orphan, got {orphans}"
+
+    def test_compact_terminates_on_pathological_input(self):
+        """Iteration cap prevents runaway loop on impossible-to-reduce conversations."""
+        # Build a conversation that would loop forever without the cap
+        conv = _build_conversation(
+            [
+                ("user", "u1"),
+                ("assistant", "a1"),
+                ("assistant", "plan", {"tool_calls": [
+                    {"call_id": "c1"}, {"call_id": "c2"}, {"call_id": "c3"},
+                ]}),
+                ("tool", "c1"), ("tool", "c2"), ("tool", "c3"),
+                ("user", "u2"), ("assistant", "a2"),
+            ],
+            system_prompt="S" * 200,
+        )
+        # Tight budget that triggers straddle but doesn't allow reduction
+        import signal
+        def _handler(signum, frame): raise TimeoutError("compact hung")
+        signal.signal(signal.SIGALRM, _handler)
+        signal.alarm(10)
+        try:
+            DefaultContextStrategy().compact(conv, token_budget=100, keep_first=2)
+        finally:
+            signal.alarm(0)
+        # Wire format MUST be valid even if budget not met
+        assert _count_orphan_tool_results(conv) == 0
