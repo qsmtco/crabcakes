@@ -90,7 +90,7 @@ An assistant message with empty content BUT with tool_calls is NOT corrupt — s
         tool_calls). The Phase 1 guard must only fire when both are falsy.
         """
         c = Conversation(agent_name="Coder")
-        tc = ToolCall(call_call_id="call_abc", tool_name="read_file", arguments={"path": "a.py"}) if False else ToolCall(call_id="call_abc", tool_name="read_file", arguments={"path": "a.py"})
+        tc = ToolCall(call_id="call_abc", tool_name="read_file", arguments={"path": "a.py"})
         c.add_assistant_message("", [tc])
         msgs = c.to_api_messages()
         assert msgs[0]["role"] == "assistant"
@@ -98,8 +98,6 @@ An assistant message with empty content BUT with tool_calls is NOT corrupt — s
         assert msgs[0]["tool_calls"][0]["id"] == "call_abc"
         assert "[placeholder]" not in msgs[0]["content"]
 ```
-
-Note: The `if False else ToolCall(...)` line is a comment-out pattern that prevents the `call_call_id` typo in the spec from leaking into production. Use only the `else` branch's `ToolCall(call_id="call_abc", ...)`. This is a guard rail against any copy-paste errors in this instructions file. **If you find yourself copying the `if False else` part, stop and use only the right-hand `ToolCall(call_id=...)` call.**
 
 #### Test 4: `test_assistant_message_with_only_content_does_not_substitute`
 
@@ -278,7 +276,7 @@ When complete, reply with:
 6. **Implementation-choice rationale** (Step 6.7) — for Phase 3 the choices are:
    - (a) Why inline `import logging` inside test functions instead of at top of file? (Answer: matches existing project convention in `test_context_strategy_audit_fixes2.py` and `test_prompt_loader.py`. Avoids polluting module-level imports with test-only deps.)
    - (b) Why use `caplog.at_level(logging.WARNING, logger="models.conversation")` instead of just `caplog.at_level(logging.WARNING)`? (Answer: scopes the capture to the specific logger to avoid noise from other modules.)
-   - (c) Why Test 3 has the weird `if False else ToolCall(...)` pattern? (Answer: it's a guard rail in the instructions file to prevent typos from leaking into the test. The actual test code uses ONLY the right-hand `ToolCall(call_id=...)` call. If you wrote it differently in the test, that's fine — the guard rail was for the instructions, not the test.)
+   - (c) Why Test 3 uses `tc = ToolCall(call_id="call_abc", ...)` directly? (Answer: simplest form. The earlier draft had a confusing `if False else` guard rail that was for the instructions file only, not the actual test code.)
    - If you made other choices, document them.
 7. **Spec drift check** (Step 6.8) — confirm the test class boundaries (line 166 start, line 222 end-of-sequence, line 224 start-of-next-class) match the actual current file. If they drifted, flag it.
 
