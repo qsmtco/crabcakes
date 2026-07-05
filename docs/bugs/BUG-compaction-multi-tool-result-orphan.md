@@ -8,7 +8,9 @@
 
 ## Symptom
 
-Sending any message to the Coder agent fails with:
+Sending any message to the Coder agent fails. Confirmed across **two independent providers**, both rejecting the same first orphan id (`call_function_bng8mesvwhyp_2`) at the same wire position:
+
+**Cohere via OpenRouter** (model `cohere/north-mini-code:free`):
 
 ```
 HTTPError: HTTP Error 400: Bad Request
@@ -16,9 +18,14 @@ HTTPError: HTTP Error 400: Bad Request
  not found in previous tool calls"
 ```
 
-The error returns at Cohere (via OpenRouter) for `cohere/north-mini-code:free`. It also affects any provider that validates tool-call/tool-result pairing (OpenAI, Anthropic, Cohere all enforce this).
+**MiniMax** (model `minimax/Minimax-M3`, provider `minimax`):
 
-The HTTPError body — now correctly logged by the previous fix — is:
+```
+RuntimeError: MiniMax API error (status_code=2013):
+  invalid params, tool result's tool id(call_function_bng8mesvwhyp_2) not found
+```
+
+The HTTPError body from Cohere — now correctly logged by the previous fix (SPEC-CODER-400-STALE-MESSAGES-AND-HTTPERROR-BODY) — is:
 
 ```json
 {"error":{"message":"Provider returned error","code":400,
@@ -26,6 +33,8 @@ The HTTPError body — now correctly logged by the previous fix — is:
   tool call id 'call_function_bng8mesvwhyp_2' not found in previous tool calls\"}",
   "provider_name":"Cohere"}}}
 ```
+
+This confirms the failure is at the wire-payload shape, **not** at any model-specific behavior. Any strict provider (Cohere, OpenAI, Anthropic, MiniMax) rejects; lenient ones may silently drop orphans or reconstruct — but the wire payload is malformed either way.
 
 ## Root cause
 
