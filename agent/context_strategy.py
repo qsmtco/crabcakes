@@ -187,7 +187,24 @@ class DefaultContextStrategy:
                     and conv.messages[idx - 1].tool_calls
                     and (idx - 1) >= keep_first
                 ):
+                    # Parent ASSISTANT in trimmable region — pop the pair.
+                    parent_call_ids = {
+                        tc.call_id for tc in conv.messages[idx - 1].tool_calls
+                    }
                     conv.messages.pop(idx - 1)
+                    # After popping the first TR + parent, sweep any remaining
+                    # trimmable sibling TRs. (Sibling TRs in tail are fine — the
+                    # parent is gone, but the post-trim orphan sweep below will
+                    # clean them up. We do not need to preserve tail here because
+                    # the parent is already gone.)
+                    trimmable_end = len(conv.messages) - tail_preserve
+                    while (
+                        idx + 1 < len(conv.messages)
+                        and conv.messages[idx + 1].role == MessageRole.TOOL_RESULT
+                        and conv.messages[idx + 1].tool_call_id in parent_call_ids
+                        and (idx + 1) < trimmable_end
+                    ):
+                        conv.messages.pop(idx + 1)
                 elif (
                     idx > 0
                     and conv.messages[idx - 1].role == MessageRole.ASSISTANT
