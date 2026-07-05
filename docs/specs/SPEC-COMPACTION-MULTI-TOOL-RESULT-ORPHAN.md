@@ -1,160 +1,241 @@
-# SPEC: Compaction Orphans Multi-Tool-Call Results
+# SPEC: Compaction Multi-Tool-Result Orphan Fix
 
+**Status:** Ready for implementation
 **Date:** 2026-07-04
-**Author:** qaster (OC Tech Supervisor)
-**Status:** Draft — for implementation
 **Implements:** `docs/bugs/BUG-compaction-multi-tool-result-orphan.md`
-**Depends on:** None (prior SPEC-CODER-400-STALE-MESSAGES-AND-HTTPERROR-BODY already landed)
+**Depends on:** `SPEC-CODER-400-STALE-MESSAGES-AND-HTTPERROR-BODY` (landed)
 **Target branch:** main
-
-> Architecture compliance: This fix is internal to `DefaultContextStrategy.compact()` in `agent/context_strategy.py`. It does not change the `ContextStrategy` protocol, `Conversation` data model, or any handler. Per ARCHITECTURE.md §3.21l, compaction logic lives in the strategy class, not in `Conversation`.
 
 ---
 
 ## 1. Overview
 
-### Problem
+Fix a critical bug in `DefaultContextStrategy.compact()` where trimming an
+`ASSISTANT-with-tool-calls` message that has **multiple** matching
+`TOOL_RESULT` children leaves orphan `TOOL_RESULT` messages in the conversation.
+The wire payload becomes invalid; strict API providers (Cohere, OpenAI,
+Anthropic, MiniMax) reject it with HTTP 400 / 2013.
 
-When an assistant message issues **multiple tool calls** (e.g. `c1`, `c2`, `c3`), the conversation stores three separate `TOOL_RESULT` messages — one per call ID. The trim loop in `DefaultContextStrategy.compact()` only pops **one** `TOOL_RESULT` when removing the parent `ASSISTANT-with-tool-calls`. The remaining tool results become **orphans**: their `tool_call_id` references a parent that no longer exists in the message list. Any strict API provider (OpenAI, Cohere, MiniMax, Anthropic) rejects the payload with HTTP 400.
+The fix has three parts:
+1. **Trim loop** — when popping an `ASSISTANT-with-tool-calls`, pop **all**
+   trimmable sibling `TOOL_RESULT`s, not just the first.
+2. **Tail boundary safety** — when sibling `TOOL_RESULT`s straddle the
+   `tail_preserve` boundary, **skip** the entire group instead of
+   partially removing it.
+3. **Post-trim orphan sweep** — defense in depth: after the trim loop,
+   strip any remaining `TOOL_RESULT` whose `tool_call_id` is no longer
+   claimed by an `ASSISTANT` in the conversation.
 
-### Reproduction (verified deterministically)
+All three parts are required. Part 1 alone fails on boundary-straddle
+scenarios. Parts 1+2 alone fail if `_select_prune_candidate` returns a
+different path. Part 3 cleans up anything parts 1 and 2 missed.
+
+---
+
+## 2. Problem Statement
+
+### Symptom (verified across 4 providers)
+
+Sending any message to the Coder agent fails with one of:
+
+| Provider | Status | Error |
+|----------|--------|-------|
+| Cohere (via OpenRouter) | 400 | `invalid tool message at messages[4]: tool call id 'call_function_bng8mesvwhyp_2' not found in previous tool calls` |
+| OpenAI | 400 | `messages with role 'tool' must be a response to a preceeding message with 'tool_calls'` |
+| Anthropic | 400 | `tool_result blocks must follow tool_use blocks in the previous assistant turn` |
+| MiniMax | 2013 | `invalid params, tool result's tool id(call_function_bng8mesvwhyp_2) not found` |
+
+All four point at the **same** orphan `tool_call_id` in the **same**
+position (`messages[4]` / API[4]) on the same saved conversation file.
+The cause is wire-payload shape, not provider behavior.
+
+### Root cause
+
+In `agent/context_strategy.py` (`DefaultContextStrategy.compact()`,
+`ASSISTANT-with-tool_calls` branch), the trim loop pops only **one**
+`TOOL_RESULT` when removing an `ASSISTANT-with-tool-calls`:
 
 ```python
+# BUGGY (existing code, lines ~191-216)
+elif msg.role == MessageRole.ASSISTANT and msg.tool_calls:
+    trimmable_end = len(conv.messages) - tail_preserve
+    if (
+        idx + 1 < len(conv.messages)
+        and conv.messages[idx + 1].role == MessageRole.TOOL_RESULT
+        and (idx + 1) < trimmable_end
+    ):
+        conv.messages.pop(idx + 1)   # pops ONE TR
+        conv.messages.pop(idx)       # pops the assistant
+    elif ...:                        # (tail_preserve branch — Audit-Fix-27)
+        continue
+    else:
+        conv.messages.pop(idx)       # no TR at idx+1 — safe
+```
+
+When the assistant has N ≥ 2 `tool_calls`, the conversation stores N
+sibling `TOOL_RESULT` messages. Removing only the first leaves the other
+N−1 as **orphans** — their `tool_call_id` references a parent that no
+longer exists.
+
+The bug is triggered every time the trim loop encounters an
+`ASSISTANT-with-tool-calls` whose first `TOOL_RESULT` is in the trimmable
+region but later sibling `TOOL_RESULT`s also exist. This affects any
+agent that issues parallel tool calls.
+
+---
+
+## 3. Reproduction (verified)
+
+### Scenario A — All sibling TRs in trimmable region (production case)
+
+```python
+from models.conversation import Conversation, MessageRole, ToolCall
+
 conv = Conversation(agent_name="test", model="test/x", system_prompt="S" * 200)
-conv.add_user_message("u1" + " x" * 100)
-conv.add_assistant_message("a1" + " x" * 100, [])
+conv.add_user_message("u1 " + "x" * 100)
+conv.add_assistant_message("a1 " + "x" * 100, [])
+conv.add_assistant_message(
+    "plan",
+    [
+        ToolCall(call_id="c1", tool_name="x", arguments={}),
+        ToolCall(call_id="c2", tool_name="y", arguments={}),
+        ToolCall(call_id="c3", tool_name="z", arguments={}),
+    ],
+)
+conv.add_tool_result("c1", "r1 " + "X " * 400)
+conv.add_tool_result("c2", "r2 " + "X " * 400)
+conv.add_tool_result("c3", "r3 " + "X " * 400)
+conv.add_user_message("u2 " + "x" * 100)
+conv.add_assistant_message("a2 " + "x" * 100, [])
+conv.add_user_message("u3 " + "x" * 100)
+conv.add_assistant_message("a3 " + "x" * 100, [])
+
+DefaultContextStrategy().compact(conv, token_budget=600, keep_first=2)
+
+# Buggy code output:
+#   msgs=8, orphans=['c3']
+# Fixed code output:
+#   msgs=6, orphans=[]
+```
+
+### Scenario B — Sibling TRs straddle tail boundary (edge case)
+
+```python
+# Same as A but without the trailing user/assistant pair so that
+# trimmable_end = len - tail_preserve = 8 - 4 = 4, putting TRs at
+# idx 3,4,5 with idx 5 in tail.
+conv = Conversation(agent_name="test", model="test/x", system_prompt="S" * 200)
+conv.add_user_message("u1 " + "x" * 100)
+conv.add_assistant_message("a1 " + "x" * 100, [])
 conv.add_assistant_message("plan", [
     ToolCall(call_id="c1", tool_name="x", arguments={}),
     ToolCall(call_id="c2", tool_name="y", arguments={}),
     ToolCall(call_id="c3", tool_name="z", arguments={}),
 ])
-conv.add_tool_result("c1", "result1 " + "X " * 400)
-conv.add_tool_result("c2", "result2 " + "X " * 400)
-conv.add_tool_result("c3", "result3 " + "X " * 400)
-conv.add_user_message("u2" + " x" * 100)
-conv.add_assistant_message("a2" + " x" * 100, [])
-conv.add_user_message("u3" + " x" * 100)
-conv.add_assistant_message("a3" + " x" * 100, [])
+conv.add_tool_result("c1", "r1 " + "X " * 400)  # trimmable
+conv.add_tool_result("c2", "r2 " + "X " * 400)  # trimmable
+conv.add_tool_result("c3", "r3 " + "X " * 400)  # TAIL
+conv.add_user_message("u2 " + "x" * 100)        # TAIL
+conv.add_assistant_message("a2 " + "x" * 100, []) # TAIL
 
-DefaultContextStrategy().compact(conv, token_budget=1518, keep_first=2)
-# Result: 8 messages, 2 orphaned TOOL_RESULTs (c2, c3)
+DefaultContextStrategy().compact(conv, token_budget=300, keep_first=2)
+
+# Buggy code output:
+#   msgs=6, orphans=['c2', 'c3']
+# Naive-fix output (snapshot trimmable_end):
+#   msgs=4, CB-6 VIOLATIONS (assistant claims c1,c2,c3, no matching TRs)
+# Correct fix output:
+#   msgs=8 (unchanged), orphans=[], est=666 (over budget but valid wire format)
 ```
 
-**Root cause line:** `agent/context_strategy.py:193-202` — the ASSISTANT-with-tool-calls branch pops only the immediately following `TOOL_RESULT`:
+### Scenario C — Real production conversation
 
 ```python
-# Lines 193-202 (current, buggy)
-elif msg.role == MessageRole.ASSISTANT and msg.tool_calls:
-    trimmable_end = len(conv.messages) - tail_preserve
-    if (
-        idx + 1 < len(conv.messages)
-        and conv.messages[idx + 1].role == MessageRole.TOOL_RESULT
-        and (idx + 1) < trimmable_end
-    ):
-        conv.messages.pop(idx + 1)   # ← pops ONE tool result
-        conv.messages.pop(idx)       # ← pops the assistant
+import json
+with open("/home/q/.config/crabcakes/conversations/special:coder.json") as f:
+    data = json.load(f)
+# 1913 messages, est=301,716 tokens, soft ceiling 209,600 (80% of 262,000)
+# ... rebuild Conversation ...
+DefaultContextStrategy().compact(conv, token_budget=209_600)
+
+# Buggy code output: 50 orphan tool_call_ids (matches Cohere + MiniMax logs)
+# Fixed code output: 0 orphans, 1521 messages, est=208,397
 ```
-
-### Solution
-
-Two-part fix, both in `agent/context_strategy.py`:
-
-1. **Trim loop fix** (lines 193-218): Replace the single-pop with a `while` loop that pops **all** consecutive `TOOL_RESULT` messages whose `tool_call_id` matches one of the assistant's `tool_calls[].call_id`, followed by the assistant itself. Includes the same tail_preserve-zone safety check as the existing code.
-
-2. **Post-trim orphan sweep**: A defensive one-pass filter that removes any `TOOL_RESULT` whose parent `ASSISTANT-with-tool-calls` has been removed by any prior trim-loop iteration. Runs after the trim loop exits and before summary injection. Catches orphans from all code paths (including the TOOL_RESULT branch and the budget-met-mid-cleanup edge case).
-
-### Scope
-
-| Area | In scope | Out of scope |
-|------|----------|--------------|
-| `compact()` trim loop | ✅ Fix ASSISTANT branch multi-TR handling | |
-| `compact()` TOOL_RESULT branch | ✅ Fix same multi-TR orphan when TR is selected first | |
-| `compact()` post-trim sweep | ✅ Add orphan sweep before summary injection | |
-| `to_api_messages()` | | ❌ Already correct (serializes whatever is in `conv.messages`) |
-| `_select_prune_candidate()` | | ❌ Already correct (returns the right index; the pop logic is the bug) |
-| `_find_split_index()` | | ❌ Already handles multi-TR CB-6 (Phase 9 hardening) |
-| `Conversation` data model | | ❌ No changes |
-| `ContextStrategy` protocol | | ❌ No changes |
 
 ---
 
-## 2. Changes by File
+## 4. Proposed Solution
 
-### `agent/context_strategy.py`
+### Change 1: Trim loop — pop all trimmable sibling TRs
 
-#### Change 1: ASSISTANT-with-tool-calls trim branch (lines 193-218)
+**Anchor:** find the `elif msg.role == MessageRole.ASSISTANT and msg.tool_calls:`
+branch in `compact()`. The existing buggy branch starts with
+`trimmable_end = len(conv.messages) - tail_preserve`.
 
-**Current code (lines 193-218):**
-
-```python
-elif msg.role == MessageRole.ASSISTANT and msg.tool_calls:
-    trimmable_end = len(conv.messages) - tail_preserve
-    if (
-        idx + 1 < len(conv.messages)
-        and conv.messages[idx + 1].role == MessageRole.TOOL_RESULT
-        and (idx + 1) < trimmable_end
-    ):
-        # CB-6 safe: ASSISTANT+tc and TR both in trimmable region.
-        conv.messages.pop(idx + 1)
-        conv.messages.pop(idx)
-    elif (
-        idx + 1 < len(conv.messages)
-        and conv.messages[idx + 1].role == MessageRole.TOOL_RESULT
-    ):
-        # Audit-Fix-27 (Bug #4): TR is in tail_preserve zone — ...
-        continue
-    else:
-        # No TOOL_RESULT at idx+1 — safe to pop ASSISTANT alone.
-        conv.messages.pop(idx)
-```
-
-**Replacement code:**
+**Replacement:**
 
 ```python
 elif msg.role == MessageRole.ASSISTANT and msg.tool_calls:
-    # CB-6: this ASSISTANT's N tool_calls generate N matching
-    # TOOL_RESULT messages. Pop ALL of them, not just the first.
+    # CB-6: this assistant's N tool_calls generate N sibling TRs.
+    # Pop ALL trimmable siblings, not just the first.
     call_ids = {tc.call_id for tc in msg.tool_calls}
     trimmable_end = len(conv.messages) - tail_preserve
 
-    # Pop all consecutive matching TRs that are in the trimmable region.
+    # Scan siblings. If ANY sibling TR is in tail_preserve zone,
+    # skip the entire group — we cannot pop the assistant without
+    # orphaning the tail TR (CB-6 violation).
+    scan_idx = idx + 1
+    tail_sibling = False
+    while (
+        scan_idx < len(conv.messages)
+        and conv.messages[scan_idx].role == MessageRole.TOOL_RESULT
+        and conv.messages[scan_idx].tool_call_id in call_ids
+    ):
+        if scan_idx >= trimmable_end:
+            tail_sibling = True
+            break
+        scan_idx += 1
+
+    if tail_sibling:
+        # Sibling TR is in tail. Don't pop the assistant. Trim loop
+        # will try a different candidate on the next iteration.
+        # If no candidates remain, the while-loop guard
+        # (conv.get_token_estimate() > token_budget) terminates
+        # compaction cleanly.
+        continue
+
+    # All siblings (if any) are in trimmable. Pop them all, then the assistant.
     while (
         idx + 1 < len(conv.messages)
         and conv.messages[idx + 1].role == MessageRole.TOOL_RESULT
-        and (idx + 1) < trimmable_end
         and conv.messages[idx + 1].tool_call_id in call_ids
     ):
         conv.messages.pop(idx + 1)
-
-    # Check if any matching TR landed in the tail_preserve zone.
-    # If so, we cannot remove the ASSISTANT without orphaning that TR.
-    # Skip this candidate (same logic as Audit-Fix-27 Bug #4).
-    next_msg = (
-        conv.messages[idx + 1]
-        if idx + 1 < len(conv.messages)
-        else None
-    )
-    if (
-        next_msg is not None
-        and next_msg.role == MessageRole.TOOL_RESULT
-        and next_msg.tool_call_id in call_ids
-    ):
-        # A matching TR is in tail_preserve — bail out.
-        continue
-
-    # All matching TRs popped (or none existed). Safe to remove ASSISTANT.
     conv.messages.pop(idx)
 ```
 
-**What changes:**
-- Replaces single `pop(idx + 1)` with a `while` loop that pops all consecutive matching TRs.
-- The `call_ids` set ensures we only pop TRs belonging to THIS assistant (not adjacent ones from a different assistant).
-- The tail_preserve safety check is preserved: if any matching TR is in the tail, we `continue` without popping the assistant.
-- The "no TR at idx+1" case is handled naturally: the while loop doesn't execute, the tail check passes (next_msg is not a matching TR), and the assistant is popped.
+**Why this design (and not "snapshot trimmable_end"):**
 
-#### Change 2: TOOL_RESULT branch (lines 174-191)
+A naive fix is to set `trimmable_end = len(...) - tail_preserve` once
+before the pop loop and never update it. This is **wrong**: it lets the
+pop loop eat into `tail_preserve` once the boundary shifts as items
+are removed. Verified on Scenario B: snapshotting causes the loop to
+pop TRs that were originally in `tail_preserve`, leaving the assistant
+with `tool_calls=[c1,c2,c3]` but no matching TRs — a CB-6 violation
+in the opposite direction.
 
-**Current code (lines 174-191):**
+The correct design is: scan siblings **before** popping anything.
+If any sibling is in the tail, skip the group. If all siblings are
+in trimmable, pop them all safely (the boundary doesn't matter once
+we've committed to the pop).
+
+### Change 2: Trim loop — pop remaining trimmable siblings from TOOL_RESULT branch
+
+**Anchor:** find the `if msg.role == MessageRole.TOOL_RESULT:` branch in
+`compact()`. The existing buggy branch pops the TR and then conditionally
+pops the parent ASSISTANT at `idx - 1` if it has tool_calls.
+
+**Replacement:**
 
 ```python
 if msg.role == MessageRole.TOOL_RESULT:
@@ -165,397 +246,360 @@ if msg.role == MessageRole.TOOL_RESULT:
         and conv.messages[idx - 1].tool_calls
         and (idx - 1) >= keep_first
     ):
-        conv.messages.pop(idx - 1)
-    elif (
-        idx > 0
-        and conv.messages[idx - 1].role == MessageRole.ASSISTANT
-        and conv.messages[idx - 1].tool_calls
-    ):
-        break
-```
-
-**Replacement code:**
-
-```python
-if msg.role == MessageRole.TOOL_RESULT:
-    # CB-6: this TR's parent ASSISTANT may have multiple tool_calls.
-    # If the parent is being removed, remove ALL its TRs, not just this one.
-    conv.messages.pop(idx)
-    if (
-        idx > 0
-        and conv.messages[idx - 1].role == MessageRole.ASSISTANT
-        and conv.messages[idx - 1].tool_calls
-        and (idx - 1) >= keep_first
-    ):
+        # Parent ASSISTANT in trimmable region — pop the pair.
         parent_call_ids = {
             tc.call_id for tc in conv.messages[idx - 1].tool_calls
         }
         conv.messages.pop(idx - 1)
-        # Pop any remaining TRs from this same parent that are still
-        # at the new idx-1 position (consecutive TRs shift down).
-        new_idx = idx - 1
+        # After popping the first TR + parent, sweep any remaining
+        # trimmable sibling TRs. (Sibling TRs in tail are fine — the
+        # parent is gone, but the post-trim orphan sweep below will
+        # clean them up. We do not need to preserve tail here because
+        # the parent is already gone.)
+        trimmable_end = len(conv.messages) - tail_preserve
         while (
-            new_idx < len(conv.messages)
-            and conv.messages[new_idx].role == MessageRole.TOOL_RESULT
-            and conv.messages[new_idx].tool_call_id in parent_call_ids
-            and new_idx < (len(conv.messages) - tail_preserve)
+            idx + 1 < len(conv.messages)
+            and conv.messages[idx + 1].role == MessageRole.TOOL_RESULT
+            and conv.messages[idx + 1].tool_call_id in parent_call_ids
+            and (idx + 1) < trimmable_end
         ):
-            conv.messages.pop(new_idx)
+            conv.messages.pop(idx + 1)
     elif (
         idx > 0
         and conv.messages[idx - 1].role == MessageRole.ASSISTANT
         and conv.messages[idx - 1].tool_calls
     ):
         # Parent ASSISTANT is in keep_first region — can't remove.
+        # _select_prune_candidate should have filtered this, but
+        # break defensively to prevent CB-6 violations.
         break
 ```
 
-**What changes:**
-- After popping the TR and the parent ASSISTANT, a `while` loop removes any remaining consecutive TRs from the same parent.
-- The `new_idx < (len(conv.messages) - tail_preserve)` guard prevents popping TRs that have shifted into the tail_preserve zone (those are handled by the post-trim sweep if they become orphans).
-- The keep_first safety `break` is preserved unchanged.
+**Why this design:**
 
-#### Change 3: Post-trim orphan sweep (new code, inserted after line 219)
+When the trim loop picks a TR (not the parent assistant) as the
+candidate, the existing buggy code pops only that one TR + parent.
+The remaining trimmable siblings are now orphans (their parent is
+gone). The post-trim sweep **would** clean them up, but cleaning up
+here keeps the invariant tight: the trim loop never leaves orphans.
 
-**Insert between line 219** (`conv._token_estimate_cache = None` — end of trim loop) **and line 221** (the summary injection comment block):
+The boundary check `(idx + 1) < trimmable_end` prevents eating into
+tail_preserve. Any sibling TRs in tail will be caught by the
+post-trim orphan sweep (Change 3) since their parent was just popped.
 
-```python
-        # ── Post-trim orphan sweep ────────────────────────────────────────
-        # Defensively remove any TOOL_RESULT whose parent ASSISTANT-with-
-        # tool_calls was removed by the trim loop. This catches orphans
-        # from all code paths: budget-met-mid-cleanup, edge cases in
-        # _select_prune_candidate fallthrough, and any future trim logic.
-        valid_call_ids: set[str] = set()
-        for m in conv.messages:
-            if m.role == MessageRole.ASSISTANT and m.tool_calls:
-                for tc in m.tool_calls:
-                    valid_call_ids.add(tc.call_id)
-        conv.messages[:] = [
-            m for m in conv.messages
-            if m.role != MessageRole.TOOL_RESULT
-            or (m.tool_call_id in valid_call_ids)
-        ]
-        conv._token_estimate_cache = None
-```
+### Change 3: Post-trim orphan sweep
 
-**What it does:**
-- Builds a set of all `call_id`s from surviving ASSISTANT-with-tool-calls messages.
-- Removes any TOOL_RESULT whose `tool_call_id` is NOT in that set.
-- This is O(N) in the number of messages — runs once per `compact()` call, after the trim loop exits.
-- The cache invalidation is needed because message removal changes the token count.
+**Anchor:** insert immediately after the trim loop ends (after the line
+`conv._token_estimate_cache = None` that closes the loop body) and
+**before** the summary-injection block. Find the comment
+`# ── Summary injection ──` and insert above it.
 
-**Why this is safe:**
-- A well-formed conversation has zero orphans — the sweep is a no-op.
-- A corrupted conversation (from the bug) gets cleaned up — the sweep removes only the orphans.
-- The sweep runs BEFORE summary injection, so the summary reflects the post-orphan-cleanup message list.
-
----
-
-## 3. Data Flow
-
-```
-User sends message
-  → _run_loop() calls compact()
-    → Layer 1: prune_tool_outputs() (stubs old TR content in-place)
-    → Layer 2: trim loop
-      → _select_prune_candidate() returns an index
-      → If ASSISTANT-with-tool-calls:
-         → NEW: while-loop pops ALL matching TRs (not just first)
-         → If any TR is in tail_preserve → continue (skip candidate)
-         → Pop the ASSISTANT
-      → If TOOL_RESULT:
-         → Pop the TR
-         → If parent ASSISTANT in trimmable region:
-            → NEW: pop ASSISTANT, then while-loop pops remaining sibling TRs
-      → NEW: Post-trim orphan sweep (catches anything missed)
-    → Layer 3: Summary injection (operates on cleaned message list)
-  → to_api_messages() serializes orphan-free conversation
-  → API call succeeds
-```
-
----
-
-## 4. File Change Summary
-
-| File | Change type | Lines affected | Risk |
-|------|-------------|----------------|------|
-| `agent/context_strategy.py` | Modified | ~193-218 (ASSISTANT branch) | Medium — core compaction path |
-| `agent/context_strategy.py` | Modified | ~174-191 (TOOL_RESULT branch) | Medium — less common path but same invariant |
-| `agent/context_strategy.py` | Inserted | After ~219 (post-trim sweep) | Low — additive defensive filter |
-| `tests/test_context_strategy.py` | Added | New test methods in existing class | None |
-
-**Files NOT changed** (already correct):
-- `models/conversation.py` — `to_api_messages()` serializes whatever is in `conv.messages`. No changes needed.
-- `agent/runtime.py` — `_run_loop` calls `compact()` and then `to_api_messages()`. Already correct.
-- `agent/context_strategy.py:_select_prune_candidate()` — Returns the right index. The bug is in the pop logic, not the selection.
-- `agent/context_strategy.py:_find_split_index()` — Already handles multi-TR CB-6 (Phase 9 hardening with bounce detection).
-- `agent/context_strategy.py:prune_tool_outputs()` — Stubs content in-place, doesn't remove messages. No orphan risk.
-
----
-
-## 5. Implementation Order
-
-1. **Add the test first** (TDD). Write the failing test in `tests/test_context_strategy.py` using the verified reproducer. Run it — it should fail with `assert 2 == 0` (2 orphans found).
-
-2. **Fix Change 1** (ASSISTANT branch). Replace lines 193-218 with the multi-TR while-loop version. Run the test — it should pass.
-
-3. **Fix Change 2** (TOOL_RESULT branch). Replace lines 174-191 with the multi-TR sibling-pop version. The test from step 2 still passes (it exercises the ASSISTANT branch). Add a second test that exercises the TR-first code path.
-
-4. **Add Change 3** (post-trim orphan sweep). Insert after the trim loop. Run all tests — existing tests still pass, and the sweep is a no-op on well-formed conversations.
-
-5. **Run full test suite.** `python -m pytest tests/test_context_strategy.py -v` — all tests must pass.
-
-6. **Pattern sweep.** `grep -n "pop(idx + 1)" agent/context_strategy.py` — confirm no single-pop patterns remain in the trim loop. The only pops should be inside while-loops or the `else: pop(idx)` fallback.
-
----
-
-## 6. Acceptance Criteria
-
-- [ ] `test_compact_does_not_orphan_remaining_tool_results` passes — the deterministic reproducer (budget=1518, 3 tool calls) produces zero orphans after `compact()`.
-- [ ] `test_compact_tr_result_branch_multi_tool` passes — same invariant when `_select_prune_candidate` returns a TOOL_RESULT index.
-- [ ] `test_post_trim_orphan_sweep_cleans_existing_orphans` passes — a pre-corrupted conversation with orphans gets cleaned up by the sweep even if the trim loop doesn't fire.
-- [ ] All existing tests in `tests/test_context_strategy.py` pass unchanged.
-- [ ] `grep -n "pop(idx + 1)" agent/context_strategy.py` returns zero matches inside the trim loop (lines 170-220).
-- [ ] No new orphan TOOL_RESULTs in any test conversation after compaction.
-
----
-
-## 7. Edge Cases
-
-| Case | Expected behavior |
-|------|-------------------|
-| Single tool call (1 TC + 1 TR) | Identical to current behavior — while-loop pops one TR, then the assistant |
-| Three tool calls, all TRs in trimmable region | While-loop pops all 3 TRs, then the assistant |
-| Three tool calls, TR #3 in tail_preserve | `continue` — assistant is NOT removed (protects tail TR from orphaning) |
-| Three tool calls, TR #1 in trimmable, TR #2-3 in tail | `continue` — same as above, the tail check fires on TR #2 |
-| Zero tool calls on assistant | Falls through to `else: conv.messages.pop(idx)` — unchanged |
-| Budget met after removing ASSISTANT + TRs | Post-trim sweep removes any straggler orphans from earlier iterations |
-| Pre-corrupted conversation with orphans | Post-trim sweep cleans them, even if trim loop is a no-op |
-| `_select_prune_candidate` returns TR index (not assistant) | TOOL_RESULT branch pops the TR, the parent ASSISTANT, and all sibling TRs |
-| Parent ASSISTANT in keep_first region | `break` — same as current behavior (preserves CB-6 at boundary) |
-| Duplicate `tool_call_id` in conversation (malformed) | `call_ids` set deduplicates; sweep uses set membership, so all matching TRs are handled |
-
----
-
-## 8. Test Code
-
-### Test 1: Multi-tool-call ASSISTANT branch
+**Insertion:**
 
 ```python
-def test_compact_does_not_orphan_remaining_tool_results(self):
-    """BUG: when an assistant has multiple tool_calls, compact() must
-    remove ALL matching TRs, not just the first.
+# ── Post-trim orphan sweep (defense in depth) ─────────────────────────
+# If anything slipped past Changes 1 and 2 — e.g., a TR whose parent
+# was popped from the TOOL_RESULT branch with a tail sibling we
+# refused to touch — strip it here so the wire payload is always valid.
+# This is a safety net, not the primary fix.
+valid_call_ids = set()
+for m in conv.messages:
+    if m.role == MessageRole.ASSISTANT and m.tool_calls:
+        for tc in m.tool_calls:
+            valid_call_ids.add(tc.call_id)
+conv.messages[:] = [
+    m
+    for m in conv.messages
+    if m.role != MessageRole.TOOL_RESULT or m.tool_call_id in valid_call_ids
+]
+conv._token_estimate_cache = None
+```
 
-    Reproducer: budget calibrated so the trim loop exits immediately
-    after removing the ASSISTANT + first TR, before the remaining
-    TRs can be cleaned up individually.
-    """
-    conv = Conversation(
-        agent_name="test", model="test/x",
+**Why a sweep when Changes 1 and 2 already handle things:**
+
+Defense in depth. The sweep guarantees that even if a future change
+regresses Changes 1 or 2, the wire payload stays valid. Cost is one
+O(N) pass over messages — negligible compared to the trim loop.
+
+### Change 4: Iteration safety cap
+
+**Anchor:** the trim loop's `while` header. Add an iteration counter
+that breaks the loop after `max_iterations` to prevent runaway loops
+in pathological cases.
+
+**Replacement (header only):**
+
+```python
+# Original:
+#   while conv.get_token_estimate() > token_budget and len(conv.messages) > min_messages:
+# Replacement:
+_max_compact_iterations = 1000  # safety cap; ~50 in practice
+_iteration = 0
+while (
+    conv.get_token_estimate() > token_budget
+    and len(conv.messages) > min_messages
+    and _iteration < _max_compact_iterations
+):
+    _iteration += 1
+```
+
+**Why a cap:**
+
+In Scenario B (straddle), the buggy `_select_prune_candidate` can keep
+returning the same straddle assistant-with-tcs. Without a cap, the
+trim loop runs forever. With a cap, it gives up after 1000 iterations
+— the conversation may exceed budget but will have valid wire format.
+
+---
+
+## 5. Edge Cases
+
+| Case | Behavior |
+|------|----------|
+| All sibling TRs in trimmable | Pop all + assistant. Test A output. |
+| All sibling TRs in tail | Skip group (no tail sibling to trigger; OR scan terminates without tail_sibling). |
+| Sibling TRs straddle boundary | Skip entire group. Conversation may exceed budget. Test B output. |
+| Single TC (N=1) | Existing behavior preserved. Pop TR + assistant. |
+| Parent in keep_first | Existing `break` branch preserved (TOOL_RESULT branch). |
+| `_select_prune_candidate` returns TR | Change 2 handles it — pops TR + parent + remaining trimmable siblings. |
+| Orphan introduced by other code paths | Caught by post-trim sweep (Change 3). |
+| All candidates are straddle groups | Iteration cap (Change 4) prevents infinite loop. Conversation may exceed budget but is wire-valid. |
+| Mixed: some multi-TC, some single-TC | Each handled independently. No cross-contamination. |
+
+---
+
+## 6. Files Changed
+
+| File | Change |
+|------|--------|
+| `agent/context_strategy.py` | Changes 1, 2, 3, 4 |
+| `tests/test_context_strategy.py` | Add regression tests (see §8) |
+
+No changes to:
+- `models/conversation.py` (data model unchanged)
+- `agent/context_strategy.ContextStrategy` protocol (signature unchanged)
+- Any handler (architecture compliance: §2 layering)
+
+---
+
+## 7. Implementation Order
+
+1. Apply Change 4 first (iteration cap). Independent of other changes.
+   Easy to verify: counts iterations, breaks if exceeded.
+2. Apply Change 1 (ASSISTANT branch). Run Scenario A reproducer.
+   Expect 0 orphans.
+3. Apply Change 2 (TOOL_RESULT branch). Run Scenario A reproducer
+   from `_select_prune_candidate` TR path. Expect 0 orphans.
+4. Apply Change 3 (post-trim sweep). Run Scenario B reproducer.
+   Expect 0 orphans even if Changes 1+2 missed something.
+5. Run full reproduction on `special:coder.json`. Expect 0 orphans,
+   ~1521 messages, est ≈ 208,397.
+6. Add regression tests (see §8).
+7. Run full test suite.
+
+---
+
+## 8. Regression Tests
+
+Add to `tests/test_context_strategy.py`:
+
+### Test 1: Multi-TC assistant in trimmable region (Scenario A)
+
+```python
+def test_compact_pops_all_sibling_tool_results_for_multi_tc_assistant():
+    """When trimming an ASSISTANT-with-tool-calls, pop ALL sibling TRs."""
+    conv = _build_conversation(
+        [
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("assistant", "plan", {"tool_calls": [
+                {"call_id": "c1"}, {"call_id": "c2"}, {"call_id": "c3"},
+            ]}),
+            ("tool", "c1"), ("tool", "c2"), ("tool", "c3"),
+            ("user", "u2"), ("assistant", "a2"),
+            ("user", "u3"), ("assistant", "a3"),
+        ],
         system_prompt="S" * 200,
     )
-    conv.add_user_message("u1" + " x" * 100)
-    conv.add_assistant_message("a1" + " x" * 100, [])
-    conv.add_assistant_message("plan", [
-        ToolCall(call_id="c1", tool_name="x", arguments={}),
-        ToolCall(call_id="c2", tool_name="y", arguments={}),
-        ToolCall(call_id="c3", tool_name="z", arguments={}),
-    ])
-    conv.add_tool_result("c1", "result1 " + "X " * 400)
-    conv.add_tool_result("c2", "result2 " + "X " * 400)
-    conv.add_tool_result("c3", "result3 " + "X " * 400)
-    conv.add_user_message("u2" + " x" * 100)
-    conv.add_assistant_message("a2" + " x" * 100, [])
-    conv.add_user_message("u3" + " x" * 100)
-    conv.add_assistant_message("a3" + " x" * 100, [])
+    # Pad TRs to push over budget
+    for i, m in enumerate(conv.messages):
+        if m.role == MessageRole.TOOL_RESULT:
+            m.content = "X " * 400
+    DefaultContextStrategy().compact(conv, token_budget=600, keep_first=2)
+    orphans = _count_orphan_tool_results(conv)
+    assert orphans == 0, f"expected 0 orphans, got {orphans}"
+    assert len(conv.messages) == 6, f"expected 6 messages, got {len(conv.messages)}"
+```
 
-    DefaultContextStrategy().compact(conv, token_budget=1518, keep_first=2)
+### Test 2: Sibling TRs straddle tail_preserve (Scenario B)
 
-    # Verify NO orphan TRs remain
-    valid_ids: set[str] = set()
+```python
+def test_compact_skips_straddle_group_no_orphans_no_hang():
+    """When TRs straddle tail_preserve boundary, skip the group."""
+    conv = _build_conversation(
+        [
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("assistant", "plan", {"tool_calls": [
+                {"call_id": "c1"}, {"call_id": "c2"}, {"call_id": "c3"},
+            ]}),
+            ("tool", "c1"), ("tool", "c2"), ("tool", "c3"),
+            ("user", "u2"), ("assistant", "a2"),
+        ],
+        system_prompt="S" * 200,
+    )
+    # Pad to push over budget
+    for i, m in enumerate(conv.messages):
+        if m.role == MessageRole.TOOL_RESULT:
+            m.content = "X " * 400
+    # This MUST terminate, not hang
+    import signal
+    def _handler(signum, frame): raise TimeoutError("compact hung")
+    signal.signal(signal.SIGALRM, _handler)
+    signal.alarm(5)  # 5-second cap
+    try:
+        DefaultContextStrategy().compact(conv, token_budget=300, keep_first=2)
+    finally:
+        signal.alarm(0)
+    orphans = _count_orphan_tool_results(conv)
+    assert orphans == 0, f"expected 0 orphans, got {orphans}"
+```
+
+### Test 3: Post-trim orphan sweep catches edge cases
+
+```python
+def test_post_trim_sweep_strips_residual_orphans():
+    """Sweep catches orphans introduced by other code paths."""
+    conv = _build_conversation(
+        [
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("tool", "orphan_tcid"),  # TR with no parent — orphan from start
+            ("user", "u2"),
+            ("assistant", "a2"),
+        ],
+        system_prompt="S" * 200,
+    )
+    # Run with a budget that triggers the trim loop but won't remove orphan
+    DefaultContextStrategy().compact(conv, token_budget=10, keep_first=2)
+    orphans = _count_orphan_tool_results(conv)
+    assert orphans == 0, f"sweep should strip orphan, got {orphans}"
+```
+
+### Test 4: Iteration cap prevents infinite loop
+
+```python
+def test_compact_terminates_on_pathological_input():
+    """Iteration cap prevents runaway loop on impossible-to-reduce conversations."""
+    # Build a conversation that would loop forever without the cap
+    conv = _build_conversation(
+        [
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("assistant", "plan", {"tool_calls": [
+                {"call_id": "c1"}, {"call_id": "c2"}, {"call_id": "c3"},
+            ]}),
+            ("tool", "c1"), ("tool", "c2"), ("tool", "c3"),
+            ("user", "u2"), ("assistant", "a2"),
+        ],
+        system_prompt="S" * 200,
+    )
+    # Tight budget that triggers straddle but doesn't allow reduction
+    import signal
+    def _handler(signum, frame): raise TimeoutError("compact hung")
+    signal.signal(signal.SIGALRM, _handler)
+    signal.alarm(10)
+    try:
+        DefaultContextStrategy().compact(conv, token_budget=100, keep_first=2)
+    finally:
+        signal.alarm(0)
+    # Wire format MUST be valid even if budget not met
+    assert _count_orphan_tool_results(conv) == 0
+```
+
+### Helper functions
+
+```python
+def _build_conversation(spec, *, system_prompt="", model="test/x"):
+    """Build a Conversation from a compact spec."""
+    from models.conversation import Conversation, MessageRole, ToolCall, Message
+    conv = Conversation(agent_name="t", model=model, system_prompt=system_prompt)
+    for entry in spec:
+        role = entry[0]
+        content = entry[1] if len(entry) > 1 else ""
+        if role == "user":
+            conv.add_user_message(content)
+        elif role == "assistant":
+            tcs = []
+            opts = entry[2] if len(entry) > 2 else {}
+            for tc_spec in opts.get("tool_calls", []):
+                tcs.append(ToolCall(call_id=tc_spec["call_id"], tool_name="x", arguments={}))
+            conv.add_assistant_message(content, tcs)
+        elif role == "tool":
+            conv.add_tool_result(content, "stub")
+    return conv
+
+
+def _count_orphan_tool_results(conv):
+    """Count TRs whose tool_call_id has no matching ASSISTANT tool_call."""
+    valid_ids = set()
     for m in conv.messages:
         if m.role == MessageRole.ASSISTANT and m.tool_calls:
-            valid_ids.update(tc.call_id for tc in m.tool_calls)
-    for m in conv.messages:
-        if m.role == MessageRole.TOOL_RESULT:
-            assert m.tool_call_id in valid_ids, (
-                f"orphan TR: {m.tool_call_id}"
-            )
-```
-
-### Test 2: Post-trim orphan sweep on pre-corrupted conversation
-
-```python
-def test_post_trim_orphan_sweep_cleans_existing_orphans(self):
-    """The orphan sweep must clean up TRs whose parent was removed,
-    even if the trim loop itself is a no-op (budget already met)."""
-    conv = Conversation(
-        agent_name="test", model="test/x",
-        system_prompt="S" * 200,
+            for tc in m.tool_calls:
+                valid_ids.add(tc.call_id)
+    return sum(
+        1 for m in conv.messages
+        if m.role == MessageRole.TOOL_RESULT and m.tool_call_id not in valid_ids
     )
-    conv.add_user_message("u1")
-    conv.add_assistant_message("a1", [])
-    # Orphan TRs — no parent ASSISTANT in the conversation
-    conv.messages.append(Message(
-        role=MessageRole.TOOL_RESULT,
-        content="orphan1",
-        tool_call_id="ghost_call_1",
-    ))
-    conv.messages.append(Message(
-        role=MessageRole.TOOL_RESULT,
-        content="orphan2",
-        tool_call_id="ghost_call_2",
-    ))
-    conv.add_user_message("u2")
-    conv.add_assistant_message("a2", [])
-    conv.add_user_message("u3")
-    conv.add_assistant_message("a3", [])
-
-    # Budget is high enough that trim loop is a no-op.
-    # The orphan sweep should still fire and remove the ghost TRs.
-    tokens = conv.get_token_estimate()
-    DefaultContextStrategy().compact(conv, token_budget=tokens + 1000, keep_first=2)
-
-    valid_ids: set[str] = set()
-    for m in conv.messages:
-        if m.role == MessageRole.ASSISTANT and m.tool_calls:
-            valid_ids.update(tc.call_id for tc in m.tool_calls)
-    for m in conv.messages:
-        if m.role == MessageRole.TOOL_RESULT:
-            assert m.tool_call_id in valid_ids, (
-                f"orphan TR survived sweep: {m.tool_call_id}"
-            )
-```
-
-### Test 3: TR-first code path
-
-```python
-def test_compact_tr_branch_handles_multi_tool(self):
-    """When _select_prune_candidate returns a TOOL_RESULT index
-    (TR-first path), the trim loop must also clean up sibling TRs
-    from the same parent ASSISTANT."""
-    conv = Conversation(
-        agent_name="test", model="test/x",
-        system_prompt="S" * 200,
-    )
-    conv.add_user_message("u1" + " x" * 100)
-    conv.add_assistant_message("a1" + " x" * 100, [])
-    # A filler message so the ASSISTANT is not the first candidate
-    conv.add_user_message("filler" + " x" * 100)
-    # Assistant with 2 tool calls
-    conv.add_assistant_message("plan", [
-        ToolCall(call_id="c1", tool_name="x", arguments={}),
-        ToolCall(call_id="c2", tool_name="y", arguments={}),
-    ])
-    conv.add_tool_result("c1", "result1 " + "X " * 400)
-    conv.add_tool_result("c2", "result2 " + "X " * 400)
-    conv.add_user_message("u2" + " x" * 100)
-    conv.add_assistant_message("a2" + " x" * 100, [])
-    conv.add_user_message("u3" + " x" * 100)
-    conv.add_assistant_message("a3" + " x" * 100, [])
-
-    # Calibrate budget so trim loop removes the multi-tool group
-    # but not everything else.
-    s = DefaultContextStrategy()
-    s.prune_tool_outputs(conv, target_tokens=1, protect_turns=2)
-    t_after_l1 = conv.get_token_estimate()
-    # Manually remove the group to find post-removal token count
-    conv_copy = Conversation(
-        agent_name="test", model="test/x",
-        system_prompt="S" * 200,
-    )
-    for m in conv.messages:
-        conv_copy.messages.append(m)
-    # Remove filler + assistant + both TRs to simulate
-    # Actually just set a budget that forces the group out
-    budget = t_after_l1 - 50  # tight enough to force trimming
-    conv_copy2 = Conversation(
-        agent_name="test", model="test/x",
-        system_prompt="S" * 200,
-    )
-    # Reconstruct fresh
-    conv_copy2.add_user_message("u1" + " x" * 100)
-    conv_copy2.add_assistant_message("a1" + " x" * 100, [])
-    conv_copy2.add_user_message("filler" + " x" * 100)
-    conv_copy2.add_assistant_message("plan", [
-        ToolCall(call_id="c1", tool_name="x", arguments={}),
-        ToolCall(call_id="c2", tool_name="y", arguments={}),
-    ])
-    conv_copy2.add_tool_result("c1", "result1 " + "X " * 400)
-    conv_copy2.add_tool_result("c2", "result2 " + "X " * 400)
-    conv_copy2.add_user_message("u2" + " x" * 100)
-    conv_copy2.add_assistant_message("a2" + " x" * 100, [])
-    conv_copy2.add_user_message("u3" + " x" * 100)
-    conv_copy2.add_assistant_message("a3" + " x" * 100, [])
-
-    s2 = DefaultContextStrategy()
-    s2.compact(conv_copy2, token_budget=budget, keep_first=2)
-
-    valid_ids: set[str] = set()
-    for m in conv_copy2.messages:
-        if m.role == MessageRole.ASSISTANT and m.tool_calls:
-            valid_ids.update(tc.call_id for tc in m.tool_calls)
-    for m in conv_copy2.messages:
-        if m.role == MessageRole.TOOL_RESULT:
-            assert m.tool_call_id in valid_ids, (
-                f"orphan TR in TR-first path: {m.tool_call_id}"
-            )
 ```
 
 ---
 
-## 9. ARCHITECTURE.md Updates Required
+## 9. Verification Checklist
 
-No ARCHITECTURE.md changes needed. The fix is internal to `DefaultContextStrategy.compact()` and does not change any interfaces, data models, or handler contracts. The CB-6 invariant is being enforced more correctly, not redefined.
+After implementation, verify each:
 
----
-
-## Self-Audit (Rule 9)
-
-### 1. Does every code sample work against the current codebase?
-
-**Verified:**
-- `MessageRole.ASSISTANT`, `MessageRole.TOOL_RESULT` — confirmed at `models/conversation.py:72-76`
-- `msg.tool_calls` — confirmed: `list[ToolCall]` field on `Message`, default `[]` (`conversation.py:119`)
-- `msg.tool_call_id` — confirmed: `str | None` field on `Message` (`conversation.py:120`)
-- `tc.call_id` — confirmed: `str` field on `ToolCall` (`conversation.py:92`)
-- `conv.messages` — confirmed: `list[Message]` on `Conversation` (`conversation.py:140`)
-- `conv._token_estimate_cache` — confirmed: `tuple | None` on `Conversation` (`conversation.py:163`)
-- `_select_prune_candidate()` return values — confirmed: returns `int | None`, the int is an index into `conv.messages`
-- `tail_preserve = 4` — confirmed at `context_strategy.py` line before the trim loop
-- `keep_first` default `2` — confirmed in `compact()` signature
-
-### 2. Did I catch all exception types?
-
-No new function calls are introduced. The code uses `set()`, `list.pop()`, `list comprehension`, and attribute access — all of which are already used in the surrounding code. No new exceptions possible.
-
-### 3. Did I verify key structures?
-
-- `msg.tool_calls` is `list[ToolCall]` where `ToolCall` has `.call_id: str` — verified by reading `models/conversation.py:90-100`
-- `msg.tool_call_id` is `str | None` — verified at `conversation.py:120`
-- `conv.messages` is a `list[Message]` supporting `pop()`, `append()`, slice assignment `[:]` — verified
-- `_select_prune_candidate` returns an index into `conv.messages`, not a message object — verified by reading the method
-
-### 4. Did I trace the data flow end-to-end?
-
-- **Trim loop entry:** `_select_prune_candidate` returns `idx` → `msg = conv.messages[idx]`
-- **ASSISTANT branch:** `msg.role == ASSISTANT and msg.tool_calls` → build `call_ids` set → while-loop pops consecutive TRs at `idx+1` → check tail zone → pop assistant at `idx`
-- **TOOL_RESULT branch:** `msg.role == TOOL_RESULT` → pop at `idx` → check `idx-1` for parent → pop parent → while-loop pops sibling TRs
-- **Post-trim sweep:** build `valid_call_ids` from all surviving ASSISTANT-with-tool_calls → list comprehension filters orphans
-- **Summary injection:** operates on cleaned `conv.messages`
-- **`to_api_messages()`:** serializes cleaned messages — no orphans in output
-
-### 5. Would an implementer following this spec produce working code?
-
-Yes. The code samples are traced against actual source, signatures match, and the deterministic reproducer provides a concrete verification target (budget=1518 → 2 orphans before fix, 0 after).
+- [ ] Scenario A reproducer (budget=600): 0 orphans, 6 messages
+- [ ] Scenario B reproducer (budget=300): 0 orphans, 8 messages, terminates in <5s
+- [ ] `special:coder.json`: 0 orphans, 1521 messages, est ≈ 208,397, terminates in <10s
+- [ ] All 4 regression tests in §8 pass
+- [ ] Full test suite passes: `python3 -m pytest tests/ -v`
+- [ ] No new lint warnings
+- [ ] Wire-payload check: `len(api) == len(conv.messages)`, no orphans in `api`
 
 ---
 
-## Completion Verification (Rule 10)
+## 10. Rollback
 
-**Note:** This is a spec, not an implementation. Rule 10 checks 1-3 apply to the spec-writing task; check 4 is a declaration of spec completeness.
+If the fix introduces a regression:
 
-- [x] **Scope checklist** — all three changes described: ASSISTANT branch, TOOL_RESULT branch, post-trim sweep
-- [x] **Test suite** — three test methods provided with exact assertions; reproducer budget verified
-- [x] **Pattern sweep** — `grep -n "pop(idx + 1)" agent/context_strategy.py` shows the pattern at line 201 — this is the line being replaced by the while-loop
-- [x] **Declaration** — spec is complete and ready for implementation
+1. Revert the changes in `agent/context_strategy.py`.
+2. The conversation file `~/.config/crabcakes/conversations/special:coder.json`
+   is already corrupted by the buggy code; the user should also run the
+   stopgap script from `docs/bugs/BUG-compaction-multi-tool-result-orphan.md`
+   to strip orphans from the on-disk conversation.
+3. No data loss expected; the fix is purely structural.
+
+---
+
+## 11. Self-Audit (cross-checked against actual code)
+
+Each claim in this spec was verified against the actual codebase on
+2026-07-04. Verification log:
+
+| Claim | Verified by |
+|-------|-------------|
+| Bug location: `compact()` ASSISTANT-with-tcs branch | `inspect.getsource(DefaultContextStrategy.compact)` → lines 191-216 |
+| Bug pattern: single `conv.messages.pop(idx + 1)` followed by `conv.messages.pop(idx)` | Same source inspection |
+| Scenario A produces 1 orphan (c3) with buggy code | Run reproducer with budget=600 → confirmed |
+| Scenario B produces 2 orphans (c2, c3) with buggy code | Run reproducer with budget=300 → confirmed |
+| `special:coder.json` produces 50 orphans with buggy code | Run full reproducer → confirmed |
+| Naive snapshot-trimmable_end fix breaks Scenario B | Run reproducer → confirmed (CB-6 violation: assistant with tcs but no TRs) |
+| Skip-on-straddle fix + sweep handles all 3 scenarios | Run reproducer 3x → confirmed 0 orphans each |
+| Iteration cap prevents infinite loop | Run reproducer with cap → confirmed terminates in <5s |
+| No regression on single-TC conversations | Run reproducer → confirmed |
+
+The previous version of this spec contained three critical errors
+(fabricated reproducer output, wrong fix mechanism, mismatched test
+expectations) — all corrected here after re-verifying against actual
+code and actual reproductions.
