@@ -818,7 +818,10 @@ class TestMultiToolCallOrphanRegression:
         DefaultContextStrategy().compact(conv, token_budget=600, keep_first=2)
         orphans = _count_orphan_tool_results(conv)
         assert orphans == 0, f"expected 0 orphans, got {orphans}"
-        assert len(conv.messages) == 6, f"expected 6 messages, got {len(conv.messages)}"
+        # Spec §8 expected 6, but Phase 4.10 summary injection adds 1 message
+        # after the trim loop (4 removed: multi-TC assistant + 3 TRs → 6 remaining,
+        # then _summary() + _fit_summary() injects 1 summary → 7).
+        assert len(conv.messages) == 7, f"expected 7 messages, got {len(conv.messages)}"
 
     def test_compact_skips_straddle_group_no_orphans_no_hang(self):
         """When TRs straddle tail_preserve boundary, skip the group."""
