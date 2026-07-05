@@ -255,6 +255,23 @@ class DefaultContextStrategy:
                 conv.messages.pop(idx)
             conv._token_estimate_cache = None
 
+        # ── Post-trim orphan sweep (defense in depth) ─────────────────────────
+        # If anything slipped past Changes 1 and 2 — e.g., a TR whose parent
+        # was popped from the TOOL_RESULT branch with a tail sibling we
+        # refused to touch — strip it here so the wire payload is always valid.
+        # This is a safety net, not the primary fix.
+        valid_call_ids = set()
+        for m in conv.messages:
+            if m.role == MessageRole.ASSISTANT and m.tool_calls:
+                for tc in m.tool_calls:
+                    valid_call_ids.add(tc.call_id)
+        conv.messages[:] = [
+            m
+            for m in conv.messages
+            if m.role != MessageRole.TOOL_RESULT or m.tool_call_id in valid_call_ids
+        ]
+        conv._token_estimate_cache = None
+
         # ── Summary injection ─────────────────────────────────────────────────
         # Phase 4.10: fire when any messages were removed AND at least 4
         # messages remain. Skip if the summary would push the conversation
