@@ -25,17 +25,17 @@ import logging
 
 #### Edit 2: Add module-level logger
 
-After the `_DEFAULT_ENCODING_NAME` constant block (search for it — it's near the top of the file after imports, around lines 18-30), add:
+After the `_DEFAULT_ENCODING_NAME` constant definition on line 27 of `models/conversation.py`, and before the `_tiktoken_encoding_for` function definition that begins on line 30, add:
 
 ```python
 _logger = logging.getLogger(__name__)
 ```
 
-The exact location: place it immediately after the `_DEFAULT_ENCODING_NAME` definition and any adjacent top-level constants. Do not place it after the `MessageRole` enum or after the dataclass definitions — place it with the other top-level module constants, before the class definitions begin.
+This is the canonical module-level logger pattern. It goes at the top of the module with the other constants, NOT after the dataclass definitions and NOT inside any function.
 
 #### Edit 3: Replace the ASSISTANT branch in `to_api_messages()`
 
-The current ASSISTANT branch (anchor lines 244–258 per the spec) is:
+The current ASSISTANT branch (verified current location: lines 246–260 of `models/conversation.py`) is:
 
 ```python
             elif msg.role == MessageRole.ASSISTANT:
@@ -54,6 +54,8 @@ The current ASSISTANT branch (anchor lines 244–258 per the spec) is:
                     ]
                 result.append(entry)
 ```
+
+Note: spec referenced 244–258, but the actual block now spans 246–260. Use the function/class identifier `to_api_messages` and the `elif msg.role == MessageRole.ASSISTANT:` branch header as the source of truth (per `steelFramedCodeWriter.md` Step 6.8).
 
 Replace it with:
 
@@ -233,7 +235,7 @@ When complete, reply with:
 4. **COMPLETENESS checklist** (literal `**COMPLETENESS:**` block, mandatory)
 5. **Related-bug scan** findings (Step 6.6)
 6. **Implementation-choice rationale** (Step 6.7) for any non-obvious choice — for Phase 1 the choices are: (a) where to place `_logger` (top-of-file vs after-classes — chose top-of-file because that's the canonical module-level logger pattern), (b) whether to keep the existing `entry: dict` type annotation — kept it for the valid path, omitted it for the new placeholder path (the new entry is always a `dict[str, str]` which doesn't need annotation). If you made other choices, document them.
-7. **Spec drift check** (Step 6.8) — confirm the line numbers 244–258 in the spec match the actual current code. If they drifted, flag it.
+7. **Spec drift check** (Step 6.8) — confirm the line numbers in the spec (244–258) versus actual current code (246–260) for the ASSISTANT branch. The drift is 2 lines — minor, but flag it in the report so the supervisor can update the spec in the post-mortem phase.
 
 **Do not declare done** unless ALL of V1–V8 pass and the COMPLETENESS block is present.
 
