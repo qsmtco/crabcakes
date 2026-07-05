@@ -164,7 +164,14 @@ class DefaultContextStrategy:
         # Phase 4: delegates candidate selection to ``_select_prune_candidate``,
         # which implements P2 (keep_first) and P3 (protect_is_summary) as a
         # single two-pass scan (non-protected first, then protected).
-        while conv.get_token_estimate() > token_budget and len(conv.messages) > min_messages:
+        _max_compact_iterations = 1000  # safety cap; ~50 in practice
+        _iteration = 0
+        while (
+            conv.get_token_estimate() > token_budget
+            and len(conv.messages) > min_messages
+            and _iteration < _max_compact_iterations
+        ):
+            _iteration += 1
             idx = self._select_prune_candidate(
                 conv, keep_first, tail_preserve, protect_is_summary
             )
