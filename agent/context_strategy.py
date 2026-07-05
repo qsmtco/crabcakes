@@ -198,29 +198,42 @@ class DefaultContextStrategy:
                     # break defensively to prevent CB-6 violations.
                     break
             elif msg.role == MessageRole.ASSISTANT and msg.tool_calls:
+                # CB-6: this assistant's N tool_calls generate N sibling TRs.
+                # Pop ALL trimmable siblings, not just the first.
+                call_ids = {tc.call_id for tc in msg.tool_calls}
                 trimmable_end = len(conv.messages) - tail_preserve
-                if (
-                    idx + 1 < len(conv.messages)
-                    and conv.messages[idx + 1].role == MessageRole.TOOL_RESULT
-                    and (idx + 1) < trimmable_end
+
+                # Scan siblings. If ANY sibling TR is in tail_preserve zone,
+                # skip the entire group — we cannot pop the assistant without
+                # orphaning the tail TR (CB-6 violation).
+                scan_idx = idx + 1
+                tail_sibling = False
+                while (
+                    scan_idx < len(conv.messages)
+                    and conv.messages[scan_idx].role == MessageRole.TOOL_RESULT
+                    and conv.messages[scan_idx].tool_call_id in call_ids
                 ):
-                    # CB-6 safe: ASSISTANT+tc and TR both in trimmable region.
-                    conv.messages.pop(idx + 1)
-                    conv.messages.pop(idx)
-                elif (
-                    idx + 1 < len(conv.messages)
-                    and conv.messages[idx + 1].role == MessageRole.TOOL_RESULT
-                ):
-                    # Audit-Fix-27 (Bug #4): TR is in tail_preserve zone — popping
-                    # the ASSISTANT alone would orphan the TR, violating CB-6.
-                    # Skip this candidate by re-entering the loop so _select_prune_candidate
-                    # returns a different index. If no candidates remain, the
-                    # while-loop guard (conv.get_token_estimate() > token_budget)
-                    # terminates compaction cleanly.
+                    if scan_idx >= trimmable_end:
+                        tail_sibling = True
+                        break
+                    scan_idx += 1
+
+                if tail_sibling:
+                    # Sibling TR is in tail. Don't pop the assistant. Trim loop
+                    # will try a different candidate on the next iteration.
+                    # If no candidates remain, the while-loop guard
+                    # (conv.get_token_estimate() > token_budget) terminates
+                    # compaction cleanly.
                     continue
-                else:
-                    # No TOOL_RESULT at idx+1 — safe to pop ASSISTANT alone.
-                    conv.messages.pop(idx)
+
+                # All siblings (if any) are in trimmable. Pop them all, then the assistant.
+                while (
+                    idx + 1 < len(conv.messages)
+                    and conv.messages[idx + 1].role == MessageRole.TOOL_RESULT
+                    and conv.messages[idx + 1].tool_call_id in call_ids
+                ):
+                    conv.messages.pop(idx + 1)
+                conv.messages.pop(idx)
             else:
                 conv.messages.pop(idx)
             conv._token_estimate_cache = None
