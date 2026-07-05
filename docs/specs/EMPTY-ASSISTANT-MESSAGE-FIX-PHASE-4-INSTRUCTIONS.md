@@ -264,7 +264,7 @@ Commit: `654bc2038d789d4086ffed49bff0432995386210` ("Accept: tests/test_conversa
 ```
 ### 4.1 Stopgap: repair the corrupt supervisor conversation file (APPLIED — pending operator verification)
 ### 4.2 Proper fix: add validation in `to_api_messages` (APPLIED — Phase 1, commit 4d210bb5)
-### 4.3 Companion fix: add content validation in the add path (DEFERRED — backlog B-2; write-side guard at runtime.py:2222 is the primary prevention)
+### 4.3 Companion fix: add content validation in the add path (REJECTED — see spec §10 item 7; write-side guard at runtime.py:2222 is the primary prevention)
 ```
 
 For §4.2, change the `Recommended actions (NOT applied)` line in §4's preamble to `Recommended actions (MIXED — applied in Phases 1–3; details below)`.
