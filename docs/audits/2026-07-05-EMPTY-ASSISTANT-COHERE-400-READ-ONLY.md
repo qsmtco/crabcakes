@@ -1,5 +1,7 @@
 # Investigation Report — Cohere 400 Empty-Assistant Bug (READ-ONLY)
 
+**Status (2026-07-05):** ✅ RESOLVED. Phases 1–3 shipped. See post-mortem at `docs/post-mortems/2026-07-05-EMPTY-ASSISTANT-MESSAGE-POST-MORTEM.md` and updated spec at `docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md` (Status section).
+
 **Date:** 2026-07-05 09:55 PDT
 **Author:** Implementation Supervisor (this session)
 **Severity:** CRITICAL (blocks all supervisor agent calls — every API call fails)
@@ -143,9 +145,9 @@ The symmetric issue could also occur with `TOOL_RESULT` (empty `content=""` with
 
 ---
 
-## 4. Recommended actions (NOT applied — read-only per request)
+## 4. Recommended actions (MIXED — applied in Phases 1–3; details below)
 
-### 4.1 Stopgap: repair the corrupt supervisor conversation file (USER ACTION, NOT CODE)
+### 4.1 Stopgap: repair the corrupt supervisor conversation file (APPLIED — pending operator verification)
 
 Analogous to the stopgap script proposed in `BUG-compaction-multi-tool-result-orphan.md`:
 
@@ -173,7 +175,7 @@ else:
 
 This can be run once now to unblock the supervisor. It does NOT fix the underlying bug; it only repairs the corrupted file.
 
-### 4.2 Proper fix: add validation in `to_api_messages` (RECOMMENDED)
+### 4.2 Proper fix: add validation in `to_api_messages` (APPLIED — Phase 1, commit 4d210bb5)
 
 Add a filter inside the ASSISTANT branch of `models/conversation.py::to_api_messages`:
 
@@ -215,7 +217,7 @@ Trade-off scorecard:
 - ⚠️ Adds one warning log per empty message (useful for tracking how often this happens)
 - ⚠️ Does NOT prevent the empty message from being created at line 2214 (separate fix below)
 
-### 4.3 Companion fix: add content validation in the add path (RECOMMENDED)
+### 4.3 Companion fix: add content validation in the add path (REJECTED — see spec §10 item 7; write-side guard at runtime.py:2222 is the primary prevention)
 
 At `agent/runtime.py:2214`, before calling `conv.add_assistant_message("", [])`, instead use a descriptive placeholder:
 
