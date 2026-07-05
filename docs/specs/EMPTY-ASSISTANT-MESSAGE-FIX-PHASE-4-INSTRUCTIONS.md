@@ -225,9 +225,9 @@ Commit: `654bc2038d789d4086ffed49bff0432995386210` ("Accept: tests/test_conversa
 
 ## 9. Backlog
 
-- **B-1:** `agent/runtime.py:2290` write-side guard tightening (see `SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md` §11)
-- **B-2:** `add_assistant_message` `ValueError` validation (rejected; would break intentional empty-content test cases)
-- **B-3:** Consolidate the two placeholder strings if user reports confusion (rejected; distinct strings are deliberate)
+- **B-1 (now §10 item 6):** `agent/runtime.py:2290` write-side guard tightening (see `SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md` §10 item 6)
+- **B-2 (now §10 item 7):** `add_assistant_message` `ValueError` validation (rejected; would break intentional empty-content test cases) — see spec §10 item 7
+- **B-3 (now §10 item 8):** Consolidate the two placeholder strings if user reports confusion (rejected; distinct strings are deliberate) — see spec §10 item 8
 
 ---
 
@@ -311,13 +311,13 @@ cd /home/q/projects/crabcakes && grep -c '\[ \]' docs/specs/SPEC-EMPTY-ASSISTANT
 
 Expected: at least 12 `[x]` (the box-checkable criteria that are shippable). Exactly 2–3 `[ ]` (B1, B2, possibly T5 if test_agent_runtime.py has failures).
 
-### V4. Backlog section added
+### V4. Backlog items 6/7/8 added to §10
 
 ```
-cd /home/q/projects/crabcakes && grep -n "^## 11\|^## Backlog\|^### B-1\|^### B-2\|^### B-3" docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md
+cd /home/q/projects/crabcakes && grep -n "^6\. \`agent/runtime.py:2290\|^7\. \`add_assistant_message\`\|`ValueError\|^8\. \*\*Two distinct placeholder strings" docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md
 ```
 
-Expected: backlog section exists with B-1, B-2, B-3 entries.
+Expected: 3 hits, all in §10 (between line 577 and end of file). Items numbered 6, 7, 8 (existing items 1–5 unchanged).
 
 ### V5. Post-mortem exists and has all required sections
 
