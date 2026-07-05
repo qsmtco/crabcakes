@@ -2211,7 +2211,18 @@ class AgentRuntime:
                     if not text_content and not response.get("choices"):
                         logger.warning("[tool-loop] sk=%s LLM returned no choices and no content — treating as error",
                                        session_key)
-                        conv.add_assistant_message("", [])
+                        # Defense in depth: instead of persisting a corrupt empty
+                        # assistant message that downstream providers (Cohere,
+                        # strict OpenAI tool-loop, Anthropic strict mode) reject
+                        # with HTTP 400 "must have non-empty content or tool calls",
+                        # record a descriptive placeholder. The on_error dispatch
+                        # below still fires so the user sees the error; this just
+                        # prevents the corrupt entry from being saved and re-sent
+                        # on subsequent calls.
+                        conv.add_assistant_message(
+                            "[LLM returned no choices and no content — provider error or malformed response]",
+                            [],
+                        )
                         self._dispatch(self._on_error, session_key,
                                         "Agent returned no content. This may indicate a configuration error "
                                         "or an issue with the LLM provider.")
