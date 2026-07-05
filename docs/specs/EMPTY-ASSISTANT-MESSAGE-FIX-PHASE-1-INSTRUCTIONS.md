@@ -141,14 +141,14 @@ cd /home/q/projects/crabcakes && grep -c "^import logging" models/conversation.p
 
 Expected: `count` = 1.
 
-### V4. Confirm new logger is added exactly once
+### V4. Confirm new logger is added exactly once and placed correctly
 
 ```
 cd /home/q/projects/crabcakes && grep -n "^_logger = logging.getLogger" models/conversation.py
 cd /home/q/projects/crabcakes && grep -c "^_logger = logging.getLogger" models/conversation.py
 ```
 
-Expected: `count` = 1.
+Expected: `count` = 1, line between 24 and 25 (between `_DEFAULT_ENCODING_NAME` at line 23 and `_tiktoken_encoding_for` at line 26). NOT after any `class` definition.
 
 ### V5. Confirm the placeholder substitution works (live simulation)
 
