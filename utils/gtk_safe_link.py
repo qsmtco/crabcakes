@@ -102,6 +102,9 @@ def make_safe_label(
     label.set_selectable(selectable)
     if css_class:
         label.add_css_class(css_class)
+    if css_classes:
+        for cls in css_classes:
+            label.add_css_class(cls)
     # HIGH-6: gate navigation on scheme allowlist
     label.connect("activate-link", on_activate_link)
     return label
