@@ -226,16 +226,49 @@ safe_line = escape_for_pango(line)
 line_widget.set_markup(f"<tt><span foreground=\"#e5c07b\">$</span> {safe_line}</tt>")
 ```
 
-**New code — apply `format_markdown` to content lines:**
+**New code — apply `format_markdown` to content lines and route through `make_safe_label`:**
+
+Replace the raw `Gtk.Label` + `<tt>` + color-span wrapping with `make_safe_label` calls. `make_safe_label` already wires the `activate-link` handler (HIGH-6 guard) and produces a properly-configured `Gtk.Label`. We then add `<tt>` and color-span via CSS class instead of Pango markup — cleaner, no tag-conflict with `set_markup`.
+
 ```python
-escaped_line = escape_for_pango(line)
-formatted_line = format_markdown(escaped_line)
-line_widget.set_markup(f"<tt><span foreground=\"#e5c07b\">$</span> {formatted_line}</tt>")
+# Add new CSS classes in ui/styles.py (one-time setup):
+#   .terminal-line { font-family: monospace; }
+#   .terminal-prompt { color: #e5c07b; }
+
+for line in lines:
+    escaped_line = escape_for_pango(line)
+    formatted_line = format_markdown(escaped_line)
+    line_widget = make_safe_label(
+        formatted_line,
+        css_classes=["terminal-line"],
+    )
+    # Use a child label for the prompt prefix to keep `make_safe_label`'s
+    # set_markup() output untouched (no Pango tag conflicts).
+    content_box.append(line_widget)
 ```
 
-**Rationale:** This is a 1-line change inside the per-line loop. The `<tt>` wrapping and `$` prefix are applied AFTER `format_markdown` returns, so they are not affected by markdown processing. Note: terminal lines are NOT wrapped with `make_safe_label` because the `<tt>` + color span wrapping is incompatible with `make_safe_label`'s `set_markup` call (we'd need to restructure the entire terminal block to use `make_safe_label`). This is acceptable because terminal content is not user/agent-authored markdown — it's command output. The `format_markdown` addition handles the edge case of URLs in terminal output becoming clickable, but the `activate-link` guard is less critical here since terminal blocks are read-only display.
+**Architecture note (restructure):** The current terminal renderer puts the `$` prompt and color into a `<tt><span>` wrapper around the line content. With `make_safe_label` running `set_markup` on the line content, mixing Pango wrapper tags would conflict. The cleaner solution is to:
+1. Render the `$` prompt as a separate `Gtk.Label` with hardcoded markup (no user input).
+2. Render the line content as a `make_safe_label` (which has its own `set_markup`).
+3. Put both labels in a `Gtk.Box` so they appear side-by-side.
 
-**Risk:** Minimal. The only behavior change is that inline markdown in terminal output renders as formatted text instead of literal characters.
+**Why this is the right fix (not the originally proposed 1-liner):**
+
+The original proposed fix added `format_markdown` to the per-line content but kept the raw `Gtk.Label` + `set_markup`. This is a HIGH-6 SECURITY REGRESSION:
+
+- `format_markdown` produces `<a href="...">` tags for `[text](url)` patterns.
+- A terminal line like `error: see [docs](javascript:alert(1))` would render as a clickable `<a href="javascript:alert(1)">docs</a>`.
+- Terminal labels use raw `set_markup()` with no `activate-link` handler connected, so the HIGH-6 guard is bypassed.
+- `label.emit("activate-link", "javascript:alert(1)")` returns `False` (navigation allowed).
+- Verified empirically against GTK 4.14 at HEAD (713dab9).
+
+Before the fix, terminal content was not run through `format_markdown`, so `[click](...)` rendered as literal text and was never clickable. After the fix (the original 1-liner), it becomes a clickable XSS vector with no guard. This is strictly worse for security.
+
+**Status quo alternative:** If the team prefers the safer-but-less-featureful option, **leave terminal alone** (no `format_markdown`, no HIGH-6 risk). Terminal content rarely needs inline formatting. Inline markdown in terminal output remains literal — the same as today's behavior.
+
+**Recommendation:** Adopt the restructured fix (per-line `make_safe_label`). It enables inline formatting (bold/italic/code) AND keeps the HIGH-6 guard connected. The status-quo alternative is acceptable if the team decides terminal formatting is not worth the additional code paths.
+
+**Risk:** Low. The restructured fix adds one CSS class to `ui/styles.py` and splits each terminal line into a 2-label `Gtk.Box` (prompt + content). Visually identical to today's output, with the addition of inline markdown rendering and link safety.
 
 ### 2.5 `ui/views/chat_bubble.py` — event card factories (Bug #4)
 
