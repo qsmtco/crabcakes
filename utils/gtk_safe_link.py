@@ -74,7 +74,7 @@ def make_safe_label(
     xalign: float = 0,
     wrap: bool = True,
     selectable: bool = True,
-    ['str] | None = None,']
+    css_class: str | None = None,
 ) -> "Gtk.Label":
     """Create a Gtk.Label wired with the HIGH-6 activate-link guard.
 
