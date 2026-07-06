@@ -780,21 +780,28 @@ These are meta-tests that verify the documentation is present. They will fail if
 
 ## 5. Implementation Order
 
-1. **Fix `make_safe_label` first** (Bug #5, §2.1) — add `css_classes` parameter. This unblocks the heading fix.
+1. **Fix `make_safe_label` first** (Bug #5, §2.1) — add `css_classes` parameter and document it (Bug #11, §2.9). This unblocks the heading fix.
 2. **Fix `_build_heading_segment()`** (Bug #1, §2.2) — use `css_classes=` list, add `format_markdown` + `make_safe_label`.
 3. **Fix `_build_task_segment()`** (Bug #2, §2.3) — same pattern as heading.
-4. **Fix `_build_terminal_segment()`** (Bug #3, §2.4) — add `format_markdown` call per line.
+4. **Fix `_build_terminal_segment()`** (Bug #3 + #8, §2.4) — restructured fix using `make_safe_label` per-line. Verify HIGH-6 guard is wired.
 5. **Fix event card factories** (Bug #4, §2.5) — switch `escape_for_pango` → `xml_escape_text`.
-6. **Fix `block_parser.py` heading regex** (Bug #6, §2.6).
-7. **Fix `markdown.py` bullet regex** (Bug #7, §2.7).
-8. **Write all tests** (§3) and run full regression suite.
-9. **Confirm scope:** `git diff --stat` should show changes only in:
-   - `utils/gtk_safe_link.py`
-   - `ui/views/chat_bubble.py`
-   - `utils/block_parser.py`
-   - `utils/markdown.py`
-   - New test files: `tests/test_chat_heading.py`, `tests/test_chat_task_segment.py`, and additions to existing test files.
-10. **Manual UI smoke test:** Send messages with `### **bold** heading`, `- [x] **bold** task`, `[x](javascript:alert(1))`, and verify correct rendering + blocked JS.
+6. **Fix wider presentation-injection scope** (Bug #9, §2.5b) — add `xml_template` helper to `utils/escaping.py`, migrate ~16 call sites.
+7. **Fix `block_parser.py` heading regex** (Bug #6, §2.6).
+8. **Fix `markdown.py` bullet regex** (Bug #7, §2.7).
+9. **Fix streaming bubble** (Bug #10, §2.8) — use `make_safe_label` for the streaming label.
+10. **Write all tests** (§3) and run full regression suite.
+11. **Confirm scope:** `git diff --stat` should show changes only in:
+    - `utils/gtk_safe_link.py`
+    - `utils/escaping.py` (adds `xml_template`)
+    - `ui/views/chat_bubble.py`
+    - `ui/handlers/chat_render_handler.py`
+    - `ui/views/diff_card.py`
+    - `ui/views/feed_card.py`
+    - `utils/block_parser.py`
+    - `utils/markdown.py`
+    - `ui/styles.py` (one new CSS class for terminal)
+    - New test files: `tests/test_chat_heading.py`, `tests/test_chat_task_segment.py`, `tests/test_chat_terminal_segment.py`, `tests/test_chat_streaming.py`, `tests/test_presentation_injection.py`, and additions to existing test files.
+12. **Manual UI smoke test:** Send messages with `### **bold** heading`, `- [x] **bold** task`, terminal lines with `[x](javascript:alert(1))`, file paths containing `<b>` markup, and verify correct rendering + blocked JS.
 
 ---
 
