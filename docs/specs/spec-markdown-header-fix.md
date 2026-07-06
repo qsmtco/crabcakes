@@ -916,15 +916,18 @@ git diff --stat -- ui/views/chat_bubble.py ui/handlers/chat_render_handler.py ui
 
 | Check | Result |
 |---|---|
-| Bug verified empirically before writing spec | ✓ (all bugs confirmed with runnable code) |
-| All referenced files actually read | ✓ (`utils/markdown.py`, `utils/block_parser.py`, `ui/views/chat_bubble.py`, `ui/handlers/chat_render_handler.py`, `ui/styles.py`, `utils/gtk_safe_link.py`, `utils/escaping.py`, `utils/syntax_highlight.py`, `tests/test_gtk_safe_link.py`, `tests/test_markdown.py`) |
-| Code samples traced through actual call sites | ✓ |
-| Tests cover the NEW code paths | ✓ (heading: 12 cases, task: 7 cases, block_parser: 5 cases, event cards: 4 cases, bullet: 1 case) |
-| Acceptance criteria are measurable | ✓ (specific markup strings, CSS class lists, activate-link return values) |
-| Verification commands are runnable as written | ✓ (no template placeholders) |
+| Bug verified empirically before writing spec | ✓ (all 11 bugs confirmed with runnable code at HEAD 713dab9) |
+| All referenced files actually read | ✓ (`utils/markdown.py`, `utils/block_parser.py`, `ui/views/chat_bubble.py`, `ui/handlers/chat_render_handler.py`, `ui/views/diff_card.py`, `ui/views/feed_card.py`, `ui/styles.py`, `utils/gtk_safe_link.py`, `utils/escaping.py`, `utils/syntax_highlight.py`, `tests/test_gtk_safe_link.py`, `tests/test_markdown.py`) |
+| Code samples traced through actual call sites | ✓ (all 12+ presentation-injection sites enumerated; verify commands run against actual sources) |
+| Tests cover the NEW code paths | ✓ (heading: 12 cases, task: 7 cases, block_parser: 5 cases, event cards: 4 cases, terminal: 5 cases, presentation-injection: 8 cases, streaming: 3 cases, docstring: 3 cases, bullet: 1 case — 48 total) |
+| Acceptance criteria are measurable | ✓ (specific markup strings, CSS class lists, activate-link return values, escaped strings) |
+| Verification commands are runnable as written | ✓ (no template placeholders; all imports verified) |
 | Spec stays in scope (no format_markdown core rewrite, no extract_blocks structural changes) | ✓ |
 | References existing patterns (`_build_text_segment`, `make_safe_label`) | ✓ |
 | `make_safe_label` signature verified against actual source | ✓ (single `css_class` param confirmed; compound class bug verified empirically) |
+| Bug #6 regex/test/prose contradiction resolved | ✓ (new regex `r'^(#{1,6})(.*)$'` matches all 5 §3.5 test cases; verified empirically) |
+| Bug #3 HIGH-6 regression risk addressed | ✓ (restructured fix uses `make_safe_label` per-line; §3.9 tests verify HIGH-6 guard) |
+| Bug #9 wider scope covered | ✓ (12+ additional call sites enumerated; `xml_template` helper proposed for migration) |
 
 **Previous spec failure modes (addressed in this rewrite):**
 - ✗ Original proposed dead regex in `format_markdown` → ✓ Removed; fix lives in `_build_heading_segment` only
@@ -934,7 +937,10 @@ git diff --stat -- ui/views/chat_bubble.py ui/handlers/chat_render_handler.py ui
 - ✗ Original cited §3.14 handler pattern (which is `chat_handler.py`, unrelated) → ✓ Removed; no ARCHITECTURE.md section claim needed
 - ✗ Original verification commands had `SyntaxError` → ✓ All commands runnable
 - ✗ Original claimed "automatic testing passes" with no header tests existing → ✓ This spec mandates `tests/test_chat_heading.py` with 12 specific cases
-- ✗ Original only covered the heading bug → ✓ This spec covers 7 bugs found in the same audit
+- ✗ Original only covered the heading bug → ✓ This spec covers 11 bugs found in the audit
+- ✗ Original Bug #3 fix introduced HIGH-6 regression → ✓ Restructured to use `make_safe_label` per-line
+- ✗ Original Bug #4 scope only covered 4 cards → ✓ Expanded to ~16 call sites with `xml_template` helper
+- ✗ Original Bug #6 regex contradicted its own test cases and §1.6 prose → ✓ New regex matches all 5 test cases; §1.6 prose corrected to reflect actual CommonMark stance
 
 ---
 
@@ -945,10 +951,14 @@ git diff --stat -- ui/views/chat_bubble.py ui/handlers/chat_render_handler.py ui
 | 1 | Heading segment skips `format_markdown()` + `make_safe_label()` | `chat_bubble.py:736` | bug (rendering + HIGH-6 security) | §2.2 |
 | 2 | Task segment skips `format_markdown()` + `make_safe_label()` | `chat_bubble.py:759` | bug (rendering + HIGH-6 security) | §2.3 |
 | 3 | Terminal segment skips `format_markdown()` | `chat_bubble.py:706` | issue (minor rendering) | §2.4 |
-| 4 | Event cards use `escape_for_pango` instead of `xml_escape_text` | `chat_bubble.py:833+` | bug (presentation injection) | §2.5 |
+| 4 | Event cards use `escape_for_pango` instead of `xml_escape_text` | `chat_bubble.py:833+` (4 cards) | bug (presentation injection) | §2.5 |
 | 5 | `make_safe_label` compound CSS class creates single invalid class | `gtk_safe_link.py:77` | bug (CSS classes silently wrong) | §2.1 |
-| 6 | Heading regex rejects CommonMark no-space headers | `block_parser.py:204` | issue (standards compliance) | §2.6 |
+| 6 | Heading regex rejects bare `##` and no-space headers | `block_parser.py:204` | issue (low-stakes correctness) | §2.6 |
 | 7 | First bullet at position 0 not converted to • | `markdown.py` Step 2 | issue (minor rendering) | §2.7 |
+| 8 | Bug #3 fix would introduce HIGH-6 regression in terminal | `chat_bubble.py:706` (proposed) | bug (HIGH-6 security) | §2.4 (restructured fix) |
+| 9 | `escape_for_pango` presentation-injection in ~16 call sites | `chat_bubble.py`, `chat_render_handler.py`, `diff_card.py`, `feed_card.py` | issue (presentation injection) | §2.5b (`xml_template` helper) |
+| 10 | Streaming bubble skips `make_safe_label` | `chat_render_handler.py:update_streaming` | issue (consistency) | §2.8 |
+| 11 | `make_safe_label` `css_classes` parameter undocumented | `gtk_safe_link.py` docstring | suggestion (discoverability) | §2.9 |
 
 ---
 
