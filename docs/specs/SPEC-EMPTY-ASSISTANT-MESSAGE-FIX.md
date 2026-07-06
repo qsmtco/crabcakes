@@ -2,7 +2,7 @@
 
 **Status:** ✅ SHIPPED (2026-07-05)
 **Commits:** `4d210bb5fccea9fb47c694b0d70891cd98c2ba3e` (Phase 1), `0ed7afa9c4465bb1df9b1ea62695439b5bf136a1` (Phase 2), `654bc2038d789d4086ffed49bff0432995386210` (Phase 3)
-**Tests:** 65 pass (60 pre-existing + 5 new regression tests)
+**Tests:** 86 pass (60 pre-existing + 5 empty-assistant regression + 21 bulk-repair regression)
 **Branch:** main (1 commit ahead of origin/main after delivery)
 **Post-mortem:** `docs/post-mortems/2026-07-05-EMPTY-ASSISTANT-MESSAGE-POST-MORTEM.md`
 **Date:** 2026-07-05
