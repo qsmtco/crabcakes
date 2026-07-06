@@ -89,11 +89,66 @@ label.get_css_classes()  # → ['chat-heading chat-heading-2']  (WRONG: single c
 
 **Verified:** `format_markdown('- item1\n- item2')` returns `'- item1\n• item2'` — first bullet missed.
 
-### 1.8 Out of scope
+### 1.8 Bug #8: terminal HIGH-6 regression risk from Bug #3 fix (security regression)
+
+**Problem:** A naive Bug #3 fix that adds `format_markdown` to per-line terminal content introduces a clickable `javascript:` link vector with no `activate-link` guard.
+
+**Why this is a separate bug:** The Bug #3 fix as originally proposed in this spec would itself create a HIGH-6 regression. The audit caught this before implementation.
+
+**Verified empirically:**
+```python
+from utils.markdown import format_markdown
+from utils.escaping import escape_for_pango
+import gi; gi.require_version('Gtk', '4.0')
+from gi.repository import Gtk
+
+# What format_markdown produces for a [link](url):
+formatted = format_markdown(escape_for_pango("see [docs](javascript:alert(1))"))
+# formatted = 'see <a href="javascript:alert(1)">docs</a>'
+
+# A raw Gtk.Label with set_markup(formatted) has NO activate-link handler.
+label = Gtk.Label()
+label.set_markup(formatted)
+result = label.emit("activate-link", "javascript:alert(1)")
+# result == GLib.EVENT_STOP? No — False (event_propagation_continue), i.e. navigation allowed.
+```
+
+**Fix:** See §2.4 for the restructured terminal fix that routes per-line content through `make_safe_label`. Either adopt the restructured fix (preferred) or leave terminal at status quo.
+
+**Severity:** bug (HIGH-6 security).
+
+### 1.9 Bug #9: `escape_for_pango` presentation-injection pattern (wider Bug #4 scope)
+
+**Problem:** Bug #4 was originally scoped to 4 event card factories. The audit found the same `escape_for_pango`-inside-hardcoded-Pango-wrapper pattern in ~16 additional call sites across `chat_bubble.py`, `chat_render_handler.py`, `diff_card.py`, and `feed_card.py`. A `file_path` of `<b>fake</b>` renders as bold in path labels; a `tool_name` of `<i>fake</i>` renders as italic; etc.
+
+**Verified:** `escape_for_pango('<b>fake</b>')` returns `'<b>fake</b>'` (tag preserved).
+
+**Severity:** issue (presentation injection — misleading UI, not RCE).
+
+**Fix:** See §2.5b for the `xml_template` helper and migration of all ~16 call sites.
+
+### 1.10 Bug #10: streaming bubble skips `format_markdown` and `make_safe_label` (consistency)
+
+**Problem:** `chat_render_handler.py:update_streaming()` (line 434-469) does `sb.label.set_markup(escape_for_pango(sb.plain_text) + "<tt>▍</tt>")` on a raw `Gtk.Label`. No `format_markdown`, no `make_safe_label`. During the live-streaming window (before `end_streaming` replaces the bubble with the final rendered version), text shows up without markdown formatting.
+
+**Severity:** issue (inconsistent rendering during streaming window — not a security issue because text is escaped, but visual flash on completion).
+
+**Fix:** See §2.8. Use `make_safe_label` for the streaming label so it matches the final-render pipeline.
+
+### 1.11 Bug #11: `make_safe_label` `css_classes` parameter undocumented (suggestion)
+
+**Problem:** The `css_classes` parameter added in §2.1 (Bug #5 fix) is not documented in the function's docstring. New callers won't know about it without reading the source.
+
+**Severity:** suggestion.
+
+**Fix:** See §2.1 — add docstring entry for the new parameter.
+
+### 1.12 Out of scope
 
 - Anything in `utils/markdown.py`'s core formatting logic beyond the bullet fix (§1.7). The `format_markdown` function is well-tested with 58 passing tests.
 - `utils/block_parser.py` table parsing, quote detection for lazy continuation lines, or multi-paragraph blockquotes. These are structural improvements, not rendering bugs.
 - Underscore italic (`_italic_`). CommonMark specifies `_italic_` but CrabCakes only supports `*italic*`. Adding underscore support is a feature, not a bug fix.
+- The streaming path is intentionally lightweight and is replaced wholesale by `end_streaming`. Bug #10 is a minor consistency improvement; if the team prefers to keep streaming plain-text, that is also acceptable.
 
 **Risk:** Low–Medium. All changes are small, mirror existing patterns, and have clear test cases.
 
