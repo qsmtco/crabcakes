@@ -757,11 +757,20 @@ These are meta-tests that verify the documentation is present. They will fail if
 - [ ] `tests/test_markdown.py` has the new `test_bullet_list_first_item` test (§3.4)
 - [ ] `tests/test_block_parser.py` has the 5 heading regex tests (§3.5)
 - [ ] Event card escaping tests pass (§3.6)
+- [ ] Terminal segment tests pass (§3.9) — HIGH-6 invariant for terminal labels
+- [ ] Presentation-injection tests pass (§3.10) — covers Bug #9 wider scope
+- [ ] Streaming bubble tests pass (§3.11) — HIGH-6 invariant for streaming label
+- [ ] `make_safe_label` docstring test passes (§3.12) — Bug #11 verification
 - [ ] All 10+ existing `tests/test_gtk_safe_link.py` tests still pass (no regression)
 - [ ] All existing `tests/test_markdown.py` tests still pass (no regression)
+- [ ] All existing `tests/test_block_parser.py` tests still pass (no regression)
+- [ ] All existing `tests/test_escaping.py` tests still pass (no regression — `xml_template` is additive)
 - [ ] Manual smoke test in UI: `### **bold** heading` renders bold at heading size
 - [ ] Manual smoke test: `- [x] **bold** task` renders bold checkbox item
 - [ ] Manual smoke test: clicking `[x](javascript:alert(1))` in a heading does NOT execute JS (HIGH-6)
+- [ ] Manual smoke test: clicking `[x](javascript:alert(1))` in a task does NOT execute JS (HIGH-6)
+- [ ] Manual smoke test: clicking `[x](javascript:alert(1))` in a terminal line does NOT execute JS (HIGH-6, Bug #8 regression check)
+- [ ] Manual smoke test: a `file_path` of `<b>fake</b>` renders as literal `&lt;b&gt;fake&lt;/b&gt;` (Bug #9)
 - [ ] `_build_heading_segment` produces two separate CSS classes: `chat-heading` and `chat-heading-{level}`
 - [ ] Event card content with `<b>` tags renders as literal `&lt;b&gt;` (Bug #4 fix)
 - [ ] `git diff utils/markdown.py` shows only the bullet regex change (Bug #7)
