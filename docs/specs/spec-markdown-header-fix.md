@@ -436,9 +436,9 @@ Add to `TestEdgeCases`:
 
 | # | Input paragraph | Assertion |
 |---|---|---|
-| 1 | `"##no space"` | `{type: "heading", level: 2, content: ""}` |
+| 1 | `"##no-space"` | `{type: "heading", level: 2, content: "no-space"}` (no whitespace separator — captured as content) |
 | 2 | `"### has space"` | `{type: "heading", level: 3, content: "has space"}` (regression) |
-| 3 | `"##"` | `{type: "heading", level: 2, content: ""}` |
+| 3 | `"##"` | `{type: "heading", level: 2, content: ""}` (bare markers, empty content guard renders as spacer) |
 | 4 | `"###### max heading"` | `{type: "heading", level: 6, content: "max heading"}` (regression) |
 | 5 | `"####### too many"` | NOT a heading (7 `#` > max 6), classified as text |
 
