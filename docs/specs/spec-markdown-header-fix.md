@@ -107,17 +107,23 @@ Test #6 (HIGH-6) is non-negotiable. The original spec missed that `_build_headin
 
 Test #2 is the headline bug — bold in headings must render.
 
-### 3.3 How to read Pango markup from a Gtk.Label
+### 3.3 How to assert on Pango markup from a Gtk.Label
 
-`Gtk.Label.get_label()` returns the plain text without markup. To inspect the Pango markup, you must capture it before `set_markup()` is called. Two options:
+After `set_markup()` (or after `make_safe_label()`), `Gtk.Label.get_label()` returns the **markup string** verbatim, including Pango tags. This is verified empirically against GTK 4.14:
 
-(a) Refactor `_build_heading_segment` to call a small private helper `_heading_markup(seg)` that returns the markup string. Test the helper directly; test the widget separately.
+```python
+label = Gtk.Label()
+label.set_markup("<b>bold</b> text")
+assert label.get_label() == "<b>bold</b> text"  # True
+```
 
-(b) Use `label.get_layout().get_text()` and reconstruct — but this loses Pango tags, so it can't verify `<b>` wrapping.
+So tests can call `_build_heading_segment(seg)`, read `.get_label()` on the returned widget, and assert on the markup string. **No extraction helper is required.**
 
-Option (a) is cleaner and matches the codebase style (`_build_text_segment` does inline `escape_for_pango`+`format_markdown` — extract to `_text_markup(seg)` helper for testing).
+The existing `_build_text_segment` and `_build_quote_segment` paths do NOT extract a helper either — tests in `tests/test_gtk_safe_link.py` (`TestBlockquoteLinkGuard`) call the segment function and assert on `label.get_label()` directly. The proposed `tests/test_chat_heading.py` follows the same pattern.
 
-**Implementation note for coder:** extract the markup computation into a private function `_heading_markup(seg: dict) -> str` so tests can assert on the markup string directly without needing GTK introspection tricks.
+If a future test wants to inspect rendered text (stripped of markup), use `label.get_layout().get_text()` — but for verifying that `<b>` wrapping is present, `get_label()` is correct.
+
+**Note:** I considered asking for a `_heading_markup()` helper function for unit-testability without GTK. Empirically, `_build_heading_segment` works headless in this environment (`DISPLAY=:0`, no display server needed for `Gtk.Label()`). Don't add the helper unless tests require it.
 
 ---
 
