@@ -148,6 +148,7 @@ Commit: `654bc2038d789d4086ffed49bff0432995386210` ("Accept: tests/test_conversa
 - **B-1 (spec §10 item 6):** `agent/runtime.py:2290` write-side guard tightening — when `text_content` is empty but `choices` is non-empty, the guard doesn't fire. Deferred; Phase 1 read-side filter provides defense-in-depth.
 - **B-2 (spec §10 item 7):** `add_assistant_message` `ValueError` validation — rejected. Would break intentional empty-content test cases. See spec §10 item 7 for full rationale.
 - **B-3 (spec §10 item 8):** Two placeholder strings — kept distinct for log discrimination. Re-evaluate if user reports confusion. See spec §10 item 8.
+- **B-4 (NEW, 2026-07-05):** Bulk-repair script for legacy corrupt messages — **SHIPPED** in a follow-up commit. Operator requested sweeping all 21,245 conversation files for the same corruption pattern. Implemented `scripts/bulk_repair_empty_assistant.py` with 21 regression tests in `tests/test_bulk_repair_empty_assistant.py`. Result: 350 files repaired, 351 messages substituted (all empty-content + no-tool-calls cases). 0 corrupt messages remain. Backup of pre-repair state stored at `~/.config/crabcakes/conversations/.bulk-repair-2026-07-05/` (350 files, 20MB). Idempotent: safe to re-run. Note: 55 messages with empty content BUT tool_calls present were correctly skipped — these are legitimate tool-call-only assistant turns that Cohere accepts. 1 file (`k-b'helper'.json`) skipped — truncated mid-write, requires different recovery.
 
 ---
 
