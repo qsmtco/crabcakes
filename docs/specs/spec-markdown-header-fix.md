@@ -854,11 +854,12 @@ import re
 m = re.match(r'^(#{1,6})\s+(.*)', '##no space')
 print('Current regex on \"##no space\":', 'matches' if m else 'NO MATCH (BUG)')
 # Proposed regex (from §2.6):
-m = re.match(r'^(#{1,6})(.*)$', '##no space')
+pattern = r'^(#{1,6})(?!#)(.*)$'
+m = re.match(pattern, '##no space')
 print('Proposed regex on \"##no space\":', 'matches' if m else 'NO MATCH')
 # Verify all five test cases:
 for inp in ['##no-space', '### has space', '##', '###### max heading', '####### too many']:
-    m = re.match(r'^(#{1,6})(.*)$', inp)
+    m = re.match(pattern, inp)
     print(f'  {inp!r:25s} -> {\"MATCH\" if m else \"NO MATCH\"}')
 "
 
