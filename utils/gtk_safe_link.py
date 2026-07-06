@@ -122,7 +122,20 @@ def make_safe_label(
     if css_class:
         label.add_css_class(css_class)
     if css_classes:
+        # Guard against the string-as-list footgun: a caller writing
+        # css_classes="chat-heading chat-heading-2" (forgetting brackets)
+        # would otherwise iterate char-by-char, producing single-char class
+        # names — the exact failure mode Bug #5 targeted. Reject non-list
+        # iterables (str, bytes) explicitly.
+        if isinstance(css_classes, (str, bytes)):
+            raise TypeError(
+                "css_classes must be a list or tuple, not a string. "
+                "Use css_class='single' for one class, or "
+                "css_classes=['a', 'b'] for multiple."
+            )
         for cls in css_classes:
+            if not isinstance(cls, str) or not cls:
+                raise ValueError(f"Invalid CSS class: {cls!r}")
             label.add_css_class(cls)
     # HIGH-6: gate navigation on scheme allowlist
     label.connect("activate-link", on_activate_link)
