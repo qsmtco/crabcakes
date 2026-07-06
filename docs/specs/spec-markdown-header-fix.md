@@ -38,9 +38,15 @@
 
 **Problem:** `_build_terminal_segment()` at `chat_bubble.py:706-742` builds each line manually with `escape_for_pango()` + `<tt>` wrapping but does NOT call `format_markdown()`. While terminal content is usually monospace commands, LLM-generated terminal blocks can contain inline formatting (e.g., emphasis in error output, links in help text).
 
-**Severity:** Low — terminal content rarely uses inline markdown. But for consistency and to avoid the appearance of a bug, it should be fixed. Note: `format_markdown` should be applied to the content BEFORE the `$` prefix and `<tt>` color wrapping are added (i.e., only to the output/continuation lines, not the command prompt structure).
+**Severity:** Low — terminal content rarely uses inline markdown.
 
-**Risk:** Low. The `$` prefix and amber color are applied as Pango spans around the line; `format_markdown` operates on the content portion only.
+**HIGH-6 caveat (important):** A naive fix that adds `format_markdown` to per-line content would introduce a clickable `javascript:` link vector. Because `format_markdown` produces `<a href=...>` tags and terminal labels use raw `Gtk.Label() + set_markup()` with no `make_safe_label`, the `activate-link` HIGH-6 guard is not connected. Verified empirically: `label.emit("activate-link", "javascript:alert(1)")` returns `False` on a terminal label — navigation is allowed.
+
+**Two valid fix approaches:**
+1. **Leave terminal alone** (status quo): no inline markdown in terminal output. Safest, simplest.
+2. **Restructure per-line labels to use `make_safe_label`** (preferred if inline markdown is desired): renders `**bold**` / `*italic*` / `` `code` `` AND gates `<a href>` activation through the scheme allowlist.
+
+The fix in §2.4 adopts approach #2. The team can choose approach #1 if the additional code paths aren't worth the feature.
 
 ### 1.4 Bug #4: event card widgets skip `format_markdown()` and `make_safe_label()` (HIGH-6)
 
