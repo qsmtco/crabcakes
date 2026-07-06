@@ -516,7 +516,7 @@ if m:
 **Updated classification block:**
 ```python
 if first.startswith('#'):
-    m = re.match(r'^(#{1,6})(.*)$', first)
+    m = re.match(r'^(#{1,6})(?!#)(.*)$', first)
     if m:
         level = len(m.group(1))
         rest = m.group(2)
