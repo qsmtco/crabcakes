@@ -695,6 +695,59 @@ assert label.get_label() == "<b>bold</b> text"  # True
 
 So tests can call `_build_heading_segment(seg)`, read `.get_label()` on the returned widget, and assert on the markup string. **No extraction helper is required.**
 
+### 3.9 Terminal segment tests (Bug #3 + #8)
+
+Add to `tests/test_chat_terminal_segment.py` (new file):
+
+| # | Input line | Assertion |
+|---|---|---|
+| 1 | `"error with **bold** message"` | `get_label()` contains `<b>bold</b>`, not literal `**bold**` |
+| 2 | `"see [docs](https://example.com)"` | contains `<a href="https://example.com">docs</a>` |
+| 3 | `"see [x](javascript:alert(1))"` | HIGH-6: `label.emit("activate-link", "javascript:alert(1)")` returns `True` (blocked) |
+| 4 | `"plain text"` | equals `"plain text"` (regression) |
+| 5 | `""` | returns an empty spacer widget |
+
+**Note:** If the team chooses the status-quo alternative (no `format_markdown` in terminal), §3.9 tests #1–3 should be marked skip/xfail, OR §2.4 should be revised to leave terminal alone. The §3.9 tests are only meaningful if the restructured fix from §2.4 is adopted.
+
+### 3.10 Presentation-injection tests for the wider Bug #4 scope (Bug #9)
+
+Add to `tests/test_presentation_injection.py` (new file):
+
+| # | Call site | Input | Assertion |
+|---|---|---|---|
+| 1 | `create_file_card("<b>fake</b>")` | `file_path` containing `<b>` | path label's `get_label()` contains `&lt;b&gt;` (escaped), not raw `<b>` |
+| 2 | `create_file_card("path", line_range="<i>fake</i>")` | `line_range` containing `<i>` | lr label contains `&lt;i&gt;` |
+| 3 | `create_edit_card("<b>fake</b>")` | `file_path` containing `<b>` | path label contains `&lt;b&gt;` |
+| 4 | `create_tool_card("<i>fake</i>")` | `tool_name` containing `<i>` | name label contains `&lt;i&gt;` |
+| 5 | task card `task_id="<s>fake</s>"` | task_id containing `<s>` | title label contains `&lt;s&gt;` |
+| 6 | task card `status="<u>fake</u>"` | status containing `<u>` | meta label contains `&lt;u&gt;` |
+| 7 | task card `assigned_to="<b>fake</b>"` | assigned_to containing `<b>` | at label contains `&lt;b&gt;` |
+| 8 | `xml_template("<b>{x}</b>", x="<b>fake</b>")` | helper test | result is `"<b>&lt;b&gt;fake&lt;/b&gt;</b>"` |
+
+### 3.11 Streaming bubble tests (Bug #10)
+
+Add to `tests/test_chat_streaming.py` (new file) or extend existing streaming tests:
+
+| # | Input | Assertion |
+|---|---|---|
+| 1 | `update_streaming("**bold** text")` | resulting label is `make_safe_label`-wrapped (has `activate-link` handler connected) |
+| 2 | `update_streaming("[link](https://example.com)")` | HIGH-6: `label.emit("activate-link", "https://example.com")` returns `False` (allowed) |
+| 3 | `update_streaming("[x](javascript:alert(1))")` | HIGH-6: `label.emit("activate-link", "javascript:alert(1)")` returns `True` (blocked) |
+
+**Alternative:** If the team prefers streaming to remain plain-text, skip these tests and add a comment to the streaming path stating this is intentional.
+
+### 3.12 `make_safe_label` docstring test (Bug #11)
+
+Add to `tests/test_gtk_safe_link.py`:
+
+| # | Test |
+|---|---|
+| 1 | `inspect.getdoc(make_safe_label)` contains the string `"css_classes"` |
+| 2 | The docstring explains that GTK4's `add_css_class` does not split on whitespace |
+| 3 | The docstring references the Bug #5 spec for context |
+
+These are meta-tests that verify the documentation is present. They will fail if the docstring is missing or stale.
+
 ---
 
 ## 4. Acceptance Criteria
