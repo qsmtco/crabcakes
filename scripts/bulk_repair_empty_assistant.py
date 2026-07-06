@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 bulk_repair_empty_assistant.py — Repair corrupt empty-content assistant messages
 across all crabcakes conversation files.
@@ -10,11 +9,12 @@ substitutes a placeholder at serialization time, but the underlying file is stil
 corrupt. This script repairs the files directly.
 
 Usage:
-    python3 scripts/bulk_repair_empty_assistant.py --dry-run
-    python3 scripts/bulk_repair_empty_assistant.py --apply --backup-dir PATH
+    python3 scripts/bulk_repair_empty_assistant.py           # dry run (default)
+    python3 scripts/bulk_repair_empty_assistant.py --apply   # actually repair
+    python3 scripts/bulk_repair_empty_assistant.py --verbose # show skipped files too
 
 Default conversations dir: ~/.config/crabcakes/conversations/
-Default backup dir:         ~/.config/crabcakes/conversations/.bulk-repair-2026-07-05/
+Default backup dir:        ~/.config/crabcakes/conversations/.bulk-repair-2026-07-05/
 
 Idempotent: safe to re-run. Files with no corrupt messages are skipped entirely.
 """
@@ -107,7 +107,7 @@ def repair_file(path: Path, backup_dir: Path, apply: bool) -> tuple[int, str]:
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--apply', action='store_true',
-                        help='Actually repair files (default is dry-run)')
+                        help='Actually repair files (default is dry-run preview only)')
     parser.add_argument('--conv-dir', type=Path, default=CONV_DIR,
                         help=f'Conversations directory (default: {CONV_DIR})')
     parser.add_argument('--backup-dir', type=Path, default=None,
