@@ -68,7 +68,14 @@ def on_activate_link(_label, uri: str) -> bool:
     return True  # block
 
 
-['str] | None = None,\n) -> "Gtk.Label']
+def make_safe_label(
+    markup: str,
+    *,
+    xalign: float = 0,
+    wrap: bool = True,
+    selectable: bool = True,
+    css_class: str | None = None,
+) -> "Gtk.Label":
     """Create a Gtk.Label wired with the HIGH-6 activate-link guard.
 
     Caller passes already-formatted Pango markup (output of escape_for_pango +
