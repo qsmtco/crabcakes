@@ -479,10 +479,11 @@ m = re.match(r'^(#{1,6})\s+(.*)', first)
 **New code:** Match `#` markers followed by anything, then strip one optional leading whitespace. Simpler than a single complex regex:
 ```python
 # Match 1–6 `#` markers followed by anything (including nothing).
-# The optional whitespace stripping below handles the standard
-# "space-after-#" expectation while also accepting bare `##` and
-# no-space variants like `##no-space`.
-m = re.match(r'^(#{1,6})(.*)$', first)
+# The (?!#) negative lookahead prevents matching when the input has 7+
+# hashes (which would be an invalid ATX heading). The optional whitespace
+# stripping below handles the standard "space-after-#" expectation while
+# also accepting bare `##` and no-space variants like `##no-space`.
+m = re.match(r'^(#{1,6})(?!#)(.*)$', first)
 if m:
     level = len(m.group(1))
     rest = m.group(2)
@@ -496,7 +497,8 @@ if m:
 ```
 
 **Rationale (regex choice):**
-- `^(#{1,6})(.*)$` — matches `##` (rest=""), `## heading` (rest=" heading"), AND `##no-space` (rest="no-space").
+- `^(#{1,6})(?!#)(.*)$` — matches `##` (rest=""), `## heading` (rest=" heading"), AND `##no-space` (rest="no-space").
+- The `(?!#)` negative lookahead is critical: it ensures the `#` group is NOT immediately followed by another `#`, which would mean 7+ hashes (invalid ATX). Without this, `#######` would match as `######` (6) + `# too many`, incorrectly producing a level-6 heading.
 - The optional whitespace stripping (`rest[1:]` if it starts with space/tab) preserves the standard CommonMark space-after-# expectation while also accepting bare or no-space variants.
 - The `#{1,6}` quantifier keeps the 1–6 hash count enforcement.
 - This regex is simple, easy to read, and matches all five test cases in §3.5.
