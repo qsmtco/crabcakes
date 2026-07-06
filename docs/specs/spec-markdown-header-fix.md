@@ -1,13 +1,17 @@
-# SPEC: Fix Markdown Header Stripping Bug
+# SPEC: Fix Markdown Rendering Bugs Across All Segment Builders
 
-**Date:** 2026-07-05 (rewritten after adversarial audit)
-**Author:** Coder (original); rewritten by Supervisor + Coder
+> **⚠️ Note:** Despite the original filename (`spec-markdown-header-fix.md`), this specification covers **multiple bugs** found during a deep-dive audit of the chat rendering pipeline. The header fix is the original issue; the additional bugs were discovered while auditing the sibling code paths. All fixes are grouped here because they share the same root pattern: segment builders that skip `format_markdown()` and/or `make_safe_label()`.
+
+**Date:** 2026-07-05 (original); 2026-07-06 (expanded after deep-dive audit)
+**Author:** Coder (original); rewritten by Supervisor + Coder; expanded by Qaster
 **Status:** Draft — for implementation
 **Target branch:** main
 
 ---
 
 ## 1. Overview (problem statement — verified)
+
+### 1.1 Original bug: heading inline formatting
 
 **Problem:** When a chat bubble contains a markdown header with inline formatting, the inline formatting is rendered as literal text instead of Pango markup.
 
@@ -20,19 +24,111 @@
 - `utils/markdown.py:format_markdown()` already correctly converts `**bold**`, `*italic*`, `` `code` ``, and `[text](url)` inside heading content — when it is called. It just isn't called for headings.
 - `ui/styles.py:539-543` defines `.chat-heading-{1..4}` CSS classes that already handle font sizing (20px/17px/15px/14px). These are correctly applied today via `add_css_class()` calls at `chat_bubble.py:753-754`. The CSS layer is not broken.
 
-**Out of scope:** Anything in `utils/markdown.py` itself. The original spec proposed adding a header regex to `format_markdown`, but that code path is dead: by the time `_build_heading_segment` sees the content, `#` markers are already stripped. There is no inline header processing to add.
+**Risk:** Low. The change mirrors existing patterns.
 
-**Out of scope (separate issue, not addressed here):** `utils/block_parser.py:204` regex `r'^(#{1,6})\s+(.*)'` requires at least one whitespace character after the `#` markers. CommonMark allows headers like `##h2` with no space. This causes `##h2` to be classified as text instead of a heading. Documented here for follow-up; not fixed in this spec.
+### 1.2 Bug #2: task segment skips `format_markdown()` and `make_safe_label()` (HIGH-6)
 
-**Risk:** Low. The change is a 1-line edit (plus regression tests). No new dependencies. No behavior change for the `#` markers themselves — they were already gone before this fix.
+**Problem:** `_build_task_segment()` at `chat_bubble.py:759-771` calls `escape_for_pango()` but does NOT call `format_markdown()`, so inline formatting in task list items (`**bold**`, `*italic*`, `` `code` ``, `[text](url)`) is rendered as literal text.
+
+**Security:** The task segment also does NOT use `make_safe_label()`, meaning the `activate-link` HIGH-6 guard is not connected. A task item containing `[click](javascript:alert(1))` would be a clickable XSS vector — but only if `format_markdown` were added. Currently it's doubly broken (no format_markdown AND no guard), but both must be fixed together.
+
+**Verified:** `☑ **Important** task` renders as literal `**Important**` (confirmed empirically). `activate-link` returns `False` for `javascript:` URLs (confirmed: guard not connected).
+
+### 1.3 Bug #3: terminal segment skips `format_markdown()`
+
+**Problem:** `_build_terminal_segment()` at `chat_bubble.py:706-742` builds each line manually with `escape_for_pango()` + `<tt>` wrapping but does NOT call `format_markdown()`. While terminal content is usually monospace commands, LLM-generated terminal blocks can contain inline formatting (e.g., emphasis in error output, links in help text).
+
+**Severity:** Low — terminal content rarely uses inline markdown. But for consistency and to avoid the appearance of a bug, it should be fixed. Note: `format_markdown` should be applied to the content BEFORE the `$` prefix and `<tt>` color wrapping are added (i.e., only to the output/continuation lines, not the command prompt structure).
+
+**Risk:** Low. The `$` prefix and amber color are applied as Pango spans around the line; `format_markdown` operates on the content portion only.
+
+### 1.4 Bug #4: event card widgets skip `format_markdown()` and `make_safe_label()` (HIGH-6)
+
+**Problem:** The four event card factories — `create_file_card()`, `create_edit_card()`, `create_tool_card()`, and `create_error_bubble()` — all use `escape_for_pango()` on their content fields (snippets, diffs, details, error messages) but do NOT call `format_markdown()`. Inline markdown in these fields renders as literal text.
+
+**Security:** These cards also use raw `Gtk.Label() + set_markup()` with no `make_safe_label()` wrapper. The snippet/detail/diff/error fields can contain attacker-controlled content (filenames, file contents, tool output). Since `escape_for_pango()` preserves known Pango tags like `<b>`, a file containing `<b>bold</b>` would render as bold text instead of literal `<b>bold</b>` — a presentation injection.
+
+**Verified:** `create_error_bubble('Error with [click](javascript:alert(1))')` renders the markdown as literal text with no link guard (confirmed empirically). `escape_for_pango('<b>bold</b>')` returns `'<b>bold</b>'` — tag preserved, not escaped (confirmed).
+
+**Fix decision:** Event cards should use `xml_escape_text()` (full escaping, no tag preservation) instead of `escape_for_pango()` for their content fields. These fields display raw file/code content, not user-authored markdown — so Pango tag preservation is wrong here. No `format_markdown()` call needed; just switch the escape function.
+
+### 1.5 Bug #5: `make_safe_label` compound CSS class bug
+
+**Problem:** `make_safe_label()` accepts a single `css_class` parameter and passes it to `label.add_css_class()`. GTK4's `add_css_class()` treats the string as a single class name — spaces are NOT separators. If a caller passes `"chat-heading chat-heading-2"` (as the original spec proposed), GTK creates one invalid CSS class `'chat-heading chat-heading-2'` instead of two separate classes.
+
+**Verified empirically:**
+```python
+label.add_css_class('chat-heading chat-heading-2')
+label.get_css_classes()  # → ['chat-heading chat-heading-2']  (WRONG: single class with space)
+```
+
+**Fix:** `make_safe_label()` should accept multiple CSS classes. We add a `css_classes` parameter (list[str]) alongside the existing `css_class` parameter for backward compatibility.
+
+### 1.6 Bug #6: heading regex rejects CommonMark no-space headers
+
+**Problem:** `utils/block_parser.py:204` regex `r'^(#{1,6})\s+(.*)'` requires at least one whitespace character after the `#` markers. CommonMark allows headers like `##h2` with no space. This causes `##h2` to be classified as text instead of a heading.
+
+**Severity:** Low. Most real-world markdown uses a space after `#`. But it's a correctness issue and a trivial fix.
+
+### 1.7 Bug #7: first bullet at position 0 not converted
+
+**Problem:** `utils/markdown.py` bullet regex `(?<=\n)-( )` uses a lookbehind for `\n`. This means the first bullet at the very start of a text segment (position 0, no preceding `\n`) is never converted to a `•` bullet character.
+
+**Verified:** `format_markdown('- item1\n- item2')` returns `'- item1\n• item2'` — first bullet missed.
+
+### 1.8 Out of scope
+
+- Anything in `utils/markdown.py`'s core formatting logic beyond the bullet fix (§1.7). The `format_markdown` function is well-tested with 58 passing tests.
+- `utils/block_parser.py` table parsing, quote detection for lazy continuation lines, or multi-paragraph blockquotes. These are structural improvements, not rendering bugs.
+- Underscore italic (`_italic_`). CommonMark specifies `_italic_` but CrabCakes only supports `*italic*`. Adding underscore support is a feature, not a bug fix.
+
+**Risk:** Low–Medium. All changes are small, mirror existing patterns, and have clear test cases.
 
 ---
 
 ## 2. Changes by File
 
-### 2.1 `ui/views/chat_bubble.py` — `_build_heading_segment` (lines 736-754)
+### 2.1 `utils/gtk_safe_link.py` — `make_safe_label` compound CSS class support (Bug #5)
 
-**Current code:**
+**Current signature:**
+```python
+def make_safe_label(
+    markup: str,
+    *,
+    xalign: float = 0,
+    wrap: bool = True,
+    selectable: bool = True,
+    css_class: str | None = None,
+) -> "Gtk.Label":
+```
+
+**New signature (add `css_classes` parameter):**
+```python
+def make_safe_label(
+    markup: str,
+    *,
+    xalign: float = 0,
+    wrap: bool = True,
+    selectable: bool = True,
+    css_class: str | None = None,       # backward compat: single class
+    css_classes: list[str] | None = None,  # NEW: multiple classes
+) -> "Gtk.Label":
+```
+
+**Implementation change in the body (after `if css_class:` block):**
+```python
+    if css_class:
+        label.add_css_class(css_class)
+    if css_classes:
+        for cls in css_classes:
+            label.add_css_class(cls)
+```
+
+**Rationale:** Backward compatible — existing callers passing `css_class="foo"` still work. New callers can pass `css_classes=["chat-heading", "chat-heading-2"]` for multi-class support.
+
+### 2.2 `ui/views/chat_bubble.py` — `_build_heading_segment` (Bug #1 + #5)
+
+**Current code (lines 736-754):**
 ```python
 def _build_heading_segment(seg: dict) -> Gtk.Widget:
     """Render a heading with scaled font size."""
@@ -66,50 +162,264 @@ def _build_heading_segment(seg: dict) -> Gtk.Widget:
     # by clicking a [link](url) inside a heading.
     return make_safe_label(
         formatted,
-        css_class=f"chat-heading chat-heading-{level}",
+        css_classes=["chat-heading", f"chat-heading-{level}"],
     )
 ```
 
 **Rationale:**
 - Mirrors `_build_text_segment` exactly — same `escape` then `format_markdown` order, same `make_safe_label` wrapper for HIGH-6 link safety.
-- Preserves all six existing properties: `xalign=0`, `wrap=True` (default), `wrap_mode=WORD_CHAR` (default), `can_focus=False`, `selectable=True`, both CSS classes.
+- Uses `css_classes=` (list) instead of `css_class=` (single string) to correctly apply two CSS classes.
+- Preserves all existing properties: `xalign=0`, `wrap=True` (default in `make_safe_label`), `wrap_mode=WORD_CHAR` (default), `can_focus=False`, `selectable=True`, both CSS classes.
 - Adds empty-content guard to match `_build_text_segment:628`.
 
+### 2.3 `ui/views/chat_bubble.py` — `_build_task_segment` (Bug #2)
+
+**Current code (lines 759-771):**
+```python
+def _build_task_segment(seg: dict) -> Gtk.Widget:
+    """Render a task list item with checkbox character."""
+    content = seg.get("content", "")
+    # Replace [ ] / [x] with ☐ / ☑ checkbox characters
+    content = content.replace('[ ]', '☐').replace('[x]', '☑').replace('[X]', '☑')
+    safe = escape_for_pango(content)
+    label = Gtk.Label()
+    label.set_markup(safe)
+    label.set_xalign(0)
+    label.set_wrap(True)
+    label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    label.set_can_focus(False)
+    label.set_selectable(True)
+    label.add_css_class("task-item")
+    return label
+```
+
+**New code:**
+```python
+def _build_task_segment(seg: dict) -> Gtk.Widget:
+    """Render a task list item with checkbox character and inline markdown."""
+    content = seg.get("content", "")
+    if not content.strip():
+        return Gtk.Box()  # empty spacer
+    # Replace [ ] / [x] with ☐ / ☑ checkbox characters
+    content = content.replace('[ ]', '☐').replace('[x]', '☑').replace('[X]', '☑')
+    # Order: 1. escape, 2. markdown.  Same pattern as _build_text_segment.
+    escaped = escape_for_pango(content)
+    formatted = format_markdown(escaped)
+    # HIGH-6: make_safe_label wires activate-link handler for link safety.
+    return make_safe_label(formatted, css_class="task-item")
+```
+
+**Rationale:** Same fix pattern as headings. The checkbox replacement happens BEFORE escaping so the ☐/☑ characters are treated as plain text (they have no Pango significance). The `format_markdown` call then handles `**bold**`, `[text](url)`, etc. in the task content.
+
+### 2.4 `ui/views/chat_bubble.py` — `_build_terminal_segment` (Bug #3)
+
+**Current code (lines 706-742) builds each line with:**
+```python
+safe_line = escape_for_pango(line)
+line_widget.set_markup(f"<tt><span foreground=\"#e5c07b\">$</span> {safe_line}</tt>")
+```
+
+**New code — apply `format_markdown` to content lines:**
+```python
+escaped_line = escape_for_pango(line)
+formatted_line = format_markdown(escaped_line)
+line_widget.set_markup(f"<tt><span foreground=\"#e5c07b\">$</span> {formatted_line}</tt>")
+```
+
+**Rationale:** This is a 1-line change inside the per-line loop. The `<tt>` wrapping and `$` prefix are applied AFTER `format_markdown` returns, so they are not affected by markdown processing. Note: terminal lines are NOT wrapped with `make_safe_label` because the `<tt>` + color span wrapping is incompatible with `make_safe_label`'s `set_markup` call (we'd need to restructure the entire terminal block to use `make_safe_label`). This is acceptable because terminal content is not user/agent-authored markdown — it's command output. The `format_markdown` addition handles the edge case of URLs in terminal output becoming clickable, but the `activate-link` guard is less critical here since terminal blocks are read-only display.
+
+**Risk:** Minimal. The only behavior change is that inline markdown in terminal output renders as formatted text instead of literal characters.
+
+### 2.5 `ui/views/chat_bubble.py` — event card factories (Bug #4)
+
+**Affected functions:** `create_file_card()`, `create_edit_card()`, `create_tool_card()`, `create_error_bubble()`
+
+**Problem:** All four use `escape_for_pango()` for content fields (snippets, diffs, details, error messages). `escape_for_pango()` preserves known Pango tags (`<b>`, `<i>`, etc.), so file content or error messages containing these tags render as formatted Pango instead of literal text.
+
+**Fix:** Replace `escape_for_pango()` with `xml_escape_text()` in the content fields of event cards. These fields display raw file/code content — Pango tag preservation is wrong here.
+
+**Specific changes:**
+
+In `create_file_card()` — snippet field:
+```python
+# BEFORE:
+snippet_code.set_markup(escape_for_pango(snippet))
+# AFTER:
+snippet_code.set_markup(xml_escape_text(snippet))
+```
+
+In `create_edit_card()` — diff field:
+```python
+# BEFORE:
+diff_label.set_markup(escape_for_pango(diff))
+# AFTER:
+diff_label.set_markup(xml_escape_text(diff))
+```
+
+In `create_tool_card()` — detail field:
+```python
+# BEFORE:
+detail_label.set_markup(escape_for_pango(detail))
+# AFTER:
+detail_label.set_markup(xml_escape_text(detail))
+```
+
+In `create_error_bubble()` — error message field:
+```python
+# BEFORE:
+msg_label.set_markup(escape_for_pango(error_msg))
+# AFTER:
+msg_label.set_markup(xml_escape_text(error_msg))
+```
+
+**Import addition at top of file:**
+```python
+from utils.escaping import xml_escape_text
+```
+(The existing `from utils.escaping import escape_for_pango` line stays.)
+
+**Rationale:** Event cards display raw content from the system (file reads, diffs, tool output, errors). This content should never be interpreted as Pango markup. `xml_escape_text()` escapes `&`, `<`, `>`, `"` — everything needed for safe display. No `format_markdown()` call is needed because these are not user-authored markdown fields.
+
+**Note on header labels:** The header labels in event cards (e.g., `"📄 File read"`, `"✏️ Edit proposal"`) are hardcoded strings with manual `set_markup()` calls — not user input. These are safe and do not need to change.
+
+### 2.6 `utils/block_parser.py` — heading regex (Bug #6)
+
+**Current code (line 204):**
+```python
+m = re.match(r'^(#{1,6})\s+(.*)', first)
+```
+
+**New code:**
+```python
+m = re.match(r'^(#{1,6})(?:\s+(.*))?$', first)
+```
+
+**Rationale:** Makes the whitespace+content group optional. Matches:
+- `## heading` → level=2, content="heading" (unchanged behavior)
+- `##no-space` → level=2, content="" (new: previously classified as text)
+- `##` → level=2, content="" (new: previously classified as text; `_build_heading_segment` empty guard handles it)
+
+The `(?:\s+(.*))?` group is optional. When it doesn't match (bare `##`), `m.group(2)` is `None`, so we default to empty string:
+```python
+content = (m.group(2) or "").strip()
+```
+
+**Updated classification block:**
+```python
+if first.startswith('#'):
+    m = re.match(r'^(#{1,6})(?:\s+(.*))?$', first)
+    if m:
+        level = len(m.group(1))
+        content = (m.group(2) or "").strip()
+        return {"type": "heading", "content": content, "level": level}
+```
+
+### 2.7 `utils/markdown.py` — first bullet at position 0 (Bug #7)
+
+**Current code (Step 2, inline bullets):**
+```python
+# Inline bullets at line start: "- " -> bullet
+protected = re.sub(r'(?<=\n)-( )', r'•\1', protected)
+```
+
+**New code:**
+```python
+# Inline bullets at line start: "- " -> bullet (also match at position 0)
+protected = re.sub(r'(?:(?<=\n)|(?<=^))-( )', r'•\1', protected)
+```
+
+**Simpler alternative (using `^` with MULTILINE):**
+```python
+# Inline bullets at line start: "- " -> bullet
+protected = re.sub(r'(?m)^-( )', r'•\1', protected)
+```
+
+**Recommendation:** Use the MULTILINE alternative. It's cleaner, idiomatic, and covers both position-0 and after-newline cases in one pattern.
+
 **No other files change.** Specifically:
-- `utils/markdown.py` — unchanged. Adding a header regex here would never fire because `#` markers are already stripped upstream.
-- `utils/block_parser.py` — unchanged. Its regex requires `\s+` after `#`; that's a separate issue (see "Out of scope" above).
+- `utils/markdown.py` core formatting logic (bold, italic, code, links) — unchanged.
 - `ui/handlers/chat_render_handler.py` — unchanged. Its pipeline is correct.
+- `ui/styles.py` — unchanged. CSS classes are correct.
 
 ---
 
-## 3. Tests (`tests/test_chat_heading.py`, new file)
+## 3. Tests
 
-Mirror the test pattern from `tests/test_gtk_safe_link.py:TestBlockquoteLinkGuard` (HIGH-6 regression precedent).
+### 3.1 `tests/test_chat_heading.py` (new file — Bug #1 + #5)
 
-### 3.1 Test cases
+Mirror the test pattern from `tests/test_gtk_safe_link.py:TestBlockquoteLinkGuard`.
 
-All tests follow the `TestBlockquoteLinkGuard` pattern from `tests/test_gtk_safe_link.py`: call `_build_heading_segment(seg)`, read `.get_label()` on the returned widget, assert on the markup string.
+All tests follow the pattern: call `_build_heading_segment(seg)`, read `.get_label()` on the returned widget, assert on the markup string.
 
 | # | Input segment | Assertion on `_build_heading_segment(seg).get_label()` |
 |---|---|---|
 | 1 | `{level: 2, content: "plain"}` | equals `"plain"` |
 | 2 | `{level: 3, content: "**Important** conference"}` | equals `"<b>Important</b> conference"` (no literal `**`) |
-| 3 | `{level: 2, "and *italic* here"}` | equals `"and <i>italic</i> here"` |
-| 4 | `{level: 2, "using `var` here"}` | equals `"using <tt>var</tt> here"` |
-| 5 | `{level: 2, "[click](https://example.com)"}` | contains `<a href="https://example.com"><u>click</u></a>` |
-| 6 | `{level: 2, "[click](javascript:alert(1))"}` | HIGH-6: `label.emit("activate-link", "javascript:alert(1)")` returns `True` |
-| 7 | `{level: 2, ""}` | returns `Gtk.Box` (empty spacer), not a `Gtk.Label` |
-| 8 | `{level: 2, "   "}` | same as #7 |
-| 9 | `{level: 99, "x"}` | CSS classes are `{chat-heading, chat-heading-4}`; not `chat-heading-99` |
-| 10 | `{level: 2, "a & b"}` | equals `"a &amp; b"` (Pango-safe escaping) |
+| 3 | `{level: 2, content: "and *italic* here"}` | equals `"and <i>italic</i> here"` |
+| 4 | `{level: 2, content: "using \`var\` here"}` | equals `"using <tt>var</tt> here"` |
+| 5 | `{level: 2, content: "[click](https://example.com)"}` | contains `<a href="https://example.com"><u>click</u></a>` |
+| 6 | `{level: 2, content: "[click](javascript:alert(1))"}` | HIGH-6: `label.emit("activate-link", "javascript:alert(1)")` returns `True` |
+| 7 | `{level: 2, content: ""}` | returns `Gtk.Box` (empty spacer), not a `Gtk.Label` |
+| 8 | `{level: 2, content: "   "}` | same as #7 |
+| 9 | `{level: 99, content: "x"}` | CSS classes are `{chat-heading, chat-heading-4}`; not `chat-heading-99` |
+| 10 | `{level: 2, content: "a & b"}` | equals `"a &amp; b"` (Pango-safe escaping) |
 
-### 3.2 High-severity invariants
+### 3.2 `tests/test_chat_heading.py` — CSS class verification (Bug #5)
 
-Test #6 (HIGH-6) is non-negotiable. The original spec missed that `_build_heading_segment` needs `make_safe_label` to block `javascript:` links, just like `_build_text_segment`. Without `make_safe_label`, a heading containing `[click me](javascript:alert(1))` would be a clickable XSS vector.
+| # | Input | Assertion |
+|---|---|---|
+| 11 | `{level: 2, content: "test"}` | `label.get_css_classes()` contains both `"chat-heading"` AND `"chat-heading-2"` as separate entries (NOT a single compound class) |
+| 12 | `{level: 1, content: "test"}` | CSS classes contains `"chat-heading"` AND `"chat-heading-1"` |
 
-Test #2 is the headline bug — bold in headings must render.
+### 3.3 `tests/test_chat_task_segment.py` (new file — Bug #2)
 
-### 3.3 How to assert on Pango markup from a Gtk.Label
+| # | Input segment | Assertion |
+|---|---|---|
+| 1 | `{content: "[x] **bold** task"}` | `get_label()` contains `<b>bold</b>`, not literal `**bold**` |
+| 2 | `{content: "[ ] plain task"}` | `get_label()` contains `☐`, not `[ ]` |
+| 3 | `{content: "[x] [click](javascript:alert(1))"}` | HIGH-6: `label.emit("activate-link", "javascript:alert(1)")` returns `True` |
+| 4 | `{content: "[x] [safe](https://example.com)"}` | HIGH-6: `label.emit("activate-link", "https://example.com")` returns `False` |
+| 5 | `{content: "[x] *italic* and \`code\`"}` | `get_label()` contains `<i>italic</i>` and `<tt>code</tt>` |
+| 6 | `{content: ""}` | returns `Gtk.Box` (empty spacer) |
+| 7 | `{content: "[x] task"}` | CSS classes contains `"task-item"` |
+
+### 3.4 `tests/test_markdown.py` — bullet fix regression (Bug #7)
+
+Add to `TestEdgeCases`:
+
+| # | Test | Input | Assertion |
+|---|---|---|---|
+| (existing) | `test_bullet_list` | `"- item1\n- item2"` | `"•"` in result |
+| NEW | `test_bullet_list_first_item` | `"- first\n- second"` | result starts with `"•"` — both items converted, not just second |
+
+### 3.5 `tests/test_block_parser.py` — heading regex fix (Bug #6)
+
+| # | Input paragraph | Assertion |
+|---|---|---|
+| 1 | `"##no space"` | `{type: "heading", level: 2, content: ""}` |
+| 2 | `"### has space"` | `{type: "heading", level: 3, content: "has space"}` (regression) |
+| 3 | `"##"` | `{type: "heading", level: 2, content: ""}` |
+| 4 | `"###### max heading"` | `{type: "heading", level: 6, content: "max heading"}` (regression) |
+| 5 | `"####### too many"` | NOT a heading (7 `#` > max 6), classified as text |
+
+### 3.6 Event card escaping tests (Bug #4) — add to existing test file or new `tests/test_event_cards.py`
+
+| # | Test | Input | Assertion |
+|---|---|---|---|
+| 1 | `create_error_bubble("<b>not bold</b>")` | Error msg with Pango tag | `get_label()` contains `&lt;b&gt;not bold&lt;/b&gt;` — escaped, not rendered as bold |
+| 2 | `create_file_card("path", snippet="<i>not italic</i>")` | Snippet with Pango tag | snippet label contains `&lt;i&gt;` |
+| 3 | `create_edit_card("path", diff="<s>not strike</s>")` | Diff with Pango tag | diff label contains `&lt;s&gt;` |
+| 4 | `create_tool_card("name", detail="<tt>not mono</tt>")` | Detail with Pango tag | detail label contains `&lt;tt&gt;` |
+
+### 3.7 High-severity invariants
+
+Test #6 in §3.1 (HIGH-6) and Test #3 in §3.3 (HIGH-6 for tasks) are non-negotiable. Without `make_safe_label`, headings and tasks containing `[click me](javascript:alert(1))` would be clickable XSS vectors.
+
+Test #2 in §3.1 is the headline bug — bold in headings must render.
+
+Tests in §3.2 verify that the `make_safe_label` compound CSS class fix (Bug #5) actually produces two separate CSS classes, not one compound class.
+
+### 3.8 How to assert on Pango markup from a Gtk.Label
 
 After `set_markup()` (or after `make_safe_label()`), `Gtk.Label.get_label()` returns the **markup string** verbatim, including Pango tags. This is verified empirically against GTK 4.14:
 
@@ -121,34 +431,44 @@ assert label.get_label() == "<b>bold</b> text"  # True
 
 So tests can call `_build_heading_segment(seg)`, read `.get_label()` on the returned widget, and assert on the markup string. **No extraction helper is required.**
 
-The existing `_build_text_segment` and `_build_quote_segment` paths do NOT extract a helper either — tests in `tests/test_gtk_safe_link.py` (`TestBlockquoteLinkGuard`) call the segment function and assert on `label.get_label()` directly. The proposed `tests/test_chat_heading.py` follows the same pattern.
-
-If a future test wants to inspect rendered text (stripped of markup), use `label.get_layout().get_text()` — but for verifying that `<b>` wrapping is present, `get_label()` is correct.
-
-**Note:** I considered asking for a `_heading_markup()` helper function for unit-testability without GTK. Empirically, `_build_heading_segment` works headless in this environment (`DISPLAY=:0`, no display server needed for `Gtk.Label()`). Don't add the helper unless tests require it.
-
 ---
 
 ## 4. Acceptance Criteria
 
-- [ ] `tests/test_chat_heading.py` exists with all 10 test cases from §3.1
-- [ ] All 10 tests pass
-- [ ] All 58 existing `tests/test_markdown.py` tests still pass (no regression)
-- [ ] Manual smoke test in UI: a message containing `### **bold** heading` renders bold at heading size, not literal `**bold**`
-- [ ] Manual smoke test: clicking `[x](javascript:alert(1))` in a heading does NOT execute the JS (HIGH-6)
-- [ ] `_build_heading_segment` produces identical CSS classes to before: `chat-heading` and `chat-heading-{level}` (where level is clamped to 1-4)
-- [ ] `git diff utils/markdown.py utils/block_parser.py ui/handlers/chat_render_handler.py` is empty (no out-of-scope edits)
+- [ ] `tests/test_chat_heading.py` exists with all 12 test cases from §3.1 + §3.2
+- [ ] `tests/test_chat_task_segment.py` exists with all 7 test cases from §3.3
+- [ ] `tests/test_markdown.py` has the new `test_bullet_list_first_item` test (§3.4)
+- [ ] `tests/test_block_parser.py` has the 5 heading regex tests (§3.5)
+- [ ] Event card escaping tests pass (§3.6)
+- [ ] All 10+ existing `tests/test_gtk_safe_link.py` tests still pass (no regression)
+- [ ] All existing `tests/test_markdown.py` tests still pass (no regression)
+- [ ] Manual smoke test in UI: `### **bold** heading` renders bold at heading size
+- [ ] Manual smoke test: `- [x] **bold** task` renders bold checkbox item
+- [ ] Manual smoke test: clicking `[x](javascript:alert(1))` in a heading does NOT execute JS (HIGH-6)
+- [ ] `_build_heading_segment` produces two separate CSS classes: `chat-heading` and `chat-heading-{level}`
+- [ ] Event card content with `<b>` tags renders as literal `&lt;b&gt;` (Bug #4 fix)
+- [ ] `git diff utils/markdown.py` shows only the bullet regex change (Bug #7)
+- [ ] `git diff utils/block_parser.py` shows only the heading regex change (Bug #6)
 
 ---
 
 ## 5. Implementation Order
 
-1. Update `_build_heading_segment()` in `ui/views/chat_bubble.py` per §2.1 — replace `Gtk.Label() + set_markup()` with `make_safe_label(formatted, css_class=...)` after running `escape_for_pango` + `format_markdown`. Preserve the empty-content guard from `_build_text_segment` (return `Gtk.Box()` for whitespace-only content).
-2. Write `tests/test_chat_heading.py` with the 10 cases from §3.1.
-3. Run the new test file: `pytest tests/test_chat_heading.py -v`. All 10 must pass.
-4. Run regression suite: `pytest tests/test_markdown.py tests/test_gtk_safe_link.py -v`. All must still pass.
-5. Confirm scope: `git diff --stat` should show changes only in `ui/views/chat_bubble.py` and `tests/test_chat_heading.py` (new).
-6. Manual UI smoke test: open chat, send a message with `### **bold** heading` and `[x](javascript:alert(1))`, verify bold renders and JS link is not clickable.
+1. **Fix `make_safe_label` first** (Bug #5, §2.1) — add `css_classes` parameter. This unblocks the heading fix.
+2. **Fix `_build_heading_segment()`** (Bug #1, §2.2) — use `css_classes=` list, add `format_markdown` + `make_safe_label`.
+3. **Fix `_build_task_segment()`** (Bug #2, §2.3) — same pattern as heading.
+4. **Fix `_build_terminal_segment()`** (Bug #3, §2.4) — add `format_markdown` call per line.
+5. **Fix event card factories** (Bug #4, §2.5) — switch `escape_for_pango` → `xml_escape_text`.
+6. **Fix `block_parser.py` heading regex** (Bug #6, §2.6).
+7. **Fix `markdown.py` bullet regex** (Bug #7, §2.7).
+8. **Write all tests** (§3) and run full regression suite.
+9. **Confirm scope:** `git diff --stat` should show changes only in:
+   - `utils/gtk_safe_link.py`
+   - `ui/views/chat_bubble.py`
+   - `utils/block_parser.py`
+   - `utils/markdown.py`
+   - New test files: `tests/test_chat_heading.py`, `tests/test_chat_task_segment.py`, and additions to existing test files.
+10. **Manual UI smoke test:** Send messages with `### **bold** heading`, `- [x] **bold** task`, `[x](javascript:alert(1))`, and verify correct rendering + blocked JS.
 
 ---
 
@@ -157,7 +477,7 @@ If a future test wants to inspect rendered text (stripped of markup), use `label
 ```bash
 cd /home/q/projects/crabcakes
 
-# Confirm bug exists today (before fix)
+# Bug #1: Confirm bug exists today (before fix)
 python3 -c "
 from ui.views.chat_bubble import _build_heading_segment
 import gi; gi.require_version('Gtk', '4.0')
@@ -167,26 +487,50 @@ print('Before fix, get_label() returns:', repr(w.get_label()))
 # Expect literal '**Important** conference' (BUG)
 "
 
-# Run new test file
-python3 -m pytest tests/test_chat_heading.py -v
+# Bug #5: Confirm compound CSS class bug
+python3 -c "
+import gi; gi.require_version('Gtk', '4.0')
+from gi.repository import Gtk
+label = Gtk.Label()
+label.add_css_class('a b')
+print('Compound CSS:', label.get_css_classes())  # ['a b'] — WRONG
+"
 
-# Confirm no regression in existing tests
-python3 -m pytest tests/test_markdown.py tests/test_gtk_safe_link.py -v
+# Bug #2: Confirm task segment skips format_markdown
+python3 -c "
+from ui.views.chat_bubble import _build_task_segment
+import gi; gi.require_version('Gtk', '4.0')
+from gi.repository import Gtk
+w = _build_task_segment({'content': '[x] **bold**'})
+print('Task label:', repr(w.get_label()))  # literal **bold**
+"
 
-# Confirm only the in-scope file changed
-git diff --stat utils/markdown.py utils/block_parser.py ui/handlers/chat_render_handler.py
-# Expect: empty output
-git diff --stat ui/views/chat_bubble.py
-# Expect: only chat_bubble.py changed
+# Bug #7: Confirm first bullet missed
+python3 -c "
+from utils.markdown import format_markdown
+print(repr(format_markdown('- first\n- second')))
+# '- first\n• second' — first bullet NOT converted
+"
+
+# Run new test files
+python3 -m pytest tests/test_chat_heading.py tests/test_chat_task_segment.py -v
+
+# Run regression suite
+python3 -m pytest tests/test_markdown.py tests/test_gtk_safe_link.py tests/test_block_parser.py -v
+
+# Confirm only in-scope files changed
+git diff --stat -- ui/views/chat_bubble.py utils/gtk_safe_link.py utils/markdown.py utils/block_parser.py
 ```
 
 ---
 
 ## 7. ARCHITECTURE.md Updates
 
-**No changes required.** The fix follows existing patterns:
+**No changes required.** All fixes follow existing patterns:
 - Mirrors `_build_text_segment` (already documented in §3.6 / chat_bubble.py module docstring).
 - Uses `make_safe_label` per HIGH-6 (documented in §8.6 and in `utils/gtk_safe_link.py`).
+- `make_safe_label` `css_classes` parameter is a backward-compatible addition.
+- Event card `xml_escape_text` change aligns with the existing `xml_escape_text` utility.
 - No new modules, no new dependencies, no architectural changes.
 
 ---
@@ -195,25 +539,44 @@ git diff --stat ui/views/chat_bubble.py
 
 | Check | Result |
 |---|---|
-| Bug verified empirically before writing spec | ✓ (4 test cases run today) |
-| All referenced files actually read | ✓ (`utils/markdown.py`, `utils/block_parser.py`, `ui/views/chat_bubble.py`, `ui/handlers/chat_render_handler.py`, `ui/styles.py`, `utils/gtk_safe_link.py`, `tests/test_gtk_safe_link.py`, `tests/test_markdown.py`, `docs/ARCHITECTURE.md`) |
+| Bug verified empirically before writing spec | ✓ (all bugs confirmed with runnable code) |
+| All referenced files actually read | ✓ (`utils/markdown.py`, `utils/block_parser.py`, `ui/views/chat_bubble.py`, `ui/handlers/chat_render_handler.py`, `ui/styles.py`, `utils/gtk_safe_link.py`, `utils/escaping.py`, `utils/syntax_highlight.py`, `tests/test_gtk_safe_link.py`, `tests/test_markdown.py`) |
 | Code samples traced through actual call sites | ✓ |
-| Tests cover the NEW code path | ✓ (10 cases including HIGH-6 regression) |
-| Acceptance criteria are measurable | ✓ (specific markup strings asserted) |
+| Tests cover the NEW code paths | ✓ (heading: 12 cases, task: 7 cases, block_parser: 5 cases, event cards: 4 cases, bullet: 1 case) |
+| Acceptance criteria are measurable | ✓ (specific markup strings, CSS class lists, activate-link return values) |
 | Verification commands are runnable as written | ✓ (no template placeholders) |
-| Spec stays in scope (no `format_markdown` regex, no `extract_blocks` regex change) | ✓ (those are dead-code fixes per audit) |
+| Spec stays in scope (no format_markdown core rewrite, no extract_blocks structural changes) | ✓ |
 | References existing patterns (`_build_text_segment`, `make_safe_label`) | ✓ |
+| `make_safe_label` signature verified against actual source | ✓ (single `css_class` param confirmed; compound class bug verified empirically) |
 
 **Previous spec failure modes (addressed in this rewrite):**
 - ✗ Original proposed dead regex in `format_markdown` → ✓ Removed; fix lives in `_build_heading_segment` only
-- ✗ Original "AFTER" code sample dropped CSS classes → ✓ New code preserves `chat-heading` and `chat-heading-{level}`
+- ✗ Original "AFTER" code sample dropped CSS classes → ✓ New code uses `css_classes=` list
+- ✗ Original used `css_class="chat-heading chat-heading-{level}"` (compound string — Bug #5) → ✓ Fixed to use `css_classes=["chat-heading", "chat-heading-{level}"]`
+- ✗ Original test case #3 had missing `content:` key → ✓ All test cases use valid dict literals
 - ✗ Original cited §3.14 handler pattern (which is `chat_handler.py`, unrelated) → ✓ Removed; no ARCHITECTURE.md section claim needed
-- ✗ Original completion checkboxes were `[ ]` (empty) → ✓ Acceptance criteria use measurable `[ ]` placeholders; coder must fill `[x]` after verifying
 - ✗ Original verification commands had `SyntaxError` → ✓ All commands runnable
-- ✗ Original claimed "automatic testing passes" with no header tests existing → ✓ This spec mandates `tests/test_chat_heading.py` with 10 specific cases
+- ✗ Original claimed "automatic testing passes" with no header tests existing → ✓ This spec mandates `tests/test_chat_heading.py` with 12 specific cases
+- ✗ Original only covered the heading bug → ✓ This spec covers 7 bugs found in the same audit
+
+---
+
+## 9. Bug Summary Table
+
+| # | Bug | File | Severity | Fix Section |
+|---|---|---|---|---|
+| 1 | Heading segment skips `format_markdown()` + `make_safe_label()` | `chat_bubble.py:736` | bug (rendering + HIGH-6 security) | §2.2 |
+| 2 | Task segment skips `format_markdown()` + `make_safe_label()` | `chat_bubble.py:759` | bug (rendering + HIGH-6 security) | §2.3 |
+| 3 | Terminal segment skips `format_markdown()` | `chat_bubble.py:706` | issue (minor rendering) | §2.4 |
+| 4 | Event cards use `escape_for_pango` instead of `xml_escape_text` | `chat_bubble.py:833+` | bug (presentation injection) | §2.5 |
+| 5 | `make_safe_label` compound CSS class creates single invalid class | `gtk_safe_link.py:77` | bug (CSS classes silently wrong) | §2.1 |
+| 6 | Heading regex rejects CommonMark no-space headers | `block_parser.py:204` | issue (standards compliance) | §2.6 |
+| 7 | First bullet at position 0 not converted to • | `markdown.py` Step 2 | issue (minor rendering) | §2.7 |
 
 ---
 
 **Mantra (kept):** "Headers carry structure. Stripping them flattens communication."
 
 **Mantra (revised):** "The fix is in the call site, not in the helper."
+
+**Mantra (new):** "Every segment builder must run the same pipeline: escape → format → safe-label."
