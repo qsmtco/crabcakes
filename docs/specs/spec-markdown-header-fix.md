@@ -88,18 +88,20 @@ Mirror the test pattern from `tests/test_gtk_safe_link.py:TestBlockquoteLinkGuar
 
 ### 3.1 Test cases
 
-| # | Input segment | Asserted on `Gtk.Label.get_label()` (escaped→formatted) |
+All tests follow the `TestBlockquoteLinkGuard` pattern from `tests/test_gtk_safe_link.py`: call `_build_heading_segment(seg)`, read `.get_label()` on the returned widget, assert on the markup string.
+
+| # | Input segment | Assertion on `_build_heading_segment(seg).get_label()` |
 |---|---|---|
-| 1 | `{level: 2, content: "plain"}` | markup contains `plain`, no `**` literal |
-| 2 | `{level: 3, content: "**Important** conference"}` | markup contains `<b>Important</b> conference`, no literal `**` |
-| 3 | `{level: 2, content: "and *italic* here"}` | markup contains `<i>italic</i>` |
-| 4 | `{level: 2, content: "using \`var\` here"}` | markup contains `<tt>var</tt>` |
-| 5 | `{level: 2, content: "[click](https://example.com)"}` | markup contains `<a href="https://example.com">` |
-| 6 | `{level: 2, content: "[click](javascript:alert(1))"}` | HIGH-6: `emit("activate-link", "javascript:...")` returns `True` (blocked) |
-| 7 | `{level: 2, content: ""}` | returns an empty `Gtk.Box` (spacer), not a label |
-| 8 | `{level: 2, content: "   "}` | same as #7 (whitespace-only is empty) |
-| 9 | `{level: 99, content: "x"}` | level capped at 4; CSS class is `chat-heading-4`, not `chat-heading-99` |
-| 10 | `{level: 2, content: "a & b"}` | `&` is escaped to `&amp;` (Pango-safe) |
+| 1 | `{level: 2, content: "plain"}` | equals `"plain"` |
+| 2 | `{level: 3, content: "**Important** conference"}` | equals `"<b>Important</b> conference"` (no literal `**`) |
+| 3 | `{level: 2, "and *italic* here"}` | equals `"and <i>italic</i> here"` |
+| 4 | `{level: 2, "using `var` here"}` | equals `"using <tt>var</tt> here"` |
+| 5 | `{level: 2, "[click](https://example.com)"}` | contains `<a href="https://example.com"><u>click</u></a>` |
+| 6 | `{level: 2, "[click](javascript:alert(1))"}` | HIGH-6: `label.emit("activate-link", "javascript:alert(1)")` returns `True` |
+| 7 | `{level: 2, ""}` | returns `Gtk.Box` (empty spacer), not a `Gtk.Label` |
+| 8 | `{level: 2, "   "}` | same as #7 |
+| 9 | `{level: 99, "x"}` | CSS classes are `{chat-heading, chat-heading-4}`; not `chat-heading-99` |
+| 10 | `{level: 2, "a & b"}` | equals `"a &amp; b"` (Pango-safe escaping) |
 
 ### 3.2 High-severity invariants
 
