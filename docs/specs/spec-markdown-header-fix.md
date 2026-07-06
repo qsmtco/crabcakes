@@ -1,173 +1,210 @@
 # SPEC: Fix Markdown Header Stripping Bug
 
-**Date:** 2026-06-23
-**Author:** Coder
+**Date:** 2026-07-05 (rewritten after adversarial audit)
+**Author:** Coder (original); rewritten by Supervisor + Coder
 **Status:** Draft — for implementation
 **Target branch:** main
 
-> **Architecture compliance statement referencing ARCHITECTURE.md**
->  
-> This spec addresses handler pattern violations where markdown headers are stripped during chat bubble rendering. The fix must be contained within `ui/handlers/chat_render_handler.py` and `ui/views/chat_bubble.py` as per Section 3.14 handler pattern rules.
-
 ---
 
-## 1. Overview
+## 1. Overview (problem statement — verified)
 
-**Problem:** Markdown headers (e.g., `### **Header**`) are being stripped during the chat rendering process, losing header hierarchy and making content difficult to read.
+**Problem:** When a chat bubble contains a markdown header with inline formatting, the inline formatting is rendered as literal text instead of Pango markup.
 
-**Root Cause:** The `utils/markdown.py` module's `format_markdown()` function handles inline formatting (bold, italic, code, links) but does NOT process markdown header syntax (`#`, `##`, `###`, etc.) during the Pango markup conversion.
+**Example:** A message containing `### **Important** conference` renders as the literal string `**Important** conference` (no bold) at the heading's font size, instead of rendering as `Important conference` in bold at the heading's font size.
 
-**Impact:** When users write markdown-formatted messages containing headers, those headers disappear during chat bubble rendering, forcing users to avoid using markdown headers entirely for readable project documentation.
+**Verified root cause (one line):** `_build_heading_segment()` in `ui/views/chat_bubble.py:736-754` calls `escape_for_pango()` on the heading content but does NOT call `format_markdown()`. The sibling `_build_text_segment()` (line 626) does call both. That is the entire bug.
 
-**Solution:** Implement proper header support in the markdown-to-Pango pipeline while maintaining backward compatibility with existing formatting.
+**Architecture findings (verified):**
+- `utils/block_parser.py:extract_blocks()` already strips the `#` markers before passing heading content to the renderer (line 206: `m.group(2).strip()`). The content reaching `_build_heading_segment` is `**Important** conference`, not `### **Important** conference`.
+- `utils/markdown.py:format_markdown()` already correctly converts `**bold**`, `*italic*`, `` `code` ``, and `[text](url)` inside heading content — when it is called. It just isn't called for headings.
+- `ui/styles.py:539-543` defines `.chat-heading-{1..4}` CSS classes that already handle font sizing (20px/17px/15px/14px). These are correctly applied today via `add_css_class()` calls at `chat_bubble.py:753-754`. The CSS layer is not broken.
+
+**Out of scope:** Anything in `utils/markdown.py` itself. The original spec proposed adding a header regex to `format_markdown`, but that code path is dead: by the time `_build_heading_segment` sees the content, `#` markers are already stripped. There is no inline header processing to add.
+
+**Out of scope (separate issue, not addressed here):** `utils/block_parser.py:204` regex `r'^(#{1,6})\s+(.*)'` requires at least one whitespace character after the `#` markers. CommonMark allows headers like `##h2` with no space. This causes `##h2` to be classified as text instead of a heading. Documented here for follow-up; not fixed in this spec.
+
+**Risk:** Low. The change is a 1-line edit (plus regression tests). No new dependencies. No behavior change for the `#` markers themselves — they were already gone before this fix.
+
+---
 
 ## 2. Changes by File
 
-### 2.1 utils/markdown.py
+### 2.1 `ui/views/chat_bubble.py` — `_build_heading_segment` (lines 736-754)
 
-**Changes:**
-- Added header processing regex to `format_markdown()` function
-- Processed levels 1-4 only (per `_build_heading_segment()` expectations)
-- Header markers `#` → `<span markup="parpanspan"><span weight="bold">` (as used by `fio` app)
-- Headers escaped with `escape_for_pango()` before conversion
-- Generated markup: `<span markup="parpanspan"><span weight="bold">Level 2: Heading Text</span></span>`
-
-**Expected Headers Processed:**
-```
-#   -> Level 1: Heading
-##  -> Level 2: Heading  
-### -> Level 3: Heading
-#### -> Level 4: Heading
-```
-
-**No Code Samples:** This is a straightforward regex addition without functional code samples.
-
-### 2.2 ui/views/chat_bubble.py
-
-**Changes:**
-- Updated `_build_heading_segment()` to use escape_for_pango + format_markdown instead of direct escape_for_pango
-- Added test coverage for header markup preservation
-- Ensure inline formatting within headers (bold, italic, links) continues to work
-
-**Expected:**
+**Current code:**
 ```python
 def _build_heading_segment(seg: dict) -> Gtk.Widget:
-    level = min(seg.get("level", 1), 4)
+    """Render a heading with scaled font size."""
+    level = min(seg.get("level", 1), 4)  # cap at h4
     content = seg.get("content", "")
 
-    # BEFORE (stripped headers):
     label = Gtk.Label()
     label.set_markup(escape_for_pango(content))
-    
-    # AFTER (preserved headers with inline formatting):
+    label.set_xalign(0)
+    label.set_can_focus(False)
+    label.set_selectable(True)
+    label.add_css_class("chat-heading")
+    label.add_css_class(f"chat-heading-{level}")
+    return label
+```
+
+**New code (mirror `_build_text_segment` at line 626):**
+```python
+def _build_heading_segment(seg: dict) -> Gtk.Widget:
+    """Render a heading with scaled font size and inline markdown."""
+    level = min(seg.get("level", 1), 4)  # cap at h4
+    content = seg.get("content", "")
+    if not content.strip():
+        return Gtk.Box()  # empty spacer
+
+    # Order: 1. escape, 2. markdown.  Same pattern as _build_text_segment.
     escaped = escape_for_pango(content)
     formatted = format_markdown(escaped)
-    label.set_markup(formatted)
+    # HIGH-6: make_safe_label wires activate-link handler so non-allowlisted
+    # schemes (javascript:, file://, custom URIs, etc.) cannot be opened
+    # by clicking a [link](url) inside a heading.
+    return make_safe_label(
+        formatted,
+        css_class=f"chat-heading chat-heading-{level}",
+    )
 ```
 
-## 3. Data Flow
+**Rationale:**
+- Mirrors `_build_text_segment` exactly — same `escape` then `format_markdown` order, same `make_safe_label` wrapper for HIGH-6 link safety.
+- Preserves all six existing properties: `xalign=0`, `wrap=True` (default), `wrap_mode=WORD_CHAR` (default), `can_focus=False`, `selectable=True`, both CSS classes.
+- Adds empty-content guard to match `_build_text_segment:628`.
 
-**Current Path (buggy):**
-```
-User writes: "### **Important** conference"
+**No other files change.** Specifically:
+- `utils/markdown.py` — unchanged. Adding a header regex here would never fire because `#` markers are already stripped upstream.
+- `utils/block_parser.py` — unchanged. Its regex requires `\s+` after `#`; that's a separate issue (see "Out of scope" above).
+- `ui/handlers/chat_render_handler.py` — unchanged. Its pipeline is correct.
 
-1. ChatRenderHandler.render_sync()
-2. build_role_bubble() -> calls _build_heading_segment()
-3. escape_for_pango() only → text stripped
-4. Gtk.Label.set_markup() (empty header)
-```
+---
 
-**Fixed Path:**
-```
-User writes: "### **Important** conference"
+## 3. Tests (`tests/test_chat_heading.py`, new file)
 
-1. ChatRenderHandler.render_sync()
-2. build_role_bubble() -> calls _build_heading_segment()
-3. escape_for_pango() + format_markdown() -> completes header markup
-4. Gtk.Label.set_markup() (intact header markup)
-```
+Mirror the test pattern from `tests/test_gtk_safe_link.py:TestBlockquoteLinkGuard` (HIGH-6 regression precedent).
 
-## 4. File Change Summary
+### 3.1 Test cases
 
-| File | Change Type | Lines | Risk Level |
-|------|-------------|-------|------------|
-| utils/markdown.py | Add header regex | ~10 lines | Low |
-| ui/views/chat_bubble.py | Update heading processing | ~5 lines | Low |
+| # | Input segment | Asserted on `Gtk.Label.get_label()` (escaped→formatted) |
+|---|---|---|
+| 1 | `{level: 2, content: "plain"}` | markup contains `plain`, no `**` literal |
+| 2 | `{level: 3, content: "**Important** conference"}` | markup contains `<b>Important</b> conference`, no literal `**` |
+| 3 | `{level: 2, content: "and *italic* here"}` | markup contains `<i>italic</i>` |
+| 4 | `{level: 2, content: "using \`var\` here"}` | markup contains `<tt>var</tt>` |
+| 5 | `{level: 2, content: "[click](https://example.com)"}` | markup contains `<a href="https://example.com">` |
+| 6 | `{level: 2, content: "[click](javascript:alert(1))"}` | HIGH-6: `emit("activate-link", "javascript:...")` returns `True` (blocked) |
+| 7 | `{level: 2, content: ""}` | returns an empty `Gtk.Box` (spacer), not a label |
+| 8 | `{level: 2, content: "   "}` | same as #7 (whitespace-only is empty) |
+| 9 | `{level: 99, content: "x"}` | level capped at 4; CSS class is `chat-heading-4`, not `chat-heading-99` |
+| 10 | `{level: 2, content: "a & b"}` | `&` is escaped to `&amp;` (Pango-safe) |
+
+### 3.2 High-severity invariants
+
+Test #6 (HIGH-6) is non-negotiable. The original spec missed that `_build_heading_segment` needs `make_safe_label` to block `javascript:` links, just like `_build_text_segment`. Without `make_safe_label`, a heading containing `[click me](javascript:alert(1))` would be a clickable XSS vector.
+
+Test #2 is the headline bug — bold in headings must render.
+
+### 3.3 How to read Pango markup from a Gtk.Label
+
+`Gtk.Label.get_label()` returns the plain text without markup. To inspect the Pango markup, you must capture it before `set_markup()` is called. Two options:
+
+(a) Refactor `_build_heading_segment` to call a small private helper `_heading_markup(seg)` that returns the markup string. Test the helper directly; test the widget separately.
+
+(b) Use `label.get_layout().get_text()` and reconstruct — but this loses Pango tags, so it can't verify `<b>` wrapping.
+
+Option (a) is cleaner and matches the codebase style (`_build_text_segment` does inline `escape_for_pango`+`format_markdown` — extract to `_text_markup(seg)` helper for testing).
+
+**Implementation note for coder:** extract the markup computation into a private function `_heading_markup(seg: dict) -> str` so tests can assert on the markup string directly without needing GTK introspection tricks.
+
+---
+
+## 4. Acceptance Criteria
+
+- [ ] `tests/test_chat_heading.py` exists with all 10 test cases from §3.1
+- [ ] All 10 tests pass
+- [ ] All 58 existing `tests/test_markdown.py` tests still pass (no regression)
+- [ ] Manual smoke test in UI: a message containing `### **bold** heading` renders bold at heading size, not literal `**bold**`
+- [ ] Manual smoke test: clicking `[x](javascript:alert(1))` in a heading does NOT execute the JS (HIGH-6)
+- [ ] `_build_heading_segment` produces identical CSS classes to before: `chat-heading` and `chat-heading-{level}` (where level is clamped to 1-4)
+- [ ] `git diff utils/markdown.py utils/block_parser.py ui/handlers/chat_render_handler.py` is empty (no out-of-scope edits)
+
+---
 
 ## 5. Implementation Order
 
-1. **Priority 1:** Update `utils/markdown.py` to process header levels
-2. **Priority 2:** Update `ui/views/chat_bubble.py` `_build_heading_segment()` to use new header support
-3. **Priority 3:** Verify backward compatibility with existing markdown formatting
+1. Extract markup computation to `_heading_markup(seg)` helper inside `chat_bubble.py`.
+2. Update `_build_heading_segment` to call the helper + `make_safe_label`.
+3. Write `tests/test_chat_heading.py` with the 10 cases from §3.1.
+4. Run full test suite. Confirm no regression in `tests/test_markdown.py` (58 tests) or `tests/test_gtk_safe_link.py`.
+5. Manual UI smoke test on the chat view.
 
-## 6. Acceptance Criteria
+---
 
-- [ ] Headers (# through ####) are rendered with proper markup
-- [ ] Inline formatting within headers (bold `**`, italic `*`, links `[text](url)`) continues to work
-- [ ] No existing markdown formatting (bold, italic, code) regresses
-- [ ] Automatic testing passes for header rendering
-- [ ] Chat bubbles display header content correctly
+## 6. Verification Commands (real, runnable)
 
-## 7. Edge Cases
-
-| Edge Case | Expected Behavior |
-|-----------|-------------------|
-| Header with nested formatting `### **bold** and *italic*` | Preserves all inline formatting |
-| Header with inline code `### using ` `var` here` | Process code span and header together |
-| Header with URL `[link](http://example.com)` | Links work inside headers |
-| Header at very long content | Should not break rendering |
-| Mixed headers and paragraphs | Each header level displays independently |
-
-## 8. ARCHITECTURE.md Updates Required
-
-None - This fix maintains existing architecture patterns and does not require documentation updates.
-
-## 9. Verification Cheat Sheet
-
-**For the header regex addition in utils/markdown.py:**
 ```bash
-# Verify header regex matches expected patterns
-python3 -c "
-import re
-pattern = r'^#####\b'?# Adjust based on actual implementation
-text = '# Level 1'
-if re.match(pattern, text):
-    print('✓ Header regex works')
-"
+cd /home/q/projects/crabcakes
 
-# Verify header conversion preserves markup
-python3 -c "
-from utils.markdown import format_markdown
-from utils.escaping import escape_for_pango
-
-escaped = escape_for_pango('### **Important** conference')
-formatted = format_markdown(escaped)
-
-if '###' in formatted:
-    print('✗ Header markers stripped')
-if '<span' in formatted:
-    print('✓ Header markers converted to markup')
-if '<b>' in formatted:
-    print('✓ Bold inside headers preserved')
-"
-```
-
-**For the heading segment update:**
-```bash
-# Verify heading processing uses new markdown function
+# Confirm bug exists today (before fix)
 python3 -c "
 from ui.views.chat_bubble import _build_heading_segment
-seg = {'level': 2, 'content': '### **Test** heading'}
-result = _build_heading_segment(seg)
-print('✓ Heading building works')
+import gi; gi.require_version('Gtk', '4.0')
+from gi.repository import Gtk
+w = _build_heading_segment({'level': 2, 'content': '**Important** conference'})
+print('Before fix, get_label() returns:', repr(w.get_label()))
+# Expect literal '**Important** conference' (BUG)
 "
 
-# Verify git diff shows expected changes
-git diff utils/markdown.py ui/views/chat_bubble.py
+# Run new test file
+python3 -m pytest tests/test_chat_heading.py -v
+
+# Confirm no regression in existing tests
+python3 -m pytest tests/test_markdown.py tests/test_gtk_safe_link.py -v
+
+# Confirm only the in-scope file changed
+git diff --stat utils/markdown.py utils/block_parser.py ui/handlers/chat_render_handler.py
+# Expect: empty output
+git diff --stat ui/views/chat_bubble.py
+# Expect: only chat_bubble.py changed
 ```
 
 ---
 
-**Mantra:** "Headers carry structure. Stripping them flattens communication."
+## 7. ARCHITECTURE.md Updates
 
-**Mantra 2:** "Markdown is a language. Headers are its grammar. Don't kill the grammar."
+**No changes required.** The fix follows existing patterns:
+- Mirrors `_build_text_segment` (already documented in §3.6 / chat_bubble.py module docstring).
+- Uses `make_safe_label` per HIGH-6 (documented in §8.6 and in `utils/gtk_safe_link.py`).
+- No new modules, no new dependencies, no architectural changes.
+
+---
+
+## 8. Spec Self-Audit (this rewrite)
+
+| Check | Result |
+|---|---|
+| Bug verified empirically before writing spec | ✓ (4 test cases run today) |
+| All referenced files actually read | ✓ (`utils/markdown.py`, `utils/block_parser.py`, `ui/views/chat_bubble.py`, `ui/handlers/chat_render_handler.py`, `ui/styles.py`, `utils/gtk_safe_link.py`, `tests/test_gtk_safe_link.py`, `tests/test_markdown.py`, `docs/ARCHITECTURE.md`) |
+| Code samples traced through actual call sites | ✓ |
+| Tests cover the NEW code path | ✓ (10 cases including HIGH-6 regression) |
+| Acceptance criteria are measurable | ✓ (specific markup strings asserted) |
+| Verification commands are runnable as written | ✓ (no template placeholders) |
+| Spec stays in scope (no `format_markdown` regex, no `extract_blocks` regex change) | ✓ (those are dead-code fixes per audit) |
+| References existing patterns (`_build_text_segment`, `make_safe_label`) | ✓ |
+
+**Previous spec failure modes (addressed in this rewrite):**
+- ✗ Original proposed dead regex in `format_markdown` → ✓ Removed; fix lives in `_build_heading_segment` only
+- ✗ Original "AFTER" code sample dropped CSS classes → ✓ New code preserves `chat-heading` and `chat-heading-{level}`
+- ✗ Original cited §3.14 handler pattern (which is `chat_handler.py`, unrelated) → ✓ Removed; no ARCHITECTURE.md section claim needed
+- ✗ Original completion checkboxes were `[ ]` (empty) → ✓ Acceptance criteria use measurable `[ ]` placeholders; coder must fill `[x]` after verifying
+- ✗ Original verification commands had `SyntaxError` → ✓ All commands runnable
+- ✗ Original claimed "automatic testing passes" with no header tests existing → ✓ This spec mandates `tests/test_chat_heading.py` with 10 specific cases
+
+---
+
+**Mantra (kept):** "Headers carry structure. Stripping them flattens communication."
+
+**Mantra (revised):** "The fix is in the call site, not in the helper."
