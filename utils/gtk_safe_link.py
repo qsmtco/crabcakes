@@ -68,40 +68,4 @@ def on_activate_link(_label, uri: str) -> bool:
     return True  # block
 
 
-def make_safe_label(
-    markup: str,
-    *,
-    xalign: float = 0,
-    wrap: bool = True,
-    selectable: bool = True,
-    css_class: str | None = None,
-) -> "Gtk.Label":
-    """Create a Gtk.Label wired with the HIGH-6 activate-link guard.
-
-    Caller passes already-formatted Pango markup (output of escape_for_pango +
-    format_markdown). This helper:
-      1. Creates the Gtk.Label.
-      2. Sets the markup.
-      3. Connects `activate-link` to on_activate_link (the HIGH-6 guard).
-      4. Sets xalign / wrap / selectable / css_class as specified.
-
-    Use this in place of `Gtk.Label() + set_markup()` for any label that
-    renders user- or agent-authored text.
-    """
-    import gi
-    gi.require_version("Gtk", "4.0")
-    from gi.repository import Gtk, Pango  # noqa: F401
-
-    label = Gtk.Label()
-    label.set_markup(markup)
-    label.set_xalign(xalign)
-    if wrap:
-        label.set_wrap(True)
-        label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-    label.set_can_focus(False)
-    label.set_selectable(selectable)
-    if css_class:
-        label.add_css_class(css_class)
-    # HIGH-6: gate navigation on scheme allowlist
-    label.connect("activate-link", on_activate_link)
-    return label
+['str] | None = None,\n) -> "Gtk.Label":\n    "', 'Create a Gtk.Label wired with the HIGH-6 activate-link guard.\n\n    Caller passes already-formatted Pango markup (output of escape_for_pango +\n    format_markdown). This helper:\n      1. Creates the Gtk.Label.\n      2. Sets the markup.\n      3. Connects `activate-link` to on_activate_link (the HIGH-6 guard).\n      4. Sets xalign / wrap / selectable / css_class as specified.\n\n    Use this in place of `Gtk.Label() + set_markup()` for any label that\n    renders user- or agent-authored text.\n\n    Args:\n        markup: The Pango markup string to display (output of escape_for_pango\n            + format_markdown).\n        xalign: Horizontal alignment (0=left, 0.5=center, 1=right). Default 0.\n        wrap: Whether to wrap text. Default True.\n        selectable: Whether the text is selectable. Default True.\n        css_class: A single CSS class to add. Backward compat with existing\n            callers.\n        css_classes: A list of CSS classes to add. Use this when you need to\n            apply multiple classes (e.g., ["chat-heading', 'chat-heading-2']
