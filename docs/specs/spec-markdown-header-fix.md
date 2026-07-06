@@ -64,9 +64,16 @@ label.get_css_classes()  # → ['chat-heading chat-heading-2']  (WRONG: single c
 
 **Fix:** `make_safe_label()` should accept multiple CSS classes. We add a `css_classes` parameter (list[str]) alongside the existing `css_class` parameter for backward compatibility.
 
-### 1.6 Bug #6: heading regex rejects CommonMark no-space headers
+### 1.6 Bug #6: heading regex rejects bare `##` and no-space headers
 
-**Problem:** `utils/block_parser.py:204` regex `r'^(#{1,6})\s+(.*)'` requires at least one whitespace character after the `#` markers. CommonMark allows headers like `##h2` with no space. This causes `##h2` to be classified as text instead of a heading.
+**Problem:** `utils/block_parser.py:204` regex `r'^(#{1,6})\s+(.*)'` requires at least one whitespace character after the `#` markers, with the content group mandatory. This rejects two inputs that should logically be headings:
+
+- `##` — bare hash markers with no content. Should be a heading with empty content (and `_build_heading_segment`'s empty-content guard would render it as an empty spacer).
+- `##no-space` — hash markers immediately followed by content with no whitespace separator. Real-world markdown authors sometimes write this when the "content" is itself a `#`-anchored term (e.g., `##no-space`, `##h2`).
+
+**Note on CommonMark:** Strict CommonMark §4.2 requires at least one space (or end-of-line) after the closing `#` sequence, so `##h2` is technically NOT a CommonMark ATX heading. CrabCakes is being slightly looser than CommonMark here to match practical authoring patterns. `##` (bare) is supported by CommonMark as a valid (empty-content) heading.
+
+**Verified:** `extract_blocks('##no space')` returns `[{'type': 'text', 'content': '##no space'}]`. `extract_blocks('##')` returns `[{'type': 'text', 'content': '##'}]`. Both wrong — should be heading segments.
 
 **Severity:** Low. Most real-world markdown uses a space after `#`. But it's a correctness issue and a trivial fix.
 
