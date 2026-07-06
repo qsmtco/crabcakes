@@ -143,11 +143,12 @@ If a future test wants to inspect rendered text (stripped of markup), use `label
 
 ## 5. Implementation Order
 
-1. Extract markup computation to `_heading_markup(seg)` helper inside `chat_bubble.py`.
-2. Update `_build_heading_segment` to call the helper + `make_safe_label`.
-3. Write `tests/test_chat_heading.py` with the 10 cases from §3.1.
-4. Run full test suite. Confirm no regression in `tests/test_markdown.py` (58 tests) or `tests/test_gtk_safe_link.py`.
-5. Manual UI smoke test on the chat view.
+1. Update `_build_heading_segment()` in `ui/views/chat_bubble.py` per §2.1 — replace `Gtk.Label() + set_markup()` with `make_safe_label(formatted, css_class=...)` after running `escape_for_pango` + `format_markdown`. Preserve the empty-content guard from `_build_text_segment` (return `Gtk.Box()` for whitespace-only content).
+2. Write `tests/test_chat_heading.py` with the 10 cases from §3.1.
+3. Run the new test file: `pytest tests/test_chat_heading.py -v`. All 10 must pass.
+4. Run regression suite: `pytest tests/test_markdown.py tests/test_gtk_safe_link.py -v`. All must still pass.
+5. Confirm scope: `git diff --stat` should show changes only in `ui/views/chat_bubble.py` and `tests/test_chat_heading.py` (new).
+6. Manual UI smoke test: open chat, send a message with `### **bold** heading` and `[x](javascript:alert(1))`, verify bold renders and JS link is not clickable.
 
 ---
 
