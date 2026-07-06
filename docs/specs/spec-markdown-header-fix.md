@@ -328,6 +328,84 @@ from utils.escaping import xml_escape_text
 
 **Note on header labels:** The header labels in event cards (e.g., `"📄 File read"`, `"✏️ Edit proposal"`) are hardcoded strings with manual `set_markup()` calls — not user input. These are safe and do not need to change.
 
+### 2.5b Presentation-injection: `escape_for_pango` inside hardcoded Pango wrappers (Bug #9 — expanded scope)
+
+**Problem:** The Bug #4 fix above only covers 4 of the ~16 call sites with the same pattern. The `escape_for_pango` function preserves known Pango tags (`<b>`, `<i>`, etc.). When wrapped inside a hardcoded Pango template like `<b>{escape_for_pango(file_path)}</b>`, the inner tag is interpreted as Pango by GTK. A `file_path` of `<b>fake</b>` renders as bold inside the path label; a `status` of `low <i>priority</i>` renders as italic; etc.
+
+This is presentation injection: a malicious or unexpected value can change the visual formatting of an unrelated label. It is not RCE (no XSS), but it is misleading UI and a violation of the principle that system/agent-controlled strings should not be interpreted as markup.
+
+**Affected call sites (verified by reading source at HEAD 713dab9):**
+
+| File:line | Field | Pattern |
+|---|---|---|
+| `ui/views/chat_bubble.py:847` | `create_file_card` `path_label` | `<b>{escape_for_pango(file_path)}</b>` |
+| `ui/views/chat_bubble.py:852` | `create_file_card` `lr_label` | `<span foreground="#9b9bab">{escape_for_pango(line_range)}</span>` |
+| `ui/views/chat_bubble.py:898` | `create_edit_card` `path_label` | `<b>{escape_for_pango(file_path)}</b>` |
+| `ui/views/chat_bubble.py:942` | `create_tool_card` `name_label` | `<b>{escape_for_pango(tool_name)}</b>` |
+| `ui/handlers/chat_render_handler.py:712` | task card `title_label` | `<b>Task {action.capitalize()}:</b> {escape_for_pango(task_id)}` |
+| `ui/handlers/chat_render_handler.py:728` | task card `meta_label` | `" \| ".join([escape_for_pango(s) for s in parts])` |
+| `ui/handlers/chat_render_handler.py:736` | task card `at_label` | `→ {escape_for_pango(assigned_to)}` |
+| `ui/views/diff_card.py:325` | diff card `file_lbl` | `<b>{escape_for_pango(f.display_path)}</b>` |
+| `ui/views/diff_card.py:327` | diff card `file_lbl` | `<b>{escape_for_pango(f.display_path)}</b>` |
+| `ui/views/diff_card.py:329` | diff card `file_lbl` | `<b>{escape_for_pango(f.display_path)}</b>` |
+| `ui/views/feed_card.py:163` | feed card `path_label` | `<b>{escape_for_pango(path)}</b>` |
+| `ui/views/feed_card.py:176` | feed card `desc_label` | `escape_for_pango(card_data.body)` |
+| `ui/views/feed_card.py:196` | feed card `title_label` | `<b>{escape_for_pango(card_data.title)}</b>` |
+| `ui/views/feed_card.py:207` | feed card `body_label` | `escape_for_pango(card_data.body)` |
+| `ui/views/feed_card.py:219` | feed card `id_label` | `<span foreground="#9b9bab">ID: {escape_for_pango(card_data.task_id)}</span>` |
+| `ui/views/feed_card.py:285` | feed card `role_label` | `<b>{escape_for_pango(msg.role)}:</b>` |
+| `ui/views/feed_card.py:290` | feed card `text_label` | `escape_for_pango(msg.text)` |
+
+**Fix:** Introduce a helper in `utils/escaping.py` that auto-escapes kwargs into a hardcoded template. This makes the wrong escape function impossible to use at the call site:
+
+```python
+# In utils/escaping.py:
+def xml_template(template: str, **kwargs: str) -> str:
+    """
+    Substitute keyword arguments into a hardcoded Pango template, applying
+    xml_escape_text() to each value. Use for any `set_markup` call that
+    interpolates dynamic values into a template containing literal Pango tags.
+
+    Example:
+        label.set_markup(xml_template(
+            "<b>Task {action}:</b> {task_id}",
+            action=action,
+            task_id=task_id,
+        ))
+    """
+    escaped = {k: xml_escape_text(v) for k, v in kwargs.items()}
+    return template.format(**escaped)
+```
+
+**Migration:** Replace every `escape_for_pango` call inside a hardcoded Pango wrapper with `xml_template`. The call sites above should each become:
+
+```python
+# Example: chat_bubble.py:847
+path_label.set_markup(xml_template("<b>{file_path}</b>", file_path=file_path))
+
+# Example: chat_render_handler.py:712
+title_label.set_markup(xml_template(
+    "<b>Task {action}:</b> {task_id}",
+    action=action.capitalize(),
+    task_id=task_id,
+))
+
+# Example: chat_render_handler.py:728
+meta_label.set_markup(xml_template(
+    "{parts}",
+    parts=" | ".join(parts),  # parts are already individually escaped above
+))
+
+# Example: feed_card.py:196
+title_label.set_markup(xml_template("<b>{title}</b>", title=card_data.title))
+```
+
+**Rationale:** `xml_template` makes the wrong escape function impossible to use. If a future contributor adds a new card label, they reach for `xml_template` (safe) instead of `escape_for_pango` (unsafe in this context). The hardcoded Pango wrapper is separated from the dynamic values, making the intent clear at the call site.
+
+**Risk:** Low. Mechanical replacement of existing call sites. No behavior change for inputs that don't contain Pango-tag-like characters (which is the common case).
+
+**Out of scope for this PR (note for follow-up):** Some of these call sites also need `make_safe_label` if the underlying field could ever contain `[text](url)`-style markdown (e.g., a `file_path` containing `?` plus `[link]`). The current audit confirms that `escape_for_pango` is the only presentation-injection issue for these specific fields; `make_safe_label` migration is a separate concern.
+
 ### 2.6 `utils/block_parser.py` — heading regex (Bug #6)
 
 **Goal:** Match three cases:
