@@ -548,6 +548,58 @@ protected = re.sub(r'(?m)^-( )', r'•\1', protected)
 
 **Recommendation:** Use the MULTILINE alternative. It's cleaner, idiomatic, and covers both position-0 and after-newline cases in one pattern.
 
+### 2.8 `ui/handlers/chat_render_handler.py` — streaming bubble (Bug #10)
+
+**Problem:** The streaming path in `chat_render_handler.py:update_streaming()` uses raw `Gtk.Label() + set_markup()` instead of `make_safe_label`. During the live-streaming window, text appears without inline markdown formatting (no bold/italic/links).
+
+**Severity:** issue (visual inconsistency during streaming window, not a security issue since text is escaped).
+
+**Current code (around line 460-469):**
+```python
+sb.label = Gtk.Label()
+sb.label.set_markup(escaped + "<tt>▍</tt>")
+```
+
+**New code:**
+```python
+from utils.gtk_safe_link import make_safe_label
+sb.label = make_safe_label(escaped + "<tt>▍</tt>")
+```
+
+**Rationale:** `make_safe_label` calls `set_markup` internally and wires the `activate-link` handler. It also preserves all `Gtk.Label` properties (selectable, wrap, etc.) that the streaming path needs. The cursor `<tt>▍</tt>` is hardcoded, so no user-input safety issue.
+
+**Alternative:** If the team prefers streaming to remain plain-text (no inline formatting), add a comment to the streaming path stating this explicitly and skip this fix. The streaming label is replaced wholesale by `end_streaming() → build_role_bubble()`, so any inconsistency is brief.
+
+### 2.9 `utils/gtk_safe_link.py` — document `css_classes` parameter (Bug #11)
+
+**Problem:** The new `css_classes` parameter added in §2.1 is not documented in the function's docstring.
+
+**Fix:** Add the following to `make_safe_label`'s docstring:
+
+```python
+"""
+...
+
+Args:
+    markup: The Pango markup string to display.
+    xalign: Horizontal alignment (0=left, 0.5=center, 1=right). Default 0.
+    wrap: Whether to wrap text. Default True.
+    selectable: Whether the text is selectable. Default True.
+    css_class: A single CSS class to add. For backward compat with existing callers.
+    css_classes: A list of CSS classes to add. Use this when you need to apply
+        multiple classes (e.g., ["chat-heading", "chat-heading-2"]). GTK4's
+        add_css_class() treats strings as single class names — spaces are NOT
+        separators. See Bug #5 in spec-markdown-header-fix.md.
+
+Returns:
+    A configured Gtk.Label with the markup applied and the activate-link
+    handler connected (HIGH-6 defense-in-depth: non-allowlisted schemes
+    like javascript: are blocked).
+"""
+```
+
+**Rationale:** Documentation makes the new parameter discoverable and explains the Bug #5 context (why `css_classes` exists separately from `css_class`).
+
 **No other files change.** Specifically:
 - `utils/markdown.py` core formatting logic (bold, italic, code, links) — unchanged.
 - `ui/handlers/chat_render_handler.py` — unchanged. Its pipeline is correct.
