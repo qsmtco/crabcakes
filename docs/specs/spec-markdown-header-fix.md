@@ -845,14 +845,58 @@ print(repr(format_markdown('- first\n- second')))
 # '- first\n• second' — first bullet NOT converted
 "
 
+# Bug #6: Confirm heading regex bug + verify proposed regex matches spec inputs
+python3 -c "
+import re
+# Current (buggy) regex:
+m = re.match(r'^(#{1,6})\s+(.*)', '##no space')
+print('Current regex on \"##no space\":', 'matches' if m else 'NO MATCH (BUG)')
+# Proposed regex (from §2.6):
+m = re.match(r'^(#{1,6})(.*)$', '##no space')
+print('Proposed regex on \"##no space\":', 'matches' if m else 'NO MATCH')
+# Verify all five test cases:
+for inp in ['##no-space', '### has space', '##', '###### max heading', '####### too many']:
+    m = re.match(r'^(#{1,6})(.*)$', inp)
+    print(f'  {inp!r:25s} -> {\"MATCH\" if m else \"NO MATCH\"}')
+"
+
+# Bug #4 / #9: Confirm escape_for_pango preserves known Pango tags
+python3 -c "
+from utils.escaping import escape_for_pango, xml_escape_text
+print('escape_for_pango(\"<b>fake</b>\"):', repr(escape_for_pango('<b>fake</b>')))
+# '<b>fake</b>' — tag preserved (BUG in presentation-injection contexts)
+print('xml_escape_text(\"<b>fake</b>\"):', repr(xml_escape_text('<b>fake</b>')))
+# '<b>fake</b>' → '&lt;b&gt;fake&lt;/b&gt;' — fully escaped (safe)
+"
+
+# Bug #8: Confirm terminal HIGH-6 regression risk from Bug #3 fix
+python3 -c "
+from utils.markdown import format_markdown
+from utils.escaping import escape_for_pango
+import gi; gi.require_version('Gtk', '4.0')
+from gi.repository import Gtk
+
+# What format_markdown produces for a [link](url):
+formatted = format_markdown(escape_for_pango('see [docs](javascript:alert(1))'))
+print('formatted:', repr(formatted))
+# 'see <a href=\"javascript:alert(1)\">docs</a>' — clickable!
+
+# A raw Gtk.Label with set_markup(formatted) has NO activate-link handler.
+label = Gtk.Label()
+label.set_markup(formatted)
+result = label.emit('activate-link', 'javascript:alert(1)')
+print('Raw Gtk.Label activate-link emit result:', result)
+# False (event_propagation_continue) — navigation ALLOWED, NOT blocked. HIGH-6 RISK.
+"
+
 # Run new test files
-python3 -m pytest tests/test_chat_heading.py tests/test_chat_task_segment.py -v
+python3 -m pytest tests/test_chat_heading.py tests/test_chat_task_segment.py tests/test_chat_terminal_segment.py tests/test_chat_streaming.py tests/test_presentation_injection.py -v
 
 # Run regression suite
-python3 -m pytest tests/test_markdown.py tests/test_gtk_safe_link.py tests/test_block_parser.py -v
+python3 -m pytest tests/test_markdown.py tests/test_gtk_safe_link.py tests/test_block_parser.py tests/test_escaping.py -v
 
 # Confirm only in-scope files changed
-git diff --stat -- ui/views/chat_bubble.py utils/gtk_safe_link.py utils/markdown.py utils/block_parser.py
+git diff --stat -- ui/views/chat_bubble.py ui/handlers/chat_render_handler.py ui/views/diff_card.py ui/views/feed_card.py utils/gtk_safe_link.py utils/escaping.py utils/markdown.py utils/block_parser.py ui/styles.py
 ```
 
 ---
