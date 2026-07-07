@@ -392,4 +392,4 @@ grep -n '_from_wire_name\|partition.*"/"' agent/tools.py
 
 ### 4. Declaration
 
-Spec is complete. All code samples traced against source. All function signatures verified. All edge cases enumerated.
+Spec writing is complete. Implementation has not yet been performed (this PR). All code samples traced against source. All function signatures verified. All edge cases enumerated. The §10.1 scope checklist is intentionally unchecked — those are the implementation items the developer will check off when the code is written.
