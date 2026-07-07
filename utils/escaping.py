@@ -185,3 +185,35 @@ def xml_escape_text(text: str) -> str:
         'say "hi"'    -> "say &quot;hi&quot;"
     """
     return html.escape(text, quote=True)
+
+
+def xml_template(template: str, **kwargs: str) -> str:
+    """
+    Substitute keyword arguments into a hardcoded Pango template, applying
+    xml_escape_text() to each value. Use for any set_markup() call that
+    interpolates dynamic values into a template containing literal Pango tags.
+
+    This prevents presentation injection: escape_for_pango() preserves known
+    Pango tags (<b>, <i>, etc.), so a file_path of "<b>fake</b>" would render
+    as bold inside "<b>{escape_for_pango(file_path)}</b>". xml_template uses
+    xml_escape_text() instead, which escapes all markup.
+
+    Example:
+        label.set_markup(xml_template(
+            "<b>Task {action}:</b> {task_id}",
+            action=action,
+            task_id=task_id,
+        ))
+
+    Args:
+        template: A format string containing literal Pango tags and {key}
+            placeholders. The literal tags are preserved; only the kwarg
+            values are escaped.
+        **kwargs: Values to substitute. Each is passed through
+            xml_escape_text() before formatting.
+
+    Returns:
+        A Pango markup string safe for set_markup().
+    """
+    escaped = {k: xml_escape_text(v) for k, v in kwargs.items()}
+    return template.format(**escaped)
