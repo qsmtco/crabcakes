@@ -35,7 +35,7 @@ _ALLOWED_LINK_SCHEMES = frozenset({"http", "https", "mailto"})
 
 def _is_safe_scheme(url: str) -> bool:
     """Return True if `url` is a URL with a safe scheme (or relative)."""
-    if not url:
+    if not isinstance(url, str) or not url:
         return False
     # Allow relative URLs (no scheme) — they navigate within the app's webview,
     # which isn't a code-execution vector the same way custom schemes are.
