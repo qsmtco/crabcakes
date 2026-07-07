@@ -48,19 +48,21 @@ class TestEventCardEscaping:
             pytest.skip("GTK not available in test environment")
         from ui.views.chat_bubble import create_error_bubble
         widget = create_error_bubble("<b>not bold</b>")
-        # Walk the widget tree to find the message label
-        bubble = widget.get_first_child()  # container > bubble
-        # Find the label containing the escaped text
-        child = bubble.get_first_child()
-        found = False
-        while child is not None:
-            if hasattr(child, "get_label"):
-                lbl = child.get_label()
-                if "&lt;b&gt;not bold&lt;/b&gt;" in lbl:
-                    found = True
-                    break
-            child = child.get_next_sibling()
-        assert found, "escaped text not found in error bubble"
+
+        def find_label_with(w, needle):
+            if hasattr(w, "get_label"):
+                if needle in w.get_label():
+                    return True
+            child = w.get_first_child()
+            while child:
+                if find_label_with(child, needle):
+                    return True
+                child = child.get_next_sibling()
+            return False
+
+        assert find_label_with(widget, "&lt;b&gt;not bold&lt;/b&gt;"), (
+            "escaped text not found in error bubble"
+        )
 
     def test_file_card_path_escapes_bold(self):
         if _gtk_skip():
