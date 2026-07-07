@@ -35,7 +35,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Pango', '1.0')
 from gi.repository import Gtk, Pango, Gdk
 
-from utils.escaping import escape_for_pango, xml_escape_text
+from utils.escaping import escape_for_pango, xml_escape_text, xml_template
 from utils.markdown import format_markdown
 from utils.block_parser import extract_blocks
 from utils.crabcard_parser import is_crabcards_placeholder, get_placeholder_index as _get_placeholder_index
