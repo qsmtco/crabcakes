@@ -288,3 +288,102 @@ class TestSaveProviderPrefixConsistency:
         from utils.providers_store import load_providers
         providers = [p for p in load_providers() if p.name == "p-custom"]
         assert providers[0].caller == "openai"
+
+    def test_raises_on_empty_caller_no_slash_model(self, handler, tmp_config_dir):
+        """BUG #1: when caller is empty and default_model has no slash,
+        save_provider must raise ValueError — same contract as
+        settings_handler.add_or_update. Silently saving caller=""
+        reintroduces the 'No streaming caller' runtime failure.
+        """
+        h, _, _ = handler
+        with pytest.raises(ValueError, match="Cannot auto-detect caller"):
+            h.save_provider("broken", {
+                "base_url": "https://api.openai.com",
+                "api_key": "sk-test",
+                "default_model": "gpt-4o",   # no slash
+                "caller": "",                # empty
+            })
+
+    def test_normalizes_none_caller_to_empty(self, handler, tmp_config_dir):
+        """BUG #3: dict.get('caller', '') returns None for YAML null
+        values (default only fires on MISSING keys). save_provider
+        must treat None as empty so the empty-caller guard fires
+        rather than leaking caller=None into ProviderConfig.
+        """
+        h, _, _ = handler
+        # caller=None + no slash on model → must raise (same path as
+        # empty string), not silently accept None.
+        with pytest.raises(ValueError, match="Cannot auto-detect caller"):
+            h.save_provider("nullcaller", {
+                "base_url": "https://api.openai.com",
+                "api_key": "sk-test",
+                "default_model": "gpt-4o",
+                "caller": None,
+            })
+
+    def test_raises_on_invalid_caller_value(self, handler, tmp_config_dir):
+        """Mirror of settings_handler.add_or_update: a hand-set caller
+        that is NOT in the valid taxonomy must raise ValueError. The
+        correction block (which fires on prefix-in-taxonomy mismatches)
+        does not pre-empt this — use a non-taxonomy prefix so the
+        correction branch skips, then the taxonomy guard fires.
+        """
+        h, _, _ = handler
+        with pytest.raises(ValueError, match="Invalid caller 'foo'"):
+            h.save_provider("bad-caller", {
+                "base_url": "https://x",
+                "api_key": "k",
+                "default_model": "mycompany/foo",  # not in taxonomy
+                "caller": "foo",                    # not in taxonomy
+            })
+
+
+class TestProviderTaxonomyDuplicationInvariant:
+    """The agent_builder_handler must use the LIVE get_valid_callers()
+    taxonomy, not a hardcoded set literal that can drift out of sync
+    when a new adapter is added to agent.runtime._PROVIDER_CALLERS.
+
+    The existing TestValidCallersDuplicationInvariant only guards
+    utils/providers_store._VALID_CALLERS. This class guards the
+    behavioral contract: a brand-new caller in the runtime taxonomy
+    must be honored by the agent_builder correction gate. We
+    simulate the drift by monkeypatching get_valid_callers and
+    asserting save_provider's behavior reflects the new set.
+    """
+
+    def test_correction_uses_live_taxonomy_not_hardcoded_set(
+        self, handler, tmp_config_dir, monkeypatch
+    ):
+        """Add a fake caller to the live taxonomy and confirm that
+        agent_builder.save_provider corrects caller to the new
+        taxonomy prefix. With a hardcoded set literal, the new
+        caller would NOT be in the gate and the wrong caller
+        would persist.
+        """
+        from agent import runtime
+
+        h, _, _ = handler
+
+        # Simulate a new adapter added to _PROVIDER_CALLERS
+        fake_callers = runtime.get_valid_callers() | {"groq"}
+        monkeypatch.setattr(
+            runtime, "get_valid_callers", lambda: fake_callers
+        )
+
+        h.save_provider("groq-prov", {
+            "base_url": "https://api.groq.com",
+            "api_key": "k",
+            "default_model": "groq/llama-4",
+            "caller": "anthropic",   # wrong but valid
+        })
+        from utils.providers_store import load_providers
+        providers = [p for p in load_providers() if p.name == "groq-prov"]
+        # With the live taxonomy, 'groq' is in the gate → correction
+        # fires → caller becomes 'groq'. With a hardcoded set literal,
+        # 'groq' would NOT be in the gate → correction skipped →
+        # caller stays 'anthropic'.
+        assert providers[0].caller == "groq", (
+            "agent_builder_handler is using a hardcoded set literal "
+            "instead of get_valid_callers(); the new caller was not "
+            "honored by the correction gate."
+        )
