@@ -204,7 +204,7 @@ def _render_task_body(card_data: FeedCardData) -> Gtk.Widget:
     # Body (task description or status)
     if card_data.body and card_data.body.strip():
         body_label = Gtk.Label()
-        body_label.set_markup(escape_for_pango(card_data.body))
+        body_label.set_markup(xml_template("{body}", body=card_data.body))
         body_label.set_xalign(0)
         body_label.set_wrap(True)
         body_label.set_wrap_mode(1)
