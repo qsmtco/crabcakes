@@ -298,7 +298,7 @@ class TestToolRouting(TestState):
             "test-conv",
         )
         assert result.success is False
-        assert "Invalid" in result.error
+        assert "Unknown tool" in result.error
 
     @patch("utils.mcp_client._connect_async", side_effect=Exception("server exploded"))
     @patch("utils.mcp_client.get_server_config")
@@ -310,7 +310,7 @@ class TestToolRouting(TestState):
         )
 
         result = execute_tool(
-            "memory/search_nodes",
+            "memory__search_nodes",
             {"query": "test"},
             str(tmp_path),
             "test-conv",
