@@ -58,7 +58,12 @@ def on_activate_link(_label, uri: str) -> bool:
     Return False to allow GTK to open the link via the default handler.
 
     Blocking rule: only allow schemes in _ALLOWED_LINK_SCHEMES.
+    Fail-closed: non-string URIs are blocked (defense against TypeError
+    causing fail-open in PyGObject's exception handling).
     """
+    if not isinstance(uri, str):
+        logger.warning("HIGH-6: non-string URI in activate-link: %r", uri)
+        return True  # block (fail-closed)
     if _is_safe_scheme(uri):
         return False  # allow
     # Non-allowlisted scheme — block + log
