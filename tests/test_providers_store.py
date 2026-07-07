@@ -593,6 +593,28 @@ class TestFromDictCallerValidation:
             f"missing caller must not warn; got: {warnings}"
         )
 
+    def test_normalizes_none_caller_to_empty(self, tmp_config_dir, caplog):
+        """BUG #3: YAML `caller: null` deserializes to Python None.
+        dict.get's default (the second arg) only fires on MISSING keys,
+        not on present-but-null values. _from_dict must coerce None → ""
+        so downstream truthy checks (e.g. `not provider.caller`) fire
+        correctly. Otherwise caller=None leaks into ProviderConfig and
+        breaks the type contract.
+        """
+        from utils.providers_store import _from_dict
+        d = {
+            "name": "p",
+            "base_url": "https://x",
+            "api_key": "k",
+            "default_model": "openai/gpt-4o",
+            "caller": None,
+        }
+        with caplog.at_level(logging.WARNING, logger="utils.providers_store"):
+            cfg = _from_dict(d)
+        assert cfg.caller == "", (
+            f"caller=None must be normalized to empty string, got {cfg.caller!r}"
+        )
+
 
 class TestValidCallersDuplicationInvariant:
     """utils/_VALID_CALLERS must match agent.runtime._PROVIDER_CALLERS.keys().
