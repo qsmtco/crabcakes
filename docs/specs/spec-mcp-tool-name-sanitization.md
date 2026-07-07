@@ -55,7 +55,7 @@ This breaks all MCP-enabled agents when routed through Anthropic or OpenRouter.
 
 ### 1.3 Why the Fix Is Non-Trivial
 
-The `/` is **load-bearing for inbound routing**. `agent/tools.py:1190-1191` routes MCP tool calls by splitting on `/`:
+The `/` is **load-bearing for inbound routing**. `agent/tools.py:1189-1190` routes MCP tool calls by splitting on `/`:
 
 ```python
 if "/" in name:
