@@ -567,6 +567,18 @@ def get_tools_for_api(
             server_tool_dicts = []
             for tool in server_tools:
                 wire_name = _to_wire_name(server_name, tool.name)
+                # Validate wire name against the provider pattern
+                # ^[a-zA-Z0-9_-]{1,128}$. MCP tool names come from external
+                # servers and are untrusted — a name with spaces, slashes, or
+                # excessive length would cause the provider to reject the
+                # ENTIRE tool list with HTTP 400. Skip invalid tools and log.
+                if not _WIRE_NAME_PATTERN.fullmatch(wire_name):
+                    logger.warning(
+                        "Skipping MCP tool %r from server %r: wire name %r "
+                        "does not match provider pattern ^[a-zA-Z0-9_-]{1,128}$",
+                        tool.name, server_name, wire_name,
+                    )
+                    continue
                 raw_desc = tool.description or f"MCP: {tool.name}"
                 sanitized_desc = _sanitize_tool_description(raw_desc)
                 func_dict = {
