@@ -760,20 +760,17 @@ def _build_heading_segment(seg: dict) -> Gtk.Widget:
 
 
 def _build_task_segment(seg: dict) -> Gtk.Widget:
-    """Render a task list item with checkbox character."""
+    """Render a task list item with checkbox character and inline markdown."""
     content = seg.get("content", "")
+    if not content.strip():
+        return Gtk.Box()  # empty spacer
     # Replace [ ] / [x] with ☐ / ☑ checkbox characters
     content = content.replace('[ ]', '☐').replace('[x]', '☑').replace('[X]', '☑')
-    safe = escape_for_pango(content)
-    label = Gtk.Label()
-    label.set_markup(safe)
-    label.set_xalign(0)
-    label.set_wrap(True)
-    label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-    label.set_can_focus(False)
-    label.set_selectable(True)
-    label.add_css_class("task-item")
-    return label
+    # Order: 1. escape, 2. markdown.  Same pattern as _build_text_segment.
+    escaped = escape_for_pango(content)
+    formatted = format_markdown(escaped)
+    # HIGH-6: make_safe_label wires activate-link handler for link safety.
+    return make_safe_label(formatted, css_class="task-item")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
