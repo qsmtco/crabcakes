@@ -208,3 +208,83 @@ class TestOptions:
             with open(agent_json) as f:
                 raw = json.load(f)
             assert "providers" not in raw or "testprov" not in raw.get("providers", {})
+
+
+class TestSaveProviderPrefixConsistency:
+    """Sonnet-5 regression for agent_builder.save_provider: this path
+    previously bypassed validation entirely (it called add_provider
+    directly, not add_or_update). Now it must mirror the prefix-correction
+    logic so the bypass cannot reintroduce a wrong caller.
+    """
+
+    def test_sonnet5_regression_caller_corrected(self, handler, tmp_config_dir):
+        """The exact Sonnet 5 case: base_url=openrouter.ai, model=
+        openrouter/claude-sonnet-5, caller=anthropic. After save,
+        caller must be openrouter.
+        """
+        h, _, _ = handler
+        h.save_provider("Sonnet 5", {
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_key": "sk-or-v1-fake",
+            "default_model": "openrouter/claude-sonnet-5",
+            "caller": "anthropic",        # the wrong-but-valid value
+        })
+        from utils.providers_store import load_providers
+        providers = load_providers()
+        assert any(p.name == "Sonnet 5" and p.caller == "openrouter" for p in providers)
+
+    def test_auto_detects_caller_from_model_prefix(self, handler, tmp_config_dir):
+        """When caller is empty and model has a slash, auto-detect.
+        Mirrors settings_handler.add_or_update.
+        """
+        h, _, _ = handler
+        h.save_provider("autoprovider", {
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_key": "k",
+            "default_model": "openrouter/some-model",
+            "caller": "",
+        })
+        from utils.providers_store import load_providers
+        providers = [p for p in load_providers() if p.name == "autoprovider"]
+        assert providers[0].caller == "openrouter"
+
+    def test_no_correction_when_caller_matches_prefix(self, handler, tmp_config_dir):
+        """Idempotent on matching caller+prefix."""
+        h, _, _ = handler
+        h.save_provider("p-matched", {
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_key": "k",
+            "default_model": "openrouter/foo",
+            "caller": "openrouter",
+        })
+        from utils.providers_store import load_providers
+        providers = [p for p in load_providers() if p.name == "p-matched"]
+        assert providers[0].caller == "openrouter"
+
+    def test_no_correction_when_model_has_no_slash(self, handler, tmp_config_dir):
+        """Anthropic native: model='claude-sonnet-4-5' (no slash).
+        Caller stays as user set.
+        """
+        h, _, _ = handler
+        h.save_provider("p-anthro", {
+            "base_url": "https://api.anthropic.com",
+            "api_key": "k",
+            "default_model": "claude-sonnet-4-5",
+            "caller": "anthropic",
+        })
+        from utils.providers_store import load_providers
+        providers = [p for p in load_providers() if p.name == "p-anthro"]
+        assert providers[0].caller == "anthropic"
+
+    def test_no_correction_when_prefix_not_in_taxonomy(self, handler, tmp_config_dir):
+        """Custom prefix not in the valid-caller set — block must not fire."""
+        h, _, _ = handler
+        h.save_provider("p-custom", {
+            "base_url": "https://mycompany.example.com",
+            "api_key": "k",
+            "default_model": "mycompany/foo",
+            "caller": "openai",
+        })
+        from utils.providers_store import load_providers
+        providers = [p for p in load_providers() if p.name == "p-custom"]
+        assert providers[0].caller == "openai"
