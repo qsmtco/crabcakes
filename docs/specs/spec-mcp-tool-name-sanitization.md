@@ -229,25 +229,6 @@ The rest of the MCP routing block (the `try:` ... `mcp_call_tool(...)` section a
 
 ---
 
-## 4. File Change Summary
-
-| File | Change Type | Lines | Risk Level |
-|------|-------------|-------|------------|
-| `utils/mcp_client.py` | Add `_to_wire_name`, `_from_wire_name`; rewrite `get_tools_for_api` namespacing | ~30 added, ~2 changed | Low |
-| `agent/tools.py` | Update `execute_tool` MCP routing to use `_from_wire_name` | ~8 changed | Low |
-
----
-
-## 5. Implementation Order
-
-1. **Add `_to_wire_name` and `_from_wire_name` to `utils/mcp_client.py`** — pure functions, no dependencies.
-2. **Rewrite `get_tools_for_api` to use `_to_wire_name`** — one-line change inside the loop.
-3. **Update `execute_tool` in `agent/tools.py`** — replace the `name.partition("/")` block with `_from_wire_name`-based routing.
-4. **Write tests** — unit tests for the helpers, integration test for the round-trip.
-5. **Verify** — run the full test suite + manual confirmation that the wire name is provider-safe.
-
----
-
 ## 3. Data Flow
 
 ### 3.1 Outbound (tools → provider)
@@ -279,6 +260,25 @@ The rest of the MCP routing block (the `try:` ... `mcp_call_tool(...)` section a
    → mcp_call_tool("memory", "create_entities", args, conv_key)
 6. MCP server executes "create_entities" — correct routing
 ```
+
+---
+
+## 4. File Change Summary
+
+| File | Change Type | Lines | Risk Level |
+|------|-------------|-------|------------|
+| `utils/mcp_client.py` | Add `_to_wire_name`, `_from_wire_name`; rewrite `get_tools_for_api` namespacing | ~30 added, ~2 changed | Low |
+| `agent/tools.py` | Update `execute_tool` MCP routing to use `_from_wire_name` | ~8 changed | Low |
+
+---
+
+## 5. Implementation Order
+
+1. **Add `_to_wire_name` and `_from_wire_name` to `utils/mcp_client.py`** — pure functions, no dependencies.
+2. **Rewrite `get_tools_for_api` to use `_to_wire_name`** — one-line change inside the loop.
+3. **Update `execute_tool` in `agent/tools.py`** — replace the `name.partition("/")` block with `_from_wire_name`-based routing.
+4. **Write tests** — unit tests for the helpers, integration test for the round-trip.
+5. **Verify** — run the full test suite + manual confirmation that the wire name is provider-safe.
 
 ---
 
