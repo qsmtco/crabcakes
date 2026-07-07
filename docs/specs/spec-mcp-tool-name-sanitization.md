@@ -225,7 +225,7 @@ The rest of the MCP routing block (the `try:` ... `mcp_call_tool(...)` section a
 
 - **`agent/runtime.py`** — No changes. The runtime passes tool names through unchanged: `_extract_tool_calls` reads the name from the provider response (`func.get("name", "")`), stores it in `ToolCall.tool_name`, and passes it to `execute_tool`. The wire name (`memory__create_entities`) arrives intact and is routed by the updated `execute_tool`. The `tools.extend(mcp_tools)` at line 2127 needs no change — the tool dicts already have sanitized names (produced by the updated `get_tools_for_api`).
 - **`utils/mcp_config.py`** — No changes. It already validates that server names do not contain `/`. The new `__` separator does not need validation here because `_from_wire_name` splits on the first `__`, making the mapping unambiguous.
-- **`models/conversation.py`** — No changes. `ToolCall.tool_name` stores the wire name. On save/load round-trip, the wire name persists. The updated `execute_tool` handles both wire (`__`) and legacy (`/`) formats.
+- **`models/conversation.py`** — No changes. `ToolCall.tool_name` stores the wire name (e.g. `memory__create_entities`). On save/load round-trip, the wire name persists. The updated `execute_tool` routes wire names via `_from_wire_name`. No legacy `/` format needs handling — this is a pre-1.0 codebase with no released MCP integration yet.
 
 ---
 
