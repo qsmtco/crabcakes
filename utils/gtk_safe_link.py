@@ -122,14 +122,12 @@ def make_safe_label(
     if css_class:
         label.add_css_class(css_class)
     if css_classes:
-        # Guard against the string-as-list footgun: a caller writing
-        # css_classes="chat-heading chat-heading-2" (forgetting brackets)
-        # would otherwise iterate char-by-char, producing single-char class
-        # names — the exact failure mode Bug #5 targeted. Reject non-list
-        # iterables (str, bytes) explicitly.
-        if isinstance(css_classes, (str, bytes)):
+        # Guard against non-list iterables (Bug #5 type guard, tightened per
+        # adversarial audit): str/bytes iterate char-by-char, dict iterates
+        # keys, generators are one-shot. Only list and tuple are valid.
+        if not isinstance(css_classes, (list, tuple)):
             raise TypeError(
-                "css_classes must be a list or tuple, not a string. "
+                f"css_classes must be a list or tuple, got {type(css_classes).__name__}. "
                 "Use css_class='single' for one class, or "
                 "css_classes=['a', 'b'] for multiple."
             )
