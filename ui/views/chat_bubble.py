@@ -741,18 +741,22 @@ def _build_terminal_segment(seg: dict) -> Gtk.Widget:
 
 
 def _build_heading_segment(seg: dict) -> Gtk.Widget:
-    """Render a heading with scaled font size."""
+    """Render a heading with scaled font size and inline markdown."""
     level = min(seg.get("level", 1), 4)  # cap at h4
     content = seg.get("content", "")
+    if not content.strip():
+        return Gtk.Box()  # empty spacer
 
-    label = Gtk.Label()
-    label.set_markup(escape_for_pango(content))
-    label.set_xalign(0)
-    label.set_can_focus(False)
-    label.set_selectable(True)
-    label.add_css_class("chat-heading")
-    label.add_css_class(f"chat-heading-{level}")
-    return label
+    # Order: 1. escape, 2. markdown.  Same pattern as _build_text_segment.
+    escaped = escape_for_pango(content)
+    formatted = format_markdown(escaped)
+    # HIGH-6: make_safe_label wires activate-link handler so non-allowlisted
+    # schemes (javascript:, file://, custom URIs, etc.) cannot be opened
+    # by clicking a [link](url) inside a heading.
+    return make_safe_label(
+        formatted,
+        css_classes=["chat-heading", f"chat-heading-{level}"],
+    )
 
 
 def _build_task_segment(seg: dict) -> Gtk.Widget:
