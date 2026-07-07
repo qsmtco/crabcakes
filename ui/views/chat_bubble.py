@@ -715,6 +715,10 @@ def _build_terminal_segment(seg: dict) -> Gtk.Widget:
     would make javascript: links clickable with no guard.
     """
     content = seg.get("content", "")
+    if not isinstance(content, str):
+        content = ""
+    if not content.strip():
+        return Gtk.Box()  # empty spacer
 
     block = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
     block.add_css_class("terminal-block")
@@ -760,6 +764,8 @@ def _build_heading_segment(seg: dict) -> Gtk.Widget:
     """Render a heading with scaled font size and inline markdown."""
     level = min(seg.get("level", 1), 4)  # cap at h4
     content = seg.get("content", "")
+    if not isinstance(content, str):
+        content = ""
     if not content.strip():
         return Gtk.Box()  # empty spacer
 
@@ -778,6 +784,8 @@ def _build_heading_segment(seg: dict) -> Gtk.Widget:
 def _build_task_segment(seg: dict) -> Gtk.Widget:
     """Render a task list item with checkbox character and inline markdown."""
     content = seg.get("content", "")
+    if not isinstance(content, str):
+        content = ""
     if not content.strip():
         return Gtk.Box()  # empty spacer
     # Replace [ ] / [x] with ☐ / ☑ checkbox characters
