@@ -16,7 +16,7 @@ from typing import Callable
 
 from models.feed_card import FeedCardData, CardType
 from models.conversation_snapshot import ConversationSnapshot
-from utils.escaping import escape_for_pango
+from utils.escaping import escape_for_pango, xml_template
 
 
 # ─────────────────────────────────────────────────────────────────────────────
