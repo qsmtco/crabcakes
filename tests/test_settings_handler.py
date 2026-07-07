@@ -245,7 +245,9 @@ class TestTestProvider:
 
         callback = threading.Event()
         h = SettingsHandler()
-        p = _make_provider("p", caller="minimax")
+        # Caller matches the model prefix so the prefix-consistency block
+        # does not correct it (added in the Sonnet-5 regression fix).
+        p = _make_provider("p", default_model="minimax/M3", caller="minimax")
         h.add_or_update(p)
         h.test_provider(p, lambda r: callback.set())
         assert callback.wait(timeout=2.0), "test_provider callback never fired"
