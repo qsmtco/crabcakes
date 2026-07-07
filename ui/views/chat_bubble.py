@@ -825,6 +825,9 @@ def build_streaming_bubble(agent_name: str = "Agent") -> Gtk.Widget:
     label.set_can_focus(False)
     label.set_selectable(True)
     label.add_css_class("chat-msg-label")
+    # HIGH-6 (Bug #10): connect activate-link guard so javascript: links in
+    # streamed markdown cannot be clicked during the live-streaming window.
+    label.connect("activate-link", on_activate_link)
     bubble.append(label)
 
     container.append(bubble)
