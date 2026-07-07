@@ -67,14 +67,19 @@ class TestEventCardEscaping:
             pytest.skip("GTK not available in test environment")
         from ui.views.chat_bubble import create_file_card
         widget = create_file_card("<b>fake</b>")
-        bubble = widget.get_first_child()
-        child = bubble.get_first_child()
-        found = False
-        while child is not None:
-            if hasattr(child, "get_label"):
-                lbl = child.get_label()
-                if "&lt;b&gt;fake&lt;/b&gt;" in lbl:
-                    found = True
-                    break
-            child = child.get_next_sibling()
-        assert found, "escaped path not found in file card"
+
+        # Recursive walk to find any label containing the escaped text
+        def find_label_with(w, needle):
+            if hasattr(w, "get_label"):
+                if needle in w.get_label():
+                    return True
+            child = w.get_first_child()
+            while child:
+                if find_label_with(child, needle):
+                    return True
+                child = child.get_next_sibling()
+            return False
+
+        assert find_label_with(widget, "&lt;b&gt;fake&lt;/b&gt;"), (
+            "escaped path not found in file card"
+        )
