@@ -213,8 +213,8 @@ def format_markdown(text: str) -> str:
     # Strikethrough: ~~text~~ -> <s>text</s>
     protected = re.sub(r'~~(.+?)~~', r'<s>\1</s>', protected)
 
-    # Inline bullets at line start: "- " -> bullet
-    protected = re.sub(r'(?<=\n)-( )', r'•\1', protected)
+    # Inline bullets at line start: "- " -> bullet (also match at position 0)
+    protected = re.sub(r'(?m)^-( )', r'•\1', protected)
 
     # ── Step 3: Markdown links -> <a> tags, then immediately protect those <a> tags
     anchor_spans: list[str] = []
