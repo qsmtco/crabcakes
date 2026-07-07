@@ -305,7 +305,7 @@ The rest of the MCP routing block (the `try:` ... `mcp_call_tool(...)` section a
 
 | Case | Expected Behavior |
 |------|-------------------|
-| Server name contains `__` | Not possible — `mcp_config.py` validates server names. `_from_wire_name` splits on first `__`, so `my__server__tool` → `("my", "server__tool")`. Documented as a limitation; the server name would have to be changed. |
+| Server name contains `__` | Currently allowed by `mcp_config.py:190` (only `/` and whitespace are rejected). Would mis-split: `my__server__tool` → `("my", "server__tool")`. **Known limitation** — would route to wrong server. Current MCP server names (`memory`, `fetch`) don't contain `__`. Hardening: add `__` to the validation regex in `mcp_config.py:190` as a follow-up. Tracked here as a known limitation rather than a blocker. |
 | Tool name contains `__` | Works — split on first `__`. `memory__create__entities` → `("memory", "create__entities")`. |
 | Tool name is empty | `_from_wire_name("memory__")` → `None` (empty tool name rejected). `execute_tool` falls through to built-in lookup, returns "Unknown tool". |
 | Wire name has no separator | `_from_wire_name("read_file")` → `None`. `execute_tool` returns `Unknown tool: read_file` (no MCP routing). |
