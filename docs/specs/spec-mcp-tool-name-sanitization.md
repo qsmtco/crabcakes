@@ -147,7 +147,7 @@ def _from_wire_name(wire_name: str) -> tuple[str, str] | None:
 
 **Rewrite `get_tools_for_api`** — replace the namespacing line (`namespaced = f"{server_name}/{tool.name}"`) with the wire-name helper:
 
-Current code (line 521):
+Current code (line 520):
 ```python
                 namespaced = f"{server_name}/{tool.name}"
                 raw_desc = tool.description or f"MCP: {tool.name}"
