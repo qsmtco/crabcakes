@@ -912,7 +912,7 @@ def create_edit_card(file_path: str, diff: str = "") -> Gtk.Widget:
     icon_label.set_markup("<b>✏️ Edit proposal</b>")
     icon_label.set_xalign(0)
     path_label = Gtk.Label()
-    path_label.set_markup(f"<b>{escape_for_pango(file_path)}</b>")
+    path_label.set_markup(xml_template("<b>{file_path}</b>", file_path=file_path))
     path_label.set_xalign(0)
     path_label.set_hexpand(True)
     header.append(icon_label)
