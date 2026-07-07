@@ -707,6 +707,12 @@ def _build_quote_segment(seg: dict) -> Gtk.Widget:
 def _build_terminal_segment(seg: dict) -> Gtk.Widget:
     """
     Render a terminal block with amber left border and $ prefix on lines.
+
+    Each line is split into a prompt label (hardcoded markup, no user input)
+    and a content label (routed through make_safe_label for HIGH-6 link safety
+    and inline markdown support). This prevents the Bug #8 HIGH-6 regression
+    where adding format_markdown to per-line content without make_safe_label
+    would make javascript: links clickable with no guard.
     """
     content = seg.get("content", "")
 
@@ -726,15 +732,25 @@ def _build_terminal_segment(seg: dict) -> Gtk.Widget:
     content_box.add_css_class("terminal-content")
 
     for line in content.split('\n'):
-        line_widget = Gtk.Label()
-        safe_line = escape_for_pango(line)
-        line_widget.set_markup(f"<tt><span foreground=\"#e5c07b\">$</span> {safe_line}</tt>")
-        line_widget.set_xalign(0)
-        line_widget.set_wrap(True)
-        line_widget.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        line_widget.set_can_focus(False)
-        line_widget.set_selectable(True)
-        content_box.append(line_widget)
+        # Line row: prompt label + content label, side by side
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+
+        # Prompt: hardcoded markup (no user input) — safe to set_markup directly
+        prompt = Gtk.Label()
+        prompt.set_markup("<tt><span foreground=\"#e5c07b\">$</span></tt>")
+        prompt.set_xalign(0)
+        prompt.add_css_class("terminal-prompt")
+        row.append(prompt)
+
+        # Content: route through escape + format_markdown + make_safe_label.
+        # This enables inline markdown (bold/italic/code/links) in terminal
+        # output AND keeps the HIGH-6 activate-link guard connected (Bug #8).
+        escaped_line = escape_for_pango(line)
+        formatted_line = format_markdown(escaped_line)
+        line_widget = make_safe_label(formatted_line, css_class="terminal-line")
+        row.append(line_widget)
+
+        content_box.append(row)
 
     block.append(content_box)
     return block
