@@ -192,3 +192,112 @@ class TestExecuteToolRouting:
         )
         assert result.success is False
         assert "Unknown tool" not in (result.error or "")
+
+
+class TestAllowedToolsGateForMcp:
+    """BUG #1 (gate-ordering-bypass): the allowed_tools gate must cover MCP tools too."""
+
+    def test_mcp_tool_denied_when_not_in_allowed_tools(self):
+        """An MCP wire-name tool not in allowed_tools must be denied."""
+        from agent.tools import execute_tool
+
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.output = "should not reach here"
+        mock_result.error = None
+        mock_result.duration_ms = 5
+
+        with patch("utils.mcp_client.is_connected", return_value=True), \
+             patch("utils.mcp_client.call_tool", return_value=mock_result):
+            result = execute_tool(
+                "memory__search_nodes",
+                {"query": "test"},
+                project_path="/tmp",
+                allowed_tools=["read_file"],
+            )
+        assert result.success is False
+        assert "not in the agent's allowed_tools" in result.error
+
+    def test_mcp_tool_allowed_when_in_allowed_tools(self):
+        """An MCP wire-name tool that IS in allowed_tools must execute."""
+        from agent.tools import execute_tool
+
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.output = "memory response"
+        mock_result.error = None
+        mock_result.duration_ms = 5
+
+        with patch("utils.mcp_client.is_connected", return_value=True), \
+             patch("utils.mcp_client.call_tool", return_value=mock_result):
+            result = execute_tool(
+                "memory__search_nodes",
+                {"query": "test"},
+                project_path="/tmp",
+                allowed_tools=["read_file", "memory__search_nodes"],
+            )
+        assert result.success is True
+        assert result.output == "memory response"
+
+
+class TestWireNameValidation:
+    """BUG #2/#4: get_tools_for_api must skip tools with invalid wire names."""
+
+    def test_tool_with_space_in_name_is_skipped(self):
+        """A tool name containing a space must be skipped, not sent to provider."""
+        from utils.mcp_client import (
+            get_tools_for_api, _conversations, _tools_cache, _MCPLoopThread,
+        )
+
+        fake_tools = [
+            MCPToolDefinition(
+                name="bad name with space",
+                description="Invalid tool",
+                parameters={"type": "object", "properties": {}},
+                server_name="memory",
+            ),
+        ]
+        _conversations.clear()
+        _tools_cache.clear()
+        for k in list(_MCPLoopThread._instances.keys()):
+            inst = _MCPLoopThread._instances.pop(k)
+            try:
+                inst.stop()
+            except Exception:
+                pass
+
+        with patch("utils.mcp_client.connect"), \
+             patch("utils.mcp_client.discover_tools", return_value=fake_tools):
+            tools = get_tools_for_api(["memory"])
+
+        assert tools == [], f"Invalid tool should be skipped, got: {tools}"
+
+    def test_tool_with_too_long_name_is_skipped(self):
+        """A tool name >128 chars total must be skipped."""
+        from utils.mcp_client import (
+            get_tools_for_api, _conversations, _tools_cache, _MCPLoopThread,
+        )
+
+        long_name = "a" * 200
+        fake_tools = [
+            MCPToolDefinition(
+                name=long_name,
+                description="Too long",
+                parameters={"type": "object", "properties": {}},
+                server_name="memory",
+            ),
+        ]
+        _conversations.clear()
+        _tools_cache.clear()
+        for k in list(_MCPLoopThread._instances.keys()):
+            inst = _MCPLoopThread._instances.pop(k)
+            try:
+                inst.stop()
+            except Exception:
+                pass
+
+        with patch("utils.mcp_client.connect"), \
+             patch("utils.mcp_client.discover_tools", return_value=fake_tools):
+            tools = get_tools_for_api(["memory"])
+
+        assert tools == [], f"Too-long tool should be skipped, got: {tools}"
