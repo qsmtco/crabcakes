@@ -193,7 +193,7 @@ def _render_task_body(card_data: FeedCardData) -> Gtk.Widget:
 
     # Task title
     title_label = Gtk.Label()
-    title_label.set_markup(f"<b>📋 {escape_for_pango(card_data.title)}</b>")
+    title_label.set_markup(xml_template("<b>📋 {title}</b>", title=card_data.title))
     title_label.set_xalign(0)
     title_label.set_wrap(True)
     title_label.set_wrap_mode(1)
