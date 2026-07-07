@@ -878,7 +878,7 @@ def create_file_card(file_path: str, snippet: str = "", line_range: str = "") ->
     # Snippet if provided
     if snippet:
         snippet_code = Gtk.Label()
-        snippet_code.set_markup(escape_for_pango(snippet))
+        snippet_code.set_markup(xml_escape_text(snippet))
         snippet_code.set_xalign(0)
         snippet_code.set_wrap(True)
         snippet_code.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -922,7 +922,7 @@ def create_edit_card(file_path: str, diff: str = "") -> Gtk.Widget:
     # Diff content
     if diff:
         diff_label = Gtk.Label()
-        diff_label.set_markup(escape_for_pango(diff))
+        diff_label.set_markup(xml_escape_text(diff))
         diff_label.set_xalign(0)
         diff_label.set_wrap(True)
         diff_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -966,7 +966,7 @@ def create_tool_card(tool_name: str, detail: str = "") -> Gtk.Widget:
     # Detail if provided
     if detail:
         detail_label = Gtk.Label()
-        detail_label.set_markup(escape_for_pango(detail))
+        detail_label.set_markup(xml_escape_text(detail))
         detail_label.set_xalign(0)
         detail_label.set_wrap(True)
         detail_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -1005,7 +1005,7 @@ def create_error_bubble(error_msg: str) -> Gtk.Widget:
 
     # Error message
     msg_label = Gtk.Label()
-    msg_label.set_markup(escape_for_pango(error_msg))
+    msg_label.set_markup(xml_escape_text(error_msg))
     msg_label.set_xalign(0)
     msg_label.set_wrap(True)
     msg_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
