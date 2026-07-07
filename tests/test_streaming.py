@@ -79,7 +79,19 @@ class TestStreamingBubbleHigh6:
         assert retval is False, "https: link blocked in streaming label"
 
     def test_streaming_label_has_handler_connected(self):
-        """The streaming label must have the activate-link handler connected."""
+        """The streaming label must have the activate-link handler ACTUALLY connected.
+
+        This test proves the handler is doing the blocking — not the GTK default.
+        In a headless environment, GTK's default activate-link handler returns
+        False for all URIs (it can't open anything). So simply asserting
+        emit() returns True for javascript: is insufficient — that would pass
+        even without our handler if the environment happened to block it.
+
+        We use handler_block_by_func to temporarily disconnect our handler,
+        verify the signal now returns False (default doesn't block), then
+        reconnect and verify it returns True again. This proves our handler
+        is the one doing the blocking.
+        """
         try:
             import gi
             gi.require_version("Gtk", "4.0")
@@ -88,7 +100,20 @@ class TestStreamingBubbleHigh6:
             pytest.skip("GTK not available in test environment")
 
         from ui.views.chat_bubble import build_streaming_bubble
+        from utils.gtk_safe_link import on_activate_link
         _container, label = build_streaming_bubble("Agent")
-        # If no handler is connected, emit returns False for ALL URIs.
-        # Verify that javascript: specifically returns True (handler is active).
+
+        # Step 1: With handler active, javascript: must be blocked
         assert label.emit("activate-link", "javascript:alert(1)") is True
+
+        # Step 2: Block our handler — now javascript: should NOT be blocked
+        # (the default handler can't open it in this env, so returns False)
+        label.handler_block_by_func(on_activate_link)
+        result_blocked = label.emit("activate-link", "javascript:alert(1)")
+        label.handler_unblock_by_func(on_activate_link)
+
+        assert result_blocked is False, (
+            "With handler blocked, javascript: should return False (default "
+            "doesn't block). If True, the test environment is also blocking, "
+            "making the handler-connection test vacuous."
+        )
