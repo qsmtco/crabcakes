@@ -735,8 +735,8 @@ class ChatRenderHandler:
         # Assigned-to
         if assigned_to:
             at_label = Gtk.Label()
-            # MED-9: escape interpolated values to prevent Pango markup injection
-            at_label.set_markup(f"→ {escape_for_pango(assigned_to)}")
+            # MED-9: xml_template escapes interpolated values to prevent Pango markup injection
+            at_label.set_markup(xml_template("→ {assigned_to}", assigned_to=assigned_to))
             at_label.set_xalign(0)
             box.append(at_label)
 
