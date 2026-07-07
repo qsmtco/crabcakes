@@ -956,7 +956,7 @@ def create_tool_card(tool_name: str, detail: str = "") -> Gtk.Widget:
     icon_label.set_markup("<b>🔧 Tool call</b>")
     icon_label.set_xalign(0)
     name_label = Gtk.Label()
-    name_label.set_markup(f"<b>{escape_for_pango(tool_name)}</b>")
+    name_label.set_markup(xml_template("<b>{tool_name}</b>", tool_name=tool_name))
     name_label.set_xalign(0)
     name_label.set_hexpand(True)
     header.append(icon_label)
