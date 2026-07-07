@@ -208,8 +208,8 @@ class TestToolMerging(TestState):
         assert len(mcp_tools) > 0
         names = [t["function"]["name"] for t in mcp_tools]
         # BUG #38: With proper explicit attributes, names must be exact strings
-        assert "memory/search_nodes" in names
-        assert "memory/create_node" in names
+        assert "memory__search_nodes" in names
+        assert "memory__create_node" in names
 
     @patch("utils.mcp_client._connect_async", side_effect=FakeMCPFactory.fake_connect_async)
     @patch("utils.mcp_client.get_server_config")
