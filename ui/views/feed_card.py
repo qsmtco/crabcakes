@@ -173,7 +173,7 @@ def _render_file_event_body(card_data: FeedCardData) -> Gtk.Widget:
     # Body description if present
     if card_data.body and card_data.body.strip():
         desc_label = Gtk.Label()
-        desc_label.set_markup(escape_for_pango(card_data.body))
+        desc_label.set_markup(xml_template("{body}", body=card_data.body))
         desc_label.set_xalign(0)
         desc_label.set_wrap(True)
         desc_label.set_wrap_mode(1)
