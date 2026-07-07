@@ -198,12 +198,20 @@ def _classify_paragraph(para: str) -> dict | None:
     lines = para.split('\n')
     first = lines[0].strip()
 
-    # Heading: starts with # (1-6 levels)
+    # Heading: starts with # (1-6 levels). Accept bare "##" and no-space
+    # variants like "##no-space" in addition to the standard "## heading".
+    # The (?!#) negative lookahead prevents matching 7+ hashes.
     if first.startswith('#'):
-        m = re.match(r'^(#{1,6})\s+(.*)', first)
+        m = re.match(r'^(#{1,6})(?!#)(.*)$', first)
         if m:
             level = len(m.group(1))
-            return {"type": "heading", "content": m.group(2).strip(), "level": level}
+            rest = m.group(2)
+            # Strip a single leading whitespace separator if present.
+            if rest.startswith(' ') or rest.startswith('\t'):
+                content = rest[1:]
+            else:
+                content = rest
+            return {"type": "heading", "content": content.strip(), "level": level}
 
     # Blockquote: every line starts with >
     if all(line.lstrip().startswith('>') for line in lines):
