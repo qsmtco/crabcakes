@@ -7,7 +7,7 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
 
 from utils.diff_parser import FileDiff, ParsedDiff, DiffHunk, DiffLine
-from utils.escaping import escape_for_pango
+from utils.escaping import escape_for_pango, xml_template
 from utils.syntax_highlight import highlight
 
 
