@@ -1186,6 +1186,21 @@ def execute_tool(
     All file paths are sandboxed to project_path.
     exec_command requires PM approval via the registered callback.
     """
+    # §3.21n — allowed_tools enforcement gate (MOVED before MCP routing).
+    # When the caller (agent runtime) supplies an explicit allow-list,
+    # we honor it here for BOTH built-in and MCP tools. The API-schema
+    # filter in get_tool_definitions_for_api() is advisory only; this gate
+    # is the law. Previously this gate ran AFTER the MCP branch, allowing
+    # MCP tools to bypass it entirely (BUG: gate-ordering-bypass).
+    if allowed_tools is not None and name not in allowed_tools:
+        return ToolResult(
+            success=False,
+            error=(
+                f"Tool '{name}' is not in the agent's allowed_tools "
+                f"(permitted: {sorted(allowed_tools)})"
+            ),
+        )
+
     # MCP tool routing. Wire names use "__" as the separator (provider-safe).
     from utils.mcp_client import _from_wire_name
     server_tool = _from_wire_name(name)
