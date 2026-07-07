@@ -158,3 +158,47 @@ class TestEdgeCases:
         assert "code" in types
         assert "terminal" in types
         assert "task" in types
+
+
+class TestHeadingRegex:
+    """Bug #6: heading regex must accept bare ## and no-space variants."""
+
+    def test_no_space_heading(self):
+        """##no-space should be a level-2 heading with content 'no-space'."""
+        result = extract_blocks("##no-space")
+        assert len(result) == 1
+        assert result[0]["type"] == "heading"
+        assert result[0]["level"] == 2
+        assert result[0]["content"] == "no-space"
+
+    def test_standard_heading_with_space(self):
+        """Regression: ### heading must still work."""
+        result = extract_blocks("### has space")
+        assert len(result) == 1
+        assert result[0]["type"] == "heading"
+        assert result[0]["level"] == 3
+        assert result[0]["content"] == "has space"
+
+    def test_bare_markers_empty_content(self):
+        """## with no content should be a heading with empty content."""
+        result = extract_blocks("##")
+        assert len(result) == 1
+        assert result[0]["type"] == "heading"
+        assert result[0]["level"] == 2
+        assert result[0]["content"] == ""
+
+    def test_six_hashes_max(self):
+        """###### heading should be level 6."""
+        result = extract_blocks("###### max heading")
+        assert len(result) == 1
+        assert result[0]["type"] == "heading"
+        assert result[0]["level"] == 6
+        assert result[0]["content"] == "max heading"
+
+    def test_seven_hashes_not_heading(self):
+        """####### too many should NOT be a heading (>6 hashes)."""
+        result = extract_blocks("####### too many")
+        # Should fall through to text, not heading
+        assert any(r["type"] != "heading" for r in result), (
+            "7+ hashes should not be a heading"
+        )
