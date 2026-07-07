@@ -282,7 +282,7 @@ def build_context_panel(
                 )
 
                 role_label = Gtk.Label()
-                role_label.set_markup(f"<b>{escape_for_pango(msg.role)}:</b>")
+                role_label.set_markup(xml_template("<b>{role}:</b>", role=msg.role))
                 role_label.set_xalign(0)
                 role_label.set_valign(Gtk.Align.START)
 
