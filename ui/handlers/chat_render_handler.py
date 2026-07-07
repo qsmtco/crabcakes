@@ -464,9 +464,13 @@ class ChatRenderHandler:
 
         def _update():
             from utils.escaping import escape_for_pango
-            # Use sb.plain_text (always latest) not the delta_text arg
+            from utils.markdown import format_markdown
+            # Use sb.plain_text (always latest) not the delta_text arg.
+            # Route through escape + format_markdown so inline formatting
+            # (bold/italic/links) renders during the streaming window (Bug #10).
             escaped = escape_for_pango(sb.plain_text)
-            sb.label.set_markup(escaped + "<tt>▍</tt>")
+            formatted = format_markdown(escaped)
+            sb.label.set_markup(formatted + "<tt>▍</tt>")
 
         self._dispatch(_update)
 
