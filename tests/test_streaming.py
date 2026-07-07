@@ -45,3 +45,50 @@ class TestStreamingBubbleFields:
         """role field accepts "You" for outgoing streaming bubbles."""
         sb = StreamingBubble(container="c", label="l", role="You")
         assert sb.role == "You"
+
+
+class TestStreamingBubbleHigh6:
+    """Bug #10: streaming label must have activate-link guard connected."""
+
+    def test_streaming_javascript_blocked(self):
+        """HIGH-6: build_streaming_bubble's label must block javascript: links."""
+        try:
+            import gi
+            gi.require_version("Gtk", "4.0")
+            from gi.repository import Gtk
+        except (ImportError, ValueError):
+            pytest.skip("GTK not available in test environment")
+
+        from ui.views.chat_bubble import build_streaming_bubble
+        _container, label = build_streaming_bubble("Agent")
+        retval = label.emit("activate-link", "javascript:alert(1)")
+        assert retval is True, "javascript: link not blocked in streaming label"
+
+    def test_streaming_https_allowed(self):
+        """HIGH-6: build_streaming_bubble's label must allow https: links."""
+        try:
+            import gi
+            gi.require_version("Gtk", "4.0")
+            from gi.repository import Gtk
+        except (ImportError, ValueError):
+            pytest.skip("GTK not available in test environment")
+
+        from ui.views.chat_bubble import build_streaming_bubble
+        _container, label = build_streaming_bubble("Agent")
+        retval = label.emit("activate-link", "https://example.com/")
+        assert retval is False, "https: link blocked in streaming label"
+
+    def test_streaming_label_has_handler_connected(self):
+        """The streaming label must have the activate-link handler connected."""
+        try:
+            import gi
+            gi.require_version("Gtk", "4.0")
+            from gi.repository import Gtk
+        except (ImportError, ValueError):
+            pytest.skip("GTK not available in test environment")
+
+        from ui.views.chat_bubble import build_streaming_bubble
+        _container, label = build_streaming_bubble("Agent")
+        # If no handler is connected, emit returns False for ALL URIs.
+        # Verify that javascript: specifically returns True (handler is active).
+        assert label.emit("activate-link", "javascript:alert(1)") is True
