@@ -77,7 +77,7 @@ The outbound mapping is applied in `get_tools_for_api()` (where tool dicts are b
 
 **Collision safety:** The `__` separator can theoretically collide if a built-in tool name or an MCP tool name contains `__`. The mitigation:
 - Built-in tool names are hardcoded (`read_file`, `write_file`, etc.) — none contain `__`.
-- MCP tool names come from MCP servers. The spec adds a guard: `_from_wire_name` splits on the **first** `__` occurrence, so `server_name` cannot contain `__` (validated at config load by `mcp_config.py`, which already rejects `/`). If a tool name contains `__`, it is preserved intact after the split.
+- MCP tool names come from MCP servers. The spec adds a guard: `_from_wire_name` splits on the **first** `__` occurrence, so `server_name` cannot contain `__` to avoid mis-split. Note: `mcp_config.py:190` validates server names against `/` and whitespace but **does not currently reject `__`**; this is a pre-1.0 codebase and existing MCP server names (`memory`, `fetch`) contain no `__`, so the gap is not exercised in practice. The limitation is documented in §7 and noted for future hardening. If a tool name contains `__`, it is preserved intact after the split (split is on the first `__` only).
 
 ### 1.5 Scope
 
