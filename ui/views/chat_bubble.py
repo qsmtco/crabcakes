@@ -626,6 +626,8 @@ def _make_table_cell(text: str, is_header: bool = False, is_odd_row: bool = Fals
 def _build_text_segment(seg: dict) -> Gtk.Widget:
     """Render a plain text segment with inline markdown formatting."""
     raw = seg.get("content", "")
+    if not isinstance(raw, str):
+        raw = ""
     if not raw.strip():
         return Gtk.Box()  # empty spacer
 
