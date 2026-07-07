@@ -785,7 +785,10 @@ class TestAllowedToolsGate:
         assert "read_file" in r.error
 
     def test_unknown_tool_still_rejected_before_gate(self):
-        """The 'Unknown tool' check fires before the allowed_tools gate."""
+        """The allowed_tools gate fires first (covers both built-in and MCP tools).
+        An unknown tool name with allowed_tools set is rejected by the gate,
+        not by the 'Unknown tool' lookup. This is intentional: the gate is the
+        single enforcement point for tool authorization."""
         with tempfile.TemporaryDirectory() as proj:
             r = execute_tool(
                 "nonexistent_tool",
@@ -794,7 +797,7 @@ class TestAllowedToolsGate:
                 allowed_tools=["read_file"],
             )
         assert r.success is False
-        assert "Unknown tool" in r.error
+        assert "not in the agent's allowed_tools" in r.error
 
     def test_realistic_special_agent_config(self):
         """Mirror the actual failing scenario: special:coder-style tools
