@@ -193,12 +193,28 @@ class AgentBuilderHandler:
         """Add or update a provider in providers.yaml."""
         from utils.providers_store import add_provider, load_providers
         from models.providers import ProviderConfig
+        # PROV-CALLER-CONSISTENCY (regression for Sonnet 5): mirror the
+        # settings_handler.add_or_update auto-detect + prefix-correction
+        # block so this path can no longer bypass it.
+        caller = config.get("caller", "")
+        default_model = config.get("default_model", "")
+        if not caller and default_model and "/" in default_model:
+            caller = default_model.split("/")[0].lower()
+        elif caller and default_model and "/" in default_model:
+            prefix = default_model.split("/")[0].lower()
+            if prefix in {"anthropic", "minimax", "openai", "openrouter", "zai"} and prefix != caller:
+                logger.warning(
+                    "Provider %r has caller=%r but default_model prefix=%r; "
+                    "correcting caller to %r.",
+                    name, caller, prefix, prefix,
+                )
+                caller = prefix
         provider = ProviderConfig(
             name=name,
             base_url=config.get("base_url", ""),
             api_key=config.get("api_key", ""),
-            default_model=config.get("default_model", ""),
-            caller=config.get("caller", ""),
+            default_model=default_model,
+            caller=caller,
             supports_tools=config.get("supports_tools", True),
             supports_streaming=config.get("supports_streaming", True),
             max_tokens=config.get("max_tokens", 128_000),
