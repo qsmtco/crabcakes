@@ -191,7 +191,11 @@ class TestProviderManagement:
         ok = h.save_provider("test-prov", {
             "base_url": "http://localhost:11434/v1",
             "api_key": "test-key",
-            "default_model": "test-model",
+            # Use a "<vendor>/<model>" default_model so the caller
+            # auto-detect path can derive a valid caller. (Prior versions
+            # of save_provider were a data-sink; the PROV-CALLER-CONSISTENCY
+            # fix added validation that requires a slash.)
+            "default_model": "openai/test-model",
         })
         assert ok
 
