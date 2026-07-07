@@ -727,9 +727,8 @@ class ChatRenderHandler:
         # Status + priority row
         meta_label = Gtk.Label()
         parts = [s for s in [status, priority] if s]
-        # MED-9: escape interpolated values to prevent Pango markup injection
-        escaped_parts = [escape_for_pango(s) for s in parts if s]
-        meta_label.set_markup(" | ".join(escaped_parts))
+        # MED-9: xml_template escapes interpolated values to prevent Pango markup injection
+        meta_label.set_markup(xml_template("{parts}", parts=" | ".join(parts)))
         meta_label.set_xalign(0)
         box.append(meta_label)
 
