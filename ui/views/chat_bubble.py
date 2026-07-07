@@ -692,6 +692,8 @@ def _make_block_header(
 def _build_quote_segment(seg: dict) -> Gtk.Widget:
     """Render a blockquote with left border and italic muted text."""
     content = seg.get("content", "")
+    if not isinstance(content, str):
+        content = ""
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
     box.add_css_class("blockquote")
 
