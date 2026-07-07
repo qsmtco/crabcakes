@@ -216,7 +216,7 @@ def _render_task_body(card_data: FeedCardData) -> Gtk.Widget:
     # Task ID if present
     if card_data.task_id:
         id_label = Gtk.Label()
-        id_label.set_markup(f"<span foreground='#9b9bab'>ID: {escape_for_pango(card_data.task_id)}</span>")
+        id_label.set_markup(xml_template("<span foreground='#9b9bab'>ID: {task_id}</span>", task_id=card_data.task_id))
         id_label.set_xalign(0)
         id_label.set_margin_top(2)
         box.append(id_label)
