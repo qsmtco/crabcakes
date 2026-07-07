@@ -190,25 +190,58 @@ class AgentBuilderHandler:
         return get_available_providers()
 
     def save_provider(self, name: str, config: dict) -> bool:
-        """Add or update a provider in providers.yaml."""
+        """Add or update a provider in providers.yaml.
+
+        Raises ValueError on invalid input (mirror of
+        settings_handler.add_or_update). Bypassing validation here
+        reintroduces the Sonnet 5 regression — so we apply the SAME
+        auto-detect + prefix-correction + invalid-caller guard that
+        settings_handler does. The provider path cannot be the
+        weaker sister.
+        """
         from utils.providers_store import add_provider, load_providers
         from models.providers import ProviderConfig
+        from agent.runtime import get_valid_callers
         # PROV-CALLER-CONSISTENCY (regression for Sonnet 5): mirror the
         # settings_handler.add_or_update auto-detect + prefix-correction
         # block so this path can no longer bypass it.
-        caller = config.get("caller", "")
+        # None-normalize: dict.get's default only fires on MISSING keys,
+        # not on YAML-null values (which deserialize to None). Without
+        # this, `caller:` in YAML leaks None into ProviderConfig.caller.
+        caller = config.get("caller") or ""
         default_model = config.get("default_model", "")
         if not caller and default_model and "/" in default_model:
             caller = default_model.split("/")[0].lower()
-        elif caller and default_model and "/" in default_model:
+        elif not caller:
+            # Gap fix: default_model has no "/" (e.g. "gpt-4o") and caller
+            # is empty — auto-detect cannot derive a caller. Surface a
+            # clear error at save time rather than letting an empty
+            # caller slip through to runtime.
+            raise ValueError(
+                "Cannot auto-detect caller: default_model must be '<vendor>/<model>'. "
+                "Set caller explicitly or use a prefixed model."
+            )
+        if caller and default_model and "/" in default_model:
+            # Use the live taxonomy (get_valid_callers) — not a hardcoded
+            # set literal — so a new adapter added to agent.runtime
+            # automatically extends the gate. Otherwise the hardcoded
+            # set drifts out of sync (regression risk).
             prefix = default_model.split("/")[0].lower()
-            if prefix in {"anthropic", "minimax", "openai", "openrouter", "zai"} and prefix != caller:
+            if prefix in get_valid_callers() and prefix != caller:
                 logger.warning(
                     "Provider %r has caller=%r but default_model prefix=%r; "
-                    "correcting caller to %r.",
+                    "correcting caller to %r. To override, use a model whose "
+                    "prefix matches the caller's taxonomy key.",
                     name, caller, prefix, prefix,
                 )
                 caller = prefix
+        if caller and caller not in get_valid_callers():
+            valid = sorted(get_valid_callers())
+            raise ValueError(
+                f"Invalid caller {caller!r}. "
+                f"Valid callers: {', '.join(valid)}. "
+                f"Set the caller field explicitly or use a model with a recognized prefix."
+            )
         provider = ProviderConfig(
             name=name,
             base_url=config.get("base_url", ""),
