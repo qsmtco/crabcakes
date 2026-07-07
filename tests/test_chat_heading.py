@@ -150,3 +150,45 @@ class TestHeadingSegmentCssClasses:
         classes = label.get_css_classes()
         assert "chat-heading-4" in classes, f"level not capped: {classes}"
         assert "chat-heading-99" not in classes
+
+
+class TestHeadingSegmentLevelGuard:
+    """BUG #1 (audit): level field must be guarded against non-int types."""
+
+    def test_level_none_falls_back_to_default(self):
+        if _gtk_skip():
+            pytest.skip("GTK not available in test environment")
+        from ui.views.chat_bubble import _build_heading_segment
+        w = _build_heading_segment({"level": None, "content": "hi"})
+        assert "chat-heading" in w.get_css_classes()
+
+    def test_level_string_falls_back_to_default(self):
+        if _gtk_skip():
+            pytest.skip("GTK not available in test environment")
+        from ui.views.chat_bubble import _build_heading_segment
+        w = _build_heading_segment({"level": "high", "content": "hi"})
+        assert "chat-heading" in w.get_css_classes()
+
+    def test_level_negative_clamped_to_1(self):
+        if _gtk_skip():
+            pytest.skip("GTK not available in test environment")
+        from ui.views.chat_bubble import _build_heading_segment
+        w = _build_heading_segment({"level": -1, "content": "hi"})
+        classes = w.get_css_classes()
+        assert "chat-heading-1" in classes, f"negative not clamped: {classes}"
+
+    def test_level_zero_clamped_to_1(self):
+        if _gtk_skip():
+            pytest.skip("GTK not available in test environment")
+        from ui.views.chat_bubble import _build_heading_segment
+        w = _build_heading_segment({"level": 0, "content": "hi"})
+        classes = w.get_css_classes()
+        assert "chat-heading-1" in classes, f"zero not clamped: {classes}"
+
+    def test_level_float_truncated(self):
+        if _gtk_skip():
+            pytest.skip("GTK not available in test environment")
+        from ui.views.chat_bubble import _build_heading_segment
+        w = _build_heading_segment({"level": 2.7, "content": "hi"})
+        classes = w.get_css_classes()
+        assert "chat-heading-2" in classes, f"float not truncated: {classes}"
