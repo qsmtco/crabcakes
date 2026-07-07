@@ -708,8 +708,12 @@ class ChatRenderHandler:
 
         # Title label
         title_label = Gtk.Label()
-        # MED-9: escape interpolated values to prevent Pango markup injection
-        title_label.set_markup(f"<b>Task {action.capitalize()}:</b> {escape_for_pango(task_id)}")
+        # MED-9: xml_template escapes interpolated values to prevent Pango markup injection
+        title_label.set_markup(xml_template(
+            "<b>Task {action}:</b> {task_id}",
+            action=action.capitalize(),
+            task_id=task_id,
+        ))
         title_label.set_xalign(0)
         box.append(title_label)
 
