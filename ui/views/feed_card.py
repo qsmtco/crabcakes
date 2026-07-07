@@ -160,7 +160,7 @@ def _render_file_event_body(card_data: FeedCardData) -> Gtk.Widget:
     path = card_data.file_path or ""
     icon = "📁" if card_data.card_type == "dir_created" else "📄"
     path_label = Gtk.Label()
-    path_label.set_markup(f"{icon} <b>{escape_for_pango(path)}</b>")
+    path_label.set_markup(xml_template(f"{icon} <b>{{path}}</b>", path=path))
     path_label.set_xalign(0)
     path_label.set_wrap(False)
     path_label.set_ellipsize(Pango.EllipsizeMode.START)
