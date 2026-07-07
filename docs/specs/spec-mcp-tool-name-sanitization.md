@@ -234,7 +234,7 @@ The rest of the MCP routing block (the `try:` ... `mcp_call_tool(...)` section a
 | File | Change Type | Lines | Risk Level |
 |------|-------------|-------|------------|
 | `utils/mcp_client.py` | Add `_to_wire_name`, `_from_wire_name`; rewrite `get_tools_for_api` namespacing | ~30 added, ~2 changed | Low |
-| `agent/tools.py` | Update `execute_tool` MCP routing to use `_from_wire_name` + legacy `/` fallback | ~10 changed | Low |
+| `agent/tools.py` | Update `execute_tool` MCP routing to use `_from_wire_name` | ~8 changed | Low |
 
 ---
 
