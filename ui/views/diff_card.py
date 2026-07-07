@@ -322,11 +322,20 @@ def build_diff_summary_card(
     for f in parsed_diff.files:
         file_lbl = Gtk.Label()
         if f.is_new:
-            file_lbl.set_markup(f"  • <b>{escape_for_pango(f.display_path)}</b>  <span color='#10b981'>(new, +{f.additions})</span>")
+            file_lbl.set_markup(xml_template(
+                "  • <b>{path}</b>  <span color='#10b981'>(new, +{additions})</span>",
+                path=f.display_path, additions=str(f.additions),
+            ))
         elif f.is_deleted:
-            file_lbl.set_markup(f"  • <b>{escape_for_pango(f.display_path)}</b>  <span color='#f43f5e'>(deleted)</span>")
+            file_lbl.set_markup(xml_template(
+                "  • <b>{path}</b>  <span color='#f43f5e'>(deleted)</span>",
+                path=f.display_path,
+            ))
         else:
-            file_lbl.set_markup(f"  • <b>{escape_for_pango(f.display_path)}</b>  <span color='#10b981'>+{f.additions}</span>/<span color='#f43f5e'>-{f.deletions}</span>")
+            file_lbl.set_markup(xml_template(
+                "  • <b>{path}</b>  <span color='#10b981'>+{additions}</span>/<span color='#f43f5e'>-{deletions}</span>",
+                path=f.display_path, additions=str(f.additions), deletions=str(f.deletions),
+            ))
         file_lbl.set_halign(Gtk.Align.START)
         files_box.append(file_lbl)
 
