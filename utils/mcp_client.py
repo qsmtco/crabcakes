@@ -491,6 +491,10 @@ def _sanitize_tool_description(text: str) -> str:
 # with built-in tool names (none of which contain "__").
 _WIRE_NAME_SEPARATOR = "__"
 
+# Provider tool-name pattern (OpenAI/Anthropic/Poolside all enforce this).
+# Used to validate wire names before they reach the API.
+_WIRE_NAME_PATTERN = re.compile(r"[a-zA-Z0-9_-]{1,128}")
+
 
 def _to_wire_name(server_name: str, tool_name: str) -> str:
     """Convert an MCP (server_name, tool_name) pair to a provider-safe wire name.
