@@ -292,7 +292,7 @@ The rest of the MCP routing block (the `try:` ... `mcp_call_tool(...)` section a
 - [ ] `_from_wire_name("__tool")` returns `None` (empty server name)
 - [ ] `get_tools_for_api(["memory"], ...)` produces tool dicts with names matching `^[a-zA-Z0-9_-]{1,128}$` (no `/`)
 - [ ] `execute_tool("memory__create_entities", {...})` routes to `mcp_call_tool("memory", "create_entities", ...)`
-- [ ] `execute_tool("memory/create_entities", {...})` still works (legacy format, backward compat)
+- [ ] `execute_tool("memory/create_entities", {...})` returns `ToolResult(success=False, error="Unknown tool: memory/create_entities")` (slash format no longer recognized)
 - [ ] `execute_tool("read_file", {...})` still works (built-in tool, no MCP routing)
 - [ ] All existing `tests/test_mcp_client.py` tests pass
 - [ ] All existing `tests/test_mcp_integration.py` tests pass
