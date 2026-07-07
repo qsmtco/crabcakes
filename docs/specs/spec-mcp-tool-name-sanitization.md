@@ -330,7 +330,7 @@ The rest of the MCP routing block (the `try:` ... `mcp_call_tool(...)` section a
 
 - **`_to_wire_name` / `_from_wire_name`** — pure functions, no external dependencies. Verified against the existing `MCPToolDefinition` structure (`.name`, `.server_name`).
 - **`get_tools_for_api` rewrite** — verified the exact current code at `mcp_client.py:521`. The only change is `namespaced = f"{server_name}/{tool.name}"` → `wire_name = _to_wire_name(server_name, tool.name)`. The rest of the loop body is unchanged.
-- **`execute_tool` update** — verified the exact current code at `tools.py:1190-1191`. The legacy `/` branch preserves backward compat. The new `_from_wire_name` branch handles current wire names.
+- **`execute_tool` update** — verified the exact current code at `tools.py:1189-1190`. The `name.partition("/")` block is replaced wholesale by `_from_wire_name(name)`; there is no legacy `/` branch (clean cut — see "No backward-compat branch" in §2.2).
 - **Runtime passthrough** — verified that `_extract_tool_calls` reads the name verbatim (`func.get("name", "")` at runtime.py:527) and passes it to `execute_tool` at runtime.py:2376. No change needed.
 
 ### 2. Did I catch all exception types for every function I call?
