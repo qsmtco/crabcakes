@@ -107,6 +107,27 @@ class SettingsHandler:
                 "Cannot auto-detect caller: default_model must be '<vendor>/<model>'. "
                 "Set caller explicitly or use a prefixed model."
             )
+        # PROV-CALLER-CONSISTENCY (regression for Sonnet 5: `caller=anthropic`
+        # with `base_url=openrouter.ai` and `model=openrouter/claude-sonnet-5`):
+        # when the model carries a `<vendor>/` prefix, the caller MUST match
+        # it. A hand-set wrong caller (e.g. anthropic) silently slipped through
+        # the taxonomy check above because anthropic IS a valid caller — but
+        # it routes the request to /messages, which 404s on the OpenAI-compat
+        # API. Prefer the prefix as the source of truth.
+        if (
+            provider.default_model
+            and "/" in provider.default_model
+            and provider.caller
+        ):
+            prefix = provider.default_model.split("/")[0].lower()
+            if prefix in get_valid_callers() and prefix != provider.caller:
+                logger.warning(
+                    "Provider %r has caller=%r but default_model prefix=%r; "
+                    "correcting caller to %r. To override, use a model whose "
+                    "prefix matches the caller's taxonomy key.",
+                    provider.name, provider.caller, prefix, prefix,
+                )
+                provider.caller = prefix
         if provider.caller and provider.caller not in get_valid_callers():
             valid = sorted(get_valid_callers())
             raise ValueError(
