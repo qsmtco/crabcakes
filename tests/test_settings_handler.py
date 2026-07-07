@@ -717,12 +717,13 @@ class TestAddOrUpdatePrefixConsistency:
 
     def test_still_raises_on_totally_invalid_caller(self, tmp_config_dir):
         """The taxonomy check below the correction block must still fire
-        for callers that aren't in the valid set (e.g. hand-typed 'foo').
+        for callers that aren't in the valid set. Use a non-taxonomy prefix
+        (mycompany) so the correction block doesn't pre-empt the test.
         """
         h = SettingsHandler()
         p = ProviderConfig(
             name="p", base_url="https://x", api_key="k",
-            default_model="openrouter/foo", caller="foo",
+            default_model="mycompany/foo", caller="foo",
         )
         with pytest.raises(ValueError, match="Invalid caller 'foo'"):
             h.add_or_update(p)
