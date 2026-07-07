@@ -297,7 +297,7 @@ The rest of the MCP routing block (the `try:` ... `mcp_call_tool(...)` section a
 - [ ] All existing `tests/test_mcp_client.py` tests pass
 - [ ] All existing `tests/test_mcp_integration.py` tests pass
 - [ ] All existing `tests/test_tools.py` tests pass
-- [ ] New test file `tests/test_mcp_tool_naming.py` passes with all cases from §7
+- [ ] New test file `tests/test_mcp_tool_naming.py` (to be created) passes with all cases from §7
 
 ---
 
