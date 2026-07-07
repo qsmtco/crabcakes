@@ -71,7 +71,11 @@ def _from_dict(d: dict[str, Any]) -> ProviderConfig:
     bad data, not for silent rewrites. Save-time validation in
     settings_handler.add_or_update prevents NEW bad data.
     """
-    caller = d.get("caller", "")
+    # None-normalize: dict.get's default only fires on MISSING keys, not
+    # on YAML-null values (which deserialize to Python None). Without this,
+    # `caller: null` in YAML leaks None into ProviderConfig.caller and
+    # silently bypasses the `not caller` truthy checks downstream.
+    caller = d.get("caller") or ""
     if caller and caller not in _VALID_CALLERS:
         _logger.warning(
             "providers.yaml: provider %r has invalid caller %r. "
