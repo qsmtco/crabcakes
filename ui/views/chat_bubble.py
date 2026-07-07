@@ -762,7 +762,12 @@ def _build_terminal_segment(seg: dict) -> Gtk.Widget:
 
 def _build_heading_segment(seg: dict) -> Gtk.Widget:
     """Render a heading with scaled font size and inline markdown."""
-    level = min(seg.get("level", 1), 4)  # cap at h4
+    # Guard level field against non-int types (None, str, list crash min()).
+    try:
+        level = int(seg.get("level", 1))
+    except (TypeError, ValueError):
+        level = 1
+    level = min(max(level, 1), 4)  # clamp to [1, 4]
     content = seg.get("content", "")
     if not isinstance(content, str):
         content = ""
