@@ -566,13 +566,13 @@ def get_tools_for_api(
             server_tools = discover_tools(server_name, conversation_key)
             server_tool_dicts = []
             for tool in server_tools:
-                namespaced = f"{server_name}/{tool.name}"
+                wire_name = _to_wire_name(server_name, tool.name)
                 raw_desc = tool.description or f"MCP: {tool.name}"
                 sanitized_desc = _sanitize_tool_description(raw_desc)
                 func_dict = {
                     "type": "function",
                     "function": {
-                        "name": namespaced,
+                        "name": wire_name,
                         "description": sanitized_desc or f"MCP: {tool.name}",
                         "parameters": tool.parameters or {"type": "object", "properties": {}},
                     },
