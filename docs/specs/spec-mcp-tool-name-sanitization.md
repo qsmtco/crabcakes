@@ -48,7 +48,7 @@ This breaks all MCP-enabled agents when routed through Anthropic or OpenRouter.
 
 ### 1.2 Root Cause (verified)
 
-- **`utils/mcp_client.py:521`** — `namespaced = f"{server_name}/{tool.name}"` produces names like `memory/create_entities`.
+- **`utils/mcp_client.py:520`** — `namespaced = f"{server_name}/{tool.name}"` produces names like `memory/create_entities`.
 - **`agent/runtime.py:2127`** — `tools.extend(mcp_tools)` merges MCP tools into the built-in tool list. The slash-containing names pass through unchanged.
 - **`agent/runtime.py:211` / `agent/runtime.py:400`** — The tools list is passed verbatim into `payload["tools"]` (OpenAI format) or through `_convert_tools_for_anthropic()` (Anthropic format). Neither path sanitizes the `/`.
 - **Provider rejects** — Anthropic strictly enforces `^[a-zA-Z0-9_-]{1,128}$`; the `/` violates it.
