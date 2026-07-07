@@ -187,7 +187,7 @@ New code:
 
 **Update the MCP routing block** at lines 1190-1191.
 
-Current code:
+Current code (lines 1189-1196):
 ```python
     # Phase B: MCP tool routing — namespaced tools like "fetch/fetch"
     if "/" in name:
@@ -199,31 +199,27 @@ Current code:
             )
 ```
 
-New code:
+New code (replaces lines 1189-1196):
 ```python
     # MCP tool routing. Wire names use "__" as the separator (provider-safe).
-    # The old "/" separator is still accepted for backward compatibility
-    # (e.g. persisted conversations from before this fix).
-    server_tool = None
-    if "/" in name:
-        # Legacy format: "server/tool" (pre-fix persisted conversations)
-        server_name, _, tool_name = name.partition("/")
-        if server_name and tool_name:
-            server_tool = (server_name, tool_name)
+    from utils.mcp_client import _from_wire_name
+    server_tool = _from_wire_name(name)
     if server_tool is None:
-        # Wire format: "server__tool" (current)
-        from utils.mcp_client import _from_wire_name
-        server_tool = _from_wire_name(name)
-    if server_tool is not None:
-        server_name, tool_name = server_tool
+        return ToolResult(
+            success=False,
+            error=f"Unknown tool: {name}",
+        )
+    server_name, tool_name = server_tool
 ```
 
-The rest of the MCP routing block (the `try:` ... `mcp_call_tool(...)` section at lines 1197-1215) stays unchanged — it already uses `server_name` and `tool_name` variables.
+The rest of the MCP routing block (the `try:` ... `mcp_call_tool(...)` section at lines 1197-1215) stays unchanged — it already uses `server_name` and `tool_name` variables. The `Unknown tool: {name}` error matches the format used for unknown built-in tools later in the function (see `entry = _TOOLS.get(name)` block).
 
 **Function signature verified:**
 - `execute_tool(name, arguments, project_path, session_key="_unknown", approval_callback=None, scratch_dir=None, allowed_tools=None) -> ToolResult` — confirmed at line 1155.
 
 **Import:** The `_from_wire_name` import is done inline (inside the function body) to match the existing pattern in `execute_tool` (which already does `from utils.mcp_client import call_tool as mcp_call_tool, is_connected` inline at line 1198).
+
+**No backward-compat branch:** This fix is a clean cut. There are no legacy `/`-format names to be compatible with — this is a pre-1.0 codebase, the MCP integration has not yet been released, and there are no persisted conversations containing slash-namespaced tool names. The internal representation stays `server_name/tool_name` (in `MCPToolDefinition.name` etc.); only the wire format changes.
 
 ### 2.3 Files NOT changed (already correct)
 
