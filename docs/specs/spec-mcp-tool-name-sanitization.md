@@ -242,7 +242,7 @@ The rest of the MCP routing block (the `try:` ... `mcp_call_tool(...)` section a
 
 1. **Add `_to_wire_name` and `_from_wire_name` to `utils/mcp_client.py`** — pure functions, no dependencies.
 2. **Rewrite `get_tools_for_api` to use `_to_wire_name`** — one-line change inside the loop.
-3. **Update `execute_tool` in `agent/tools.py`** — replace the `name.partition("/")` block with the dual-format routing.
+3. **Update `execute_tool` in `agent/tools.py`** — replace the `name.partition("/")` block with `_from_wire_name`-based routing.
 4. **Write tests** — unit tests for the helpers, integration test for the round-trip.
 5. **Verify** — run the full test suite + manual confirmation that the wire name is provider-safe.
 
