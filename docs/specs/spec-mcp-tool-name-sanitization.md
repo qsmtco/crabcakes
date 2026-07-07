@@ -287,6 +287,40 @@ A conversation saved before this fix has `ToolCall.tool_name = "memory/create_en
 
 ---
 
+## 3. Data Flow
+
+### 3.1 Outbound (tools → provider)
+
+```
+1. AgentRuntime._run_loop (runtime.py:2113)
+   → tools = get_tool_definitions_for_api(conv.allowed_tools)  # built-in tools
+   → mcp_tools = get_tools_for_api(conv.mcp_servers, session_key)  # MCP tools
+2. get_tools_for_api (mcp_client.py:489)
+   → for each MCP server, discover_tools() returns MCPToolDefinition list
+   → _to_wire_name(server_name, tool.name) produces "memory__create_entities"
+   → tool dict built with wire name
+3. tools.extend(mcp_tools)  (runtime.py:2127)
+4. _call_openai / _call_anthropic (runtime.py:195 / 338)
+   → payload["tools"] = tools  (no "/" in any name — provider accepts)
+```
+
+### 3.2 Inbound (provider response → tool execution)
+
+```
+1. Provider returns tool_call with name="memory__create_entities"
+2. _extract_tool_calls (runtime.py:1136)
+   → reads func.get("name", "") → "memory__create_entities"
+   → returns (call_id, "memory__create_entities", args)
+3. ToolCall object created with tool_name="memory__create_entities"
+4. execute_tool("memory__create_entities", args, ...)  (runtime.py:2376)
+5. execute_tool (tools.py:1155)
+   → _from_wire_name("memory__create_entities") → ("memory", "create_entities")
+   → mcp_call_tool("memory", "create_entities", args, conv_key)
+6. MCP server executes "create_entities" — correct routing
+```
+
+---
+
 ## 6. Acceptance Criteria
 
 - [ ] `_to_wire_name("memory", "create_entities")` returns `"memory__create_entities"`
