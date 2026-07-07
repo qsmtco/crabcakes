@@ -337,7 +337,7 @@ The rest of the MCP routing block (the `try:` ... `mcp_call_tool(...)` section a
 
 - `_to_wire_name` — no exceptions (pure string formatting).
 - `_from_wire_name` — no exceptions (pure string parsing).
-- `get_tools_for_api` — already wrapped in `try/except Exception` at line 531. No change.
+- `get_tools_for_api` — already wrapped in `try/except Exception` at line 538. No change.
 - `execute_tool` — already wraps MCP calls in `try/except Exception` at line 1197. No change.
 
 ### 3. Did I verify key structures, not assume them?
