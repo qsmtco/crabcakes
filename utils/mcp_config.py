@@ -186,9 +186,13 @@ def load_mcp_servers(use_cache: bool = True) -> dict[str, MCPServerConfig]:
     servers: dict[str, MCPServerConfig] = {}
     
     for name, config in servers_data.items():
-        # BUG #6: Validate server names (no /, no whitespace)
-        if "/" in name or re.search(r"\s", name):
-            raise MCPConfigError(f"Invalid server name '{name}': must not contain '/' or whitespace")
+        # BUG #6: Validate server names (no /, no whitespace, no __).
+        # "__" is the wire-name separator (mcp_client.py:_WIRE_NAME_SEPARATOR) —
+        # a server name containing it would mis-split on inbound routing.
+        if "/" in name or "__" in name or re.search(r"\s", name):
+            raise MCPConfigError(
+                f"Invalid server name '{name}': must not contain '/', '__', or whitespace"
+            )
 
         # BUG #3: Validate each server config is a dict
         if not isinstance(config, dict):
