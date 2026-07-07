@@ -187,10 +187,14 @@ class TestOptions:
         import utils.config
 
         h, _, _ = handler
+        # Use a "<vendor>/<model>" default_model so the caller
+        # auto-detect path can derive a valid caller. (Prior versions
+        # of save_provider were a data-sink; the PROV-CALLER-CONSISTENCY
+        # fix added validation that requires a slash.)
         h.save_provider("testprov", {
             "base_url": "https://api.test.com/v1",
             "api_key": "sk-testkey",
-            "default_model": "test-model",
+            "default_model": "openai/test-model",
             "supports_tools": True,
             "supports_streaming": True,
             "max_tokens": 128_000,
