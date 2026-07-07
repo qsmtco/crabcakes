@@ -287,7 +287,7 @@ def build_context_panel(
                 role_label.set_valign(Gtk.Align.START)
 
                 text_label = Gtk.Label()
-                text_label.set_markup(escape_for_pango(msg.text))
+                text_label.set_markup(xml_template("{text}", text=msg.text))
                 text_label.set_xalign(0)
                 text_label.set_wrap(True)
                 text_label.set_wrap_mode(1)  # Pango.WrapMode.WORD_CHAR
