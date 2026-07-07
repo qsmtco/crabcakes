@@ -239,14 +239,14 @@ class TestToolRouting(TestState):
     @patch("utils.mcp_client._connect_async", side_effect=FakeMCPFactory.fake_connect_async)
     @patch("utils.mcp_client.get_server_config")
     def test_mcp_tool_routes_through_execute_tool(self, mock_get_config, mock_connect, tmp_path):
-        """execute_tool('memory/search_nodes', ...) → MCP call_tool → results."""
+        """execute_tool('memory__search_nodes', ...) → MCP call_tool → results."""
         mock_get_config.return_value = MagicMock(
             name="memory", transport="stdio", command="npx",
             args=["-y", "@mcp/server-memory"], enabled=True,
         )
 
         result = execute_tool(
-            "memory/search_nodes",
+            "memory__search_nodes",
             {"query": "test"},
             str(tmp_path),
             "test-conv",
