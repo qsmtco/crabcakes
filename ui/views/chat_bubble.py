@@ -39,7 +39,7 @@ from utils.escaping import escape_for_pango, xml_escape_text
 from utils.markdown import format_markdown
 from utils.block_parser import extract_blocks
 from utils.crabcard_parser import is_crabcards_placeholder, get_placeholder_index as _get_placeholder_index
-from utils.gtk_safe_link import make_safe_label  # HIGH-6: activate-link guard
+from utils.gtk_safe_link import make_safe_label, on_activate_link  # HIGH-6: activate-link guard
 
 # Module-level registry for placeholder card lookup in chat bubbles.
 # Populated by ChatRenderHandler when crabcards are extracted.
