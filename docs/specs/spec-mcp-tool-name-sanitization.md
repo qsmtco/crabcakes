@@ -38,7 +38,7 @@ Every file listed below was read before this spec was written. Line numbers in t
 
 ### 1.1 Problem
 
-MCP tool names are namespaced with a forward slash: `f"{server_name}/{tool.name}"` at `utils/mcp_client.py:521`. When Anthropic-via-OpenRouter receives a tool list containing a `/` in a name, it returns HTTP 400:
+MCP tool names are namespaced with a forward slash: `f"{server_name}/{tool.name}"` at `utils/mcp_client.py:520`. When Anthropic-via-OpenRouter receives a tool list containing a `/` in a name, it returns HTTP 400:
 
 ```
 tools.8.custom.name: String should match pattern '^[a-zA-Z0-9_-]{1,128}$'
