@@ -11,6 +11,29 @@
 
 ---
 
+## 0. Discovery
+
+Every file listed below was read before this spec was written. Line numbers in this spec refer to the current source.
+
+**Source files read:**
+- `utils/mcp_client.py` (full file, 541 lines) — confirmed `MCPToolDefinition` fields at lines 31-36 (decorator at 31, class at 32), `_tools_cache` dict structure at line 55, `get_tools_for_api` signature at line 489, namespacing expression at line **520** (spec citations corrected from 521), try/except wrapping at line **538** (spec citations corrected from 531).
+- `agent/tools.py` lines 1155-1220 — confirmed `execute_tool` signature at line 1155, MCP routing block at lines **1189-1215** (spec citations corrected from 1190-1191: `if "/" in name:` is at 1189, `name.partition("/")` is at 1190), try/except wrapping at line 1197, inline MCP import at line 1198.
+- `agent/runtime.py` lines 195-410, 1136-1150, 2113-2140, 2376 — confirmed `_call_openai` def at line 195, `payload["tools"] = tools` at line 211, `_convert_tools_for_anthropic` def at line 338 (call site at line 400), `_extract_tool_calls` def at line 1136, `func.get("name")` extraction at line 527, `tools.extend(mcp_tools)` at line 2127, `execute_tool` call at line 2376, `ToolCall.tool_name` persistence at line 1279.
+- `utils/mcp_config.py` line 190 — confirmed server-name validation rejects `/` and whitespace but **does not reject `__`** (gap; documented as a limitation in §7).
+- `models/conversation.py` lines 81-100 — confirmed `ToolCall.tool_name: str` field at line 96.
+- `docs/ARCHITECTURE.md` — confirmed §3.21w (line 2192), §3.21x (line 2234), §4.12 (line 3283) exist; **noted pre-existing doc drift**: §3.21x documents `MCPToolDefinition` as having `input_schema`, but the code has `parameters` + `server_name`. Fix included in §8.
+
+**Architectural layering (verified):**
+- `utils/mcp_client.py` owns MCP tool definition formatting (OpenAI function-calling dict construction).
+- `agent/tools.py` owns tool execution routing (built-in dict dispatch + MCP routing).
+- `agent/runtime.py` owns the tool-loop orchestration (extract tool calls from provider response → dispatch to execute_tool).
+
+**Existing patterns observed:**
+- `execute_tool` already does inline imports from `utils.mcp_client` (see `from utils.mcp_client import call_tool as mcp_call_tool, is_connected` at line 1198). The new `_from_wire_name` import follows the same pattern.
+- Tool caching uses post-sanitization cache entries (`_tools_cache` at line 55); the cache is safe to reuse across calls because dicts are immutable per spec.
+
+---
+
 ## 1. Overview
 
 ### 1.1 Problem
