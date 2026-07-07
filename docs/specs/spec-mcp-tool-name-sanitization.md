@@ -383,12 +383,14 @@ xvfb-run -a python3 -m pytest tests/test_mcp_client.py tests/test_mcp_integratio
 ```bash
 # Verify no remaining raw "/" namespacing in get_tools_for_api
 grep -n 'server_name}/' utils/mcp_client.py
-# Expected: 0 matches in get_tools_for_api (legacy comment references are OK)
+# Expected: 0 matches (the f"{server_name}/{tool.name}" expression is gone)
 
-# Verify execute_tool handles both formats
+# Verify execute_tool uses _from_wire_name (not partition)
 grep -n '_from_wire_name\|partition.*"/"' agent/tools.py
-# Expected: both the legacy "/" branch and the new _from_wire_name branch present
+# Expected: only _from_wire_name matches; no remaining partition("/") in execute_tool
 ```
+
+Note: A `name.partition("/")` call site may still exist elsewhere in the codebase for other purposes (not relevant to this fix). The pattern sweep is scoped to `agent/tools.py`'s MCP routing block in `execute_tool`.
 
 ### 4. Declaration
 
