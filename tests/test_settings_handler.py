@@ -483,12 +483,13 @@ class TestAddOrUpdateCallerValidation:
 
     def test_add_or_update_raises_on_explicitly_invalid_caller(self, tmp_config_dir):
         """User hand-sets caller='foo' — must raise even though auto-detect
-        would have produced a valid caller.
+        would have produced a valid caller. Use a non-taxonomy prefix
+        ('mycompany') so the prefix-consistency block does not pre-empt.
         """
         h = SettingsHandler()
         p = ProviderConfig(
             name="p", base_url="https://x", api_key="k",
-            default_model="openai/gpt-4o", caller="foo",
+            default_model="mycompany/foo", caller="foo",
         )
         with pytest.raises(ValueError, match="Invalid caller 'foo'"):
             h.add_or_update(p)
