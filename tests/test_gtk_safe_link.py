@@ -339,3 +339,30 @@ class TestMakeSafeLabelDocstring:
 
         doc = inspect.getdoc(make_safe_label) or ""
         assert "Bug #5" in doc, "docstring missing Bug #5 reference"
+
+
+class TestNonStringUriGuard:
+    """BUG #4 (audit): _is_safe_scheme and on_activate_link must handle non-string URIs.
+
+    PyGObject's exception handling causes fail-open (returns Falsy → link allowed)
+    when a signal handler raises TypeError. This is a security anti-pattern for
+    a blocking handler. The fix: guard against non-string input explicitly."""
+
+    def test_is_safe_scheme_rejects_int(self):
+        from utils.gtk_safe_link import _is_safe_scheme
+        assert _is_safe_scheme(42) is False
+
+    def test_is_safe_scheme_rejects_none(self):
+        from utils.gtk_safe_link import _is_safe_scheme
+        assert _is_safe_scheme(None) is False
+
+    def test_is_safe_scheme_rejects_list(self):
+        from utils.gtk_safe_link import _is_safe_scheme
+        assert _is_safe_scheme([1, 2]) is False
+
+    def test_on_activate_link_blocks_non_string(self):
+        """Non-string URI must be blocked (fail-closed), not allowed."""
+        from utils.gtk_safe_link import on_activate_link
+        assert on_activate_link(None, 42) is True  # block
+        assert on_activate_link(None, None) is True  # block
+        assert on_activate_link(None, [1, 2, 3]) is True  # block
