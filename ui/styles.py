@@ -496,6 +496,14 @@ notebook > header > tabs > tab {
     padding: 8px 12px;
     background: transparent;
 }
+.terminal-line {
+    font-family: monospace;
+}
+.terminal-prompt {
+    color: #e5c07b;
+    font-family: monospace;
+    margin-right: 4px;
+}
 
 .chat-bubble-actions {
     margin-top: 2px;
