@@ -152,6 +152,12 @@ class TestEdgeCases:
         result = format_markdown("- item1\n- item2")
         assert "•" in result
 
+    def test_bullet_list_first_item(self):
+        """Bug #7: first bullet at position 0 must be converted, not just subsequent ones."""
+        result = format_markdown("- first\n- second")
+        assert result.startswith("•"), f"first bullet not converted: {result!r}"
+        assert result.count("•") == 2, f"expected 2 bullets, got {result.count('•')}: {result!r}"
+
     def test_triple_backtick_fence_preserved(self):
         """Triple-backtick fences must not be consumed as inline code spans."""
         code = '```python\nprint("hi")\n```'
