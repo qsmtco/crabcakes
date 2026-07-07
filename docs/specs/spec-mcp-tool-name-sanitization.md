@@ -308,8 +308,7 @@ The rest of the MCP routing block (the `try:` ... `mcp_call_tool(...)` section a
 | Server name contains `__` | Not possible — `mcp_config.py` validates server names. `_from_wire_name` splits on first `__`, so `my__server__tool` → `("my", "server__tool")`. Documented as a limitation; the server name would have to be changed. |
 | Tool name contains `__` | Works — split on first `__`. `memory__create__entities` → `("memory", "create__entities")`. |
 | Tool name is empty | `_from_wire_name("memory__")` → `None` (empty tool name rejected). `execute_tool` falls through to built-in lookup, returns "Unknown tool". |
-| Wire name has no separator | `_from_wire_name("read_file")` → `None`. `execute_tool` treats as built-in. |
-| Legacy persisted conversation with `/` | `execute_tool` checks `/` first, routes correctly via legacy branch. |
+| Wire name has no separator | `_from_wire_name("read_file")` → `None`. `execute_tool` returns `Unknown tool: read_file` (no MCP routing). |
 | Two MCP servers with same tool name | No collision — wire names include server prefix. `memory__search` and `fetch__search` are distinct. |
 | Empty server name | `_to_wire_name("", "tool")` → `"__tool"`. `_from_wire_name("__tool")` → `None` (empty server). Defensive — server names are always non-empty (validated at config load). |
 
