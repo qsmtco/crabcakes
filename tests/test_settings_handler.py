@@ -653,3 +653,124 @@ class TestTestProviderEmptyCallerGap:
         assert result.ok is False
         assert "Cannot auto-detect caller" in result.error
         assert test_connection_called == []
+
+
+class TestAddOrUpdatePrefixConsistency:
+    """Sonnet-5 regression: caller must match default_model prefix when
+    both are present. The taxonomy check above accepts any valid caller,
+    so a hand-set wrong-but-valid caller (e.g. anthropic on an OpenRouter
+    URL) silently slipped through — and routed the request to /messages,
+    which 404s on the OpenAI-compat API. add_or_update must correct such
+    mismatches by deferring to the model prefix as the source of truth.
+    """
+
+    def test_correction_on_known_prefix_mismatch(self, tmp_config_dir):
+        """The original Sonnet 5 case: base_url=openrouter.ai, model=
+        openrouter/claude-sonnet-5, caller=anthropic. After save,
+        caller must be openrouter.
+        """
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name="Sonnet 5",
+            base_url="https://openrouter.ai/api/v1",
+            api_key="sk-or-v1-fake",
+            default_model="openrouter/claude-sonnet-5",
+            caller="anthropic",        # the wrong-but-valid value
+        )
+        h.add_or_update(p)
+        assert h.list_providers()[0].caller == "openrouter"
+
+    def test_no_correction_when_caller_matches_prefix(self, tmp_config_dir):
+        """Idempotent: when caller already equals the prefix, do nothing."""
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name="p", base_url="https://openrouter.ai/api/v1", api_key="k",
+            default_model="openrouter/foo", caller="openrouter",
+        )
+        h.add_or_update(p)
+        assert h.list_providers()[0].caller == "openrouter"
+
+    def test_no_correction_when_model_has_no_slash(self, tmp_config_dir):
+        """Anthropic native: model='claude-sonnet-4-5' (no slash).
+        My block must not fire — caller stays as user set.
+        """
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name="p", base_url="https://api.anthropic.com", api_key="k",
+            default_model="claude-sonnet-4-5", caller="anthropic",
+        )
+        h.add_or_update(p)
+        assert h.list_providers()[0].caller == "anthropic"
+
+    def test_no_correction_when_prefix_not_in_taxonomy(self, tmp_config_dir):
+        """Custom prefix like 'mycompany/foo' — prefix is NOT in the valid
+        caller set, so the block must not fire. We don't know which adapter
+        the user wants; respect the explicit caller.
+        """
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name="p", base_url="https://mycompany.example.com", api_key="k",
+            default_model="mycompany/foo", caller="openai",
+        )
+        h.add_or_update(p)
+        assert h.list_providers()[0].caller == "openai"
+
+    def test_still_raises_on_totally_invalid_caller(self, tmp_config_dir):
+        """The taxonomy check below the correction block must still fire
+        for callers that aren't in the valid set (e.g. hand-typed 'foo').
+        """
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name="p", base_url="https://x", api_key="k",
+            default_model="openrouter/foo", caller="foo",
+        )
+        with pytest.raises(ValueError, match="Invalid caller 'foo'"):
+            h.add_or_update(p)
+
+    @pytest.mark.parametrize("prefix,caller", [
+        ("openrouter", "anthropic"),
+        ("openai", "minimax"),
+        ("anthropic", "openai"),
+        ("zai", "anthropic"),
+        ("minimax", "openrouter"),
+    ])
+    def test_correction_table(self, tmp_config_dir, prefix, caller):
+        """Each mismatched (prefix, caller) pair from the taxonomy must
+        be corrected to the prefix.
+        """
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name=f"p-{prefix}-{caller}", base_url="https://x", api_key="k",
+            default_model=f"{prefix}/model-v1", caller=caller,
+        )
+        h.add_or_update(p)
+        assert h.list_providers()[0].caller == prefix
+
+    def test_correction_is_case_insensitive_on_prefix(self, tmp_config_dir):
+        """default_model prefix is lowercased before the taxonomy check."""
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name="p", base_url="https://x", api_key="k",
+            default_model="OpenRouter/free", caller="anthropic",
+        )
+        h.add_or_update(p)
+        assert h.list_providers()[0].caller == "openrouter"
+
+    def test_correction_warning_logged(self, tmp_config_dir, caplog):
+        """The correction must log a warning so the audit trail shows
+        that a caller was changed.
+        """
+        import logging
+        h = SettingsHandler()
+        p = ProviderConfig(
+            name="p", base_url="https://openrouter.ai/api/v1", api_key="k",
+            default_model="openrouter/foo", caller="anthropic",
+        )
+        with caplog.at_level(logging.WARNING, logger="ui.handlers.settings_handler"):
+            h.add_or_update(p)
+        assert any(
+            "correcting caller" in rec.message
+            and "anthropic" in rec.message
+            and "openrouter" in rec.message
+            for rec in caplog.records
+        ), f"no correction warning found in {[r.message for r in caplog.records]}"
