@@ -316,11 +316,11 @@ The rest of the MCP routing block (the `try:` ... `mcp_call_tool(...)` section a
 
 ## 8. ARCHITECTURE.md Updates Required
 
-**Section 3.21w (`utils/mcp_config.py`)** — add note that server names must not contain `__` (the wire-name separator). This is already enforced implicitly (server names don't contain `/`), but should be documented for the new separator.
+**Section 3.21w (`utils/mcp_config.py`)** — add note that server names must not contain `__` (the wire-name separator). The current validation at line 190 rejects `/` and whitespace but not `__`. Either add `__` to the validation regex, or document this as a known limitation (preferred for this PR — see §7).
 
-**Section 3.21x (`utils/mcp_client.py`)** — document the wire-name mapping (`_to_wire_name` / `_from_wire_name`) and the `__` separator. Note that the internal `server_name/tool_name` representation is preserved; only the wire format changes.
+**Section 3.21x (`utils/mcp_client.py`)** — document the wire-name mapping (`_to_wire_name` / `_from_wire_name`) and the `__` separator. Note that the internal `server_name/tool_name` representation is preserved; only the wire format changes. **Also fix pre-existing doc drift:** §3.21x currently documents `MCPToolDefinition` as having fields `name, description, input_schema`. The actual code at `utils/mcp_client.py:31-36` has `name, description, parameters, server_name` (no `input_schema`, has `parameters` and `server_name`). Correct the doc to match the code.
 
-**Section 4.12 (MCP Tool Execution Flow)** — update the namespacing rule from `server_name/tool_name` to `server_name__tool_name` (wire format). Note that inbound routing uses `_from_wire_name`.
+**Section 4.12 (MCP Tool Execution Flow)** — update the namespacing rule from `server_name/tool_name` to `server_name__tool_name` (wire format). Note that inbound routing uses `_from_wire_name`. Remove the existing `server_name/tool_name` references in the data-flow diagram.
 
 ---
 
