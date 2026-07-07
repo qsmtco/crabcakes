@@ -348,7 +348,7 @@ The rest of the MCP routing block (the `try:` ... `mcp_call_tool(...)` section a
 
 ### 4. Did I trace the data flow end-to-end?
 
-Yes — §3 traces outbound (tools → provider), inbound (provider response → tool execution), and backward compat (persisted conversations). Every function name and key structure verified against source.
+Yes — §3 traces outbound (tools → provider) and inbound (provider response → tool execution). There is no backward-compat path: this is a clean cut (pre-1.0 codebase, no released MCP integration yet, no persisted conversations containing slash-namespaced tool names). Every function name and key structure verified against source.
 
 ### 5. Would an implementer who follows this spec exactly produce working code?
 
