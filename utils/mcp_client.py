@@ -486,6 +486,55 @@ def _sanitize_tool_description(text: str) -> str:
     return sanitized
 
 
+# Wire-name separator: replaces "/" in MCP namespaced tool names.
+# Must be provider-safe (matches ^[a-zA-Z0-9_-]{1,128}$) and not collide
+# with built-in tool names (none of which contain "__").
+_WIRE_NAME_SEPARATOR = "__"
+
+
+def _to_wire_name(server_name: str, tool_name: str) -> str:
+    """Convert an MCP (server_name, tool_name) pair to a provider-safe wire name.
+
+    Provider APIs (Anthropic, OpenAI, Poolside) reject tool names containing "/".
+    The internal namespacing uses "server/tool" for routing, but the wire
+    format must use only [a-zA-Z0-9_-]. This function produces "server__tool".
+
+    Args:
+        server_name: MCP server name (e.g. "memory"). Must not contain "__"
+                    or the separator. mcp_config.py already validates that
+                    server names do not contain "/".
+        tool_name: MCP tool name (e.g. "create_entities"). May contain "__"
+                  internally — the split in _from_wire_name uses the FIRST
+                  separator occurrence, preserving it.
+
+    Returns:
+        Provider-safe wire name (e.g. "memory__create_entities").
+    """
+    return f"{server_name}{_WIRE_NAME_SEPARATOR}{tool_name}"
+
+
+def _from_wire_name(wire_name: str) -> tuple[str, str] | None:
+    """Split a wire name back into (server_name, tool_name).
+
+    Splits on the FIRST separator occurrence, so tool names containing "__"
+    are preserved intact after the split.
+
+    Args:
+        wire_name: The wire-format name (e.g. "memory__create_entities").
+
+    Returns:
+        (server_name, tool_name) if the name contains the separator, else None.
+        None means this is NOT an MCP wire name — the caller should treat it
+        as a built-in tool name.
+    """
+    if _WIRE_NAME_SEPARATOR not in wire_name:
+        return None
+    server, _, tool = wire_name.partition(_WIRE_NAME_SEPARATOR)
+    if not server or not tool:
+        return None
+    return server, tool
+
+
 def get_tools_for_api(
     server_names: list[str],
     conversation_key: str | None = None,
