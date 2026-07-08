@@ -249,7 +249,9 @@ def format_markdown(text: str) -> str:
         # then re-escape for safe Pango display.
         import html as _html
         display_url = _html.escape(_html.unescape(url))
-        anchor_html = f'<a href="{url}"><u>{display_url}</u></a>'
+        # Entity-encode the href value so " and & don't break the XML attribute
+        safe_href = _html.escape(url, quote=True)
+        anchor_html = f'<a href="{safe_href}"><u>{display_url}</u></a>'
         if not _validate_link_url(url):
             anchor_html = _WARNING_PREFIX + anchor_html
         anchor_spans.append(anchor_html)
