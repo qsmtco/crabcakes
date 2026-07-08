@@ -157,12 +157,13 @@ class TestStrictEntityUnescape:
     """Strict unescape: only decode entities with trailing semicolon."""
 
     def test_well_formed_entities_decoded(self):
-        # Standard entities with ; are decoded
-        assert escape_for_pango("Tom &amp; Jerry") == "Tom &amp; Jerry"  # &amp; → & → &amp; via html.escape
+        # Standard entities with ; are decoded, then html.escape re-encodes
+        # & and " (default html.escape behavior in Python 3 escapes both).
+        assert escape_for_pango("Tom &amp; Jerry") == "Tom &amp; Jerry"  # round-trip
         assert escape_for_pango("a &lt; b") == "a &lt; b"
         assert escape_for_pango("a &gt; b") == "a &gt; b"
-        assert escape_for_pango("say &quot;hi&quot;") == 'say "hi"'  # &quot; → ", not re-escaped in text content
-        assert escape_for_pango("it&apos;s") == "it's"
+        assert escape_for_pango("say &quot;hi&quot;") == "say &quot;hi&quot;"  # " re-escaped to &quot;
+        assert escape_for_pango("it&apos;s") == "it&#x27;s"  # ' re-escaped to &#x27;
 
     def test_malformed_entities_preserved(self):
         # &name without ; is left as literal text (re-escaped by html.escape)
@@ -190,10 +191,11 @@ class TestStrictEntityUnescape:
     def test_non_pango_entity_not_decoded(self):
         # &copy; etc. are not in the allowlist — left as literal text
         # (Pango would reject &copy; anyway, so leaving it gives a clearer
-        # signal that the LLM emitted an unsupported entity)
+        # signal that the LLM emitted an unsupported entity). The trailing
+        # & is then re-escaped by html.escape to &amp;.
         result = escape_for_pango("&copy; 2024")
         assert "©" not in result
-        assert "&copy;" in result
+        assert "&amp;copy;" in result  # & re-escaped, copy; preserved as literal
 
     def test_idempotency_under_double_escape(self):
         # Round-trip: &amp;amp; should not double-decode
