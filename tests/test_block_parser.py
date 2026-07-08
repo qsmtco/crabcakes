@@ -195,10 +195,146 @@ class TestHeadingRegex:
         assert result[0]["level"] == 6
         assert result[0]["content"] == "max heading"
 
-    def test_seven_hashes_not_heading(self):
+    test_seven_hashes_nos_not_heading(self):
         """####### too many should NOT be a heading (>6 hashes)."""
         result = extract_blocks("####### too many")
         # Should fall through to text, not heading
         assert any(r["type"] != "heading" for r in result), (
             "7+ hashes should not be a heading"
         )
+
+
+class TestMixedContentParagraphs:
+    """Heading/quote/task followed by non-matching lines within the same paragraph.
+
+    These are the cases that caused data loss (heading) or format degradation
+    (quote/task) before the fix. The root cause: _classify_paragraph returned
+    a single dict, discarding lines after the first block-type match.
+    """
+
+    def test_heading_then_body_single_newline(self):
+        """### X\nbody must produce heading + text, not heading only."""
+        result = extract_blocks("### X\nbody")
+        assert len(result) == 2
+        assert result[0]["type"] == "heading"
+        assert result[0]["content"] == "X"
+        assert result[1]["type"] == "text"
+        assert result[1]["content"] == "body"
+
+    def test_heading_then_multiline_body(self):
+        """## X\nl2\nl3\nl4 must preserve all body lines."""
+        result = extract_blocks("## X\nl2\nl3\nl4")
+        assert len(result) == 2
+        assert result[0]["type"] == "heading"
+        assert result[1]["type"] == "text"
+        assert "l2" in result[1]["content"]
+        assert "l3" in result[1]["content"]
+        assert "l4" in result[1]["content"]
+
+    def test_heading_then_body_no_data_loss(self):
+        """The word 'body' must appear somewhere in the output segments."""
+        result = extract_blocks("### Heading\nbody text here")
+        all_content = " ".join(seg.get("content", "") for seg in result)
+        assert "body text here" in all_content, "body text was lost!"
+
+    def test_quote_then_text(self):
+        """> quote\nnon-quote must produce quote + text, not text only."""
+        result = extract_blocks("> quote\nnon-quote-line")
+        assert len(result) == 2
+        assert result[0]["type"] == "quote"
+        assert "quote" in result[0]["content"]
+        assert result[1]["type"] == "text"
+        assert result[1]["content"] == "non-quote-line"
+
+    def test_task_then_text(self):
+        """- [ ] task\nnot-task must produce task + text, not text only."""
+        result = extract_blocks("- [ ] task\nnot-task")
+        assert len(result) == 2
+        assert result[0]["type"] == "task"
+        assert "task" in result[0]["content"]
+        assert result[1]["type"] == "text"
+        assert result[1]["content"] == "not-task"
+
+    def test_recursive_nesting_heading_quote_text(self):
+        """### Heading\n> quote\nbody → [heading, quote, text]."""
+        result = extract_blocks("### Heading\n> quote\nbody")
+        assert len(result) == 3
+        assert result[0]["type"] == "heading"
+        assert result[0]["content"] == "Heading"
+        assert result[1]["type"] == "quote"
+        assert result[1]["content"] == "quote"
+        assert result[2]["type"] == "text"
+        assert result[2]["content"] == "body"
+
+    def test_two_headings_single_newline(self):
+        """## A\n## B → [heading(A), heading(B)]."""
+        result = extract_blocks("## A\n## B")
+        assert len(result) == 2
+        assert result[0]["type"] == "heading"
+        assert result[0]["content"] == "A"
+        assert result[1]["type"] == "heading"
+        assert result[1]["content"] == "B"
+
+    def test_heading_only_no_body(self):
+        """### Heading (no body) → single heading segment, no recursion."""
+        result = extract_blocks("### Heading")
+        assert len(result) == 1
+        assert result[0]["type"] == "heading"
+        assert result[0]["content"] == "Heading"
+
+    def test_quote_multiline_then_text(self):
+        """> line1\n> line2\nplain → [quote(2 lines), text]."""
+        result = extract_blocks("> line1\n> line2\nplain")
+        assert len(result) == 2
+        assert result[0]["type"] == "quote"
+        assert "line1" in result[0]["content"]
+        assert "line2" in result[0]["content"]
+        assert result[1]["type"] == "text"
+        assert result[1]["content"] == "plain"
+
+    def test_task_multiple_then_text(self):
+        """- [ ] a\n- [x] b\nplain → [task(2 items), text]."""
+        result = extract_blocks("- [ ] a\n- [x] b\nplain")
+        assert len(result) == 2
+        assert result[0]["type"] == "task"
+        assert "a" in result[0]["content"]
+        assert "b" in result[0]["content"]
+        assert result[1]["type"] == "text"
+        assert result[1]["content"] == "plain"
+
+
+class TestMixedContentRegressions:
+    """Ensure existing behavior is preserved after the rewrite."""
+
+    def test_blank_line_heading_body_still_works(self):
+        """Regression: # Title\n\nbody still produces 2 segments."""
+        result = extract_blocks("# Title\n\nSome body text")
+        assert result[0]["type"] == "heading"
+        assert result[1]["type"] == "text"
+
+    def test_multiline_quote_all_lines(self):
+        """Regression: > l1\n> l2\n> l3 → 1 quote segment."""
+        result = extract_blocks("> Line one\n> Line two\n> Line three")
+        assert len(result) == 1
+        assert result[0]["type"] == "quote"
+        assert "Line one" in result[0]["content"]
+        assert "Line three" in result[0]["content"]
+
+    def test_mixed_tasks_all_lines(self):
+        """Regression: - [ ] a\n- [x] b → 1 task segment."""
+        result = extract_blocks("- [ ] Item one\n- [x] Item two")
+        assert len(result) == 1
+        assert result[0]["type"] == "task"
+
+    def test_empty_string(self):
+        """Regression: empty input returns [{"type": "text", "content": ""}]."""
+        result = extract_blocks("")
+        assert result == [{"type": "text", "content": ""}]
+
+    def test_plain_text_multiline(self):
+        """Regression: single-newline plain text = 1 text segment."""
+        result = extract_blocks("Line one\nLine two")
+        assert len(result) == 1
+        assert result[0]["type"] == "text"
+        assert "Line one" in result[0]["content"]
+        assert "Line two" in result[0]["content"]
