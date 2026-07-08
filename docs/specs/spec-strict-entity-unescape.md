@@ -350,8 +350,8 @@ This is a behavior change for the malformed case: previously, `&amp` would be de
 
 ## 5. Implementation Order
 
-1. **Add `_ENTITY_CODEPOINTS` and `_ENTITY_UNESCAPE_RE` to `utils/escaping.py`** (after line 32, before `def escape_for_pango`).
-2. **Replace `text = html.unescape(text)` at line 92** with the strict regex sub (verbatim from §2.1).
+1. **Add `_ENTITY_CODEPOINTS` and `_ENTITY_UNESCAPE_RE` to `utils/escaping.py`** (after the existing `_PANGO_VOID_TAGS` frozenset, before `def escape_for_pango`).
+2. **Replace `text = html.unescape(text)` at line 78** with the strict regex sub (verbatim from §2.1).
 3. **Add `TestStrictEntityUnescape` class to `tests/test_escaping.py`** (after the existing `TestEscapeForPango` class). All 7 tests must pass.
 4. **Run the full test suite** to verify no regressions in existing tests (especially `TestEscapeForPango` which has assertions like `escape_for_pango('<a href="http://example.com"><u>link</u></a>')` that should still pass).
 5. **Add a 3-line note to `docs/ARCHITECTURE.md` section 3.14a** explaining the strict-unescape choice.
@@ -419,7 +419,7 @@ spec).
 
 1. **Code samples traced?**
    - The strict unescape regex `_ENTITY_UNESCAPE_RE` was traced against 13 test inputs (`&amp;`, `&amp`, `&copy;`, `&copy`, `&;`, `&#42;`, `&#x2A;`, `&#xZZ;`, `&amp;amp;`, the audit-bug input, etc.) — all behaviors match the §7 table.
-   - The interaction with the existing attribute-escape regex (line 142) was traced: `&gt` in an attribute is matched by `&(?![a-zA-Z#0-9]+;)` because the `;` is missing, so it gets re-escaped to `&amp;gt`. Verified by running the actual code on the audit-bug input.
+   - The interaction with the existing attribute-escape regex (line 146) was traced: `&gt` in an attribute is matched by `&(?![a-zA-Z#0-9]+;)` because the `;` is missing, so it gets re-escaped to `&amp;gt`. Verified by running the actual code on the audit-bug input.
    - The interaction with `format_markdown` for well-formed `[label](url)` links was traced: `format_markdown` produces `<a href="...?a=1&amp;b=2">`, `escape_for_pango` decodes the `&amp;` to `&`, then the attribute-escape regex matches the `&` (now bare) and re-encodes to `&amp;`. Final output matches the existing test expectation.
 
 2. **Exception types?** None — pure string operations. `re.sub` does not raise on non-matching patterns. The lambda `lambda m: chr(_ENTITY_CODEPOINTS[m.group(1)])` is only invoked when the regex matches, so the `KeyError` risk is moot (matches always have a name in the allowlist or a numeric ref). The `chr()` call could raise `ValueError` for codepoints outside the BMP, but the regex restricts to `_ENTITY_CODEPOINTS` (BMP values) or numeric refs up to `0x10FFFF` (the regex doesn't restrict, but `chr` handles the full range). Verified: `chr(0x10FFFF)` is valid; `chr(0x110000)` raises `ValueError` but the regex `[0-9]+` could match that. **Action item for implementer:** add a `try/except ValueError` in the lambda to fall back to the original entity reference on invalid codepoints. Or restrict the regex to a safe range (`[0-9]{1,7}` and clamp via `min(int(...), 0x10FFFF)`).
