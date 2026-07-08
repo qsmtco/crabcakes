@@ -38,6 +38,50 @@ _PANGO_VOID_TAGS: frozenset[str] = frozenset({
 })
 
 
+# Entity references accepted by the strict unescape. Names match exactly
+# what Pango's XML parser accepts plus the standard XML named entities
+# for content (so LLM-emitted " etc. decodes correctly to the char).
+_ENTITY_CODEPOINTS: dict[str, int] = {
+    "amp": 0x26,    # &
+    "lt":  0x3C,    # <
+    "gt":  0x3E,    # >
+    "quot": 0x22,   # "
+    "apos": 0x27,   # '
+    "nbsp": 0xA0,   # non-breaking space
+}
+
+# Strict entity reference pattern: must have a trailing semicolon.
+# Matches named entities in _ENTITY_CODEPOINTS or numeric refs (decimal
+# or hex). Does NOT match &name (no ;) — those are left as literal text.
+_ENTITY_UNESCAPE_RE: re.Pattern[str] = re.compile(
+    r"&("
+    + "|".join(_ENTITY_CODEPOINTS.keys())
+    + r"|#[0-9]+|#x[0-9a-fA-F]+);"
+)
+
+
+def _strict_unescape(text: str) -> str:
+    """Decode entity references that have a trailing semicolon.
+
+    Unlike html.unescape (which is HTML5-lenient and decodes &gt, &amp etc.
+    even without the trailing ;), this function ONLY decodes well-formed
+    entity references. Malformed entities are preserved as literal text
+    and handled by the downstream html.escape / attribute-escape logic.
+    """
+    def _replace(m):
+        name = m.group(1)
+        if name.startswith("#"):
+            try:
+                if name.startswith("#x") or name.startswith("#X"):
+                    return chr(int(name[2:], 16))
+                return chr(int(name[1:]))
+            except (ValueError, OverflowError):
+                return m.group(0)  # invalid codepoint — preserve literal
+        return chr(_ENTITY_CODEPOINTS[name])
+
+    return _ENTITY_UNESCAPE_RE.sub(_replace, text)
+
+
 def escape_for_pango(text: str) -> str:
     """
     Escape XML specials in text while preserving known Pango markup tags.
