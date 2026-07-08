@@ -249,7 +249,7 @@ def _classify_paragraph(para: str) -> list[dict]:
             continue
 
         # Terminal: first non-empty line starts with $ (absorbs all remaining lines)
-        if stripped and stripped.startswith('$') and not text_buf and not segments:
+        if stripped and stripped.startswith('$') and not text_buf:
             content_lines = []
             while i < len(lines):
                 s = lines[i].strip()
