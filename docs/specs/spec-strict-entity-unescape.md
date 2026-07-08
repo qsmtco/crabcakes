@@ -111,7 +111,7 @@ This is a **defense-in-depth** fix: even if `format_markdown` produces malformed
     text = _ENTITY_UNESCAPE_RE.sub(lambda m: chr(_ENTITY_CODEPOINTS[m.group(1)]), text)
 ```
 
-**Add new module-level constants and regex** (insert after line 32, before `def escape_for_pango`):
+**Add new module-level constants and regex** (insert after the existing `_PANGO_VOID_TAGS` frozenset, before `def escape_for_pango`):
 
 ```python
 # Entity references accepted by the strict unescape. Names match exactly
