@@ -64,7 +64,7 @@ The malformed entity `&gt` came from `format_markdown` (the auto-link bug). `esc
 
 ### 1.3 Solution
 
-Replace `html.unescape` (line 92) with a **strict regex-based unescape** that only decodes entity references with a trailing semicolon. The fix uses an allowlist of entity names matching exactly what Pango's XML parser accepts (plus the standard XML named entities for content). Malformed entity references (no `;`) are left as literal text and then handled correctly by the existing attribute-escape regex and `html.escape` later in the pipeline.
+Replace `html.unescape` (line 78) with a **strict regex-based unescape** that only decodes entity references with a trailing semicolon. The fix uses an allowlist of entity names matching exactly what Pango's XML parser accepts (plus the standard XML named entities for content). Malformed entity references (no `;`) are left as literal text and then handled correctly by the existing attribute-escape regex and `html.escape` later in the pipeline.
 
 This is a **defense-in-depth** fix: even if `format_markdown` produces malformed entities (e.g., from a future bug similar to the auto-link one), `escape_for_pango` will not amplify the problem by decoding them.
 
@@ -82,7 +82,7 @@ This is a **defense-in-depth** fix: even if `format_markdown` produces malformed
 
 ### 2.1 `utils/escaping.py` — Replace lenient `html.unescape` with strict regex-based unescape
 
-**Current code (lines 88-92):**
+**Current code (lines 74-78):**
 
 ```python
     # Decode HTML entities that LLMs sometimes emit (&quot;, &amp;, &lt;, etc.)
@@ -91,7 +91,7 @@ This is a **defense-in-depth** fix: even if `format_markdown` produces malformed
     text = html.unescape(text)
 ```
 
-**Replacement code (insert at lines 88-92, replace `text = html.unescape(text)` with):**
+**Replacement code (insert at lines 74-78, replace `text = html.unescape(text)` with):**
 
 ```python
     # Decode HTML entities that LLMs sometimes emit (&quot;, &amp;, &lt;, etc.)
