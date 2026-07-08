@@ -190,6 +190,7 @@ OK — valid Pango markup, full URL preserved
 
 - [ ] `format_markdown(escape_for_pango("see <https://example.com>"))` produces valid Pango with `href="https://example.com"` and no `&gt` entity
 - [ ] `format_markdown(escape_for_pango("<https://example.com>"))` works (standalone)
+- [ ] `format_markdown(escape_for_pango("see <https://test.com?a=1&b=2>"))` produces valid Pango with `href="https://test.com?a=1&amp;b=2"` and the full query string in visible text (the wider regex covers query-param URLs)
 - [ ] `format_markdown(escape_for_pango("go to <https://example.com>."))` works (trailing period)
 - [ ] `format_markdown(escape_for_pango("check https://example.com for info"))` still works (plain URL regression)
 - [ ] `format_markdown(escape_for_pango("[label](https://example.com)"))` still works (markdown link regression)
