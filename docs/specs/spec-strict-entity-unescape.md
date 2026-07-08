@@ -105,7 +105,7 @@ This is a **defense-in-depth** fix: even if `format_markdown` produces malformed
     # autolink.md) gets converted to a literal >, which then breaks the
     # tag-detection regex below (the > looks like an end-of-tag). Strict
     # unescape preserves the malformed &gt as literal text; the attribute
-    # escape regex (line ~142) and html.escape (line ~149) downstream will
+    # escape regex (line 146) and html.escape downstream will
     # then safely re-escape it to &amp;gt. Pango renders &amp;gt as the
     # 4-character string "&gt" — not the intended character, but no warning.
     text = _ENTITY_UNESCAPE_RE.sub(lambda m: chr(_ENTITY_CODEPOINTS[m.group(1)]), text)
