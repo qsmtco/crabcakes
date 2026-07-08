@@ -54,11 +54,11 @@ For the input above, the chain is:
 
 1. `escape_for_pango` calls `html.unescape(input)`.
 2. `html.unescape` decodes the first `&gt` (no `;`) to `>`. The input becomes `<<a href="https://example.com>">...`.
-3. The opening-tag regex on line 130 is `<([a-zA-Z][a-zA-Z0-9._-]*)([^>]*)>`. The `[^>]*` is greedy but stops at the first `>`. The first `>` is now the one decoded from `&gt` (inside the URL). The tag name captures `a`, the attributes capture ` href="https://example.com`, and the closing `>` of the opening tag is the decoded `>` from the URL.
+3. The opening-tag regex on line 125 is `<([a-zA-Z][a-zA-Z0-9._-]*)([^>]*)>`. The `[^>]*` is greedy but stops at the first `>`. The first `>` is now the one decoded from `&gt` (inside the URL). The tag name captures `a`, the attributes capture ` href="https://example.com`, and the closing `>` of the opening tag is the decoded `>` from the URL.
 4. The full opening tag emitted is `<a href="https://example.com>` — the `>` that was the tag's terminator is now embedded in the attribute value, and Pango's XML parser sees an unterminated attribute.
 5. Pango raises: `Document ended unexpectedly while inside an attribute value`.
 
-The malformed entity `&gt` came from `format_markdown` (the auto-link bug). `escape_for_pango` is supposed to be a robust defense against such malformed output, but its lenient `html.unescape` actively makes the situation worse: it converts the malformed-but-safe `&gt` (which would have been re-escaped to `&amp;gt` by the attribute-escape regex on line 142) into a literal `>` (which corrupts the tag-parsing state machine).
+The malformed entity `&gt` came from `format_markdown` (the auto-link bug). `escape_for_pango` is supposed to be a robust defense against such malformed output, but its lenient `html.unescape` actively makes the situation worse: it converts the malformed-but-safe `&gt` (which would have been re-escaped to `&amp;gt` by the attribute-escape regex on line 146) into a literal `>` (which corrupts the tag-parsing state machine).
 
 **Verified live** by replaying the failing block through the same pipeline (`/tmp/test_everything_v2.py` — block 26 of the audit report was the failing block; error matched the analysis above).
 
