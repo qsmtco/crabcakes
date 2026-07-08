@@ -402,7 +402,7 @@ Add a short note to section 3.14a (`utils/escaping.py`) after the existing "Key 
 3. The reason: defense-in-depth against malformed entities from upstream (e.g., from `format_markdown` bugs).
 4. Reference to `docs/specs/spec-strict-entity-unescape.md` for the design rationale.
 
-Suggested addition (3 lines, after line 825):
+Suggested addition (3 lines, after the "Key design" paragraph, before `### 3.14b`):
 
 ```
 **Strict unescape:** Uses an allowlist (`_ENTITY_CODEPOINTS`) covering only XML
