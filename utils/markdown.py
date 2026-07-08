@@ -245,14 +245,23 @@ def format_markdown(text: str) -> str:
     # both kinds together.
     def _angle_link_replace(m):
         url = m.group(1)
-        anchor_html = f'<a href="{url}"><u>{url}</u></a>'
+        # Decode entities for visible text (so user sees & not &amp;),
+        # then re-escape for safe Pango display.
+        import html as _html
+        display_url = _html.escape(_html.unescape(url))
+        anchor_html = f'<a href="{url}"><u>{display_url}</u></a>'
         if not _validate_link_url(url):
             anchor_html = _WARNING_PREFIX + anchor_html
         anchor_spans.append(anchor_html)
         return f'\x00ANCHOR{len(anchor_spans) - 1}\x00'
 
+    # Broaden scheme to match any [a-zA-Z][a-zA-Z0-9+.-]*:// (same as Step 4).
+    # Add re.IGNORECASE to match Step 4's case behavior.
+    # This prevents non-allowlisted/uppercase schemes from bypassing Step 3a
+    # and falling through to Step 4 where _strip_trailing_punct breaks &gt;.
     angle_link_re = re.compile(
-        r'&lt;((?:https?|ftp|mailto)://(?:[^\s&]|&(?:amp|lt|gt|quot|#\d+|#x[0-9a-f]+);)+)&gt;'
+        r'&lt;([a-zA-Z][a-zA-Z0-9+.-]*://(?:[^\s&]|&(?:amp|lt|gt|quot|#\d+|#x[0-9a-f]+);)+)&gt;',
+        re.IGNORECASE
     )
     protected = angle_link_re.sub(_angle_link_replace, protected)
 
