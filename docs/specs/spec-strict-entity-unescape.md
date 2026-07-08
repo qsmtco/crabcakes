@@ -214,13 +214,42 @@ class TestStrictEntityUnescape:
         assert result == "&amp;amp;"
 
     def test_pipeline_with_format_markdown(self):
-        # Full pipeline: escape_for_pango → format_markdown
+        # Full pipeline: escape_for_pango → format_markdown.
+        # Note: this test only PASSES if BOTH spec-angle-bracket-autolink.md
+        # AND this spec are applied. With only this spec applied, the broken
+        # &gt (no ;) from format_markdown's auto-link bug still reaches
+        # set_markup and triggers a Gtk warning. The role of THIS spec is
+        # defense-in-depth: it ensures that any malformed entity (including
+        # the auto-link bug's output if it were ever fed BACK through
+        # escape_for_pango) is safely escaped, not amplified.
         from utils.markdown import format_markdown
-        raw = 'see <https://example.com>'  # auto-link input
+        raw = '&lt;<a href="https://example.com&gt"><u>https://example.com&gt</u></a>'
+        # Feed the broken markup string back through escape_for_pango
+        # (simulating: LLM response contains broken markup from a buggy
+        # upstream; we re-run escape_for_pango on it for safety).
         result = format_markdown(escape_for_pango(raw))
-        # Should not contain the broken &gt (no ;) pattern
-        assert "&gt</u>" not in result  # old broken output
-        assert "href=\"https://example.com&amp;gt" not in result  # new safe output
+        # The &gt (no ;) in the href should now be safely escaped to &amp;gt
+        assert "&amp;gt" in result
+        # No broken unescaped > inside an unterminated attribute
+        assert 'href="https://example.com>' not in result
+        # And it should round-trip through set_markup without a Gtk warning
+        import subprocess, os
+        gtk_result = subprocess.run([
+            'python3', '-c', f'''
+import sys
+sys.path.insert(0, "/home/q/projects/crabcakes")
+import gi
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gtk
+label = Gtk.Label()
+label.set_markup({result!r})
+print("OK")
+'''
+        ], capture_output=True, text=True, env={**os.environ, 'LANG': 'C'})
+        assert "Failed to set text" not in gtk_result.stderr, (
+            f"Pipeline produced broken markup: {result!r}\n"
+            f"Gtk stderr: {gtk_result.stderr}"
+        )
 ```
 
 **Note:** Some of the above assertions need to be verified against actual implementation. The implementer must run the tests and adjust expectations to match the correct output. The KEY assertions are:
