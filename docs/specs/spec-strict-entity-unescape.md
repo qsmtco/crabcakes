@@ -439,7 +439,7 @@ spec).
 ## 10. Completion Verification (for implementer)
 
 1. **Scope checklist** — every file listed in §2:
-   - [ ] `utils/escaping.py` — added constants, replaced unescape call (lines 88-92 → 14 net new lines)
+   - [ ] `utils/escaping.py` — added constants, replaced unescape call (lines 74-78 → 14 net new lines)
    - [ ] `tests/test_escaping.py` — added `TestStrictEntityUnescape` class (~60 lines)
    - [ ] `docs/ARCHITECTURE.md` — added 3-line note to section 3.14a
 
