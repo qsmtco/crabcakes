@@ -315,3 +315,66 @@ class TestMarkdownWarnButRender:
         assert result.count("\u26a0") == 1, "Only file:// should have warning"
         assert '<a href="https://example.com">' in result
         assert '<a href="file:///etc/passwd">' in result
+
+
+class TestAngleBracketAutoLink:
+    """Tests for CommonMark/GFM angle-bracket auto-link syntax: <URL>.
+
+    These inputs go through escape_for_pango() BEFORE format_markdown(),
+    so angle brackets arrive as &lt; and &gt;. The auto-link regex must
+    not capture &gt; as part of the URL, and _strip_trailing_punct must
+    not strip the semicolon from the entity.
+    """
+
+    def test_angle_bracket_basic(self):
+        """<https://example.com> renders as clickable link."""
+        from utils.escaping import escape_for_pango
+        result = format_markdown(escape_for_pango("see <https://example.com>"))
+        assert 'href="https://example.com"' in result
+        assert "&gt\"" not in result  # no truncated entity in href
+        assert "&gt<" not in result   # no truncated entity before tag
+
+    def test_angle_bracket_standalone(self):
+        """Standalone <https://example.com> works."""
+        from utils.escaping import escape_for_pango
+        result = format_markdown(escape_for_pango("<https://example.com>"))
+        assert 'href="https://example.com"' in result
+
+    def test_angle_bracket_with_query_params(self):
+        """<https://test.com?a=1&b=2> preserves full query string."""
+        from utils.escaping import escape_for_pango
+        result = format_markdown(escape_for_pango("see <https://test.com?a=1&b=2>"))
+        # href should contain the full URL with &amp; for &
+        assert "test.com?a=1&amp;b=2" in result
+        assert "&gt" not in result.replace("&gt;", "", 1)  # no broken entities
+
+    def test_angle_bracket_trailing_period(self):
+        """go to <https://example.com>. works (period after bracket)."""
+        from utils.escaping import escape_for_pango
+        result = format_markdown(escape_for_pango("go to <https://example.com>."))
+        assert 'href="https://example.com"' in result
+
+    def test_angle_bracket_embedded_in_sentence(self):
+        """see <https://example.com> out works."""
+        from utils.escaping import escape_for_pango
+        result = format_markdown(escape_for_pango("see <https://example.com> out"))
+        assert 'href="https://example.com"' in result
+
+    def test_plain_url_still_works(self):
+        """Regression: plain URL without angle brackets still auto-links."""
+        result = format_markdown("check https://example.com for info")
+        assert '<a href="https://example.com">' in result
+
+    def test_markdown_link_still_works(self):
+        """Regression: [label](url) still works."""
+        result = format_markdown("[label](https://example.com)")
+        assert '<a href="https://example.com">' in result
+
+    def test_no_broken_entities_in_output(self):
+        """Output must not contain &gt without semicolon (would crash Pango)."""
+        from utils.escaping import escape_for_pango
+        import re
+        result = format_markdown(escape_for_pango("see <https://example.com>"))
+        # Look for &gt not followed by ;
+        broken = re.findall(r'&gt(?!;)', result)
+        assert not broken, f"Broken entities found: {broken}"
