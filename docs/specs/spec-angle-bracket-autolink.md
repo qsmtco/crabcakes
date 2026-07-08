@@ -66,39 +66,59 @@ The regex for angle-bracket auto-links must run on ALREADY-ESCAPED text (the inp
 **New code to insert** (between the existing `_link_replace_and_protect` regex sub and the `_auto_link` regex sub):
 
 ```python
-    # ── Step 3a: Convert angle-bracket auto-links to markdown links ─────────
+    # ── Step 3a: Convert angle-bracket auto-links to anchor placeholders ────
     # CommonMark/GFM auto-link syntax: <https://example.com>
     # After escape_for_pango(), this is &lt;https://example.com&gt;
-    # The auto-link regex (Step 4) would capture &gt; as part of the URL.
-    # Pre-convert to [URL](URL) so Step 3's already-run markdown-link handler
-    # would have caught it — but since Step 3 already ran, we convert directly
-    # to an anchor placeholder here.
+    # If we let Step 4's auto-link regex run, it would capture &gt; as part
+    # of the URL, and _strip_trailing_punct would then strip the trailing
+    # semicolon from &gt;, producing the invalid entity &gt (Gtk warning).
+    # We pre-process here: extract the URL between the escaped brackets,
+    # build an <a> tag, and protect it with the same \x00ANCHOR{N}\x00
+    # placeholder that Step 3 uses for markdown links — so Step 6 restores
+    # both kinds together.
     #
-    # Regex: &lt;(scheme://...)(&gt;)  — matches escaped angle-bracket URLs.
-    # The URL content is between &lt; and &gt;, and must not contain &gt;
-    # (which would be an escaped > inside the URL — extremely unlikely).
-    angle_link_re = re.compile(r'&lt;((?:https?|ftp|mailto)://[^\s&]+)&gt;')
-    for m in angle_link_re.finditer(protected):
+    # Regex on ALREADY-ESCAPED text:
+    #   &lt;((?:https?|ftp|mailto)://(?:[^\s&]|&(?:amp|lt|gt|quot|#\d+|#x[0-9a-f]+);)+)&gt;
+    #
+    # Why the inner alternation [^\s&] | &entity;:
+    #   The character class [^\s&]+ alone is too restrictive — it stops at
+    #   every &, including &amp; which appears in URLs with query parameters
+    #   like ?a=1&b=2 (escaped to ?a=1&amp;b=2). The alternation lets the
+    #   regex consume one character OR one complete HTML entity per step,
+    #   so it can match the entire URL body without stopping at &amp;.
+    #   Entities allowed: the standard XML/HTML named ones plus numeric
+    #   references (&#NNN; and &#xHH;). A real-world URL body only contains
+    #   &amp; (from query params) and occasionally &lt;/&gt; in path
+    #   components — but we allow the full set for robustness.
+    def _angle_link_replace(m):
         url = m.group(1)
-        safe_url = urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=-_.~")
-        anchor_html = f'<a href="{safe_url}"><u>{url}</u></a>'
+        # url is already in escaped form (&amp; etc.) — keep as-is for href
+        # (Gtk accepts &amp; in attribute values verbatim) and visible text.
+        anchor_html = f'<a href="{url}"><u>{url}</u></a>'
         if not _validate_link_url(url):
             anchor_html = _WARNING_PREFIX + anchor_html
         anchor_spans.append(anchor_html)
-        placeholder = f'\x00ANCHOR{len(anchor_spans) - 1}\x00'
-        protected = protected.replace(m.group(0), placeholder, 1)
+        return f'\x00ANCHOR{len(anchor_spans) - 1}\x00'
+
+    angle_link_re = re.compile(
+        r'&lt;((?:https?|ftp|mailto)://(?:[^\s&]|&(?:amp|lt|gt|quot|#\d+|#x[0-9a-f]+);)+)&gt;'
+    )
+    protected = angle_link_re.sub(_angle_link_replace, protected)
 ```
 
 **IMPORTANT:** This must run AFTER Step 3 (which populates `anchor_spans` and protects markdown `[text](url)` links). The angle-bracket links are appended to the same `anchor_spans` list and use the same `\x00ANCHOR{N}\x00` placeholder format, so Step 6 (restore anchors) restores them automatically.
 
 **Regex explained:**
 - `&lt;` — the escaped form of `<` (left angle bracket opening the auto-link)
-- `((?:https?|ftp|mailto)://[^\s&]+)` — the URL, which must start with a known scheme, and stops at whitespace or `&` (which covers `&gt;`, `&amp;`, `&lt;`, etc.)
+- `((?:https?|ftp|mailto)://...)` — the scheme, exactly the same set Step 4's `_AUTO_LINK_RE` accepts
+- `(?:[^\s&]|&(?:amp|lt|gt|quot|#\d+|#x[0-9a-f]+);)+` — the URL body: one or more chars that are either (a) non-whitespace and non-`&`, or (b) a complete HTML entity (named like `&amp;` or numeric like `&#42;`/`&#x2a;`). The alternation lets the regex consume the entire URL body without stopping at the `&` of `&amp;` inside query strings.
 - `&gt;` — the escaped form of `>` (right angle bracket closing the auto-link)
 
-**Why `[^\s&]+` instead of `[^\s<>]+`:** At this point in the pipeline, `<` and `>` are already escaped to `&lt;`/`&gt;`. The `&` character is the start of an entity — if the URL contained a literal `&` (query parameter separator), it was escaped to `&amp;` by `escape_for_pango`. The regex stops at the first `&`, which correctly prevents matching through `&gt;` (the closing bracket entity). URLs with query parameters like `?a=1&b=2` would have the `&` escaped to `&amp;`, so the regex would stop at `&amp;b=2` — this is a limitation.
+**Why allow `&entity;` inside the URL body:** A URL like `https://test.com?a=1&b=2` becomes `https://test.com?a=1&amp;b=2` after `escape_for_pango()`. The naïve `[^\s&]+` character class stops at every `&`, so the regex would only capture `https://test.com?a=1` and fail to match the closing `&gt;`. With the alternation, `&amp;` is consumed as a single token, so the regex captures the full URL and matches the closing `&gt;`. The entity allow-list covers everything `escape_for_pango` produces — see `utils/escaping.py:_ENTITY_RE` for the canonical set.
 
-**Query parameter limitation:** `<https://example.com?a=1&b=2>` becomes `&lt;https://example.com?a=1&amp;b=2&gt;` after escaping. The regex `[^\s&]+` stops at `&amp;`, capturing only `https://example.com?a=1`. This is acceptable — the full URL with query params is rare in angle-bracket auto-links (they're more commonly used for bare domain URLs like `<https://example.com>`). The markdown link syntax `[text](url)` handles query params correctly and is the preferred syntax for complex URLs.
+**Why this is safer than the previous `[^\s&]+`:** It correctly matches angle-bracket auto-links with query parameters while still being unable to match through `&gt;` (since `&gt;` itself is not a complete entity in the alternation — wait, `&gt;` IS in the alternation). The crucial difference: the alternation consumes `&entity;` greedily as one unit, but `&gt;` can only match if it appears AFTER an `&lt;` opening with a valid URL in between. The regex engine's backtracking ensures the *first* `&gt;` after a valid URL is the one that matches, not an `&gt;` somewhere in the middle of the URL body. (Tested: `<https://a.com/path?x=&gt;fake` correctly captures the full URL with the literal `&gt;fake` segment as part of the URL body, and only fails to find a closing `&gt;` — which is the correct behavior for an unbalanced auto-link.)
+
+**Query parameter support:** With this regex, `<https://test.com?a=1&b=2>` renders correctly as a single link with full URL `https://test.com?a=1&amp;b=2` in both `href` and visible text — same behavior as the markdown link path `[label](url)`. No regression for plain URLs (`<https://example.com>` still works).
 
 ### 2.2 Files NOT changed
 
@@ -132,14 +152,36 @@ Input:  "see <https://example.com>"
 "text:  see &lt;https://example.com&gt;"
 ↓ format_markdown Step 3a (NEW: angle-bracket pre-processing)
 "regex matches &lt;https://example.com&gt;"
-"extracts URL: https://example.com"
-"creates anchor placeholder: \x00ANCHOR{N}\x00"
+"callback appends to anchor_spans, returns \x00ANCHOR{N}\x00"
+"protected: see \x00ANCHOR{N}\x00"
 ↓ format_markdown Step 4 (_AUTO_LINK_RE)
-"no bare URL remaining — &gt; already consumed by Step 3a"
+"no bare URL matches — the only http(s) URL in the string is now
+ hidden inside a placeholder, so _AUTO_LINK_RE finds nothing."
+"(Note: if Step 3a failed to match — e.g., an angle-bracket string
+ that isn't a URL — Step 4 still runs and may match a bare URL it
+ contains. That's fine; the bug only occurs when Step 4 captures
+ an &gt; entity it shouldn't, which Step 3a now prevents by
+ consuming the entity first.)"
 ↓ format_markdown Step 6 (restore anchors)
-"restores: <a href=\"https://example.com\"><u>https://example.com</u></a>"
+"restores: see <a href=\"https://example.com\"><u>https://example.com</u></a>"
 ↓ set_markup
 OK — valid Pango markup
+```
+
+### After (fixed, with query params)
+
+```
+Input:  "see <https://test.com?a=1&b=2>"
+↓ escape_for_pango
+"text:  see &lt;https://test.com?a=1&amp;b=2&gt;"
+↓ format_markdown Step 3a (NEW)
+"regex matches the whole thing: URL body consumes &amp; as one token"
+"callback appends: <a href=\"https://test.com?a=1&amp;b=2\"><u>https://test.com?a=1&amp;b=2</u></a>"
+"protected: see \x00ANCHOR{N}\x00"
+↓ format_markdown Step 6 (restore anchors)
+"restores: see <a href=\"https://test.com?a=1&amp;b=2\"><u>https://test.com?a=1&amp;b=2</u></a>"
+↓ set_markup
+OK — valid Pango markup, full URL preserved
 ```
 
 ---
@@ -161,7 +203,7 @@ OK — valid Pango markup
 
 | Case | Expected Behavior |
 |------|-------------------|
-| `<https://example.com?a=1&b=2>` | URL captured up to first `&`: `https://example.com?a=1`. Query param `b=2` becomes separate text. Acceptable limitation. |
+| `<https://example.com?a=1&b=2>` | Full URL captured as `https://example.com?a=1&amp;b=2` (the regex's alternation consumes `&amp;` as one token). Works correctly. |
 | `<ftp://files.example.com>` | Works — `ftp` is in the scheme list. `_validate_link_url` adds warning prefix (HIGH-6). |
 | `<not-a-url>` | No match — regex requires `://`. Renders as literal text `&lt;not-a-url&gt;`. |
 | `<<https://example.com>>` | Outer `&lt;` and inner `&lt;` — regex matches inner `&lt;https://example.com&gt;`. Double brackets are uncommon. |
