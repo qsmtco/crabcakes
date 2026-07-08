@@ -378,3 +378,31 @@ class TestAngleBracketAutoLink:
         # Look for &gt not followed by ;
         broken = re.findall(r'&gt(?!;)', result)
         assert not broken, f"Broken entities found: {broken}"
+
+    def test_non_allowlisted_scheme_no_broken_entity(self):
+        """BUG #1: <file:///x> must not produce broken &gt in href."""
+        from utils.escaping import escape_for_pango
+        import re
+        for raw in ["<file:///etc/passwd>", "<ssh://user@host>", "<git://github.com/x>"]:
+            result = format_markdown(escape_for_pango(raw))
+            broken = re.findall(r'&gt(?!;)', result)
+            assert not broken, f"Broken entity for {raw}: {broken}"
+            assert "href=" in result, f"No link created for {raw}"
+
+    def test_uppercase_scheme_no_broken_entity(self):
+        """BUG #4: <HTTPS://example.com> must not produce broken &gt."""
+        from utils.escaping import escape_for_pango
+        import re
+        for raw in ["<HTTPS://example.com>", "<Http://example.com>"]:
+            result = format_markdown(escape_for_pango(raw))
+            broken = re.findall(r'&gt(?!;)', result)
+            assert not broken, f"Broken entity for {raw}: {broken}"
+
+    def test_non_allowlisted_scheme_has_warning(self):
+        """HIGH-6: file:// and ssh:// must have the warning prefix."""
+        from utils.escaping import escape_for_pango
+        for raw in ["<file:///etc/passwd>", "<ssh://user@host>"]:
+            result = format_markdown(escape_for_pango(raw))
+            assert "⚠" in result or "foreground=\"red\"" in result, (
+                f"Missing HIGH-6 warning for {raw}"
+            )
