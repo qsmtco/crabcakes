@@ -233,6 +233,29 @@ def format_markdown(text: str) -> str:
 
     protected = re.sub(r'\[([^\]]+)\]\(((?:[^()]|\([^()]*\))+)\)', _link_replace_and_protect, protected)
 
+    # ── Step 3a: Convert angle-bracket auto-links to anchor placeholders ────
+    # CommonMark/GFM auto-link syntax: <https://example.com>
+    # After escape_for_pango(), this is &lt;https://example.com&gt;
+    # If we let Step 4's auto-link regex run, it would capture &gt; as part
+    # of the URL, and _strip_trailing_punct would then strip the trailing
+    # semicolon from &gt;, producing the invalid entity &gt (Gtk warning).
+    # We pre-process here: extract the URL between the escaped brackets,
+    # build an <a> tag, and protect it with the same \x00ANCHOR{N}\x00
+    # placeholder that Step 3 uses for markdown links — so Step 6 restores
+    # both kinds together.
+    def _angle_link_replace(m):
+        url = m.group(1)
+        anchor_html = f'<a href="{url}"><u>{url}</u></a>'
+        if not _validate_link_url(url):
+            anchor_html = _WARNING_PREFIX + anchor_html
+        anchor_spans.append(anchor_html)
+        return f'\x00ANCHOR{len(anchor_spans) - 1}\x00'
+
+    angle_link_re = re.compile(
+        r'&lt;((?:https?|ftp|mailto)://(?:[^\s&]|&(?:amp|lt|gt|quot|#\d+|#x[0-9a-f]+);)+)&gt;'
+    )
+    protected = angle_link_re.sub(_angle_link_replace, protected)
+
     # ── Step 4: Auto-link bare URLs ──────────────────────────────────────────
     def _auto_link(m):
         url = m.group(1)
