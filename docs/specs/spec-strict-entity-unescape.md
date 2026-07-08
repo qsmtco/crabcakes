@@ -166,11 +166,19 @@ class TestStrictEntityUnescape:
         assert escape_for_pango("it&apos;s") == "it&#x27;s"  # ' re-escaped to &#x27;
 
     def test_malformed_entities_preserved(self):
-        # &name without ; is left as literal text (re-escaped by html.escape)
-        assert "&amp;gt" in escape_for_pango("see &amp;gt here")
-        # Specifically: &gt (no ;) must NOT decode to > (the regression)
+        # &name without ; is left as literal text. The bare & is then
+        # re-escaped by html.escape to &amp;. The whole &amp;name sequence
+        # is preserved as 8 characters — no character is decoded.
+        assert escape_for_pango("see &gt here") == "see &amp;gt here"
+        assert escape_for_pango("see &lt here") == "see &amp;lt here"
+        assert escape_for_pango("see &amp here") == "see &amp;amp here"
+        # The critical regression: &gt (no ;) must NOT decode to a literal >
+        # (which would break the tag-detection regex downstream)
         result = escape_for_pango("see &gt here")
-        assert ">" not in result.replace("&amp;gt", "").replace("&gt;", "").replace("&gt", "").replace("&amp;", "")
+        # The only > characters allowed are inside the re-escaped entities
+        # (&amp;gt → 4 visible chars after Pango rendering, 7 source chars).
+        # No bare > should appear.
+        assert ">" not in result.replace("&amp;gt", "")
 
     def test_buggy_autolink_output_robust(self):
         # The exact failure input from spec-angle-bracket-autolink.md.
