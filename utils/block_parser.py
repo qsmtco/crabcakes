@@ -89,9 +89,8 @@ def _extract_fenced_code_blocks(text: str) -> tuple[list[dict], str]:
             para = para.strip()
             if not para:
                 continue
-            seg = _classify_paragraph(para)
-            if seg:
-                segments.append(seg)
+            segs = _classify_paragraph(para)
+            segments.extend(segs)
         last_end = m.end()
         lang = m.group(2) or ""
         content = m.group(3)
