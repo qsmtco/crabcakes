@@ -26,7 +26,7 @@
 **Existing patterns observed:**
 - `escape_for_pango` is a pure-Python function with no GTK imports (line 5 comment: "no GTK imports"). Easy to unit-test without a display.
 - The `_PANGO_KNOWN_TAGS` frozenset is the canonical allowlist for tags that survive escaping. We can follow the same pattern with a `_PANGO_KNOWN_ENTITIES` frozenset for entities that survive unescape.
-- The attribute-escape regex on line 142 (`&(?![a-zA-Z#0-9]+;)`) is already strict — it only matches `&` not followed by a complete entity reference. The unescape step is the inconsistency.
+- The attribute-escape regex on line 146 (`&(?![a-zA-Z#0-9]+;)`) is already strict — it only matches `&` not followed by a complete entity reference. The unescape step is the inconsistency.
 
 ---
 
@@ -48,7 +48,7 @@ This produces a `Gtk-WARNING: Failed to set text ... Document ended unexpectedly
 
 ### 1.2 Root Cause (verified)
 
-`utils/escaping.py:escape_for_pango()` calls `html.unescape(text)` at line 92, BEFORE the tag-detection loop runs (lines 102-156). Python's stdlib `html.unescape` is **lenient per HTML5 spec**: it decodes named character references like `&gt`, `&lt`, `&amp`, `&copy`, `&nbsp` *even when the trailing semicolon is missing*. (This is the legacy "named character reference" behavior for back-compat with pre-HTML5 markup.)
+`utils/escaping.py:escape_for_pango()` calls `html.unescape(text)` at line 78, BEFORE the tag-detection loop runs (lines 85-156). Python's stdlib `html.unescape` is **lenient per HTML5 spec**: it decodes named character references like `&gt`, `&lt`, `&amp`, `&copy`, `&nbsp` *even when the trailing semicolon is missing*. (This is the legacy "named character reference" behavior for back-compat with pre-HTML5 markup.)
 
 For the input above, the chain is:
 
