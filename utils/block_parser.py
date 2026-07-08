@@ -307,8 +307,4 @@ def _classify_paragraph(para: str) -> list[dict]:
     # Flush any remaining text
     flush_text()
 
-    # If no segments were produced (all plain text), return the paragraph as text
-    if not segments:
-        return [{"type": "text", "content": para}]
-
     return segments
