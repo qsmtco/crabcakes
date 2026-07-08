@@ -365,6 +365,34 @@ class TestMixedContentParagraphs:
         assert result[1]["type"] == "text"
         assert result[2]["type"] == "task"
 
+    def test_heading_then_terminal(self):
+        """## H\n$ echo → [heading, terminal]. Terminal after heading must work."""
+        result = extract_blocks("## H\n$ echo hello")
+        types = [s["type"] for s in result]
+        assert types == ["heading", "terminal"], (
+            f"BUG: $ after heading demoted to text. Got {types}"
+        )
+        assert "echo hello" in result[1]["content"]
+
+    def test_quote_then_terminal(self):
+        """> q\n$ echo → [quote, terminal]."""
+        result = extract_blocks("> q\n$ echo")
+        types = [s["type"] for s in result]
+        assert types == ["quote", "terminal"], f"Got {types}"
+
+    def test_task_then_terminal(self):
+        """- [ ] t\n$ echo → [task, terminal]."""
+        result = extract_blocks("- [ ] t\n$ echo")
+        types = [s["type"] for s in result]
+        assert types == ["task", "terminal"], f"Got {types}"
+
+    def test_text_then_dollar_not_terminal(self):
+        """text\n$ echo → [text]. Dollar in body text must NOT become terminal."""
+        result = extract_blocks("text\n$ echo")
+        types = [s["type"] for s in result]
+        # Dollar after plain text should stay as text (the not text_buf guard)
+        assert "terminal" not in types, f"$ in body text became terminal: {types}"
+
 
 class TestMixedContentRegressions:
     """Ensure existing behavior is preserved after the rewrite."""
