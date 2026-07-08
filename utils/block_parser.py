@@ -62,9 +62,8 @@ def extract_blocks(text: str) -> list[dict]:
         stripped = para.strip()
         if not stripped:
             continue
-        seg = _classify_paragraph(stripped)
-        if seg:
-            segments.append(seg)
+        segs = _classify_paragraph(stripped)
+        segments.extend(segs)
 
     return segments if segments else [{"type": "text", "content": ""}]
 
