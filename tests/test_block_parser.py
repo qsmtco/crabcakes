@@ -195,7 +195,7 @@ class TestHeadingRegex:
         assert result[0]["level"] == 6
         assert result[0]["content"] == "max heading"
 
-    test_seven_hashes_nos_not_heading(self):
+    def test_seven_hashes_not_heading(self):
         """####### too many should NOT be a heading (>6 hashes)."""
         result = extract_blocks("####### too many")
         # Should fall through to text, not heading
