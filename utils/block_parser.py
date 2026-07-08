@@ -190,96 +190,125 @@ def _parse_table(lines: list[str]) -> dict:
 
 def _classify_paragraph(para: str) -> list[dict]:
     """
-    Classify a paragraph into one or more block segments.
+    Classify a paragraph into one or more block segments using an iterative
+    left-to-right line scanner.
 
-    A paragraph is text between blank lines (no internal blank lines).
-    If the first line(s) match a block type (heading, quote, task, terminal),
-    extract them as a typed segment, then recursively classify the remaining
-    lines. This prevents data loss when a heading is followed by body text
-    without a blank-line separator.
+    Walks through lines, accumulating plain-text lines into a buffer. When a
+    line starting a block type (heading, quote, task, terminal) is found, the
+    text buffer is flushed as a text segment, then the block-type line(s) are
+    classified. This prevents data loss when a heading is followed by body
+    text without a blank-line separator, and handles interleaved block types
+    (e.g. heading + body + heading) within a single paragraph.
 
     Returns:
         List of segment dicts (always non-empty for non-empty input).
         Empty input returns [{"type": "text", "content": ""}].
     """
     lines = para.split('\n')
-    first = lines[0].strip()
+    segments: list[dict] = []
+    text_buf: list[str] = []
 
-    # Heading: starts with # (1-6 levels)
-    if first.startswith('#'):
-        m = re.match(r'^(#{1,6})(?!#)(.*)$', first)
-        if m:
-            level = len(m.group(1))
-            rest = m.group(2)
-            if rest.startswith(' ') or rest.startswith('\t'):
-                content = rest[1:]
-            else:
-                content = rest
-            heading_seg = {"type": "heading", "content": content.strip(), "level": level}
-            # Recursively classify remaining lines (the body after the heading)
-            remaining = '\n'.join(lines[1:]).strip()
-            if remaining:
-                return [heading_seg] + _classify_paragraph(remaining)
-            return [heading_seg]
+    def flush_text():
+        """Flush accumulated plain-text lines as a text segment."""
+        if text_buf:
+            segments.append({"type": "text", "content": "\n".join(text_buf)})
+            text_buf.clear()
 
-    # Blockquote: extract contiguous run of lines starting with >
-    quote_lines: list[str] = []
     i = 0
-    while i < len(lines) and lines[i].lstrip().startswith('>'):
-        quote_lines.append(lines[i])
-        i += 1
-    if quote_lines:
-        # Strip > prefixes
-        content_lines = []
-        for line in quote_lines:
-            line = re.sub(r'^>\s?', '', line)
-            content_lines.append(line)
-        quote_seg = {"type": "quote", "content": "\n".join(content_lines).strip()}
-        remaining = '\n'.join(lines[i:]).strip()
-        if remaining:
-            return [quote_seg] + _classify_paragraph(remaining)
-        return [quote_seg]
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
 
-    # Terminal: first non-empty line starts with $ (output lines may follow without $)
-    non_empty = [l for l in lines if l.strip()]
-    if non_empty and non_empty[0].lstrip().startswith('$'):
-        # Terminal absorbs ALL lines (command + output) — no trailing content to split
-        content_lines = []
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith('$'):
-                content_lines.append(stripped[1:].lstrip())
-            else:
-                content_lines.append(stripped)
-        return [{"type": "terminal", "content": "\n".join(content_lines).strip()}]
-
-    # Task list: extract contiguous run of task lines
-    task_line_re = re.compile(r'^\s*-\s*\[[ xX]\]\s+')
-    task_lines: list[str] = []
-    i = 0
-    while i < len(lines) and task_line_re.match(lines[i]):
-        task_lines.append(lines[i])
-        i += 1
-    if task_lines:
-        items = []
-        for line in task_lines:
-            m = re.match(r'^\s*-\s*\[([ xX])\]\s+(.*)', line)
+        # Heading: starts with # (1-6 levels)
+        if stripped.startswith('#'):
+            m = re.match(r'^(#{1,6})(?!#)(.*)$', stripped)
             if m:
-                checked = m.group(1).lower() == 'x'
-                items.append({"content": m.group(2).strip(), "checked": checked})
-        content = "\n".join(
-            f"[{'x' if item['checked'] else ' '}] {item['content']}"
-            for item in items
-        )
-        task_seg = {"type": "task", "content": content}
-        remaining = '\n'.join(lines[i:]).strip()
-        if remaining:
-            return [task_seg] + _classify_paragraph(remaining)
-        return [task_seg]
+                flush_text()
+                level = len(m.group(1))
+                rest = m.group(2)
+                if rest.startswith(' ') or rest.startswith('\t'):
+                    content = rest[1:]
+                else:
+                    content = rest
+                segments.append({"type": "heading", "content": content.strip(), "level": level})
+                i += 1
+                continue
 
-    # Markdown table: at least 2 lines, first has pipes, second is separator
-    if '|' in first and _is_markdown_table(lines):
-        return [_parse_table(lines)]
+        # Blockquote: line starts with > (collect contiguous run)
+        if stripped.startswith('>'):
+            flush_text()
+            quote_lines = []
+            while i < len(lines) and lines[i].lstrip().startswith('>'):
+                quote_lines.append(lines[i])
+                i += 1
+            content_lines = []
+            for ql in quote_lines:
+                ql = re.sub(r'^>\s?', '', ql)
+                content_lines.append(ql)
+            segments.append({"type": "quote", "content": "\n".join(content_lines).strip()})
+            continue
 
-    # Plain text — entire paragraph is one text segment
-    return [{"type": "text", "content": para}]
+        # Terminal: first non-empty line starts with $ (absorbs all remaining lines)
+        if stripped and stripped.startswith('$') and not text_buf and not segments:
+            content_lines = []
+            while i < len(lines):
+                s = lines[i].strip()
+                if s.startswith('$'):
+                    content_lines.append(s[1:].lstrip())
+                else:
+                    content_lines.append(s)
+                i += 1
+            segments.append({"type": "terminal", "content": "\n".join(content_lines).strip()})
+            continue
+
+        # Task list: line starts with - [ ] or - [x] (collect contiguous run)
+        if re.match(r'^\s*-\s*\[[ xX]\]\s+', line):
+            flush_text()
+            task_lines = []
+            while i < len(lines) and re.match(r'^\s*-\s*\[[ xX]\]\s+', lines[i]):
+                task_lines.append(lines[i])
+                i += 1
+            items = []
+            for tl in task_lines:
+                m = re.match(r'^\s*-\s*\[([ xX])\]\s+(.*)', tl)
+                if m:
+                    checked = m.group(1).lower() == 'x'
+                    items.append({"content": m.group(2).strip(), "checked": checked})
+            content = "\n".join(
+                f"[{'x' if item['checked'] else ' '}] {item['content']}"
+                for item in items
+            )
+            segments.append({"type": "task", "content": content})
+            continue
+
+        # Markdown table: requires first line with | and second line separator.
+        # Only check if we're at the start of a potential table (text_buf is empty
+        # or about to be flushed) and there are at least 2 lines remaining.
+        if '|' in stripped and not text_buf and i + 1 < len(lines):
+            remaining_lines = lines[i:]
+            if _is_markdown_table(remaining_lines):
+                flush_text()
+                # Count how many lines belong to the table (until a non-table line
+                # or a line without |). For simplicity, consume all remaining lines
+                # that contain |, plus the separator.
+                table_lines = [remaining_lines[0], remaining_lines[1]]
+                j = 2
+                while j < len(remaining_lines) and '|' in remaining_lines[j]:
+                    table_lines.append(remaining_lines[j])
+                    j += 1
+                segments.append(_parse_table(table_lines))
+                i += j
+                continue
+
+        # Not a block-type line — accumulate as plain text
+        text_buf.append(line)
+        i += 1
+
+    # Flush any remaining text
+    flush_text()
+
+    # If no segments were produced (all plain text), return the paragraph as text
+    if not segments:
+        return [{"type": "text", "content": para}]
+
+    return segments
