@@ -302,6 +302,69 @@ class TestMixedContentParagraphs:
         assert result[1]["type"] == "text"
         assert result[1]["content"] == "plain"
 
+    def test_heading_text_heading_single_paragraph(self):
+        """BUG #1: ## h1\nbody\n## h2 → [heading(h1), text(body), heading(h2)].
+        The second heading must NOT become literal text."""
+        result = extract_blocks("## h1\nbody\n## h2")
+        assert len(result) == 3, f"Expected 3 segments, got {len(result)}: {result}"
+        assert result[0]["type"] == "heading"
+        assert result[0]["content"] == "h1"
+        assert result[1]["type"] == "text"
+        assert result[1]["content"] == "body"
+        assert result[2]["type"] == "heading"
+        assert result[2]["content"] == "h2"
+
+    def test_heading_then_task_then_text(self):
+        """### H\n- [ ] task\nplain → [heading, task, text]."""
+        result = extract_blocks("### H\n- [ ] task\nplain")
+        assert len(result) == 3, f"Expected 3 segments, got {len(result)}: {result}"
+        assert result[0]["type"] == "heading"
+        assert result[1]["type"] == "task"
+        assert "task" in result[1]["content"]
+        assert result[2]["type"] == "text"
+        assert result[2]["content"] == "plain"
+
+    def test_heading_then_multi_task(self):
+        """### H\n- [ ] a\n- [x] b\nplain → [heading, task(2 items), text]."""
+        result = extract_blocks("### H\n- [ ] a\n- [x] b\nplain")
+        assert len(result) == 3
+        assert result[0]["type"] == "heading"
+        assert result[1]["type"] == "task"
+        assert "a" in result[1]["content"]
+        assert "b" in result[1]["content"]
+        assert result[2]["type"] == "text"
+
+    def test_alternating_headings_deep(self):
+        """BUG #2: 50 alternating heading+body pairs must not stack overflow."""
+        parts = []
+        for n in range(50):
+            parts.append(f"## h{n}\nbody{n}")
+        text = "\n".join(parts)
+        result = extract_blocks(text)
+        # Each pair produces 2 segments (heading + text)
+        assert len(result) == 100, f"Expected 100 segments, got {len(result)}"
+        # Spot-check: first and last heading
+        assert result[0]["type"] == "heading"
+        assert result[0]["content"] == "h0"
+        assert result[98]["type"] == "heading"
+        assert result[98]["content"] == "h49"
+
+    def test_quote_then_text_then_quote(self):
+        """> q1\nplain\n> q2 → [quote, text, quote]."""
+        result = extract_blocks("> q1\nplain\n> q2")
+        assert len(result) == 3
+        assert result[0]["type"] == "quote"
+        assert result[1]["type"] == "text"
+        assert result[2]["type"] == "quote"
+
+    def test_task_then_text_then_task(self):
+        """- [ ] a\nplain\n- [x] b → [task, text, task]."""
+        result = extract_blocks("- [ ] a\nplain\n- [x] b")
+        assert len(result) == 3
+        assert result[0]["type"] == "task"
+        assert result[1]["type"] == "text"
+        assert result[2]["type"] == "task"
+
 
 class TestMixedContentRegressions:
     """Ensure existing behavior is preserved after the rewrite."""
