@@ -92,7 +92,7 @@ class TestEscapeForPango:
 
     def test_double_closing_escaped(self):
         result = escape_for_pango("</b></b>")
-        assert result.count("<") == 0 or result.count("<") >= 2
+        assert result.count("<") >= 2
 
     def test_incomplete_open_tag_preserved(self):
         result = escape_for_pango("<b")
@@ -114,14 +114,14 @@ class TestEscapeForPango:
 
     def test_only_tag_characters(self):
         result = escape_for_pango("<<>>")
-        assert "<" not in result or "<" in result
+        assert "<" in result
 
     def test_multiple_ampersands(self):
         assert escape_for_pango("a & b & c") == "a & b & c"
 
     def test_trailing_lt_escaped(self):
         result = escape_for_pango("text <")
-        assert result.endswith("<") or result.endswith("&lt")
+        assert result.endswith("<")
 
     # Orphan tag sweep (NEW tests)
     def test_orphan_a_tag_escaped(self):
