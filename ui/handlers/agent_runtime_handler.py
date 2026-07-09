@@ -1250,6 +1250,10 @@ class AgentRuntimeHandler:
 
     def _on_error(self, session_key: str, message: str) -> None:
         """AgentRuntime error callback. Show error bubble."""
+        if isinstance(message, BaseException):
+            self._last_error_exception[session_key] = message
+        else:
+            self._last_error_exception[session_key] = None
         if self._GLib is not None:
             self._GLib.idle_add(self._do_error, session_key, message)
         else:
