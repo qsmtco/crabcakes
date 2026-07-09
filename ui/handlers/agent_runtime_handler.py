@@ -1287,6 +1287,14 @@ class AgentRuntimeHandler:
         """Main-thread portion of _on_error."""
         logger.debug("[handler] _do_error: sk=%s msg=%s", session_key, message)
         self._streaming_text.pop(session_key, None)
+        # When the runtime passes a raw exception object (not a string),
+        # translate it to a user-friendly message for display while keeping
+        # the exception stored in _last_error_exception for context enrichment.
+        if isinstance(message, BaseException):
+            from agent.runtime import _friendly_error_message
+            display_msg = _friendly_error_message(message)
+        else:
+            display_msg = str(message)
         # Resolve agent display name from the local registry so the error
         # bubble header shows "Coder" / "Debugger" / etc. instead of "Agent".
         # Mirrors the resolution in _do_response_complete.
@@ -1296,7 +1304,7 @@ class AgentRuntimeHandler:
             self._crh.end_streaming(session_key, agent_name=resolved_name)
             chat_box = self._resolve_chat_box(session_key)
             if chat_box is not None:
-                rendered = f"[Error] {message}"
+                rendered = f"[Error] {display_msg}"
                 try:
                     exc_obj = self._last_error_exception.get(session_key)
                     if exc_obj is not None:
