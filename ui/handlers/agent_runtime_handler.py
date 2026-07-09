@@ -1296,8 +1296,17 @@ class AgentRuntimeHandler:
             self._crh.end_streaming(session_key, agent_name=resolved_name)
             chat_box = self._resolve_chat_box(session_key)
             if chat_box is not None:
+                rendered = f"[Error] {message}"
+                try:
+                    exc_obj = self._last_error_exception.get(session_key)
+                    if exc_obj is not None:
+                        ctx = getattr(exc_obj, "_crabcakes_context", None)
+                        if ctx:
+                            rendered += f"\nProvider: {ctx.get('provider')} | Model: {ctx.get('model')}"
+                except Exception:
+                    pass
                 bubble = self._crh.render_sync(
-                    "Agent", f"[Error] {message}", session_key, agent_name=resolved_name or "Agent"
+                    "Agent", rendered, session_key, agent_name=resolved_name or "Agent"
                 )
                 if bubble is not None:
                     chat_box.append(bubble)
