@@ -2606,17 +2606,25 @@ class AgentRuntime:
             logger.debug("[call-llm] sk=%s streaming=True provider=%s model=%s msg_count=%d",
                          session_key, provider_name, model, len(messages))
             caller_key = self._resolve_caller_key(provider_cfg, model)
-            return self._call_llm_streaming(
-                session_key=session_key,
-                base_url=provider_cfg.base_url,
-                api_key=effective_api_key,
-                model=model,
-                caller_key=caller_key,
-                messages=messages,
-                tools=tools if tools else None,
-                timeout=float(self._config.tool_timeout_seconds),
-                x_title=x_title,
-            )
+            try:
+                return self._call_llm_streaming(
+                    session_key=session_key,
+                    base_url=provider_cfg.base_url,
+                    api_key=effective_api_key,
+                    model=model,
+                    caller_key=caller_key,
+                    messages=messages,
+                    tools=tools if tools else None,
+                    timeout=float(self._config.tool_timeout_seconds),
+                    x_title=x_title,
+                )
+            except (IndexError, KeyError, TypeError, ValueError) as e:
+                e._crabcakes_context = {
+                    "provider": caller_key,
+                    "model": model,
+                    "exception_type": type(e).__name__,
+                }
+                raise
 
         caller_key = self._resolve_caller_key(provider_cfg, model)
         caller = _PROVIDER_CALLERS.get(caller_key)
