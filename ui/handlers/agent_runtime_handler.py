@@ -102,6 +102,9 @@ class AgentRuntimeHandler:
         # Per-session token usage cache: session_key → (total_tokens, total_cost)
         # Populated by _on_token_usage, read by get_session_usage().
         self._session_usage: dict[str, tuple[int, float]] = {}
+        # SSE hardening Phase 1: capture exception objects from _on_error
+        # so _do_error can enrich the displayed message with provider/model context.
+        self._last_error_exception: dict[str, "BaseException | None"] = {}
 
         # Ensure KB provider is registered, then start KB HTTP server if KB index is available
         try:
