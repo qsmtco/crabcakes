@@ -24,6 +24,7 @@ class TestXmlEscapeText:
         assert xml_escape_text('say "hi"') == 'say "hi"'
 
     def test_single_quote_apostrophe(self):
+        # html.escape uses ' for single quotes by default
         assert xml_escape_text("it's") == "it's"
 
     def test_mixed(self):
@@ -87,11 +88,11 @@ class TestEscapeForPango:
 
     def test_wrong_closing_tag_escaped(self):
         result = escape_for_pango("<b>text</i>")
-        assert "</i>" in result or "</i>" not in result
+        assert "</i>" not in result or "</i>" in result
 
     def test_double_closing_escaped(self):
         result = escape_for_pango("</b></b>")
-        assert result.count("<") >= 2 or result.count("<") == 0
+        assert result.count("<") >= 2
 
     def test_incomplete_open_tag_preserved(self):
         result = escape_for_pango("<b")
@@ -120,18 +121,18 @@ class TestEscapeForPango:
 
     def test_trailing_lt_escaped(self):
         result = escape_for_pango("text <")
-        assert result.endswith("<") or result.endswith("&lt")
+        assert result.endswith("<")
 
     # Orphan tag sweep (NEW tests)
     def test_orphan_a_tag_escaped(self):
         result = escape_for_pango('renders <a href="..."> tags')
         assert '<a ' not in result
-        assert '<a' in result or '<a href' in result
+        assert '<a' in result
 
     def test_orphan_b_tag_escaped(self):
         result = escape_for_pango('<b>bold')
         assert '<b>' not in result
-        assert '<b>' in result or '<b' in result
+        assert '<b>' in result
 
     def test_valid_tag_pair_preserved(self):
         assert escape_for_pango('<b>bold</b>') == '<b>bold</b>'
@@ -146,7 +147,7 @@ class TestEscapeForPango:
     def test_grep_output_with_a_tag(self):
         result = escape_for_pango('# \u2190 renders <a href="..."> tags')
         assert '<a ' not in result
-        assert '<a' in result or '<a href' in result
+        assert '<a' in result
 
     def test_no_orphan_when_all_closed(self):
         result = escape_for_pango('<b>one</b> <i>two</i>')
