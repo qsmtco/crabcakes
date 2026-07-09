@@ -471,7 +471,7 @@ Verified: `logger` is already imported at line 67 (module-level).
 Truncating at 200 bytes matches the existing truncation discipline
 in `_friendly_error_message`. No public signature change.
 
-#### 2.1.7 Update docstring of `_parse_sse_delta` (line 506-518)
+#### 2.1.7b Update docstring of `_parse_sse_delta` (line 506-518)
 
 After (only the docstring changed):
 ```python
@@ -493,7 +493,7 @@ def _parse_sse_delta(d: dict) -> list[SSEEvent]:
     """
 ```
 
-### 2.2 `tests/test_agent_runtime.py`
+### 2.3 `tests/test_agent_runtime.py`
 
 Add a new test class `TestSSEFrameShapeHardening` immediately after the
 existing streaming test classes (search for the test that currently ends
@@ -654,7 +654,7 @@ class TestSSEFrameShapeHardening:
         assert events[-1].type == "done"
 ```
 
-### 2.3 Files NOT changed (already correct)
+### 2.4 Files NOT changed (already correct)
 
 - `_extract_tool_calls` (1149), `_extract_text_content` (1187),
   `_extract_usage` (1206) — non-streaming path already uses
