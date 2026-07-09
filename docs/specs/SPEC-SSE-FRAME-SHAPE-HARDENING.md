@@ -340,10 +340,136 @@ should attach context. After:
 ```
 
 **Verified:** `e._crabcakes_context` is a free-form attribute Python allows;
-the downstream `ui.handlers.agent_runtime_handler._do_error` is out of
-scope for this spec but already receives `str(exc)` — it can be enhanced
-in a follow-up to read this attribute. For THIS spec, the augmented
-exception at least appears in the logger.error output with model+provider.
+the downstream `ui.handlers.agent_runtime_handler._do_error` reads this
+attribute via the small UI-side change in §2.1.8 below.
+
+### 2.1.7 Surface `e._crabcakes_context` in chat bubbles (UI-side, ~15 lines)
+
+`ui/handlers/agent_runtime_handler.py:1279-1310` (`_do_error`) currently
+renders the error as `f"[Error] {message}"` with no model/provider info.
+Read the model's name (when available) from the augmented exception and
+append it. Only changes the bubble TEXT — no behavior, no schema, no
+public API.
+
+Before:
+```python
+    def _do_error(self, session_key: str, message: str) -> None:
+        ...
+        bubble = self._crh.render_sync(
+            "Agent", f"[Error] {message}", session_key, agent_name=resolved_name or "Agent"
+        )
+```
+
+After:
+```python
+    def _do_error(self, session_key: str, message: str) -> None:
+        ...
+        # If the runtime attached a _crabcakes_context (e.g. from
+        # _call_llm_streaming), surface provider/model so the user
+        # can identify which model produced the malformed response.
+        # See SPEC-SSE-FRAME-SHAPE-HARDENING.md §2.1.6/§2.1.7.
+        rendered = f"[Error] {message}"
+        try:
+            # `message` may be a raw string OR an Exception instance;
+            # the runtime sometimes passes str(exc), sometimes the exc.
+            exc_obj = self._last_error_exception.get(session_key)
+            if exc_obj is not None:
+                ctx = getattr(exc_obj, "_crabcakes_context", None)
+                if ctx:
+                    rendered += f"\nProvider: {ctx.get('provider')} | Model: {ctx.get('model')}"
+        except Exception:
+            # never let an enrichment bug break the error path
+            pass
+        bubble = self._crh.render_sync(
+            "Agent", rendered, session_key, agent_name=resolved_name or "Agent"
+        )
+```
+
+And add to `_on_error`:
+```python
+    def _on_error(self, session_key: str, message: str) -> None:
+        """AgentRuntime error callback. Show error bubble."""
+        # Track the original exception (if any) so _do_error can enrich
+        # the bubble. The runtime contract: if message is an Exception,
+        # store it; otherwise store None.
+        if isinstance(message, BaseException):
+            self._last_error_exception[session_key] = message
+        else:
+            self._last_error_exception[session_key] = None
+        if self._GLib is not None:
+            self._GLib.idle_add(self._do_error, session_key, message)
+        else:
+            self._do_error(session_key, message)
+```
+
+And in `__init__`:
+```python
+        self._last_error_exception: dict[str, BaseException | None] = {}
+```
+
+### 2.1.7a Log malformed SSE frames instead of swallowing them silently
+
+`_parse_sse_line` at line 487-503 silently returns `None` for any line
+that fails JSON/UTF-8 decoding. Today there is no signal at all — the
+frame vanishes and the stream appears to stall or end prematurely.
+
+Before:
+```python
+def _parse_sse_line(line: bytes) -> SSEEvent | None:
+    """Parse one SSE line into an SSEEvent. Returns None for non-data lines."""
+    line = line.strip()
+    if not line or line.startswith(b":"):
+        return None
+    if line.startswith(b"data: "):
+        data = line[6:]
+    elif line.startswith(b"data:"):
+        data = line[5:].lstrip()
+    else:
+        return None
+    if data == b"[DONE]" or data == b"DONE":
+        return SSEEvent(type="done", data={})
+    try:
+        return SSEEvent(type="raw", data=json.loads(data.decode("utf-8")))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+```
+
+After:
+```python
+def _parse_sse_line(line: bytes) -> SSEEvent | None:
+    """Parse one SSE line into an SSEEvent. Returns None for non-data lines.
+
+    Malformed frames are logged at DEBUG level so a regression in
+    provider behavior is visible in the runtime log without changing
+    stream behavior. See SPEC-SSE-FRAME-SHAPE-HARDENING.md §2.1.7a.
+    """
+    line = line.strip()
+    if not line or line.startswith(b":"):
+        return None
+    if line.startswith(b"data: "):
+        data = line[6:]
+    elif line.startswith(b"data:"):
+        data = line[5:].lstrip()
+    else:
+        return None
+    if data == b"[DONE]" or data == b"DONE":
+        return SSEEvent(type="done", data={})
+    try:
+        return SSEEvent(type="raw", data=json.loads(data.decode("utf-8")))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        # Truncate to 200 bytes to keep the log readable. Log the exception
+        # type + a short snippet so we can tell UTF-8 errors from JSON errors.
+        logger.debug(
+            "[sse-line] drop malformed frame (%s): %r",
+            type(e).__name__,
+            line[:200],
+        )
+        return None
+```
+
+Verified: `logger` is already imported at line 67 (module-level).
+Truncating at 200 bytes matches the existing truncation discipline
+in `_friendly_error_message`. No public signature change.
 
 #### 2.1.7 Update docstring of `_parse_sse_delta` (line 506-518)
 
