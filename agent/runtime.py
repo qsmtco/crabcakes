@@ -1001,17 +1001,19 @@ def _stream_minimax_events(
                     return
                 if ev.type == "raw":
                     d = ev.data
-                    # W11: text + tool_call deltas are shared with _stream_openai_events
-                    for out_ev in _parse_sse_delta(d):
-                        yield out_ev
-                    finish_reason = d.get("choices", [{}])[0].get("finish_reason")
-                    if finish_reason in ("stop", "tool_calls", "length"):
-                        # Phase CB-3: capture usage before signaling done.
-                        usage = d.get("usage")
-                        if usage:
-                            yield SSEEvent(type="usage", data={"usage": usage})
-                        yield SSEEvent(type="done", data={})
-                        return
+                    choice = _first_choice(d)
+                    if choice:
+                        # W11: text + tool_call deltas are shared with _stream_openai_events
+                        for out_ev in _parse_sse_delta(d):
+                            yield out_ev
+                        finish_reason = choice.get("finish_reason")
+                        if finish_reason in ("stop", "tool_calls", "length"):
+                            # Phase CB-3: capture usage before signaling done.
+                            usage = d.get("usage")
+                            if usage:
+                                yield SSEEvent(type="usage", data={"usage": usage})
+                            yield SSEEvent(type="done", data={})
+                            return
 
         for line in _sse_lines(resp):
             ev = _parse_sse_line(line)
