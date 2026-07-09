@@ -162,8 +162,11 @@ def format_markdown(text: str) -> str:
                 continue
             # Fenced code block opener ( ``` lang or just ``` ) — protect the whole block.
             # Check for 3+ backticks followed by (newline or non-backtick char = fenced block opener).
-            # If followed by another backtick = could be inline multi-backtick span, let parser handle.
-            if (chunk.startswith('```') or chunk.startswith('``') or chunk.startswith('`')) \
+            # Fenced block opener: 3+ backticks followed by (newline OR non-backtick).
+            # Single backtick (`) or double backtick (``) is INLINE code — let _parse_code_span
+            # handle it. Only 3+ backticks start a fenced block.
+            # Also: ``\\n\\'\\`` is NOT a fenced block opener (lang=quote isn't a thing).
+            if (chunk.startswith('```')) \
                     and len(chunk) >= 4 and chunk[3] not in ('`', "'"):
                 # This looks like a fenced block opener (``` or ```` etc).
                 # Find the matching closing fence.
