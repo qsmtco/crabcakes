@@ -406,3 +406,80 @@ class TestAngleBracketAutoLink:
             assert "⚠" in result or "foreground=\"red\"" in result, (
                 f"Missing HIGH-6 warning for {raw}"
             )
+
+
+class TestFencedVsInlineBacktickRegression:
+    """Regression: inline `` `<tt>` `` followed by ``` fenced block was being
+    eaten by the fenced-block detector as if a single backtick started a fence.
+
+    Symptom: format_markdown output an UNBALANCED <tt> tag, causing Pango to emit
+    "Failed to set text: ... Element 'markup' was closed, but the currently open
+    element is 'tt'".
+
+    Root cause: utils/markdown.py:_collect_code_spans used to match single
+    backticks as fenced-block openers. Fixed by only matching 3+ backticks.
+    """
+
+    def test_inline_bt_followed_by_fenced_block_does_not_eat_block(self):
+        """`` `<tt>` `` followed by ```bash block must both be handled."""
+        content = "Use `<tt>` for code:\n\n```bash\necho hi\n```\n\nEnd"
+        escaped = escape_for_pango(content)
+        result = format_markdown(escaped)
+        # Inline literal `<tt>` becomes <tt>&lt;tt&gt;</tt>
+        assert "<tt>&lt;tt&gt;</tt>" in result, (
+            f"inline `<tt>` not properly escaped: {result!r}"
+        )
+        # Code block preserved
+        assert "echo hi" in result
+        # Balanced
+        assert result.count("<tt>") == result.count("</tt>"), (
+            f"Unbalanced <tt>: open={result.count('<tt>')}, close={result.count('</tt>')}"
+        )
+
+    def test_inline_underscores_then_fenced_block(self):
+        content = "Math: `x*y`\n\n```\nx*y\n```"
+        result = format_markdown(content)
+        assert result.count("<tt>") == result.count("</tt>")
+        assert "<tt>x*y</tt>" in result
+
+    def test_two_inline_bt_then_fenced_block(self):
+        content = "Use `<b>` and `<tt>` then:\n\n```\nraw code\n```"
+        result = format_markdown(content)
+        assert result.count("<tt>") == result.count("</tt>"), (
+            f"Got: open={result.count('<tt>')}, close={result.count('</tt>')}"
+        )
+
+    def test_exact_user_failure_content_renders(self):
+        """The exact message that triggered Gtk-WARNING on the user's machine."""
+        content = (
+            "Specifically, `&quot;` is being preserved by strict unescape "
+            "(it's in the allowlist and has a semicolon, so it decodes to `\"`, "
+            "but then the code block formatting wraps it in `<tt>` tags and the `\"` "
+            "characters inside code blocks interact badly with the attribute escaping).\n\n"
+            "Run this:\n\n```bash\nrm ~/.config/file\n```\n\nEnd"
+        )
+        escaped = escape_for_pango(content)
+        result = format_markdown(escaped)
+        assert result.count("<tt>") == result.count("</tt>"), (
+            f"Unbalanced <tt>: {result.count('<tt>')}/{result.count('</tt>')}"
+        )
+        assert "<tt>&lt;tt&gt;</tt>" in result
+
+    def test_markup_passes_pango_validation(self):
+        """Verifies the output markup is valid Pango XML (no Gtk-WARNING)."""
+        import gi
+        gi.require_version("Gtk", "4.0")
+        from gi.repository import Gtk
+
+        content = (
+            "Use `<tt>` literal text and code:\n\n"
+            "```bash\n"
+            "echo `hello`\n"
+            "```\n"
+            "\nEnd of message with `<span foreground=\"red\">` literal mention."
+        )
+        escaped = escape_for_pango(content)
+        result = format_markdown(escaped)
+        # Should not raise / emit "Failed to set text" Gtk-WARNING
+        label = Gtk.Label()
+        label.set_markup(result)
