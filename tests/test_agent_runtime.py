@@ -3075,3 +3075,90 @@ class TestAllowedToolsFallback:
 
         # Stays None — the gate is skipped, same as before the fallback
         assert conv.allowed_tools is None
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  SSE Frame-Shape Hardening (Phase 1)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestSSEFrameShapeHardening:
+    """Phase 1 hardening: _first_choice helper + _parse_sse_delta safety
+    against empty-choices frames (OpenAI trailing usage, keepalive, etc.)."""
+
+    def test_first_choice_normal_frame(self):
+        """Normal delta frame: choices[0] is returned."""
+        from agent.runtime import _first_choice
+        result = _first_choice({"choices": [{"delta": {"content": "hi"}}]})
+        assert result == {"delta": {"content": "hi"}}
+
+    def test_first_choice_empty_choices_with_usage(self):
+        """OpenAI trailing usage frame: choices is [], should return {}."""
+        from agent.runtime import _first_choice
+        result = _first_choice({"choices": [], "usage": {"total_tokens": 42}})
+        assert result == {}
+
+    def test_first_choice_no_choices_key(self):
+        """Keepalive frame: no choices key at all, should return {}."""
+        from agent.runtime import _first_choice
+        assert _first_choice({}) == {}
+
+    def test_first_choice_only_usage(self):
+        """Usage-only frame: {"usage": {...}}, no choices."""
+        from agent.runtime import _first_choice
+        assert _first_choice({"usage": {"prompt_tokens": 10}}) == {}
+
+    def test_parse_sse_delta_empty_choices_no_crash(self):
+        """_parse_sse_delta must not crash on empty choices (the original bug)."""
+        from agent.runtime import _parse_sse_delta
+        result = _parse_sse_delta({"choices": [], "usage": {"total_tokens": 42}})
+        assert result == []
+
+    def test_parse_sse_delta_no_choices_key_no_crash(self):
+        """_parse_sse_delta must not crash when choices key is absent."""
+        from agent.runtime import _parse_sse_delta
+        assert _parse_sse_delta({}) == []
+
+    def test_parse_sse_delta_normal_text_delta(self):
+        """Normal text delta still works after hardening."""
+        from agent.runtime import _parse_sse_delta
+        events = _parse_sse_delta(
+            {"choices": [{"delta": {"content": "hello"}}]}
+        )
+        assert len(events) == 1
+        assert events[0].type == "text_delta"
+        assert events[0].data["content"] == "hello"
+
+    def test_parse_sse_delta_tool_call_delta(self):
+        """Tool call deltas still work after hardening."""
+        from agent.runtime import _parse_sse_delta
+        events = _parse_sse_delta(
+            {"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "id": "call_1",
+                 "function": {"name": "read_file", "arguments": "{\"path\":\"a.py\"}"}}
+            ]}}]}
+        )
+        assert len(events) == 1
+        assert events[0].type == "tool_call_delta"
+        assert events[0].data["name"] == "read_file"
+        assert events[0].data["id"] == "call_1"
+
+    def test_no_unguarded_choices_zero_indexing(self):
+        """Regression: no remaining d.get('choices', [{}])[0] patterns."""
+        import subprocess
+        result = subprocess.run(
+            ["grep", "-n", 'd\.get("choices", [{}])[0]', "agent/runtime.py"],
+            capture_output=True, text=True, cwd="/home/q/projects/crabcakes",
+        )
+        assert result.stdout == "", (
+            f"Unguarded [0] indexing found:\n{result.stdout}"
+        )
+
+    def test_first_choice_used_at_all_three_sites(self):
+        """_first_choice should appear 4 times: 1 def + 3 call sites."""
+        import subprocess
+        result = subprocess.run(
+            ["grep", "-c", "_first_choice", "agent/runtime.py"],
+            capture_output=True, text=True, cwd="/home/q/projects/crabcakes",
+        )
+        count = int(result.stdout.strip())
+        assert count >= 4, f"Expected >= 4 _first_choice references, got {count}"
