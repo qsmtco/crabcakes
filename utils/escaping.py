@@ -205,7 +205,26 @@ def escape_for_pango(text: str) -> str:
             result.append("&lt;")
             i += 1
 
-    return "".join(result)
+    # ── Orphan tag sweep ───────────────────────────────────────────────────
+    # After the main loop, any tags still on the open_tags stack were opened
+    # but never closed. These are orphan tags — plain text that looked like a
+    # Pango tag (e.g. grep output containing <a href="...">). Pango would
+    # reject an unclosed opening tag, so we escape orphan tags back to literal
+    # text.
+    output = "".join(result)
+    for tag_name in reversed(open_tags):
+        tag_pattern = re.compile(
+            r'<' + re.escape(tag_name) + r'(?:\s[^>]*)?>',
+            re.IGNORECASE
+        )
+        matches = list(tag_pattern.finditer(output))
+        if matches:
+            last_match = matches[-1]
+            original = last_match.group(0)
+            escaped = html.escape(original)
+            output = output[:last_match.start()] + escaped + output[last_match.end():]
+
+    return output
 
 
 def xml_escape_text(text: str) -> str:
