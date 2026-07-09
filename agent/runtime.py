@@ -917,12 +917,14 @@ def _stream_openai_events(
             if ev.type != "raw":
                 continue
             d = ev.data
-            # W11: text + tool_call deltas are shared with _stream_minimax_events
-            for out_ev in _parse_sse_delta(d):
-                yield out_ev
-            # OpenAI-compatible providers emit a usage chunk at the end of the stream,
-            # typically in a frame with empty choices. Capture and forward it.
-            # See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.1.1 (BUG #3 fix).
+            # Gate on choices presence — skip delta extraction on empty-choices
+            # frames (OpenAI trailing usage, OpenRouter keepalive).
+            choice = _first_choice(d)
+            if choice:
+                # W11: text + tool_call deltas are shared with _stream_minimax_events
+                for out_ev in _parse_sse_delta(d):
+                    yield out_ev
+            # Capture usage regardless (some frames have both choices and usage)
             usage = d.get("usage")
             if usage:
                 yield SSEEvent(type="usage", data={"usage": usage})
