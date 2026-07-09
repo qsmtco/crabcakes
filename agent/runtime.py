@@ -2471,8 +2471,7 @@ class AgentRuntime:
 
         except Exception as e:
             logger.exception("Error in tool loop for %s", session_key)
-            msg = _friendly_error_message(e)
-            self._dispatch(self._on_error, session_key, msg)
+            self._dispatch(self._on_error, session_key, e)
 
     def _dispatch_approval(self, session_key: str, tool_name: str, args: dict) -> bool | None:
         """
