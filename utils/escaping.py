@@ -119,7 +119,7 @@ def escape_for_pango(text: str) -> str:
     # Decode HTML entities that LLMs sometimes emit (&quot;, &amp;, &lt;, etc.)
     # before processing. Without this, html.escape() below would double-encode
     # them (e.g. &quot; → &amp;quot;) and they'd appear as raw text in bubbles.
-    text = html.unescape(text)
+    text = _strict_unescape(text)
 
     result: list[str] = []
     i = 0
