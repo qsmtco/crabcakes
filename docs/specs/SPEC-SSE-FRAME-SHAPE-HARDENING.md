@@ -820,7 +820,8 @@ Total: ~185 lines, all in one module, all in one test class.
 10. **Add `TestSSEFrameShapeHardening` class** to `tests/test_agent_runtime.py`.
     Verify: new tests pass.
 11. **Run full test suite** for `tests/test_agent_runtime.py`,
-    `tests/test_streaming.py`, and
+    `tests/test_streaming.py`, and any UI handler tests that exercise
+    `_do_error`. Verify: 0 failures, 0 new warnings.
 
 ---
 
