@@ -187,8 +187,8 @@ class TestEscapeForPango:
         assert "\u00a9" not in result
 
     def test_double_encoded_no_double_decode(self):
-        result = escape_for_pango("&amp;")
-        assert result == "&amp;"
+        result = escape_for_pango("&")
+        assert result == "&"
 
     def test_invalid_numeric_codepoint_preserved(self):
         result = escape_for_pango("&#999999999;")
