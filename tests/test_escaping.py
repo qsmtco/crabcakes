@@ -70,4 +70,4 @@ class TestEscapeForPango:
         assert escape_for_pango("<u>underlined</u>") == "<u>underlined</u>"
 
     def test_strikethrough_tag_preserved(self):
-        assert escape_for_pango("<s>strikethrough
+        assert escape_for_pango("
