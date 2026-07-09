@@ -806,10 +806,21 @@ Total: ~185 lines, all in one module, all in one test class.
 5. **Patch `_call_llm_streaming` exception path** to attach
    `e._crabcakes_context`. Verify: no regression in existing tests.
 6. **Update `_parse_sse_delta` docstring** to reference this spec.
-7. **Add `TestSSEFrameShapeHardening` class** to `tests/test_agent_runtime.py`.
-   Verify: new tests pass.
-8. **Run full test suite** for `tests/test_agent_runtime.py` and
-   `tests/test_streaming.py`. Verify: 0 failures, 0 new warnings.
+7. **Patch `_parse_sse_line` line 487-503** to log malformed frames at DEBUG
+   (with truncated bytes). Verify: existing SSE line tests pass; log
+   messages appear when malformed frames are fed.
+8. **Patch `_stream_with_ssl_retry` (3 except branches)** to append a
+   diagnostic phrase about partial-usage-loss. Verify: string-only
+   change, no test changes expected.
+9. **Patch `ui/handlers/agent_runtime_handler.py`** to add
+   `_last_error_exception` dict in `__init__`, capture the exception
+   in `_on_error`, and render `Provider: X | Model: Y` in `_do_error`
+   when `_crabcakes_context` is set. Verify: existing UI handler tests
+   pass; new test for the enrichment path passes.
+10. **Add `TestSSEFrameShapeHardening` class** to `tests/test_agent_runtime.py`.
+    Verify: new tests pass.
+11. **Run full test suite** for `tests/test_agent_runtime.py`,
+    `tests/test_streaming.py`, and
 
 ---
 
