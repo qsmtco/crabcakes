@@ -21,7 +21,7 @@ class TestXmlEscapeText:
         assert xml_escape_text("a > b") == "a > b"
 
     def test_double_quotes_escaped(self):
-        assert xml_escape_text('say "hi"') == "say "hi""
+        assert xml_escape_text('say "hi"') == "say \"hi\""
 
     def test_single_quote_apostrophe(self):
         # html.escape uses ' for single quotes by default
@@ -29,7 +29,7 @@ class TestXmlEscapeText:
 
     def test_mixed(self):
         assert xml_escape_text("Tom & Jerry <script> \"hi\"") == (
-            "Tom & Jerry <script> "hi""
+            "Tom & Jerry <script> \"hi\""
         )
 
     def test_empty_string(self):
