@@ -804,17 +804,24 @@ Total: ~185 lines, all in one module, all in one test class.
 | Provider error during SSL retry | `_stream_with_ssl_retry` handles SSL/OSError as today; IndexError is now caught by the `_call_llm_streaming` context annotation and re-raised |
 | Provider returns HTTP 200 with non-JSON garbage | `_parse_sse_line` returns None for non-data lines; JSONDecodeError caught and logged — unchanged |
 
-### 7.1 Out-of-scope adjacent bugs (audit findings, not fixed here)
+### 7.1 Adjacent bugs and their dispositions
 
-These are documented so the implementer doesn't wonder "should I also
-fix this?" Answer: no, separate spec.
+The audit surfaced four adjacent bugs. Two are now rolled into this spec;
+one gets a separate spec delivered alongside; one stays out of scope.
 
-| Bug | Location | Severity | Why out of scope |
+| Bug | Location | Disposition | Where addressed |
 |---|---|---|---|
-| `_stream_with_ssl_retry` re-issues with same messages including accumulated-but-not-flushed tool_call deltas | `agent/runtime.py:750-845` | Medium | Different bug class (network resilience vs. malformed frame). Needs its own spec. The retry correctly suppresses when text has already streamed; the "re-issue with same partial state" issue is acceptable for now. |
-| `_do_error` surfaces bare `str(exc)` to chat bubble | `ui/handlers/agent_runtime_handler.py` | Low | UI-side; this spec adds `e._crabcakes_context` so a follow-up UI spec can pick it up cleanly. |
-| `_parse_sse_line` swallows all JSONDecodeError silently | `agent/runtime.py:487-503` | Low | Could mask provider protocol changes; but the alternative (crashing) is worse. |
-| `conv.fallback_provider` retry on non-streaming path doesn't preserve streaming state | `agent/runtime.py:2267` | Low | Non-streaming fallback works correctly; streaming fallback is by design un-tried. |
+| `_stream_with_ssl_retry` re-issues after SSL drop, loses partial usage | `agent/runtime.py:750-845` (wrapper) and `_call_llm_streaming` accumulator at 2652, 2693 | **Separate spec, delivered alongside** | `docs/specs/SPEC-SSL-RETRY-USAGE-FIDELITY.md` |
+| `_do_error` surfaces bare `str(exc)` to chat bubble | `ui/handlers/agent_runtime_handler.py:1279` | **Now in scope** | §2.1.7 above (UI enrichment from `e._crabcakes_context`) |
+| `_parse_sse_line` swallows JSON/UTF-8 decode errors silently | `agent/runtime.py:487-503` | **Now in scope (logging only, no behavior change)** | §2.1.7a above (`logger.debug` with truncated frame) |
+| `conv.fallback_provider` retry on non-streaming path doesn't preserve streaming state | `agent/runtime.py:2267` | Out of scope | Non-streaming fallback works correctly; streaming fallback is by design un-tried. |
+
+Note: the SSL retry entry above was refined during the audit. The actual
+data-loss is in usage accounting (the post-retry `captured_usage = usage_data`
+assignment on line 2693 overwrites whatever was seen in the prior partial
+stream), not in tool_call state (the accumulator's `first-write-wins`
+keying by tool-call index already handles re-emission cleanly). See the
+new spec for the full analysis.
 
 ---
 
