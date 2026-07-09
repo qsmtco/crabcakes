@@ -3,6 +3,7 @@
 
 import pytest
 from utils.markdown import format_markdown
+from utils.escaping import escape_for_pango
 
 
 class TestBold:
