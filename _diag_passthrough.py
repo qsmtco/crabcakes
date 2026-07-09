@@ -15,9 +15,6 @@ text = escaped
 print("Step 1 (input):", repr(text))
 
 # Step 2: code spans (now testing)
-from utils.markdown import _parse_code_span, _collect_code_spans
-# Actually the function is internal. Let me just call format_markdown and examine.
-
 from utils.markdown import format_markdown
 formatted = format_markdown(text)
 print("Final formatted:", repr(formatted))
