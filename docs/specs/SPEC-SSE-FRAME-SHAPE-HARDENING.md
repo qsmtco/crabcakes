@@ -916,4 +916,167 @@ Total: ~250 lines, all in one module + one UI handler + one test class.
   `{"choices":[],"usage":{...}}` without raising IndexError
 - [ ] All 26 existing SSE/stream/parse tests still pass
 - [ ] All 8 tests in `tests/test_streaming.py` still pass
-- [ ] `tests/test_minimax_events_base_resp
+- [ ] `tests/test_minimax_events_base_resp_error` still passes
+- [ ] 8 new tests in `TestSSEFrameShapeHardening` pass (3 helper + 3 streamer + 1 sse-line log + 1 do_error enrichment)
+- [ ] When a streaming exception occurs, the raised exception has
+  `e._crabcakes_context` populated with `provider`, `model`,
+  `exception_type`
+- [ ] No behavior change on the normal-stream path (verified by
+  re-running the existing real-bytes pipeline test
+  `test_streaming_preserves_provider_tool_call_id`)
+- [ ] `_parse_sse_line` emits a DEBUG log line when fed a malformed
+  frame (verifiable via `caplog`); behavior otherwise unchanged
+- [ ] `_do_error` renders `Provider: ... | Model: ...` when
+  `_crabcakes_context` is attached to the exception; otherwise
+  renders the original `[Error] {message}` unchanged
+- [ ] `_stream_with_ssl_retry` warning text now mentions
+  "partial usage may be lost" so log-grep-based diagnosis works
+
+---
+
+## 7. Edge Cases
+
+| Case | Expected behavior |
+|---|---|
+| Frame `{"choices":[],"usage":{...}}` (OpenAI trailing usage) | Skip `_parse_sse_delta`, yield `usage` event, continue |
+| Frame `{}` (empty / keepalive) | Skip `_parse_sse_delta`, continue (no usage) |
+| Frame `{"choices":[{}]}` (empty choice dict) | `_parse_sse_delta` returns `[]` (no content, no tool_calls) |
+| Frame `{"choices":[{"delta":{}}]}` (empty delta) | `_parse_sse_delta` returns `[]` (no content, no tool_calls) |
+| Frame `{"choices":[{not-a-dict}]}` (malformed choice) | `_parse_sse_delta` returns `[]` (type check) |
+| Frame `{"choices":[{"finish_reason":"stop"}]}` | `_parse_sse_delta` returns `[]`, finish_reason path yields done |
+| Frame `{"choices":[{"finish_reason":"stop"}],"usage":{...}}` | `_parse_sse_delta` returns `[]`, finish_reason path yields done, usage yielded |
+| MiniMax `base_resp.status_code != 0` on first line | Already raises RuntimeError (untouched by this spec) |
+| Anthropic any shape | Untouched (separate parser) |
+| Provider error during SSL retry | `_stream_with_ssl_retry` handles SSL/OSError as today; IndexError is now caught by the `_call_llm_streaming` context annotation and re-raised |
+| Provider returns HTTP 200 with non-JSON garbage | `_parse_sse_line` returns None for non-data lines; JSONDecodeError caught and logged at DEBUG — unchanged behavior, new visibility |
+
+### 7.1 Adjacent bugs and their dispositions
+
+The audit surfaced four adjacent bugs. Two are now rolled into this spec;
+one gets a separate spec delivered alongside; one stays out of scope.
+
+| Bug | Location | Disposition | Where addressed |
+|---|---|---|---|
+| `_stream_with_ssl_retry` re-issues after SSL drop, loses partial usage | `agent/runtime.py:750-845` (wrapper) and `_call_llm_streaming` accumulator at 2652, 2693 | **Separate spec, delivered alongside** | `docs/specs/SPEC-SSL-RETRY-USAGE-FIDELITY.md` |
+| `_do_error` surfaces bare `str(exc)` to chat bubble | `ui/handlers/agent_runtime_handler.py:1279` | **Now in scope** | §2.1.7 above (UI enrichment from `e._crabcakes_context`) |
+| `_parse_sse_line` swallows JSON/UTF-8 decode errors silently | `agent/runtime.py:487-503` | **Now in scope (logging only, no behavior change)** | §2.1.7a above (`logger.debug` with truncated frame) |
+| `conv.fallback_provider` retry on non-streaming path doesn't preserve streaming state | `agent/runtime.py:2267` | Out of scope | Non-streaming fallback works correctly; streaming fallback is by design un-tried. |
+
+Note: the SSL retry entry above was refined during the audit. The actual
+data-loss is in usage accounting (the post-retry `captured_usage = usage_data`
+assignment on line 2693 overwrites whatever was seen in the prior partial
+stream), not in tool_call state (the accumulator's `first-write-wins`
+keying by tool-call index already handles re-emission cleanly). See the
+companion spec for the full analysis and proposed fix.
+
+---
+
+## 8. ARCHITECTURE.md Updates Required
+
+Per `docs/ARCHITECTURE.md` §0 ("When you change code, you **must** update
+this document in the same commit"), this spec requires ONE update:
+
+**Section 4 (data flow) — SSE streaming layer paragraph** (currently
+around line 1527-1565). Add a sentence to the streaming description:
+
+> "Streaming layer is defensive against empty-choices SSE frames
+> (OpenAI trailing usage, OpenRouter keepalive). The `_first_choice`
+> helper is the single source of truth for this guard pattern; both
+> `_parse_sse_delta` and the per-provider streamers use it. Malformed
+> SSE frames are logged at DEBUG with truncated bytes so provider
+> regressions are visible in the runtime log. Chat-bubble error
+> messages include `Provider` and `Model` when `_crabcakes_context`
+> is attached to the underlying exception. See
+> `docs/specs/SPEC-SSE-FRAME-SHAPE-HARDENING.md`."
+
+No other ARCHITECTURE.md sections need updating. The change is internal
+to one module + one UI handler and does not affect public APIs, event
+flows, environment variables, or protocol handling.
+
+---
+
+## 9. Self-Audit (Rule 9 — before declaring complete)
+
+1. **Does every code sample actually work against the current codebase?**
+   YES — all function signatures verified via `grep -n "def function_name"`
+   against the live `agent/runtime.py`. Helper signatures match:
+   `_parse_sse_delta(d: dict) -> list[SSEEvent]`,
+   `_first_choice(d: dict) -> dict`,
+   `_stream_openai_events(*, base_url, api_key, model, messages, tools, timeout, x_title)`,
+   `_stream_minimax_events(*, base_url, api_key, model, messages, tools, timeout, x_title)`,
+   `_stream_with_ssl_retry(streamer, *, max_retries, **kwargs)`,
+   `_parse_sse_line(line: bytes) -> SSEEvent | None`,
+   `_call_llm_streaming(...) -> dict`.
+   No invented parameters, no renamed functions, no assumed defaults.
+   The UI-side `AgentRuntimeHandler.__init__` signature was verified by
+   reading the file at lines 1279-1310; the new dict attribute uses the
+   same Python type-annotation discipline as existing private state.
+
+2. **Did I catch all exception types for every function I call?**
+   YES — the only exception types the patch can raise are `KeyError`
+   (if a sub-dict lookup fails on a non-dict), `TypeError` (if `d` is not
+   a dict — shouldn't happen since `_parse_sse_line` already JSON-parsed),
+   and `AttributeError` (likewise). All three are caught in the new
+   `_call_llm_streaming` exception handler (§2.1.6). The `_first_choice`
+   helper itself raises nothing.
+   The UI enrichment uses `try/except Exception` to ensure a malformed
+   `_crabcakes_context` attribute (e.g. someone sets it to a string
+   instead of a dict) cannot break the error path.
+
+3. **Did I verify key structures, not assume them?**
+   YES — verified by reading `_RESPONSE_FORMAT` (line 460-465),
+   `_PROVIDER_STREAMERS` (1122-1126), `_PROVIDER_CALLERS` (423-429),
+   `_stream_with_ssl_retry` (750-845), and the test pattern at lines
+   1208-1264. Key structures:
+   `{"choices":[{"delta":{...}}]}` (normal),
+   `{"choices":[],"usage":{...}}` (trailing usage),
+   `{"choices":[],"created":...}` (keepalive).
+   The three exception types in `_stream_with_ssl_retry` were confirmed
+   by reading lines 800-840 verbatim.
+
+4. **Did I trace the data flow end-to-end?**
+   YES — §3 traces both the broken and fixed flows through every layer
+   from `_parse_sse_line` → `_stream_openai_events` →
+   `_stream_with_ssl_retry` → `_call_llm_streaming` → `_run_loop` →
+   `_on_error` → `_do_error` → chat bubble. Verified the SSL retry
+   layer does NOT catch IndexError (it only catches
+   `ConnectionResetError`, `BrokenPipeError`, `urllib.error.URLError`,
+   `ssl.SSLError`), so the IndexError does propagate to the
+   `_call_llm_streaming` exception handler as the new context
+   annotation expects. Also traced the bubble enrichment in §3.4.
+
+5. **Would an implementer who follows this spec exactly produce working
+   code?**
+   YES — every code sample is copy-pasteable, every test follows the
+   established pattern, every change site has explicit before/after
+   with surrounding context. An implementer should be able to ship
+   this in 45-90 minutes including running the test suite.
+
+---
+
+## 10. Completion Verification (Rule 10)
+
+To be performed by the implementer; results recorded in the PR
+description.
+
+1. **Scope checklist:**
+   - [ ] `agent/runtime.py` — 5 modified sites + 1 new helper + 3 log annotations (lines listed in §2.1)
+   - [ ] `ui/handlers/agent_runtime_handler.py` — 3 modified methods (listed in §2.1.7)
+   - [ ] `tests/test_agent_runtime.py` — new `TestSSEFrameShapeHardening` class
+   - [ ] `docs/ARCHITECTURE.md` — §4 streaming paragraph appended
+
+2. **Test suite output (paste actual pytest -v output, not summary):**
+   ```
+   $ cd /home/q/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py tests/test_streaming.py -v
+   <paste full output here>
+   ```
+
+3. **Pattern sweep — confirm no remaining `d.get("choices", [{}])[0]`:**
+   ```
+   $ grep -n 'd\.get("choices", \[{}\])\[0\]' agent/runtime.py
+   <expect: no matches>
+   $ grep -n '_first_choice' agent/runtime.py
+   <expect: 4 matches (1 definition + 3 call sites)>
+   ```
+
+4. **Declaration:** "complete" only when all three checks pass.
