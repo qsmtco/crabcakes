@@ -121,7 +121,7 @@ class TestEscapeForPango:
 
     def test_trailing_lt_escaped(self):
         result = escape_for_pango("text <")
-        assert result.endswith("<") or result.endswith("&lt")
+        assert result.endswith("<")
 
     # Orphan tag sweep (NEW tests)
     def test_orphan_a_tag_escaped(self):
@@ -187,8 +187,8 @@ class TestEscapeForPango:
         assert "\u00a9" not in result
 
     def test_double_encoded_no_double_decode(self):
-        result = escape_for_pango("&")
-        assert result == "&"
+        result = escape_for_pango("&amp;")
+        assert result == "&amp;"
 
     def test_invalid_numeric_codepoint_preserved(self):
         result = escape_for_pango("&#999999999;")
