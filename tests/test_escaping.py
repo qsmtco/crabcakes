@@ -169,7 +169,7 @@ class TestEscapeForPango:
 
     def test_malformed_amp_preserved(self):
         result = escape_for_pango("see &amp here")
-        assert "&amp" in result or "&" in result
+        assert "&amp" in result or "&amp" in result
 
     def test_buggy_autolink_output_robust(self):
         broken = '<<a href="https://example.com&gt"><u>https://example.com&gt</u></a>'
