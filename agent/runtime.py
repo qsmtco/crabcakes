@@ -499,7 +499,12 @@ def _parse_sse_line(line: bytes) -> SSEEvent | None:
         return SSEEvent(type="done", data={})
     try:
         return SSEEvent(type="raw", data=json.loads(data.decode("utf-8")))
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        logger.debug(
+            "[sse-line] drop malformed frame (%s): %r",
+            type(e).__name__,
+            line[:200],
+        )
         return None
 
 
@@ -516,7 +521,8 @@ def _parse_sse_delta(d: dict) -> list[SSEEvent]:
     inline alongside finish_reason).
     """
     events: list[SSEEvent] = []
-    delta = d.get("choices", [{}])[0].get("delta", {})
+    choice = _first_choice(d)
+    delta = choice.get("delta", {}) if isinstance(choice, dict) else {}
     content = delta.get("content")
     if content is not None:
         events.append(SSEEvent(type="text_delta", data={"content": content}))
@@ -531,6 +537,20 @@ def _parse_sse_delta(d: dict) -> list[SSEEvent]:
                 "id": tcd.get("id", "") or "",
             }))
     return events
+
+
+def _first_choice(d: dict) -> dict:
+    """Return choices[0] from an OpenAI-format SSE frame, or {} if missing/empty.
+
+    Defensive against three legitimate frame shapes:
+      - {"choices": [...]} — normal delta/finish frame
+      - {"choices": [], "usage": {...}} — OpenAI trailing usage frame
+      - {} or {"usage": {...}} — keepalive / pre-delta frame
+
+    Replaces the unsafe d.get("choices", [{}])[0] pattern.
+    """
+    choices = d.get("choices")
+    return choices[0] if choices else {}
 
 
 # Transient SSL/network errors that warrant a retry.
