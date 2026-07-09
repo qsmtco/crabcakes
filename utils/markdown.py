@@ -270,6 +270,23 @@ def format_markdown(text: str) -> str:
     )
     protected = angle_link_re.sub(_angle_link_replace, protected)
 
+    # ── Step 3b: Protect URLs inside href="..." attributes ─────────────────
+    # Pre-existing <a href="URL"> tags (not generated from markdown) would
+    # have their URL auto-linked again in Step 4, creating nested <a> tags.
+    # We replace the URL inside href="..." with a placeholder so Step 4 skips it.
+    href_url_re = re.compile(r'href="([^"]+)"')
+
+    def _protect_href_url(m):
+        url = m.group(1)
+        # Only protect if it looks like a URL (has a scheme)
+        if re.match(r'^[a-zA-Z][a-zA-Z0-9+.-]*://', url):
+            placeholder = f'\x00HREF{len(anchor_spans)}\x00'
+            anchor_spans.append(f'href="{placeholder}"')
+            return placeholder
+        return m.group(0)
+
+    protected = href_url_re.sub(lambda m: f'href="{_protect_href_url(m)}"', protected)
+
     # ── Step 4: Auto-link bare URLs ──────────────────────────────────────────
     def _auto_link(m):
         url = m.group(1)
