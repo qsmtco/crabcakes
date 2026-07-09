@@ -407,6 +407,52 @@ And in `__init__`:
         self._last_error_exception: dict[str, BaseException | None] = {}
 ```
 
+### 2.1.7c Add diagnostic warning when SSL retry may lose partial usage
+
+The SSL retry at `_stream_with_ssl_retry` (lines 750-845) re-issues the
+full stream on transient drops. After the retry succeeds, the streaming
+accumulator's `captured_usage = usage_data` (line 2693) overwrites
+whatever partial usage the prior attempt may have captured. Today there
+is no signal at all when this happens — cost tracking silently
+under-reports.
+
+This spec adds ONE diagnostic log line so the next incident is
+debuggable. The actual usage-fidelity fix is in
+`docs/specs/SPEC-SSL-RETRY-USAGE-FIDELITY.md`.
+
+Before (in `_stream_with_ssl_retry`, each of the three `except` branches
+logs only the exception):
+
+```python
+        except (ConnectionResetError, BrokenPipeError) as e:
+            ...
+            logger.warning(
+                "[ssl-retry-stream] attempt %d/%d — %s; retrying in %.1fs",
+                attempt + 1, max_retries, e, wait_s,
+            )
+```
+
+After (additive — log already includes the warning, this just notes the
+context flag):
+
+```python
+        except (ConnectionResetError, BrokenPipeError) as e:
+            ...
+            logger.warning(
+                "[ssl-retry-stream] attempt %d/%d — %s; retrying in %.1fs "
+                "(partial usage may be lost — see SPEC-SSL-RETRY-USAGE-FIDELITY.md)",
+                attempt + 1, max_retries, e, wait_s,
+            )
+```
+
+Same one-line addition in the `urllib.error.URLError` branch and the
+`ssl.SSLError` branch.
+
+Verified: pure string change, no behavior change, no new state, no
+public API change. The added context string is harmless at WARN level
+and helps anyone reading the runtime log correlate SSL retries with
+later cost-tracker discrepancies.
+
 ### 2.1.7a Log malformed SSE frames instead of swallowing them silently
 
 `_parse_sse_line` at line 487-503 silently returns `None` for any line
