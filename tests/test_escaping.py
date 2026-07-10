@@ -97,11 +97,24 @@ class TestEscapeForPango:
         result = escape_for_pango("<b")
         assert result == "&lt;b"
 
-    def test_br_tag_preserved(self):
-        assert escape_for_pango("line1<br>line2") == "line1<br>line2"
+    def test_br_tag_escaped(self):
+        # Void tags (br, hr, img) are NOT preserved — they are common in
+        # code snippets and would break Pango rendering if left as real
+        # tags inside a <tt> code span.
+        assert escape_for_pango("line1<br>line2") == "line1&lt;br&gt;line2"
 
-    def test_hr_tag_preserved(self):
-        assert escape_for_pango("<hr>") == "<hr>"
+    def test_hr_tag_escaped(self):
+        assert escape_for_pango("<hr>") == "&lt;hr&gt;"
+
+    def test_img_tag_escaped(self):
+        assert escape_for_pango('<img src="foo.png">') == '&lt;img src=&quot;foo.png&quot;&gt;'
+
+    def test_br_inside_bold_escaped(self):
+        # Regression: <b>bold with <br> inside</b> — <br> must be escaped
+        # even when surrounded by preserved tags, otherwise Pango opens
+        # a real <br> and fails to close the </tt> (or </b>) around it.
+        assert escape_for_pango("<b>bold with <br> inside</b>") == \
+            "<b>bold with &lt;br&gt; inside</b>"
 
     def test_tag_with_attributes_preserved(self):
         result = escape_for_pango('<span foreground="blue">blue text</span>')
@@ -242,10 +255,14 @@ class TestPangoCaseSensitivity:
         assert escape_for_pango("<B><I>nested</I></B>") == "<b><i>nested</i></b>"
         assert escape_for_pango("<B><B>double</B></B>") == "<b><b>double</b></b>"
 
-    def test_uppercase_self_closing_normalized(self):
-        """Self-closing void tags with uppercase name normalized."""
-        assert escape_for_pango("<BR/>") == "<br/>"
-        assert escape_for_pango("<HR/>") == "<hr/>"
+    def test_uppercase_self_closing_escaped(self):
+        """Uppercase self-closing void tags are escaped, not normalized.
+
+        Void tags (br, hr, img) are never preserved as real Pango elements,
+        regardless of case or self-closing form. They are common in code
+        snippets and shell output, where they must render as literal text."""
+        assert escape_for_pango("<BR/>") == "&lt;BR/&gt;"
+        assert escape_for_pango("<HR/>") == "&lt;HR/&gt;"
 
     def test_uppercase_orphan_tag_still_escaped(self):
         """Orphan tags are escaped regardless of input case."""
@@ -253,3 +270,28 @@ class TestPangoCaseSensitivity:
         # so they appear as literal text in the output
         assert escape_for_pango('<B>no close') == '&lt;b&gt;no close'
         assert escape_for_pango('<B attr="val">no close') == '&lt;b attr=&quot;val&quot;&gt;no close'
+
+    def test_br_inside_code_span_does_not_break_pango(self):
+        """Regression for the cascade-failure: a <br> literal inside text
+        that gets wrapped in <tt> by format_markdown would emit the
+        Gtk warning 'Element tt was closed, but the currently open element
+        is br' and silently empty the bubble. escape_for_pango must escape
+        the <br> so the final markup stays valid Pango."""
+        # Simulates what chat_render_handler does: escape then markdown-wrap.
+        escaped = escape_for_pango('assert escape_for_pango("line1<br>line2") == "line1<br>line2"')
+        # The <br> must be escaped (not real Pango):
+        assert "<br>" not in escaped
+        assert "&lt;br&gt;" in escaped
+        # And when wrapped in <tt> by the markdown renderer, the result must
+        # be valid Pango markup (no nested unclosed void tag):
+        final = f"<tt>{escaped}</tt>"
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import Gtk
+        # set_markup logs a Gtk-WARNING on parse error and renders empty.
+        # We can't assert on stderr cleanly here, but the test below checks
+        # the structural invariant: <tt> must not contain a real <br>.
+        assert final.count("<br>") == 0, final
+        # Belt-and-suspenders: try set_markup to confirm Pango accepts it.
+        lbl = Gtk.Label()
+        lbl.set_markup(final)  # would log Gtk-WARNING if malformed
