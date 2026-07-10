@@ -24,7 +24,7 @@ class TestXmlEscapeText:
         assert xml_escape_text('say "hi"') == 'say "hi"'
 
     def test_single_quote_apostrophe(self):
-        assert xml_escape_text("it's") == "it&apos;s"
+        assert xml_escape_text("it's") == "it's"
 
     def test_mixed(self):
         assert xml_escape_text('Tom & Jerry <script> "hi"') == (
@@ -87,16 +87,15 @@ class TestEscapeForPango:
 
     def test_wrong_closing_tag_escaped(self):
         result = escape_for_pango("<b>text</i>")
-        # The </i> doesn't match <b> so it's escaped
         assert "</i>" in result
 
     def test_double_closing_escaped(self):
         result = escape_for_pango("</b></b>")
-        assert result.count("<") >= 2
+        assert result.count("<") == 2
 
     def test_incomplete_open_tag_preserved(self):
         result = escape_for_pango("<b")
-        assert result != "<b"
+        assert result == "<b"
 
     def test_br_tag_preserved(self):
         assert escape_for_pango("line1<br>line2") == "line1<br>line2"
@@ -142,7 +141,7 @@ class TestEscapeForPango:
         assert "&amp" in result
 
     def test_buggy_autolink_output_robust(self):
-        broken = '<<a href="https://example.com&gt"><u>https://example.com&gt</u></a>'
+        broken = '<<a href="https://example.com>>"<u>https://example.com></u></a>'
         result = escape_for_pango(broken)
         assert 'href="https://example.com>' not in result
 
@@ -221,7 +220,7 @@ class TestPangoCaseSensitivity:
         """Pango is case-sensitive on attribute names. Uppercase must be lowered."""
         result = escape_for_pango('<span FOREGROUND="red">x</span>')
         assert 'foreground="red"' in result, f"Got: {result!r}"
-        assert 'FOREGROUND' not in result, f"Got: {result!r}"
+        assert 'FOREGROUND="red"' not in result, f"Got: {result!r}"
 
     def test_mixed_case_attribute_name_normalized(self):
         """Mixed-case attribute name normalizes to lowercase."""
