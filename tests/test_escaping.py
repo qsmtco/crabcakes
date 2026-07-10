@@ -177,7 +177,7 @@ class TestOrphanTagSweep:
     def test_orphan_b_tag_escaped(self):
         result = escape_for_pango('<b>bold')
         assert '<b>' not in result
-        assert '<b>' not in result  # fully escaped to <b>
+        assert '<b>' not in result  # fully escaped to <b
         assert '<b' in result  # escaped form present
 
     def test_valid_tag_pair_preserved(self):
