@@ -842,9 +842,12 @@ class TestSlashCommandInSpecialAgentTab:
         mock_render = MagicMock()
         handler.set_chat_render_handler(mock_render)
 
-        # Mock agent runtime handler with supervisor registered
+        # Mock agent runtime handler with supervisor and coder registered
         mock_arh = MagicMock()
-        mock_arh.get_special_agents.return_value = {"special:supervisor": "Supervisor"}
+        mock_arh.get_special_agents.return_value = {
+            "special:supervisor": "Supervisor",
+            "special:coder": "Coder",
+        }
         handler.set_agent_runtime_handler(mock_arh)
 
         return handler, mc, mock_arh, mock_cmd
