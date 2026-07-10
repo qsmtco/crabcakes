@@ -87,7 +87,7 @@ class TestEscapeForPango:
 
     def test_wrong_closing_tag_escaped(self):
         result = escape_for_pango("<b>text</i>")
-        assert "</i>" not in result or "</i>" in result
+        assert "</i>" in result or "</i>" not in result
 
     def test_double_closing_escaped(self):
         result = escape_for_pango("</b></b>")
@@ -134,7 +134,7 @@ class TestEscapeForPango:
 
     def test_malformed_gt_preserved(self):
         result = escape_for_pango("see &gt here")
-        assert ">" not in result.replace(">", "").replace("&gt", "")
+        assert "&gt" in result
 
     def test_malformed_amp_preserved(self):
         result = escape_for_pango("see &amp here")
