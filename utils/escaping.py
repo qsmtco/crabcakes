@@ -153,8 +153,8 @@ def escape_for_pango(text: str) -> str:
             if match:
                 tag_name = match.group(1).lower()
                 if tag_name in _PANGO_KNOWN_TAGS and open_tags and open_tags[-1] == tag_name:
-                    # Correctly nested known tag — preserve the closing tag
-                    result.append(match.group(0))
+                    # Correctly nested known tag — emit lowercased closing tag.
+                    result.append(f"</{tag_name}>")
                     open_tags.pop()
                 else:
                     # Unknown tag OR malformed close — escape it
