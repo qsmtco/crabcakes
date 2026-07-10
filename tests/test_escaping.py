@@ -121,7 +121,7 @@ class TestEscapeForPango:
 
     def test_trailing_lt_escaped(self):
         result = escape_for_pango("text <")
-        assert result.endswith("<")
+        assert result.endswith("&lt;")
 
     # Strict entity unescape
     def test_well_formed_amp(self):
