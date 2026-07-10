@@ -46,7 +46,7 @@ class TestEscapeForPango:
         assert escape_for_pango("Tom & Jerry") == "Tom &amp; Jerry"
 
     def test_plain_text_with_literal_brackets_escaped(self):
-        assert escape_for_pango("a < b") == "a < b"
+        assert escape_for_pango("a < b") == "a &lt; b"
         assert escape_for_pango("a > b") == "a &gt; b"
 
     def test_empty_string(self):
