@@ -171,15 +171,12 @@ class TestOrphanTagSweep:
         result = escape_for_pango('renders <a href="..."> tags')
         assert '<a ' not in result
         assert '<a' not in result  # fully escaped to <a
-        assert '<a' not in result
-        # The orphan tag should be escaped (no literal <a> remaining)
         assert '<a' in result
 
     def test_orphan_b_tag_escaped(self):
         result = escape_for_pango('<b>bold')
         assert '<b>' not in result
         assert '<b>' not in result  # fully escaped to <b>
-        assert '<b>' not in result
         assert '<b>' in result
 
     def test_valid_tag_pair_preserved(self):
@@ -197,7 +194,6 @@ class TestOrphanTagSweep:
         result = escape_for_pango('# \u2190 renders <a href="..."> tags')
         assert '<a ' not in result
         assert '<a' not in result  # fully escaped
-        assert '<a' not in result
         assert '<a' in result
 
     def test_no_orphan_when_all_closed(self):
