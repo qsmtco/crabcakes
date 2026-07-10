@@ -210,65 +210,8 @@ class ChatHandler:
         if not text:
             return
 
-        # ── Special agent check (Phase 1.4) ─────────────────────────────────────
-        if (self._agent_runtime_handler is not None
-                and session_key in self._agent_runtime_handler.get_special_agents()):
-            def _show_and_route_to_agent():
-                chat_box = self._mc.get_chat_box()
-                if chat_box is not None:
-                    if self._chat_render_handler is not None:
-                        def _on_bubble(bubble):
-                            if bubble is not None:
-                                chat_box.append(bubble)
-                            self._mc.scroll_chat_to_bottom()
-                        self._chat_render_handler.render_async(
-                            "You", text, session_key,
-                            on_bubble_ready=_on_bubble,
-                            on_forward_click=self._on_forward_message,
-                            agent_name="You",
-                        )
-                self._agent_runtime_handler.send_to_special_agent(session_key, text)
-            self._dispatch(_show_and_route_to_agent)
-            buf.set_text("")
-            if self._on_send_initiated:
-                self._on_send_initiated(session_key)
-            return
-
-        # ── Gateway guard (project-tab sends fall through to fan-out) ──────────────
-        if self._gw is None or not self._gw.is_connected():
-            # Only block direct gateway-agent sends when offline.
-            # Project-tab sends reach _show_and_send() which handles fan-out locally.
-            if not session_key.startswith("project:"):
-                def _show_offline_error():
-                    chat_box = self._mc.get_chat_box()
-                    if chat_box is not None:
-                        if self._chat_render_handler is not None:
-                            def _on_echo(bubble):
-                                if bubble is not None:
-                                    chat_box.append(bubble)
-                                self._mc.scroll_chat_to_bottom()
-                            self._chat_render_handler.render_async(
-                                "You", text, session_key,
-                                on_bubble_ready=_on_echo,
-                                on_forward_click=self._on_forward_message,
-                                agent_name="You",
-                            )
-                            def _on_error_bubble(bubble):
-                                if bubble is not None:
-                                    chat_box.append(bubble)
-                                self._mc.scroll_chat_to_bottom()
-                            self._chat_render_handler.render_async(
-                                "System",
-                                "⚠️ Not connected to gateway. Start the gateway or use a local agent.",
-                                session_key,
-                                on_bubble_ready=_on_error_bubble,
-                            )
-                self._dispatch(_show_offline_error)
-                buf.set_text("")
-                return
-            # else: project-tab — fall through to _show_and_send for fan-out
-
-        # ── Command handler check ────────────────────────────────────────────────
+        # ── Command handler check (must run before special-agent and gateway
+        #    branches so slash commands like /clear work in ALL tabs) ────────
         if self._command_handler is not None:
             result = self._command_handler.process_input(session_key, text)
             if result.handled:
@@ -332,7 +275,65 @@ class ChatHandler:
                 # via on_display_text callback. No need to render it here.
                 # (Previous elif block caused double-bubble bug — both paths fired.)
                 return
-            # Not a command (handled=False) — fall through to normal send
+            # Not a command (handled=False) — fall through to special-agent / gateway
+
+        # ── Special agent check (Phase 1.4) ─────────────────────────────────────
+        if (self._agent_runtime_handler is not None
+                and session_key in self._agent_runtime_handler.get_special_agents()):
+            def _show_and_route_to_agent():
+                chat_box = self._mc.get_chat_box()
+                if chat_box is not None:
+                    if self._chat_render_handler is not None:
+                        def _on_bubble(bubble):
+                            if bubble is not None:
+                                chat_box.append(bubble)
+                            self._mc.scroll_chat_to_bottom()
+                        self._chat_render_handler.render_async(
+                            "You", text, session_key,
+                            on_bubble_ready=_on_bubble,
+                            on_forward_click=self._on_forward_message,
+                            agent_name="You",
+                        )
+                self._agent_runtime_handler.send_to_special_agent(session_key, text)
+            self._dispatch(_show_and_route_to_agent)
+            buf.set_text("")
+            if self._on_send_initiated:
+                self._on_send_initiated(session_key)
+            return
+
+        # ── Gateway guard (project-tab sends fall through to fan-out) ──────────────
+        if self._gw is None or not self._gw.is_connected():
+            # Only block direct gateway-agent sends when offline.
+            # Project-tab sends reach _show_and_send() which handles fan-out locally.
+            if not session_key.startswith("project:"):
+                def _show_offline_error():
+                    chat_box = self._mc.get_chat_box()
+                    if chat_box is not None:
+                        if self._chat_render_handler is not None:
+                            def _on_echo(bubble):
+                                if bubble is not None:
+                                    chat_box.append(bubble)
+                                self._mc.scroll_chat_to_bottom()
+                            self._chat_render_handler.render_async(
+                                "You", text, session_key,
+                                on_bubble_ready=_on_echo,
+                                on_forward_click=self._on_forward_message,
+                                agent_name="You",
+                            )
+                            def _on_error_bubble(bubble):
+                                if bubble is not None:
+                                    chat_box.append(bubble)
+                                self._mc.scroll_chat_to_bottom()
+                            self._chat_render_handler.render_async(
+                                "System",
+                                "⚠️ Not connected to gateway. Start the gateway or use a local agent.",
+                                session_key,
+                                on_bubble_ready=_on_error_bubble,
+                            )
+                self._dispatch(_show_offline_error)
+                buf.set_text("")
+                return
+            # else: project-tab — fall through to _show_and_send for fan-out
 
         # ── Inline @mention routing (project tabs only) ─────────────────────
         # After command handler returned handled=False, check for @mentions in
