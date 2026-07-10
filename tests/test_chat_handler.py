@@ -807,3 +807,132 @@ class TestInlineMentionRouting:
             )
         # And runtime was called
         mock_arh.send_to_special_agent.assert_called_once_with("special:coder", "hello")
+
+
+# ── Tests: Slash commands in special agent tabs (BUG: /clear unreachable) ─────
+
+class TestSlashCommandInSpecialAgentTab:
+    """Regression tests for bug: /clear (and all slash commands) were unreachable
+    from special agent tabs because the special-agent branch in on_send()
+    short-circuited the command handler.
+
+    Root cause: on_send() checked special-agent routing BEFORE checking the command
+    handler. Slash-prefixed text was sent to the agent as a literal message.
+    Fix: command handler check moved before the special-agent branch.
+    """
+
+    def _make_special_agent_handler(self, input_text, command_result):
+        """Create a ChatHandler wired for a special agent tab with a command handler.
+
+        - session_key = "special:supervisor" (triggers special-agent branch)
+        - command handler returns the given CommandResult from process_input
+        - agent_runtime_handler is mocked with supervisor as a special agent
+        """
+        from models.command import CommandResult
+        gw = FakeGatewayClient(connected=True)
+        mc = FakeMainContent(session_key="special:supervisor", input_text=input_text)
+        handler = make_handler(mc, gw)
+
+        # Mock command handler
+        mock_cmd = MagicMock()
+        mock_cmd.process_input.return_value = command_result
+        handler.set_command_handler(mock_cmd)
+
+        # Mock chat render handler
+        mock_render = MagicMock()
+        handler.set_chat_render_handler(mock_render)
+
+        # Mock agent runtime handler with supervisor registered
+        mock_arh = MagicMock()
+        mock_arh.get_special_agents.return_value = {"special:supervisor": "Supervisor"}
+        handler.set_agent_runtime_handler(mock_arh)
+
+        return handler, mc, mock_arh, mock_cmd
+
+    def test_slash_clear_reaches_command_handler_in_special_tab(self):
+        """BUG REPRODUCTION: /clear typed in Supervisor tab must reach the command
+        handler, not be sent as a literal message to the agent.
+
+        Before fix: special-agent branch fired first → send_to_special_agent got
+        the literal string '/clear' → command handler never called.
+        After fix: command handler fires first → cmd_clear executes → returns
+        handled=True → special-agent branch never reached.
+        """
+        from models.command import CommandResult
+        result = CommandResult(
+            handled=True,
+            response_text="Cleared Supervisor's conversation. Step count reset to 0.",
+        )
+        handler, mc, mock_arh, mock_cmd = self._make_special_agent_handler(
+            "/clear", result,
+        )
+
+        handler.on_send()
+
+        # Command handler MUST have been called with the supervisor session key
+        mock_cmd.process_input.assert_called_once_with("special:supervisor", "/clear")
+        # Agent runtime MUST NOT have received the literal /clear text
+        mock_arh.send_to_special_agent.assert_not_called()
+        # Input buffer MUST be cleared
+        assert mc.get_buffer()._text == ""
+
+    def test_non_command_text_still_routes_to_special_agent(self):
+        """After the fix, non-command text in a special agent tab still reaches
+        the agent. Command handler returns handled=False → falls through to
+        the special-agent branch as before.
+        """
+        from models.command import CommandResult
+        result = CommandResult(handled=False)
+        handler, mc, mock_arh, mock_cmd = self._make_special_agent_handler(
+            "hello supervisor", result,
+        )
+
+        handler.on_send()
+
+        # Command handler was consulted but didn't handle it
+        mock_cmd.process_input.assert_called_once_with("special:supervisor", "hello supervisor")
+        # Agent runtime received the text via the special-agent branch
+        mock_arh.send_to_special_agent.assert_called_once_with("special:supervisor", "hello supervisor")
+
+    def test_slash_clear_does_not_send_literal_text_to_agent(self):
+        """REGRESSION GUARD: Under no circumstances should the literal string
+        '/clear' be passed to send_to_special_agent when the command handler
+        handles it.
+        """
+        from models.command import CommandResult
+        result = CommandResult(handled=True, response_text="Cleared.")
+        handler, mc, mock_arh, mock_cmd = self._make_special_agent_handler(
+            "/clear", result,
+        )
+
+        handler.on_send()
+
+        # Check every call to send_to_special_agent — none should contain /clear
+        for call_args in mock_arh.send_to_special_agent.call_args_list:
+            args = call_args[0]
+            assert "/clear" not in args, (
+                f"send_to_special_agent was called with {args} — "
+                f"'/clear' should have been intercepted by the command handler"
+            )
+
+    def test_forward_command_from_special_tab_routes_correctly(self):
+        """A forward-to command (e.g. /ask) typed in a special agent tab must
+        route through the command handler, not be sent literally to the agent.
+        """
+        from models.command import CommandResult
+        result = CommandResult(
+            handled=True,
+            forward_to="special:coder",
+            forward_text="do the thing",
+        )
+        handler, mc, mock_arh, mock_cmd = self._make_special_agent_handler(
+            "/ask @Coder \"do the thing\"", result,
+        )
+
+        handler.on_send()
+
+        # Command handler was called
+        mock_cmd.process_input.assert_called_once()
+        # The forward target (special:coder) was called via send_to_special_agent
+        # with the extracted payload, not the raw /ask text
+        mock_arh.send_to_special_agent.assert_called_once_with("special:coder", "do the thing")
