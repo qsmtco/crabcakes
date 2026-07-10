@@ -289,7 +289,11 @@ def format_markdown(text: str) -> str:
 
     # ── Step 4: Auto-link bare URLs ──────────────────────────────────────────
     def _auto_link(m):
-        url = m.group(1)
+        # _AUTO_LINK_RE has two alternatives: scheme://... (group 1) and
+        # bare.host/... (group 2). Only one matches; fall back to group 2.
+        url = m.group(1) or m.group(2)
+        if not url:
+            return m.group(0)
         url = _strip_trailing_punct(url)
         safe_url = urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=-_.~")
         anchor_html = f'<a href="{safe_url}"><u>{url}</u></a>'
