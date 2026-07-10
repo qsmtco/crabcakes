@@ -192,3 +192,38 @@ class TestEscapeForPango:
     def test_invalid_numeric_codepoint_preserved(self):
         result = escape_for_pango("&#999999999;")
         assert "999999999" in result
+
+
+class TestOrphanTagSweep:
+    """Orphan opening tags (no matching close) must be escaped."""
+
+    def test_orphan_a_tag_escaped(self):
+        result = escape_for_pango('renders <a href="..."> tags')
+        assert '<a ' not in result
+        assert '<a' in result
+
+    def test_orphan_b_tag_escaped(self):
+        result = escape_for_pango('<b>bold')
+        assert '<b>' not in result
+        assert '<b>' in result
+
+    def test_valid_tag_pair_preserved(self):
+        assert escape_for_pango('<b>bold</b>') == '<b>bold</b>'
+
+    def test_valid_a_tag_pair_preserved(self):
+        result = escape_for_pango('<a href="https://x.com">link</a>')
+        assert '<a href="https://x.com">link</a>' == result
+
+    def test_nested_valid_tags_preserved(self):
+        assert escape_for_pango('<b><i>nested</i></b>') == '<b><i>nested</i></b>'
+
+    def test_grep_output_with_a_tag(self):
+        """The exact crash trigger: plain text containing <a href="...">."""
+        result = escape_for_pango('# \u2190 renders <a href="..."> tags')
+        assert '<a ' not in result
+        assert '<a' in result
+
+    def test_no_orphan_when_all_closed(self):
+        """When all tags are properly closed, sweep does nothing."""
+        result = escape_for_pango('<b>one</b> <i>two</i>')
+        assert result == '<b>one</b> <i>two</i>'
