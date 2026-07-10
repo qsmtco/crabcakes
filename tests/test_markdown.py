@@ -428,6 +428,37 @@ class TestAutoLinkAttributeProtection:
         assert '<a ' not in result
 
 
+class TestAutoLinkBareHostname:
+    """Bare hostnames (scheme-less URLs) must auto-link without crashing.
+
+    Regression: before fix, _auto_link called m.group(1) but _AUTO_LINK_RE has
+    two alternatives — when only the bare.hostname alternative matched,
+    group(1) was None, and urllib.parse.quote(None) raised TypeError.
+    """
+
+    def test_bare_hostname_links(self):
+        """httpbin.org/help → <a href="httpbin.org/help"> link."""
+        result = format_markdown("visit httpbin.org/help for info")
+        assert '<a href="httpbin.org/help">' in result, f"Got: {result!r}"
+
+    def test_bare_hostname_simple(self):
+        """example.com → <a href="example.com">."""
+        result = format_markdown("see example.com today")
+        assert '<a href="example.com">' in result, f"Got: {result!r}"
+
+    def test_bare_hostname_strips_trailing_period(self):
+        """Period after bare hostname is stripped from URL."""
+        result = format_markdown("see example.com.")
+        assert '<a href="example.com">' in result, f"Got: {result!r}"
+        # And the period is NOT in the href value
+        assert 'example.com.' not in result.split('"')[1] if '"' in result else True
+
+    def test_scheme_url_still_works(self):
+        """No regression: explicit-scheme URLs still auto-link."""
+        result = format_markdown("see https://x.com")
+        assert '<a href="https://x.com">' in result
+
+
 class TestFencedVsInlineBacktickRegression:
     """Regression: inline `` `<tt>` `` followed by ``` fenced block was being
     eaten by the fenced-block detector as if a single backtick started a fence.
