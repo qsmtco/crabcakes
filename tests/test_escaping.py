@@ -95,7 +95,7 @@ class TestEscapeForPango:
 
     def test_incomplete_open_tag_preserved(self):
         result = escape_for_pango("<b")
-        assert result == "<b"
+        assert result == "&lt;b"
 
     def test_br_tag_preserved(self):
         assert escape_for_pango("line1<br>line2") == "line1<br>line2"
