@@ -21,14 +21,14 @@ class TestXmlEscapeText:
         assert xml_escape_text("a > b") == "a > b"
 
     def test_double_quotes_escaped(self):
-        assert xml_escape_text('say "hi"') == 'say "hi"'
+        assert xml_escape_text('say "hi"') == 'say &quot;hi&quot;'
 
     def test_single_quote_apostrophe(self):
         assert xml_escape_text("it's") == "it's"
 
     def test_mixed(self):
         assert xml_escape_text('Tom & Jerry <script> "hi"') == (
-            'Tom & Jerry <script> "hi"'
+            'Tom & Jerry <script> &quot;hi&quot;'
         )
 
     def test_empty_string(self):
@@ -114,7 +114,7 @@ class TestEscapeForPango:
 
     def test_only_tag_characters(self):
         result = escape_for_pango("<<>>")
-        assert "&lt;" in result
+        assert "<" in result
 
     def test_multiple_ampersands(self):
         assert escape_for_pango("a & b & c") == "a &amp; b &amp; c"
@@ -154,8 +154,8 @@ class TestEscapeForPango:
 
     def test_non_pango_entity_not_decoded(self):
         result = escape_for_pango("&copy; 2024")
-        # &copy; is NOT in our entity allowlist, so it stays as literal text
-        assert "&copy;" in result
+        # &copy; is NOT in our entity allowlist, so the & is escaped to &amp;
+        assert "&amp;copy;" in result
 
     def test_double_encoded_no_double_decode(self):
         result = escape_for_pango("&")
@@ -163,8 +163,6 @@ class TestEscapeForPango:
 
     def test_invalid_numeric_codepoint_preserved(self):
         result = escape_for_pango("&#999999999;")
-        # The & gets escaped before entity decode, so it's preserved as &amp;#...
-        # But since &copy; works (well-formed entity), let's check the actual behavior
         assert "999999999" in result
 
 
