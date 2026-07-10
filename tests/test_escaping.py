@@ -128,7 +128,7 @@ class TestEscapeForPango:
         assert escape_for_pango("Tom & Jerry") == "Tom &amp; Jerry"
 
     def test_well_formed_lt(self):
-        assert escape_for_pango("a < b") == "a < b"
+        assert escape_for_pango("a < b") == "a &lt; b"
 
     def test_well_formed_gt(self):
         assert escape_for_pango("a > b") == "a &gt; b"
