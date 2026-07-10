@@ -135,8 +135,8 @@ class TestEscapeForPango:
 
     def test_malformed_gt_preserved(self):
         result = escape_for_pango("see &gt here")
-        # &gt; without semicolon is not a well-formed entity, & is escaped
-        assert "&gt;" in result
+        # &gt; without semicolon - & is escaped to &amp;, gt is literal
+        assert "amp;gt" in result
 
     def test_malformed_amp_preserved(self):
         result = escape_for_pango("see &amp here")
