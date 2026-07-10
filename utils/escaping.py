@@ -213,7 +213,7 @@ def escape_for_pango(text: str) -> str:
                 i += 1
         else:
             # '<#' or '<-' etc. — treat as literal
-            result.append("<")
+            result.append("&lt;")
             i += 1
 
     # ── Orphan tag sweep ───────────────────────────────────────────────────
