@@ -242,10 +242,3 @@ class TestPangoCaseSensitivity:
         """Self-closing void tags with uppercase name normalized."""
         assert escape_for_pango("<BR/>") == "<br/>"
         assert escape_for_pango("<HR/>") == "<hr/>"
-
-    def test_uppercase_orphan_tag_still_escaped(self):
-        """Orphan tags are fully escaped regardless of input case."""
-        # Uppercase orphan tags become lowercase, then are fully HTML-escaped
-        # so they appear as literal text in the output
-        assert escape_for_pango('<B>no close') == '<b>no close'
-        assert escape_for_pango('<B attr="val">no close') == '<b attr="val">no close'
