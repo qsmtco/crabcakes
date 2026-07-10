@@ -170,11 +170,13 @@ class TestOrphanTagSweep:
     def test_orphan_a_tag_escaped(self):
         result = escape_for_pango('renders <a href="..."> tags')
         assert '<a ' not in result
+        assert '<a' not in result  # fully escaped to <a
         assert '<a' in result
 
     def test_orphan_b_tag_escaped(self):
         result = escape_for_pango('<b>bold')
         assert '<b>' not in result
+        assert '<b>' not in result  # fully escaped to <b>
         assert '<b>' in result
 
     def test_valid_tag_pair_preserved(self):
@@ -191,6 +193,7 @@ class TestOrphanTagSweep:
         """The exact crash trigger: plain text containing <a href="...">."""
         result = escape_for_pango('# \u2190 renders <a href="..."> tags')
         assert '<a ' not in result
+        assert '<a' not in result  # fully escaped
         assert '<a' in result
 
     def test_no_orphan_when_all_closed(self):
