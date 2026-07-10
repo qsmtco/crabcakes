@@ -106,19 +106,19 @@ def escape_for_pango(text: str) -> str:
         Escaped string safe for use in Gtk.Label.set_markup()
 
     Examples:
-        "Tom & Jerry"                      -> "Tom &amp; Jerry"
+        "Tom & Jerry"                      -> "Tom & Jerry"
         "<b>bold</b>"                      -> "<b>bold</b>"  (preserved)
         "<b>bold"                          -> "<b>bold"  (unclosed, preserved)
-        "<b>Tom & Jerry</b>"               -> "<b>Tom &amp; Jerry</b>"
-        "<script>evil()</script>"          -> "&lt;script&gt;evil()&lt;/script&gt;"
-        "</b>"                              -> "&lt;/b&gt;"    (malformed close)
+        "<b>Tom & Jerry</b>"               -> "<b>Tom & Jerry</b>"
+        "<script>evil()</script>"          -> "<script>evil()</script>"
+        "</b>"                              -> "</b>"    (malformed close)
     """
     if not text:
         return ""
 
-    # Decode HTML entities that LLMs sometimes emit (&quot;, &amp;, &lt;, etc.)
+    # Decode HTML entities that LLMs sometimes emit (", &, <, etc.)
     # before processing. Without this, html.escape() below would double-encode
-    # them (e.g. &quot; → &amp;quot;) and they'd appear as raw text in bubbles.
+    # them (e.g. " → ") and they'd appear as raw text in bubbles.
     text = _strict_unescape(text)
 
     result: list[str] = []
@@ -141,7 +141,7 @@ def escape_for_pango(text: str) -> str:
         # Found '<'. Determine if it's a Pango tag or a literal '<'.
         if i + 1 >= n:
             # Trailing '<' — escape as literal
-            result.append("&lt;")
+            result.append("<")
             i += 1
             continue
 
@@ -162,7 +162,7 @@ def escape_for_pango(text: str) -> str:
                 i += match.end()
             else:
                 # Malformed close pattern — escape the '<'
-                result.append("&lt;")
+                result.append("<")
                 i += 1
         elif next_ch.isalpha() or next_ch == "!" or next_ch == "?":
             # Opening tag: <name ...> or <name>
@@ -180,15 +180,26 @@ def escape_for_pango(text: str) -> str:
                     # href="http://example.com?a=1&b=2") to prevent XML parse
                     # errors in Gtk.Label.set_markup(). Only escape & not already
                     # part of an entity by checking for ; following &.
-                    full_tag = match.group(0)
+                    # Lowercase attribute NAMES (Pango is case-sensitive on attrs too).
+                    # Preserve attribute VALUES exactly.
                     if attrs.strip():
-                        # Escape bare ampersands in attributes only
+                        # Lowercase attribute NAMES (Pango is case-sensitive on attrs too).
+                        # Preserve attribute VALUES exactly.
+                        def _lower_attr_names(m):
+                            return m.group(1).lower() + m.group(2) + m.group(3)
+                        lowered_attrs = re.sub(
+                            r'(\s+[a-zA-Z][a-zA-Z0-9_.-]*)(=)("[^"]*"|\'[^\']*\'|[^\s>]*)',
+                            _lower_attr_names,
+                            attrs,
+                        )
+                        # Escape bare ampersands in attribute values
                         def _escape_attr_ampersands(m):
                             amp = m.group(0)
-                            return amp.replace("&", "&amp;")
-                        # Only & not followed by valid entity (letter/digit/# then ;)
-                        attrs_escaped = re.sub(r'&(?![a-zA-Z#0-9]+;)', _escape_attr_ampersands, attrs)
+                            return amp.replace("&", "&")
+                        attrs_escaped = re.sub(r'&(?![a-zA-Z#0-9]+;)', _escape_attr_ampersands, lowered_attrs)
                         full_tag = f"<{tag_name}{attrs_escaped}>"
+                    else:
+                        full_tag = f"<{tag_name}>"
                     result.append(full_tag)
                     if not is_void:
                         open_tags.append(tag_name)
@@ -198,11 +209,11 @@ def escape_for_pango(text: str) -> str:
                 i += match.end()
             else:
                 # Malformed open — escape '<'
-                result.append("&lt;")
+                result.append("<")
                 i += 1
         else:
             # '<#' or '<-' etc. — treat as literal
-            result.append("&lt;")
+            result.append("<")
             i += 1
 
     # ── Orphan tag sweep ───────────────────────────────────────────────────
@@ -243,9 +254,9 @@ def xml_escape_text(text: str) -> str:
         Escaped string safe for XML/Pango attribute or text content.
 
     Examples:
-        "Tom & Jerry" -> "Tom &amp; Jerry"
-        "<script>"    -> "&lt;script&gt;"
-        'say "hi"'    -> "say &quot;hi&quot;"
+        "Tom & Jerry" -> "Tom & Jerry"
+        "<script>"    -> "<script>"
+        'say "hi"'    -> "say "hi""
     """
     return html.escape(text, quote=True)
 
