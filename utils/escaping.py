@@ -195,7 +195,7 @@ def escape_for_pango(text: str) -> str:
                         # Escape bare ampersands in attribute values
                         def _escape_attr_ampersands(m):
                             amp = m.group(0)
-                            return amp.replace("&", "&")
+                            return amp.replace("&", "&amp;")
                         attrs_escaped = re.sub(r'&(?![a-zA-Z#0-9]+;)', _escape_attr_ampersands, lowered_attrs)
                         full_tag = f"<{tag_name}{attrs_escaped}>"
                     else:
