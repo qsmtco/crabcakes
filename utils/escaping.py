@@ -209,7 +209,7 @@ def escape_for_pango(text: str) -> str:
                 i += match.end()
             else:
                 # Malformed open — escape '<'
-                result.append("<")
+                result.append("&lt;")
                 i += 1
         else:
             # '<#' or '<-' etc. — treat as literal
