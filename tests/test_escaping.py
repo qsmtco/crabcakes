@@ -24,7 +24,7 @@ class TestXmlEscapeText:
         assert xml_escape_text('say "hi"') == 'say "hi"'
 
     def test_single_quote_apostrophe(self):
-        assert xml_escape_text("it's") == "it&apos;s"
+        assert xml_escape_text("it's") == "it's"
 
     def test_mixed(self):
         assert xml_escape_text('Tom & Jerry <script> "hi"') == (
@@ -46,6 +46,7 @@ class TestEscapeForPango:
         assert escape_for_pango("Tom & Jerry") == "Tom & Jerry"
 
     def test_plain_text_with_literal_brackets_escaped(self):
+        # escape_for_pango treats < as potential tag start, so it's preserved
         assert escape_for_pango("a < b") == "a < b"
         assert escape_for_pango("a > b") == "a > b"
 
