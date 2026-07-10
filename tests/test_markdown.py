@@ -409,6 +409,25 @@ class TestAngleBracketAutoLink:
             )
 
 
+class TestAutoLinkAttributeProtection:
+    """Auto-link regex must not match URLs inside href="..." attributes."""
+
+    def test_url_in_href_not_double_linked(self):
+        """A pre-existing <a href="URL"> must not get nested <a> tags."""
+        result = format_markdown('<a href="https://example.com">link</a>')
+        assert result.count('<a ') == 1, f"Nested <a> tags: {result}"
+
+    def test_plain_url_still_links(self):
+        """Regression: plain URLs without attributes still auto-link."""
+        result = format_markdown("check https://example.com for info")
+        assert '<a href="https://example.com">' in result
+
+    def test_url_after_equals_not_linked(self):
+        """URL preceded by = should not auto-link."""
+        result = format_markdown('value=https://example.com')
+        assert '<a ' not in result
+
+
 class TestFencedVsInlineBacktickRegression:
     """Regression: inline `` `<tt>` `` followed by ``` fenced block was being
     eaten by the fenced-block detector as if a single backtick started a fence.
