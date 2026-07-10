@@ -117,12 +117,13 @@ def escape_for_pango(text: str) -> str:
         Escaped string safe for use in Gtk.Label.set_markup()
 
     Examples:
-        "Tom & Jerry"                      -> "Tom & Jerry"
+        "Tom & Jerry"                      -> "Tom &amp; Jerry"
         "<b>bold</b>"                      -> "<b>bold</b>"  (preserved)
-        "<b>bold"                          -> "<b>bold"  (unclosed, preserved)
-        "<b>Tom & Jerry</b>"               -> "<b>Tom & Jerry</b>"
-        "<script>evil()</script>"          -> "<script>evil()</script>"
-        "</b>"                              -> "</b>"    (malformed close)
+        "<b>bold"                          -> "&lt;b"   (incomplete, escaped)
+        "<b>Tom & Jerry</b>"               -> "<b>Tom &amp; Jerry</b>"
+        "<script>evil()</script>"          -> "&lt;script&gt;evil()&lt;/script&gt;"
+        "</b>"                              -> "&lt;/b&gt;"  (malformed close, escaped)
+        "line1<br>line2"                   -> "line1&lt;br&gt;line2"  (void tag, escaped)
     """
     if not text:
         return ""
