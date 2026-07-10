@@ -154,8 +154,8 @@ class TestEscapeForPango:
 
     def test_non_pango_entity_not_decoded(self):
         result = escape_for_pango("&copy; 2024")
-        # &copy; is a well-formed entity (has semicolon), so it decodes to copyright char
-        assert "\u00a9" in result
+        # &copy; is NOT in our entity allowlist, so it stays as literal text
+        assert "&copy;" in result
 
     def test_double_encoded_no_double_decode(self):
         result = escape_for_pango("&")
