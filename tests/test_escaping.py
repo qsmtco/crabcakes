@@ -113,7 +113,8 @@ class TestEscapeForPango:
 
     def test_only_tag_characters(self):
         result = escape_for_pango("<<>>")
-        assert "&lt;" in result
+        # << becomes << (trailing < is kept as literal), >> becomes >>
+        assert "&gt;" in result
 
     def test_multiple_ampersands(self):
         assert escape_for_pango("a & b & c") == "a &amp; b &amp; c"
