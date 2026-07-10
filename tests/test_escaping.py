@@ -156,8 +156,9 @@ class TestEscapeForPango:
 
     def test_non_pango_entity_not_decoded(self):
         result = escape_for_pango("&copy; 2024")
-        # &copy; is well-formed (has semicolon), so it decodes
-        assert "\u00a9" in result
+        # &copy; is well-formed (has semicolon), but &copy is not in our entity allowlist
+        # So the & is escaped to &amp; before entity decode, resulting in &amp;copy;
+        assert "&amp;copy;" in result
 
     def test_double_encoded_no_double_decode(self):
         result = escape_for_pango("&")
