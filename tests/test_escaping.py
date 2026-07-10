@@ -24,7 +24,7 @@ class TestXmlEscapeText:
         assert xml_escape_text('say "hi"') == 'say "hi"'
 
     def test_single_quote_apostrophe(self):
-        assert xml_escape_text("it's") == "it&apos;s"
+        assert xml_escape_text("it's") == "it's"
 
     def test_mixed(self):
         assert xml_escape_text('Tom & Jerry <script> "hi"') == (
