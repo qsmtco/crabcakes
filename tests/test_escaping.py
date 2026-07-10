@@ -245,5 +245,6 @@ class TestPangoCaseSensitivity:
 
     def test_uppercase_orphan_tag_still_escaped(self):
         """Orphan tags are fully escaped regardless of input case."""
+        # Uppercase orphan tags become lowercase, then are fully escaped
         assert escape_for_pango('<B>no close') == '<b>no close'
         assert escape_for_pango('<B attr="val">no close') == '<b attr="val">no close'
