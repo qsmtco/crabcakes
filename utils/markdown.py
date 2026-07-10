@@ -37,6 +37,7 @@ _AUTO_LINK_RE = re.compile(
     r'(?<![a-zA-Z0-9/:=&;])'  # not preceded by alphanum, ://, =, &, ; (href="URL")
     r'([a-zA-Z][a-zA-Z0-9+.-]*://[^\s<>"`\'\[\]()&]+)'
     r'|'
+    r'(?<![a-zA-Z0-9/:=&;])'  # same check for bare hostnames
     r'(?<!["\'])'
     r'((?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:/[^\s<>"`\'\[\]()&]+)?)'
     , re.IGNORECASE
