@@ -24,7 +24,7 @@ class TestXmlEscapeText:
         assert xml_escape_text('say "hi"') == 'say "hi"'
 
     def test_single_quote_apostrophe(self):
-        assert xml_escape_text("it's") == "it's"
+        assert xml_escape_text("it's") == "it&apos;s"
 
     def test_mixed(self):
         assert xml_escape_text('Tom & Jerry <script> "hi"') == (
@@ -87,11 +87,12 @@ class TestEscapeForPango:
 
     def test_wrong_closing_tag_escaped(self):
         result = escape_for_pango("<b>text</i>")
-        assert "</i>" in result or "</i>" not in result
+        # The </i> doesn't match <b> so it's escaped
+        assert "</i>" in result
 
     def test_double_closing_escaped(self):
         result = escape_for_pango("</b></b>")
-        assert result.count("<") >= 2 or result.count("<") == 0
+        assert result.count("<") >= 2
 
     def test_incomplete_open_tag_preserved(self):
         result = escape_for_pango("<b")
@@ -198,6 +199,51 @@ class TestOrphanTagSweep:
         result = escape_for_pango('<b>one</b> <i>two</i>')
         assert result == '<b>one</b> <i>two</i>'
 
-    def test_uppercase_tag_pair_preserved(self):
-        """Pango is case-insensitive on tag names. Uppercase pairs preserved."""
-        assert escape_for_pango("<B>orphan</B>") == "<B>orphan</B>"
+
+class TestPangoCaseSensitivity:
+    """Pango is CASE-SENSITIVE on tag names and attribute names."""
+
+    def test_uppercase_tag_pair_normalized(self):
+        """Pango is CASE-SENSITIVE on tag names. Uppercase must be lowercased."""
+        assert escape_for_pango("<B>orphan</B>") == "<b>orphan</b>"
+
+    def test_mixed_case_tag_normalized(self):
+        """Mixed case input must normalize to all-lowercase output."""
+        assert escape_for_pango("<B>x</b>") == "<b>x</b>"
+        assert escape_for_pango("<b>x</B>") == "<b>x</b>"
+        assert escape_for_pango("<Span>x</span>") == "<span>x</span>"
+
+    def test_uppercase_closing_tag_normalized(self):
+        """Closing tag with uppercase name must be lowered to match opening."""
+        assert escape_for_pango("<b>x</B>") == "<b>x</b>"
+
+    def test_uppercase_attribute_name_normalized(self):
+        """Pango is case-sensitive on attribute names. Uppercase must be lowered."""
+        result = escape_for_pango('<span FOREGROUND="red">x</span>')
+        assert 'foreground="red"' in result, f"Got: {result!r}"
+        assert 'FOREGROUND' not in result, f"Got: {result!r}"
+
+    def test_mixed_case_attribute_name_normalized(self):
+        """Mixed-case attribute name normalizes to lowercase."""
+        result = escape_for_pango('<span Foreground="red">x</span>')
+        assert 'foreground="red"' in result, f"Got: {result!r}"
+
+    def test_attribute_value_case_preserved(self):
+        """Attribute values are preserved exactly (case-sensitive user data)."""
+        result = escape_for_pango('<span foreground="RED">x</span>')
+        assert '<span foreground="RED">x</span>' == result
+
+    def test_nested_uppercase_tags_normalized(self):
+        """All Pango tags in nested structure must be lowercased."""
+        assert escape_for_pango("<B><I>nested</I></B>") == "<b><i>nested</i></b>"
+        assert escape_for_pango("<B><B>double</B></B>") == "<b><b>double</b></b>"
+
+    def test_uppercase_self_closing_normalized(self):
+        """Self-closing void tags with uppercase name normalized."""
+        assert escape_for_pango("<BR/>") == "<br/>"
+        assert escape_for_pango("<HR/>") == "<hr/>"
+
+    def test_uppercase_orphan_tag_still_escaped(self):
+        """Orphan tags are escaped regardless of input case."""
+        assert escape_for_pango('<B>no close') == '<B>no close'
+        assert escape_for_pango('<B attr="val">no close') == '<B attr="val">no close'
