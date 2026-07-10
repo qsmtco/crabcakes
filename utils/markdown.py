@@ -35,10 +35,10 @@ _ANCHOR_PLACEHOLDER_RE = re.compile(r'\x00ANCHOR(\d+)\x00')
 # Regex for auto-linking bare URLs
 _AUTO_LINK_RE = re.compile(
     r'(?<![a-zA-Z0-9/:=])'  # not preceded by alphanum, ://, or = (href="URL")
-    r'([a-zA-Z][a-zA-Z0-9+.-]*://[^\s<>"`\'\[\]()]+)'
+    r'([a-zA-Z][a-zA-Z0-9+.-]*://[^\s<>"`\'\[\]()&]+)'
     r'|'
     r'(?<!["\'])'
-    r'((?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:/[^\s<>"`\'\[\]()]+))'
+    r'((?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:/[^\s<>"`\'\[\]()&]+))'
     , re.IGNORECASE
 )
 
