@@ -141,7 +141,7 @@ def escape_for_pango(text: str) -> str:
         # Found '<'. Determine if it's a Pango tag or a literal '<'.
         if i + 1 >= n:
             # Trailing '<' — escape as literal
-            result.append("<")
+            result.append("&lt;")
             i += 1
             continue
 
