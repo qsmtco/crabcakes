@@ -15,6 +15,19 @@ import html
 # Pango markup tags known to Gtk.Label.set_markup().
 # Only these tags are preserved; everything else is escaped.
 # Ref: https://docs.gtk.org/Pango/pango_markup.html
+#
+# IMPORTANT: Void tags (br, hr, img, wabr) are deliberately EXCLUDED from
+# the preserved set. They are extremely common in code snippets, terminal
+# output, log lines, shell commands, and HTML examples — where they MUST
+# render as literal "<br>" text inside a <tt> code span. If we preserved
+# them, Pango would open a real <br> inside <tt> and then fail to close
+# the </tt> (Gtk warning: "Element 'tt' was closed, but the currently
+# open element is 'br'"), which silently empties the bubble.
+#
+# In chat content, line breaks are produced by real '\n' (GtkLabel wraps
+# these naturally); <hr>/<img> have no place in chat bubbles. Callers that
+# genuinely need a Pango line break should construct the markup directly,
+# not rely on escape_for_pango() preserving one from input text.
 _PANGO_KNOWN_TAGS: frozenset[str] = frozenset({
     # Text style tags
     "b", "i", "u", "s", "tt", "big", "small",
@@ -22,16 +35,14 @@ _PANGO_KNOWN_TAGS: frozenset[str] = frozenset({
     "span",
     # Anchor tag
     "a",
-    # Line breaks and separators
-    "br", "hr", "wabr",
     # Sub/superscript
     "sub", "sup",
     # Overline
     "o",
 })
 
-# Void elements — HTML elements with no closing tag.
-# These never push to the open-tags stack.
+# Void elements — HTML elements with no closing tag. Kept for reference /
+# future use but NOT auto-preserved (see comment above).
 _PANGO_VOID_TAGS: frozenset[str] = frozenset({
     "area", "base", "br", "col", "embed", "hr", "img",
     "input", "link", "meta", "param", "source", "track", "wbr",
@@ -170,21 +181,19 @@ def escape_for_pango(text: str) -> str:
             if match:
                 tag_name = match.group(1).lower()
                 attrs = match.group(2)
-                # Self-closing tags (e.g., <br/>) are void
-                is_self_closing = attrs.strip().endswith("/")
-                is_void = is_self_closing or tag_name in _PANGO_VOID_TAGS
+                # Note: void tags (br, hr, img, wabr, ...) are NOT preserved.
+                # They fall through to the "Unknown tag — escape it entirely"
+                # branch below. See _PANGO_KNOWN_TAGS comment for rationale.
 
-                if tag_name in _PANGO_KNOWN_TAGS or is_void:
-                    # Known Pango tag OR void tag — preserve and track on stack.
-                    # Also escape bare & in attribute values (e.g. URLs like
+                if tag_name in _PANGO_KNOWN_TAGS:
+                    # Known Pango tag — preserve and track on stack.
+                    # Escape bare & in attribute values (e.g. URLs like
                     # href="http://example.com?a=1&b=2") to prevent XML parse
-                    # errors in Gtk.Label.set_markup(). Only escape & not already
-                    # part of an entity by checking for ; following &.
-                    # Lowercase attribute NAMES (Pango is case-sensitive on attrs too).
-                    # Preserve attribute VALUES exactly.
+                    # errors in Gtk.Label.set_markup(). Only escape & not
+                    # already part of an entity by checking for ; following &.
+                    # Lowercase attribute NAMES (Pango is case-sensitive on
+                    # attrs too). Preserve attribute VALUES exactly.
                     if attrs.strip():
-                        # Lowercase attribute NAMES (Pango is case-sensitive on attrs too).
-                        # Preserve attribute VALUES exactly.
                         def _lower_attr_names(m):
                             return m.group(1).lower() + m.group(2) + m.group(3)
                         lowered_attrs = re.sub(
@@ -201,10 +210,10 @@ def escape_for_pango(text: str) -> str:
                     else:
                         full_tag = f"<{tag_name}>"
                     result.append(full_tag)
-                    if not is_void:
-                        open_tags.append(tag_name)
+                    open_tags.append(tag_name)
                 else:
-                    # Unknown tag — escape it entirely
+                    # Unknown tag (including void tags br, hr, img, wabr) —
+                    # escape it entirely as literal text.
                     result.append(html.escape(match.group(0)))
                 i += match.end()
             else:
