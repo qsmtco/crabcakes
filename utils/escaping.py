@@ -162,7 +162,7 @@ def escape_for_pango(text: str) -> str:
                 i += match.end()
             else:
                 # Malformed close pattern — escape the '<'
-                result.append("<")
+                result.append("&lt;")
                 i += 1
         elif next_ch.isalpha() or next_ch == "!" or next_ch == "?":
             # Opening tag: <name ...> or <name>
