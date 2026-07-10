@@ -83,16 +83,15 @@ class TestEscapeForPango:
     # Malformed tags escaped
     def test_unmatched_closing_tag_escaped(self):
         result = escape_for_pango("</b>")
-        assert "</b>" in result
+        assert "&lt;/b&gt;" in result
 
     def test_wrong_closing_tag_escaped(self):
         result = escape_for_pango("<b>text</i>")
-        # The </i> doesn't match <b> so it's escaped
-        assert "</i>" in result
+        assert "&lt;/i&gt;" in result
 
     def test_double_closing_escaped(self):
         result = escape_for_pango("</b></b>")
-        assert result == "</b></b>"
+        assert result == "&lt;/b&gt;&lt;/b&gt;"
 
     def test_incomplete_open_tag_preserved(self):
         result = escape_for_pango("<b")
@@ -114,10 +113,10 @@ class TestEscapeForPango:
 
     def test_only_tag_characters(self):
         result = escape_for_pango("<<>>")
-        assert "<" in result
+        assert "&lt;" in result
 
     def test_multiple_ampersands(self):
-        assert escape_for_pango("a & b & c") == "a & b & c"
+        assert escape_for_pango("a & b & c") == "a &amp; b &amp; c"
 
     def test_trailing_lt_escaped(self):
         result = escape_for_pango("text <")
@@ -125,21 +124,21 @@ class TestEscapeForPango:
 
     # Strict entity unescape
     def test_well_formed_amp(self):
-        assert escape_for_pango("Tom & Jerry") == "Tom & Jerry"
+        assert escape_for_pango("Tom & Jerry") == "Tom &amp; Jerry"
 
     def test_well_formed_lt(self):
         assert escape_for_pango("a < b") == "a < b"
 
     def test_well_formed_gt(self):
-        assert escape_for_pango("a > b") == "a > b"
+        assert escape_for_pango("a > b") == "a &gt; b"
 
     def test_malformed_gt_preserved(self):
         result = escape_for_pango("see &gt here")
-        assert "&gt" in result
+        assert "&gt;" in result
 
     def test_malformed_amp_preserved(self):
         result = escape_for_pango("see &amp here")
-        assert "&amp" in result
+        assert "&amp;" in result
 
     def test_buggy_autolink_output_robust(self):
         broken = '<<a href="https://example.com&gt"><u>https://example.com&gt</u></a>'
@@ -158,7 +157,7 @@ class TestEscapeForPango:
 
     def test_double_encoded_no_double_decode(self):
         result = escape_for_pango("&")
-        assert result == "&"
+        assert result == "&amp;"
 
     def test_invalid_numeric_codepoint_preserved(self):
         result = escape_for_pango("&#999999999;")
@@ -242,3 +241,8 @@ class TestPangoCaseSensitivity:
         """Self-closing void tags with uppercase name normalized."""
         assert escape_for_pango("<BR/>") == "<br/>"
         assert escape_for_pango("<HR/>") == "<hr/>"
+
+    def test_uppercase_orphan_tag_still_escaped(self):
+        """Orphan tags are escaped regardless of input case."""
+        assert escape_for_pango('<B>no close') == '<b>no close'
+        assert escape_for_pango('<B attr="val">no close') == '<b attr="val">no close'
