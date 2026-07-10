@@ -541,9 +541,14 @@ class ChatInputToolbar(Gtk.Box):
             self._on_find(self._find_entry.get_text())
 
     def _on_replace_clicked(self, *args):
+        # Just show the find bar with the replace row visible. The actual
+        # replacement happens when the user clicks the in-bar Replace button,
+        # which fires _on_replace_clicked_from_bar (passes the replacement
+        # text from _replace_entry). Do NOT call self._on_replace() here —
+        # it requires a replacement argument and there is no text yet.
+        # Bug: previously called self._on_replace() with no args, raising
+        # TypeError: replace_current() missing 1 required positional argument.
         self.show_find_bar(show_replace=True)
-        if self._on_replace:
-            self._on_replace()
 
     def _on_find_next_clicked(self, *args):
         # Priority: dedicated next callback > re-run search fallback
