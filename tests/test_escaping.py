@@ -197,3 +197,7 @@ class TestOrphanTagSweep:
         """When all tags are properly closed, sweep does nothing."""
         result = escape_for_pango('<b>one</b> <i>two</i>')
         assert result == '<b>one</b> <i>two</i>'
+
+    def test_uppercase_tag_pair_preserved(self):
+        """Pango is case-insensitive on tag names. Uppercase pairs preserved."""
+        assert escape_for_pango("<B>orphan</B>") == "<B>orphan</B>"
