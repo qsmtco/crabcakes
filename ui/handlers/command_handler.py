@@ -173,9 +173,10 @@ class CommandHandler:
         *,
         aliases: list[str] | None = None,
         help_text: str = "",
+        payload_free: bool = False,
     ) -> None:
         """Register a command handler. Called by window during setup."""
-        self._registry.register(name, handler, aliases=aliases, help_text=help_text)
+        self._registry.register(name, handler, aliases=aliases, help_text=help_text, payload_free=payload_free)
 
     def set_prefix(self, char: str) -> None:
         """Change the command prefix character. Default: slash."""
