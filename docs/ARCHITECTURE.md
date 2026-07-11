@@ -811,17 +811,21 @@ New methods:
 ```python
 from utils.escaping import escape_for_pango, xml_escape_text
 
-# Escape specials, preserve known Pango tags (<b>, <i>, <span>, <a>, <br>, etc.)
-# Unknown tags (<script>, <div>) are escaped — prevents Pango from silently
-# rendering the ENTIRE message as empty when it encounters an unknown tag.
+# Escape specials, preserve known Pango tags (<b>, <i>, <u>, <s>, <tt>, <span>, <a>, <sub>, <sup>, <big>, <small>, <o>).
+# Unknown tags (including HTML void elements <br>, <hr>, <img>) are escaped — prevents Pango from silently
+# rendering the ENTIRE message as empty when it encounters an unknown tag, and prevents
+# cascade-failure markup errors when literal <br>/<hr>/<img> appear inside <tt> code spans
+# (regression fixed 2026-07-10; see Bug #N in .crabcakes/coder-bugs.md).
 safe = escape_for_pango("<b>bold</b> and <script>x</script>")
 # → "<b>bold</b> and &lt;script&gt;x&lt;/script&gt;"
+safe = escape_for_pango("line1<br>line2")
+# → "line1&lt;br&gt;line2"  (void tags escaped, not preserved)
 
 # Simple XML entity escaping for plain text (no Pango markup)
 xml_escape_text("Tom & Jerry")  # → "Tom &amp; Jerry"
 ```
 
-**Key design:** Uses a Pango-known-tag whitelist (`_PANGO_KNOWN_TAGS`). Only tags in this set are preserved; everything else (HTML, `<script>`, `<div>`) is escaped. This prevents the critical bug where Pango renders unknown tags as invisible, making the entire message content disappear.
+**Key design:** Uses a Pango-known-tag whitelist (`_PANGO_KNOWN_TAGS`). Only tags in this set are preserved; everything else (HTML, `<script>`, `<div>`, AND HTML void elements `<br>`/`<hr>`/`<img>`/`<wbr>`) is escaped. This prevents the critical bug where Pango renders unknown tags as invisible, making the entire message content disappear, AND the cascade-failure bug where a literal `<br>` inside a `<tt>` code span (added by `format_markdown` for inline code) opened a real Pango `<br>` element that `</tt>` could not close, silently emptying the bubble. Void tags are intentionally escaped — line breaks in chat come from `\n` (GtkLabel wraps naturally); `<hr>`/`<img>` have no business in chat bubbles and are far more common in code snippets, terminal output, shell heredocs, and HTML examples than as genuine Pango layout directives.
 
 ### 3.14b `utils/markdown.py` — Inline Markdown → Pango Markup
 
