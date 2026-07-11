@@ -10,8 +10,9 @@ existing tests continue to pass unchanged.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Callable, Protocol
 
 from models.conversation import (
     Conversation,
