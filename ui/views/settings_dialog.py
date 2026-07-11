@@ -166,6 +166,7 @@ class _ProviderCard:
             f"  {p.caller}" if p.caller else "  (auto-detected on save)"
         )
         self._max_tokens_spin.set_value(p.max_tokens or 128_000)
+        self._compaction_threshold_spin.set_value(p.compaction_threshold or 0.80)
 
     def _is_dirty(self) -> bool:
         """True if any entry field differs from the stored provider values.
