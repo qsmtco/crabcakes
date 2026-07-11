@@ -178,6 +178,7 @@ class _ProviderCard:
             or self._model_entry.get_text().strip() != (p.default_model or "")
             or self._api_key_entry.get_text().strip() != (p.api_key or "")
             or int(self._max_tokens_spin.get_value()) != (p.max_tokens or 128_000)
+            or float(self._compaction_threshold_spin.get_value()) != (p.compaction_threshold or 0.80)
         )
 
     def _update_provider_ref(self, provider: ProviderConfig) -> None:
