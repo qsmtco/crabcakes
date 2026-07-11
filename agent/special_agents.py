@@ -43,6 +43,7 @@ class SpecialAgentDef:
     mcp_servers: list[str] = field(default_factory=list)  # MCP servers for Phase B
     auto_open: bool = False           # open tab automatically on every app launch
     auto_add_to_projects: bool = False  # auto-add to every new project's team
+    compaction_strategy: str = "textual"  # Phase C — "textual" | "llm"
 
     def get_self_improvement_config(self) -> dict:
         """Return self_improvement config with defaults applied.
