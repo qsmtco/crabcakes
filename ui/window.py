@@ -645,6 +645,14 @@ class MainWindow(Gtk.ApplicationWindow):
             self._main_content.set_context_meter(sk, usage_pct)
         self._agent_runtime_handler.set_on_token_breakdown_extra(_on_context_meter)
 
+        # Phase B — Wire /compact data-plane + UI side-effect.
+        self._project_handler.set_compact_callback(
+            self._agent_runtime_handler.compact_conversation
+        )
+        self._project_handler.set_compact_chat_callback(
+            lambda sk, result: self._show_compact_bubble(sk, result)
+        )
+
         # ── Agent Command Handler (Phase 6.2) ─────────────────────────────────────
         # Scans agent responses for backtick commands, routes to target agents,
         # and relays answers back to the asking agent via pending-ask tracking.
