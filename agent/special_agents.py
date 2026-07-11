@@ -102,6 +102,7 @@ def _load_registry() -> dict[str, SpecialAgentDef]:
             mcp_servers=raw_mcp,  # Phase B: MCP server list (coerced)
             auto_open=agent_def.get("auto_open", False),
             auto_add_to_projects=agent_def.get("auto_add_to_projects", False),
+            compaction_strategy=agent_def.get("compaction_strategy", "textual"),
         )
 
     return registry
