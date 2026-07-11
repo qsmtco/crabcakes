@@ -602,7 +602,8 @@ class TestQuotedPayloadIntegration:
 
     def test_stop_no_payload_required(self, configured_handler):
         """§7.3 #6: `stop @QTR → handled, no error about missing payload."""
-        configured_handler.register_command("stop", lambda c: CommandResult(handled=True, response_text="ok"))
+        configured_handler.register_command("stop", lambda c: CommandResult(handled=True, response_text="ok"),
+            payload_free=True)
         result = configured_handler.process_input("agent:1", "/stop @Debugger")
         assert result.handled is True
         assert "Malformed" not in result.response_text
