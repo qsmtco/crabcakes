@@ -358,13 +358,9 @@ class CommandHandler:
             else:
                 return resolved  # CommandResult error from _resolve_mention
 
-        # Payload-free commands per spec §3.2: stop, done, start, blocked, cancel,
-        # tasks, review, check, accept, reject, status, agents, cost, help
-        _PAYLOAD_FREE = frozenset({
-            'stop', 'tasks', 'review', 'check', 'accept', 'reject',
-            'status', 'agents', 'cost', 'help',
-            'done', 'start', 'blocked', 'cancel',
-        })
+        # Payload-free commands: check via registry (derives from register_command payload_free=True)
+        # Commands marked payload_free: stop, tasks, review, check, accept, reject,
+        # status, agents, cost, help, done, start, blocked, cancel, clear, session
 
         # After @mention, require quoted payload (unless command is payload-free)
         rest_text = " ".join(args_after_mentions)
@@ -389,7 +385,7 @@ class CommandHandler:
                 # Enforce 4K payload cap per spec §4.5
                 if len(body) > _PAYLOAD_MAX_CHARS:
                     body = body[:_PAYLOAD_MAX_CHARS] + '…'
-        elif cmd_name in _PAYLOAD_FREE:
+        elif self._registry.is_payload_free(cmd_name):
             # Payload-free command: no payload required, no error
             pass
         else:
