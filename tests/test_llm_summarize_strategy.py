@@ -23,8 +23,12 @@ class TestLLMSummarizeStrategy:
         from agent.context_strategy import LLMSummarizeStrategy
         strat = LLMSummarizeStrategy(llm_provider=lambda sys_p, user_p: "")
         conv = MagicMock()
-        conv.messages = [MagicMock(role=MagicMock(value="user"), content="hello")] * 10
+        msg = MagicMock()
+        msg.role = MagicMock(value="user")
+        msg.content = "hello"
+        conv.messages = [msg] * 10
         conv.system_prompt = "test"
+        conv.get_token_estimate.return_value = 5000
         result = strat._summary(conv, token_budget=1000, keep_first=2)
         assert isinstance(result, str)
 
@@ -37,8 +41,12 @@ class TestLLMSummarizeStrategy:
 
         strat = LLMSummarizeStrategy(llm_provider=raising_provider)
         conv = MagicMock()
-        conv.messages = [MagicMock(role=MagicMock(value="user"), content="hello")] * 10
+        msg = MagicMock()
+        msg.role = MagicMock(value="user")
+        msg.content = "hello"
+        conv.messages = [msg] * 10
         conv.system_prompt = "test"
+        conv.get_token_estimate.return_value = 5000
         result = strat._summary(conv, token_budget=1000, keep_first=2)
         assert isinstance(result, str)
 
@@ -49,8 +57,12 @@ class TestLLMSummarizeStrategy:
         summary = "<task>Fix the bug</task><progress>Step 1 done</progress>"
         strat = LLMSummarizeStrategy(llm_provider=lambda sys_p, user_p: summary)
         conv = MagicMock()
-        conv.messages = [MagicMock(role=MagicMock(value="user"), content="hello")] * 10
+        msg = MagicMock()
+        msg.role = MagicMock(value="user")
+        msg.content = "hello"
+        conv.messages = [msg] * 10
         conv.system_prompt = "test"
+        conv.get_token_estimate.return_value = 5000
         result = strat._summary(conv, token_budget=1000, keep_first=2)
         assert result == summary
 
@@ -70,8 +82,12 @@ class TestLLMSummarizeStrategy:
         long_response = "<task>x</task>" + "a" * 5000
         strat = LLMSummarizeStrategy(llm_provider=lambda sys_p, user_p: long_response)
         conv = MagicMock()
-        conv.messages = [MagicMock(role=MagicMock(value="user"), content="hello")] * 10
+        msg = MagicMock()
+        msg.role = MagicMock(value="user")
+        msg.content = "hello"
+        conv.messages = [msg] * 10
         conv.system_prompt = "test"
+        conv.get_token_estimate.return_value = 5000
         result = strat._summary(conv, token_budget=100, keep_first=2)
         # Should be the FULL response, not truncated by the strategy
         assert len(result) == len(long_response)
@@ -83,7 +99,8 @@ class TestForceLlmCompact:
 
     def test_strategy_swapped_and_restored(self):
         """force_llm_compact must restore _context_strategy after call."""
-        from agent.runtime import AgentRuntime, DefaultContextStrategy
+        from agent.context_strategy import DefaultContextStrategy
+        from agent.runtime import AgentRuntime
         rt = AgentRuntime.__new__(AgentRuntime)
         original = DefaultContextStrategy()
         rt._context_strategy = original
@@ -106,7 +123,8 @@ class TestForceLlmCompact:
 
     def test_system_prompt_restored(self):
         """force_llm_compact must restore conv.system_prompt after focus_text."""
-        from agent.runtime import AgentRuntime, DefaultContextStrategy
+        from agent.context_strategy import DefaultContextStrategy
+        from agent.runtime import AgentRuntime
         rt = AgentRuntime.__new__(AgentRuntime)
         rt._context_strategy = DefaultContextStrategy()
 
@@ -141,6 +159,8 @@ class TestCallForSummary:
         rt = AgentRuntime.__new__(AgentRuntime)
         rt._config = MagicMock()
         rt._config.providers = {}
+        rt._config.default_provider = None
+        rt._config.default_model = None
         with pytest.raises(RuntimeError, match="no model_id"):
             rt._call_for_summary("sys", "user", model_id=None, conv=None)
 
