@@ -1248,9 +1248,25 @@ class AgentRuntimeHandler:
         return dict(self._session_usage)
 
     def _on_token_breakdown(self, session_key: str, breakdown: dict) -> None:
-        """§4.15 — Per-turn token budget breakdown. Logged for observability."""
+        """§Phase-A — Per-turn token budget breakdown. Store + log + dispatch.
+
+        Breakdown dict keys (verified at models/conversation.py:362 and
+        runtime.py:2187-2218):
+          system_prompt_tokens  (int)
+          conversation_tokens   (int)
+          total_used_tokens     (int)
+          model_max_tokens      (int)
+          remaining_tokens      (int)
+          usage_percent         (float 0.0-100.0)
+          trimmed_this_turn     (bool)  ← only True when real compaction happened
+          messages_remaining    (int)
+          messages_removed_this_turn (int, 0 if no compaction)
+          compaction_event      (dict, only when _compaction_happened)
+        """
+        # Always log for observability (preserve existing behavior).
         logger.info(
-            "[token-breakdown] sk=%s system_prompt=%d conv=%d total=%d/%d remaining=%d (%.1f%%)",
+            "[token-breakdown] sk=%s system_prompt=%d conv=%d total=%d/%d "
+            "remaining=%d (%.1f%%) trimmed=%s removed=%d",
             session_key,
             breakdown["system_prompt_tokens"],
             breakdown["conversation_tokens"],
@@ -1258,7 +1274,139 @@ class AgentRuntimeHandler:
             breakdown["model_max_tokens"],
             breakdown["remaining_tokens"],
             breakdown["usage_percent"],
+            breakdown.get("trimmed_this_turn", False),
+            breakdown.get("messages_removed_this_turn", 0),
         )
+
+        # Cache for the UI meter (cheap, in-memory).
+        self._last_breakdown[session_key] = breakdown
+
+        # Fire compaction bubble on real compaction only.
+        if breakdown.get("trimmed_this_turn", False):
+            already_seen = self._first_compaction_seen.get(session_key, False)
+            if not already_seen:
+                self._first_compaction_seen[session_key] = True
+                ev = breakdown.get("compaction_event", {})
+                if self._GLib is not None:
+                    self._GLib.idle_add(
+                        self._do_compaction_bubble, session_key, ev
+                    )
+                else:
+                    self._do_compaction_bubble(session_key, ev)
+
+        # Threshold warnings — 80% → "approaching limit", 95% → "auto-compact imminent".
+        # Anti-spam: hysteresis — only re-fire if we cross back below 75%.
+        usage_pct = breakdown.get("usage_percent", 0.0)
+        last_pct = self._last_warning_pct.get(session_key, -1.0)
+        new_warn_level: str | None = None
+        if usage_pct >= 95.0 and last_pct < 95.0:
+            new_warn_level = "auto-compact-imminent"
+        elif usage_pct >= 80.0 and last_pct < 80.0:
+            new_warn_level = "approaching-limit"
+        if new_warn_level is not None:
+            self._last_warning_pct[session_key] = usage_pct
+            if self._GLib is not None:
+                self._GLib.idle_add(
+                    self._do_usage_warning, session_key, new_warn_level, usage_pct
+                )
+            else:
+                self._do_usage_warning(session_key, new_warn_level, usage_pct)
+        # Reset hysteresis when we drop back well below threshold.
+        if usage_pct < 75.0 and last_pct >= 80.0:
+            self._last_warning_pct[session_key] = usage_pct
+
+        # Phase A — Forward to optional extra listener (context meter).
+        if self._on_token_breakdown_extra is not None:
+            try:
+                self._on_token_breakdown_extra(session_key, breakdown)
+            except Exception:
+                logger.exception(
+                    "_on_token_breakdown: extra listener raised; ignoring"
+                )
+
+    def _do_compaction_bubble(self, session_key: str, ev: dict) -> None:
+        """Main-thread portion of the compaction bubble dispatch.
+
+        Renders a styled bubble into the chat box for the session.
+        Mirrors _do_error's pattern (line 1286): resolve chat_box, call
+        self._crh.render_sync, chat_box.append(bubble), scroll to bottom.
+        """
+        logger.debug("[handler] _do_compaction_bubble: sk=%s ev=%s", session_key, ev)
+        if self._crh is not None:
+            self._crh.end_streaming(session_key, agent_name=None)
+
+        chat_box = self._resolve_chat_box(session_key)
+        if chat_box is None:
+            logger.debug("[handler] _do_compaction_bubble: no chat box for %s", session_key)
+            return
+
+        removed = int(ev.get("messages_removed", 0))
+        freed = int(ev.get("tokens_freed", 0))
+        layer = int(ev.get("layer", 0))
+        trigger = str(ev.get("trigger", ""))
+        text = (
+            f"🧹 Context reset. Removed {removed} message"
+            f"{'s' if removed != 1 else ''}, freed ~{freed:,} tokens."
+            f"\n   (Layer {layer}; trigger: {trigger})"
+        )
+        bubble = self._crh.render_sync(
+            "Agent", text, session_key, agent_name=None
+        )
+        if bubble is not None:
+            chat_box.append(bubble)
+            self._mc.scroll_chat_to_bottom()
+        else:
+            logger.warning("[handler] _do_compaction_bubble: render_sync returned None")
+
+    def _do_usage_warning(
+        self, session_key: str, level: str, usage_pct: float
+    ) -> None:
+        """Main-thread portion of context-pressure warning.
+
+        Levels:
+          "approaching-limit" — usage >= 80%, suggest /compact.
+          "auto-compact-imminent" — usage >= 95%, expect auto-compaction.
+        """
+        if level == "approaching-limit":
+            text = (
+                f"⚠️ Context at {usage_pct:.0f}%. "
+                f"Consider /compact to free space."
+            )
+        else:  # auto-compact-imminent
+            text = (
+                f"🔴 Context at {usage_pct:.0f}%. "
+                f"Auto-compaction will trigger soon."
+            )
+        chat_box = self._resolve_chat_box(session_key)
+        if chat_box is None:
+            return
+        if self._crh is not None:
+            self._crh.end_streaming(session_key, agent_name=None)
+            bubble = self._crh.render_sync(
+                "Agent", text, session_key, agent_name=None
+            )
+            if bubble is not None:
+                chat_box.append(bubble)
+                self._mc.scroll_chat_to_bottom()
+
+    # ── Phase A: public API for the UI context meter ─────────────────────────
+    def get_last_breakdown(self, session_key: str) -> dict | None:
+        """Return the most recent token breakdown for ``session_key``.
+
+        Returns None if the session hasn't seen a turn yet.
+        Used by the chat-panel context meter to render a live progress bar.
+        """
+        return self._last_breakdown.get(session_key)
+
+    def set_on_token_breakdown_extra(
+        self, cb: Callable[[str, dict], None] | None
+    ) -> None:
+        """Inject an additional listener for breakdown events.
+
+        Used by Phase A — the context meter subscribes here without
+        replacing the existing logger.info dispatch. None clears.
+        """
+        self._on_token_breakdown_extra = cb
 
     def _on_error(self, session_key: str, message: str) -> None:
         """AgentRuntime error callback. Show error bubble."""
