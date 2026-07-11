@@ -1260,13 +1260,18 @@ Transcript:
                 f"_call_for_summary: no caller for {caller_key!r}"
             )
 
-        # IMPORTANT: api_key resolution mirrors the runtime's pattern
-        # at agent_runtime_handler.py for the existing _call_llm path.
-        # Phase C implementer should re-use the helper
-        # ``self._resolve_api_key(provider_cfg)`` (verified to exist
-        # alongside _resolve_caller_key at runtime.py:2519). If that
-        # helper does not yet exist, fall back to provider_cfg.api_key
-        # directly with a log warning.
+        # FIXME: api_key resolution — verified at runtime.py:1341, the
+        # helper is ``_resolve_api_key_for_conversation(data: dict)``
+        # (module-level, takes a dict). Phase C implementer should:
+        #   1. Re-read runtime.py:2519-2700 to confirm the exact
+        #      per-provider api_key resolution pattern (env var →
+        #      provider_cfg.api_key chain) used by the existing _call_llm.
+        #   2. Either extract a new helper ``_resolve_api_key_for_provider
+        #      (provider_cfg) -> str`` from the existing code, OR call
+        #      ``_resolve_api_key_for_conversation({"provider": name,
+        #      "model": model})`` which already implements the env var →
+        #      provider fallback chain.
+        # As a first-pass, fall back to provider_cfg.api_key with a log:
         api_key = getattr(provider_cfg, "api_key", "") or ""
         if not api_key:
             logger.warning(
@@ -1283,19 +1288,14 @@ Transcript:
             timeout=float(self._config.tool_timeout_seconds),
             x_title="crabcakes-summary",
         )
-        # _extract_text_content is the runtime's existing helper for
-        # pulling assistant text from a response dict. Verified at
-        # agent/runtime.py alongside _extract_tool_calls / _extract_usage.
-        text = self._extract_text_content(response_dict) \
-            if hasattr(self, "_extract_text_content") \
-            else response_dict.get("content", "")
-        if not text:
-            # Fallback: anthropic uses "content" as a list of blocks.
-            content = response_dict.get("content", [])
-            if isinstance(content, list) and content:
-                first = content[0]
-                text = first.get("text", "") if isinstance(first, dict) else str(first)
-        return text or ""
+        # _extract_text_content is the runtime's existing module-level
+        # helper for pulling assistant text from a response dict.
+        # Signature (verified at runtime.py:1208):
+        #   _extract_text_content(response: dict, provider: str) -> str
+        # It handles the OpenAI / Anthropic / MiniMax response shapes.
+        from agent.runtime import _extract_text_content
+        text = _extract_text_content(response_dict, provider_name)
+        return text
 ```
 
 **Files added/changed in Phase C (FIX-BUG-2 final list):**
