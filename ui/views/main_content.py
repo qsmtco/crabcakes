@@ -850,6 +850,14 @@ class MainContent(Gtk.Box):
         Called from window.py when AgentRuntimeHandler emits a breakdown.
         ``usage_percent`` is 0.0-100.0. Negative values reset to idle.
         """
+        if usage_percent is None or not isinstance(usage_percent, (int, float)):
+            self._context_meter.set_fraction(0.0)
+            self._context_meter_label.set_text("")
+            return
+        if usage_percent != usage_percent:  # NaN check
+            self._context_meter.set_fraction(0.0)
+            self._context_meter_label.set_text("")
+            return
         if usage_percent < 0:
             self._context_meter.set_fraction(0.0)
             self._context_meter_label.set_text("")
