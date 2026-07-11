@@ -507,7 +507,7 @@ class AgentRuntimeHandler:
             # Phase C path — fires when force_llm_compact exists and
             # agent_def.compaction_strategy == "llm".
             try:
-                return rt.force_llm_compact(conv, target_budget, focus_text)
+                return rt.force_llm_compact(conv, target_budget, focus_text, agent_def=agent_def)
             except Exception:
                 logger.exception(
                     "compact_conversation: LLM strategy failed; "
