@@ -840,6 +840,39 @@ class MainContent(Gtk.Box):
         else:
             self._scroll_btn.set_opacity(0)
 
+    # ── Context meter (Phase A) ──────────────────────────────────────────
+
+    def set_context_meter(
+        self, session_key: str, usage_percent: float
+    ) -> None:
+        """Update the context-meter widget for the active ``session_key``.
+
+        Called from window.py when AgentRuntimeHandler emits a breakdown.
+        ``usage_percent`` is 0.0-100.0. Negative values reset to idle.
+        """
+        if usage_percent < 0:
+            self._context_meter.set_fraction(0.0)
+            self._context_meter_label.set_text("")
+            return
+        self._context_meter.set_fraction(min(usage_percent / 100.0, 1.0))
+        # Pick CSS class per zone (green < 70%, yellow 70-90%, red >= 90%).
+        existing_classes = [
+            c for c in self._context_meter.get_css_classes()
+            if c.startswith("context-meter-")
+        ]
+        for c in existing_classes:
+            self._context_meter.remove_css_class(c)
+        if usage_percent >= 90.0:
+            self._context_meter.add_css_class("context-meter-high")
+            color_label = "high"
+        elif usage_percent >= 70.0:
+            self._context_meter.add_css_class("context-meter-medium")
+            color_label = "med"
+        else:
+            self._context_meter.add_css_class("context-meter-low")
+            color_label = "ok"
+        self._context_meter_label.set_text(f"{color_label} {usage_percent:.0f}%")
+
     # ── STT (Speech-to-Text) ───────────────────────────────────────────────
     # State machine: idle → click → recording → click → idle.
     # update_stt_state() drives the button label/style.
