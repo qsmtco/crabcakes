@@ -3125,7 +3125,11 @@ class AgentRuntime:
                 f"_call_for_summary: no caller for {caller_key!r}"
             )
 
-        api_key = getattr(provider_cfg, "api_key", "") or ""
+        api_key = ""
+        if conv is not None and getattr(conv, "api_key", None):
+            api_key = conv.api_key
+        if not api_key:
+            api_key = getattr(provider_cfg, "api_key", "") or ""
         if not api_key:
             logger.warning(
                 "_call_for_summary: empty api_key for %s; check Settings",
