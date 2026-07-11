@@ -518,19 +518,23 @@ DISCOVERY:
 **Add after the existing /clear wiring block:**
 
 ```python
-        # Phase A — Wire the context-meter callback.
-        # AgentRuntimeHandler emits a token breakdown every turn;
-        # we forward usage_percent to MainContent for the bottom bar
-        # meter. Runs on the main thread (GLib.idle_add is upstream).
+        # Phase A — Wire the context-meter callback via the
+        # set_on_token_breakdown_extra() slot (see §3.1.5). The existing
+        # _on_token_breakdown in agent_runtime_handler.py dispatches to
+        # the logger.info (preserved) and to this extra listener.
         def _on_context_meter(sk: str, breakdown: dict) -> None:
             usage_pct = breakdown.get("usage_percent", 0.0)
             self._main_content.set_context_meter(sk, usage_pct)
-        # Hook into the existing _on_token_breakdown already in arh;
-        # we don't add a new callback — we just call set_context_meter
-        # inside the existing logger.info path. To avoid double-wiring
-        # the breakdown dispatch, we extend agent_runtime_handler.py to
-        # optionally take a "meter callback" — see 3.1.5.
+        self._agent_runtime_handler.set_on_token_breakdown_extra(_on_context_meter)
 ```
+
+> **FIX-BUG-10 (reconciliation):** An earlier draft of this section said
+> "we don't add a new callback — we just call set_context_meter inside
+> the existing logger.info path." That was incorrect — the boundary
+> would couple window.py into the handler body. The correct mechanism
+> is the **`set_on_token_breakdown_extra()` slot defined in §3.1.5**,
+> and this section now wires only that. Do **not** add a second
+> mechanism.
 
 **Files NOT changed:**
 - `agent/runtime.py` — already emits breakdown
