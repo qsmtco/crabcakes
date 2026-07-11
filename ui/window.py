@@ -897,6 +897,32 @@ class MainWindow(Gtk.ApplicationWindow):
             chat_box.remove(child)
         logger.info("Cleared chat box for session %s", session_key)
 
+    def _show_compact_bubble(self, session_key: str, result: dict) -> None:
+        """Render a "🧹 Compacted" bubble into the session's chat box.
+
+        Spec: docs/specs/SPEC-CONTEXT-UI-COMPACT-LLM-2026-07-10.md §3.2.
+
+        Mirrors _clear_chat_box's pattern (resolves chat_box, appends).
+        Uses ChatRenderHandler.render_sync to build the bubble. No-op
+        if the chat box isn't available (user closed the tab).
+        """
+        chat_box = self._main_content.get_chat_box_for_session(session_key)
+        if chat_box is None:
+            logger.debug("_show_compact_bubble: no chat box for %s", session_key)
+            return
+        removed = int(result.get("messages_removed", 0))
+        freed = int(result.get("tokens_freed", 0))
+        text = (
+            f"🧹 Compacted. Removed {removed} message"
+            f"{'s' if removed != 1 else ''}, freed ~{freed:,} tokens."
+        )
+        bubble = self._chat_render_handler.render_sync(
+            "Agent", text, session_key, agent_name=None
+        )
+        if bubble is not None:
+            chat_box.append(bubble)
+            self._main_content.scroll_chat_to_bottom()
+
     # ── Auxilium wizard completion ───────────────────────────────────────────
 
     def _on_auxilium_wizard_complete(self) -> None:
