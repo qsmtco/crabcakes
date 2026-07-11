@@ -3044,6 +3044,7 @@ class AgentRuntime:
                     system_prompt=sys_p,
                     user_prompt=user_p,
                     model_id=model_id or conv.model,
+                    conv=conv,
                 ),
         )
         self._context_strategy = strat
@@ -3083,6 +3084,7 @@ class AgentRuntime:
         system_prompt: str,
         user_prompt: str,
         model_id: str | None = None,
+        conv: "Conversation | None" = None,
     ) -> str:
         """Single non-streaming chat completion for LLMSummarizeStrategy.
 
