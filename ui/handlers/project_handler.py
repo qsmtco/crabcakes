@@ -683,7 +683,7 @@ class ProjectHandler:
         tabs (session_key starts with "special:"). Project tabs are a
         no-op with a hint telling the user to use /clear in an agent tab.
         """
-        sk = cmd.source_session_key or session_key
+        sk = cmd.target_session_key or cmd.source_session_key or session_key
         if not sk:
             return CommandResult(
                 handled=True,
