@@ -1468,7 +1468,9 @@ User: types "/compact @coder — focus on the auth changes"
    if strat == "llm":
      return rt.force_llm_compact(conv, target, focus_text)
    rt._context_strategy.compact(conv, target)  [textual path]
-   rt._save_conversation_now(sk)
+   # FIX-BUG-1: use the real module-level function (no `_save_conversation_now`).
+   from agent.runtime import _save_conversation_to_disk
+   _save_conversation_to_disk(conv, sk)
    ev = rt._context_strategy.last_result
    return {messages_removed, tokens_freed, summary_chars, layer}
    ↓
