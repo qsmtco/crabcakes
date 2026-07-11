@@ -1057,16 +1057,25 @@ Transcript:
             return ""
 
         # Build the transcript: each message on its own line with role prefix.
-        # Limit to ~4000 chars to keep the LLM call cheap; the transcript is
-        # an INPUT, not an output. The LLM is expected to compress ~80x.
+        # FIX-BUG-7: smarter truncation. Tool messages are usually large
+        # raw outputs (file contents, command logs) — truncate those
+        # aggressively because the agent's text recap right above them
+        # already conveys the gist. User/assistant messages need their
+        # full content for the LLM to preserve decisions and rationale.
         lines = []
         for msg in head:
-            role = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
-            content = (msg.content or "").replace("\n", " ")[:1000]  # cap each msg
-            lines.append(f"[{role}] {content}")
+            role_value = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+            content = (msg.content or "").replace("\n", " ")
+            # Tool-role messages: cap 500 chars (already-recapped).
+            # User/assistant/system messages: cap 2000 chars (need detail).
+            if role_value == "tool":
+                content = content[:500]
+            else:
+                content = content[:2000]
+            lines.append(f"[{role_value}] {content}")
         transcript = "\n".join(lines)
-        if len(transcript) > 4000:
-            transcript = transcript[:4000] + "\n[... truncated for length ...]"
+        if len(transcript) > 8000:
+            transcript = transcript[:8000] + "\n[... transcript truncated for length ...]"
 
         # Compose the prompt.
         user_prompt = self.SUMMARY_PROMPT_TEMPLATE.format(transcript=transcript)
