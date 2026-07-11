@@ -841,8 +841,14 @@ Add this to `__init__` near `self._session_usage` initialization at line 102.
         rt._context_strategy.compact(conv, target_budget)
 
         # Persist the conversation so the trimmed state survives restarts.
+        # FIX-BUG-1: there is no instance method `_save_conversation_now`.
+        # The actual API is the module-level function
+        # agent.runtime._save_conversation_to_disk(conv, session_key)
+        # verified at agent/runtime.py:1284. The instance method call
+        # would AttributeError at runtime.
         try:
-            rt._save_conversation_now(session_key)
+            from agent.runtime import _save_conversation_to_disk
+            _save_conversation_to_disk(conv, session_key)
         except Exception:
             logger.exception(
                 "compact_conversation: persist failed; in-memory compact succeeded"
