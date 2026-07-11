@@ -1685,8 +1685,29 @@ $ python3 -m pytest tests/ -q
 
 ## 10. Compliance Checklist
 
-- [x] **Rule 1:** Every referenced file read before spec written (DISCOVERY block above).
-- [x] **Rule 2:** Every code sample traced against actual source. `_on_token_breakdown` line 1238 verified; `_compute_compaction_threshold` line 1920 verified; `_context_strategy.compact` line 125 verified; `render_sync` line 321 verified.
+- [x] **Rule 1:** Every referenced file read before spec written (DISCOVERY block above). Re-read after adversarial audit (10 bugs reported, all resolved below).
+- [x] **Rule 2:** Every code sample traced against actual source. `_on_token_breakdown` line 1238 verified; `_compute_compaction_threshold` line 1920 verified; `_context_strategy.compact` line 125 verified; `render_sync` line 321 verified. **Re-verified after audit:**
+  - `_save_conversation_to_disk(conv, session_key)` is at runtime.py:1284 (FIX-BUG-1).
+  - `_PROVIDER_CALLERS` dict at runtime.py:423; `_call_openai` at 195, `_call_anthropic` at 363 (FIX-BUG-2).
+  - `_resolve_caller_key(self, provider_cfg, model)` at runtime.py:2519 (FIX-BUG-2/3).
+  - `_extract_text_content(response, provider)` at runtime.py:1208 (FIX-BUG-2).
+  - `_resolve_api_key_for_conversation(data)` at runtime.py:1341 (FIX-BUG-2 nuance).
+  - `validate_agent_def(agent_def: dict) -> list[str]` at utils/agent_defs.py:377 (FIX-BUG-9).
+
+### 10.1 Adversarial-Audit Fixes (10 bugs, all closed)
+
+| Bug | Severity | Fix Location | Status |
+|---|---|---|---|
+| #1 `_save_conversation_now` nonexistent | CRITICAL | §3.2.3 `compact_conversation` | ✅ |
+| #2 `agent/llm_completion.py` invented modules | CRITICAL | §3.3.2 rewritten to use real `_PROVIDER_CALLERS`; new module removed | ✅ |
+| #3 Parallel LLM strategy bypasses `_compaction_events` | HIGH | §3.3.2 `force_llm_compact` swaps `self._context_strategy` then restores | ✅ |
+| #4 Dict annotations initialized with scalars | HIGH | §3.1.1 init state | ✅ |
+| #5 `_compact_callback` not initialized in `__init__` | HIGH | §3.2.1 explicit `self._compact_callback = None` in `__init__` | ✅ |
+| #6 `MainContent` context meter widget scope | MEDIUM | §3.1.2 SCOPE NOTE moves creation to `__init__` | ✅ |
+| #7 Transcript truncation loses tool content | MEDIUM | §3.3.1 LLMSummarizeStrategy uses role-aware caps (500/2000) | ✅ |
+| #8 `_get_runtime(name)` wrong key | MEDIUM | Verified — `_get_runtime(agent_def.display_name)` is correct | ✅ |
+| #9 `validate_agent_def` is supposed to return list, not raise | LOW | §3.3.5 uses list-append pattern | ✅ |
+| #10 §3.1.4 and §3.1.5 contradictory wiring | LOW | §3.1.4 reconciliation note, only `set_on_token_breakdown_extra` slot survives | ✅ |
 - [x] **Rule 3:** Every function call signature verified.
   - `_context_strategy.compact(conv, target)` ✓ (context_strategy.py:125)
   - `compact_conversation(sk)` ✓ (mirrors clear_conversation signature)
