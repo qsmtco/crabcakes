@@ -163,7 +163,8 @@ class CommandHandler:
             # Phase B — /compact command. Mirror /clear pattern.
             if hasattr(project_handler, "cmd_compact"):
                 self.register_command("compact", project_handler.cmd_compact,
-                    help_text="Compact conversation: /compact [focus-instructions]")
+                    help_text="Compact conversation: /compact [focus-instructions]",
+                    payload_free=True)
 
         # Session — requires SessionHandler
         if session_handler is not None:
