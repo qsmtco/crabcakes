@@ -160,6 +160,11 @@ class CommandHandler:
                     help_text="Clear agent conversation history and reset step count",
                     payload_free=True)
 
+            # Phase B — /compact command. Mirror /clear pattern.
+            if hasattr(project_handler, "cmd_compact"):
+                self.register_command("compact", project_handler.cmd_compact,
+                    help_text="Compact conversation: /compact [focus-instructions]")
+
         # Session — requires SessionHandler
         if session_handler is not None:
             self.register_command("session", session_handler.cmd_session, aliases=["s"],
