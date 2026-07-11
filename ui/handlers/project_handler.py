@@ -86,6 +86,9 @@ class ProjectHandler:
         # None means the runtime handler hasn't been wired yet (e.g. test
         # fixtures); the in-memory cache path is then skipped.
         self._runtime_usage_fn: Callable[[], dict] | None = None
+        # Phase B — /compact injection slots.
+        self._compact_callback: Callable[[str, str], dict] | None = None
+        self._compact_chat_callback: Callable[[str, dict], None] | None = None
 
     # ── Public API — for window / other handlers ───────────────────────────
 
