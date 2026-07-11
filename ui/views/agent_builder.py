@@ -190,7 +190,7 @@ class AgentBuilderDialog:
             "self_improvement": self._get_si_config(tools),
             "fallback_provider": self._get_selected_fallback_provider() or None,
             "compaction_strategy":
-                ["textual", "llm"][self._compaction_strategy_combo.get_selected()],
+                list(VALID_COMPACTION_STRATEGIES)[self._compaction_strategy_combo.get_selected()],
         }
 
     def show(self) -> None:
