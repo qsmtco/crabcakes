@@ -132,6 +132,12 @@ class AgentBuilderDialog:
         mcp_section = self._build_mcp_section()
         self._add_labeled(form_box, "MCP Servers", mcp_section, expand=False)
 
+        # Phase C — Compaction strategy dropdown
+        self._compaction_strategy_combo = Gtk.DropDown.new_from_strings(["textual", "llm"])
+        self._compaction_strategy_combo.set_selected(0)
+        strat_row = self._labeled_box("Compaction strategy", self._compaction_strategy_combo)
+        form_box.append(strat_row)
+
         scroll.set_child(form_box)
         content.append(scroll)
 
