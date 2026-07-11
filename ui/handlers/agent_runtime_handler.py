@@ -441,6 +441,104 @@ class AgentRuntimeHandler:
 
         return True
 
+    def compact_conversation(
+        self, session_key: str, focus_text: str = ""
+    ) -> dict:
+        """Force compaction of a special agent's conversation.
+
+        Spec: docs/specs/SPEC-CONTEXT-UI-COMPACT-LLM-2026-07-10.md §3.2.
+
+        Args:
+            session_key: "special:coder" etc.
+            focus_text: Optional focus instructions for Phase C's LLM
+                strategy (Phase B's textual strategy ignores this).
+
+        Returns:
+            dict with keys:
+                messages_removed (int)
+                tokens_freed (int)
+                summary_chars (int)
+                layer (int)
+
+        Returns an empty dict {"messages_removed": 0, ...} on failure.
+        """
+        if not isinstance(session_key, str) or not session_key.startswith("special:"):
+            logger.warning(
+                "compact_conversation: refusing non-special session_key=%r",
+                session_key,
+            )
+            return {"messages_removed": 0, "tokens_freed": 0, "summary_chars": 0, "layer": 0}
+
+        agent_def = self._agents.get(session_key)
+        if agent_def is None:
+            logger.warning(
+                "compact_conversation: no registered special agent for %s",
+                session_key,
+            )
+            return {"messages_removed": 0, "tokens_freed": 0, "summary_chars": 0, "layer": 0}
+
+        try:
+            rt = self._get_runtime(agent_def.display_name, agent_def=agent_def)
+        except Exception as exc:
+            logger.error(
+                "compact_conversation: failed to acquire runtime for %s: %s",
+                session_key, exc,
+            )
+            return {"messages_removed": 0, "tokens_freed": 0, "summary_chars": 0, "layer": 0}
+
+        conv = rt.get_conversation(session_key)
+        if conv is None:
+            return {"messages_removed": 0, "tokens_freed": 0, "summary_chars": 0, "layer": 0}
+
+        try:
+            _, hard_ceiling = rt._compute_compaction_threshold(conv)
+        except Exception:
+            logger.exception(
+                "compact_conversation: failed to resolve hard_ceiling; using 128K"
+            )
+            hard_ceiling = 128_000
+
+        target_budget = max(4_000, hard_ceiling // 2)
+        messages_before = len(conv.messages)
+        tokens_before = conv.get_token_estimate()
+
+        strat_name = getattr(agent_def, "compaction_strategy", "textual")
+        if strat_name == "llm":
+            try:
+                return rt.force_llm_compact(conv, target_budget, focus_text)
+            except Exception:
+                logger.exception(
+                    "compact_conversation: LLM strategy failed; "
+                    "falling back to textual"
+                )
+                # Fall through to textual default.
+
+        rt._context_strategy.compact(conv, target_budget)
+
+        try:
+            from agent.runtime import _save_conversation_to_disk
+            _save_conversation_to_disk(conv, session_key)
+        except Exception:
+            logger.exception(
+                "compact_conversation: persist failed; in-memory compact succeeded"
+            )
+
+        ev = rt._context_strategy.last_result
+        tokens_after = conv.get_token_estimate()
+        if ev is None:
+            return {
+                "messages_removed": 0,
+                "tokens_freed": max(0, tokens_before - tokens_after),
+                "summary_chars": 0,
+                "layer": 0,
+            }
+        return {
+            "messages_removed": ev.messages_removed,
+            "tokens_freed": ev.tokens_freed,
+            "summary_chars": ev.summary_tokens_injected,
+            "layer": ev.layer,
+        }
+
     def get_special_agent_def(self, session_key: str) -> Any | None:
         """Return the SpecialAgentDef for a session key, or None."""
         return self._agents.get(session_key)
