@@ -163,7 +163,8 @@ class CommandHandler:
         # Session — requires SessionHandler
         if session_handler is not None:
             self.register_command("session", session_handler.cmd_session, aliases=["s"],
-                help_text="Switch agent session in project: /session list @agent | /session <ref> @agent")
+                help_text="Switch agent session in project: /session list @agent | /session <ref> @agent",
+                payload_free=True)
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
