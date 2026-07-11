@@ -751,6 +751,102 @@ class ProjectHandler:
             response_text=f"Cannot clear session of type '{sk.split(':', 1)[0]}'.",
         )
 
+    def cmd_compact(self, cmd: Command, session_key: str | None = None) -> CommandResult:
+        """/compact — force compaction of the current special agent's conversation.
+
+        Spec: docs/specs/SPEC-CONTEXT-UI-COMPACT-LLM-2026-07-10.md §3.2.
+
+        Forces a compact(conv, model_max // 2) call regardless of current
+        size. Mirrors cmd_clear's structure: validate session, dispatch
+        to injected callback.
+
+        Optional body text (cmd.body) is passed to the callback as a focus
+        instruction. Phase B (textual summary) ignores it; Phase C (LLM)
+        includes it in the LLM prompt.
+
+        Refuses to operate on project tabs (each member has its own
+        conversation; compacting one would surprise the user).
+        """
+        sk = cmd.source_session_key or session_key
+        if not sk:
+            return CommandResult(
+                handled=True,
+                response_text="No active session to compact.",
+            )
+
+        if sk.startswith("project:"):
+            return CommandResult(
+                handled=True,
+                response_text=(
+                    "Use /compact in an agent tab to compact that agent's "
+                    "conversation."
+                ),
+            )
+
+        if sk.startswith("special:"):
+            agent_name = sk.split(":", 1)[1]
+            if self._compact_callback is None:
+                return CommandResult(
+                    handled=True,
+                    response_text=(
+                        f"Compact unavailable — runtime handler not wired "
+                        f"for {agent_name}. Restart the app and try again."
+                    ),
+                )
+            focus_text = cmd.body.strip() if cmd.body else ""
+            try:
+                result = self._compact_callback(sk, focus_text)
+            except Exception as exc:
+                _logger.exception("cmd_compact: callback raised for %s", sk)
+                return CommandResult(
+                    handled=True,
+                    response_text=f"Compact failed for {agent_name}: {exc}",
+                )
+            removed = int(result.get("messages_removed", 0))
+            freed = int(result.get("tokens_freed", 0))
+            msg = (
+                f"Compacted {agent_name}'s conversation. "
+                f"Removed {removed} message"
+                f"{'s' if removed != 1 else ''}, freed ~{freed:,} tokens."
+            )
+            if focus_text:
+                msg += f"\nFocus: {focus_text!r}"
+
+            if self._compact_chat_callback is not None:
+                try:
+                    self._compact_chat_callback(sk, result)
+                except Exception:
+                    _logger.exception(
+                        "cmd_compact: chat_callback raised for %s; "
+                        "data-plane compact already succeeded, continuing",
+                        sk,
+                    )
+
+            return CommandResult(handled=True, response_text=msg)
+
+        return CommandResult(
+            handled=True,
+            response_text=f"Cannot compact session of type '{sk.split(':', 1)[0]}'.",
+        )
+
+    def set_compact_callback(self, fn: Callable[[str, str], dict] | None) -> None:
+        """Inject callback for /compact command.
+
+        Phase B. Wired by window.py to AgentRuntimeHandler.compact_conversation.
+        The callback takes (session_key, focus_text) and returns a dict:
+            {"messages_removed": int, "tokens_freed": int, "summary_chars": int}
+        MUST be called before /compact can succeed. None → no-op with hint.
+        """
+        self._compact_callback = fn
+
+    def set_compact_chat_callback(self, fn: Callable[[str, dict], None] | None) -> None:
+        """Inject callback for /compact UI side effect.
+
+        Optional. Wired by window.py to insert a "🧹 Compacted" bubble
+        into the chat box of ``session_key`` after the data-plane compact
+        succeeds. Args: (session_key: str, result: dict) → None.
+        """
+        self._compact_chat_callback = fn
 
     def set_review_handler(self, review_handler) -> None:
         """"Inject ReviewHandler for review state queries in cmd_status."""
