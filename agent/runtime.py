@@ -3023,6 +3023,7 @@ class AgentRuntime:
         conv: "Conversation",
         token_budget: int,
         focus_text: str = "",
+        agent_def: Any = None,
     ) -> dict:
         """Force an LLM-summarization compact on ``conv``.
 
@@ -3036,29 +3037,44 @@ class AgentRuntime:
         """
         from agent.context_strategy import LLMSummarizeStrategy
 
-        original_strategy = self._context_strategy
+        with self._compaction_lock:
+            original_strategy = self._context_strategy
 
-        strat = LLMSummarizeStrategy(
-            llm_provider=lambda sys_p, user_p, model_id=None:
-                self._call_for_summary(
-                    system_prompt=sys_p,
-                    user_prompt=user_p,
-                    model_id=model_id or conv.model,
-                    conv=conv,
-                ),
-        )
-        self._context_strategy = strat
+            # Resolve model_id with precedence: agent_def.llm_name > conv.model > global default.
+            resolved_model = None
+            if agent_def is not None:
+                llm_name = getattr(agent_def, "llm_name", None)
+                if llm_name:
+                    prov_cfg = self._config.providers.get(llm_name)
+                    if prov_cfg and prov_cfg.default_model:
+                        if "/" in prov_cfg.default_model:
+                            resolved_model = prov_cfg.default_model
+                        else:
+                            resolved_model = f"{llm_name}/{prov_cfg.default_model}"
+            if not resolved_model:
+                resolved_model = conv.model
 
-        original_sp = conv.system_prompt
-        if focus_text:
-            conv.system_prompt = (
-                f"{original_sp}\n\n## Focus for compaction\n{focus_text}"
+            strat = LLMSummarizeStrategy(
+                llm_provider=lambda sys_p, user_p, model_id=None:
+                    self._call_for_summary(
+                        system_prompt=sys_p,
+                        user_prompt=user_p,
+                        model_id=model_id or resolved_model,
+                        conv=conv,
+                    ),
             )
-        try:
-            strat.compact(conv, token_budget)
-        finally:
-            self._context_strategy = original_strategy
-            conv.system_prompt = original_sp
+            self._context_strategy = strat
+
+            original_sp = conv.system_prompt
+            if focus_text:
+                conv.system_prompt = (
+                    f"{original_sp}\n\n## Focus for compaction\n{focus_text}"
+                )
+            try:
+                strat.compact(conv, token_budget)
+            finally:
+                self._context_strategy = original_strategy
+                conv.system_prompt = original_sp
 
         ev = strat.last_result
         tokens_after = conv.get_token_estimate()
