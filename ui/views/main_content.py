@@ -201,6 +201,8 @@ class MainContent(Gtk.Box):
         button_bar.append(self._prompt_button)
         button_bar.append(self._improve_button)
         button_bar.append(self._send_button)
+        # Phase A — Append context meter to the button bar.
+        button_bar.append(meter_box)
 
         # STT state
         self._on_stt_start_stop = None
