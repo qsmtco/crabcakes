@@ -636,6 +636,15 @@ class MainWindow(Gtk.ApplicationWindow):
             lambda sk: self._activity_handler.on_agent_end(sk)
         )
 
+        # Phase A — Wire the context-meter callback via the
+        # set_on_token_breakdown_extra() slot. The existing
+        # _on_token_breakdown in agent_runtime_handler.py dispatches to
+        # the logger.info (preserved) and to this extra listener.
+        def _on_context_meter(sk: str, breakdown: dict) -> None:
+            usage_pct = breakdown.get("usage_percent", 0.0)
+            self._main_content.set_context_meter(sk, usage_pct)
+        self._agent_runtime_handler.set_on_token_breakdown_extra(_on_context_meter)
+
         # ── Agent Command Handler (Phase 6.2) ─────────────────────────────────────
         # Scans agent responses for backtick commands, routes to target agents,
         # and relays answers back to the asking agent via pending-ask tracking.
