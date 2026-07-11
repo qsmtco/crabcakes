@@ -204,6 +204,9 @@ class _ProviderCard:
             supports_tools=existing.supports_tools if existing else True,
             supports_streaming=existing.supports_streaming if existing else True,
             max_tokens=int(self._max_tokens_spin.get_value()),
+            compaction_threshold=float(
+                self._compaction_threshold_spin.get_value()
+            ),  # Phase A
             last_verified_at=existing.last_verified_at if existing else None,
             last_error=existing.last_error if existing else None,
         )
