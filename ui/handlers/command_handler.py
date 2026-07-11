@@ -101,15 +101,20 @@ class CommandHandler:
             self.register_command("task", task_handler.cmd_task, aliases=["t"],
                 help_text="Create a task card assigned to agent")
             self.register_command("done", task_handler.cmd_done,
-                help_text="Mark task complete")
+                help_text="Mark task complete",
+                payload_free=True)
             self.register_command("start", task_handler.cmd_start,
-                help_text="Start working on a task")
+                help_text="Start working on a task",
+                payload_free=True)
             self.register_command("blocked", task_handler.cmd_blocked,
-                help_text="Report a blocker on a task")
+                help_text="Report a blocker on a task",
+                payload_free=True)
             self.register_command("cancel", task_handler.cmd_cancel,
-                help_text="Cancel a task")
+                help_text="Cancel a task",
+                payload_free=True)
             self.register_command("tasks", task_handler.cmd_tasks,
-                help_text="Show all tasks")
+                help_text="Show all tasks",
+                payload_free=True)
             self.register_command("assign", task_handler.cmd_assign,
                 help_text="Reassign a task to a different agent")
             self.register_command("priority", task_handler.cmd_priority,
