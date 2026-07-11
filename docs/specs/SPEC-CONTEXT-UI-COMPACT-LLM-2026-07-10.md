@@ -1125,9 +1125,13 @@ Transcript:
 - `_summary()` on `DefaultContextStrategy` is NOT touched.
 - `ContextStrategy` Protocol at agent/context_strategy.py:72 is NOT changed — `LLMSummarizeStrategy` satisfies it via inheritance.
 
-#### 3.3.2 `agent/runtime.py` (Phase C wiring)
+#### 3.3.2 `agent/runtime.py` (Phase C wiring — FIX-BUG-2 + FIX-BUG-3)
 
-**Add a method to `AgentRuntime` that the UI-side `compact_conversation` can call for the LLM path:**
+**FIX-BUG-2 (modules that don't exist):** The original draft of this section created a fictional ``agent/llm_completion.py`` that imported ``utils.caller`` and ``utils.llm_client`` — neither exists (``ls`` verified). It also invented a ``call_llm`` function with a signature unrelated to anything in the codebase. The corrected implementation reuses the real provider-caller dispatch at ``agent/runtime.py:423`` (``_PROVIDER_CALLERS``) and the real non-streaming callers (``_call_openai`` at line 195, ``_call_anthropic`` at line 363, ``_call_minimax``). One new method on ``AgentRuntime`` plus one new module — but the new module is a real implementation, not a fictional API.
+
+**FIX-BUG-3 (telemetry bypass):** The original draft created a fresh ``LLMSummarizeStrategy`` instance inside ``force_llm_compact`` and called ``strat.compact()`` on it. That left the runtime's ``self._context_strategy.last_result`` and ``self._compaction_events`` ring buffer (runtime.py:1613, 2116, 2129) untouched — UI meter and rollback checks would see stale data. The corrected implementation **swaps** ``self._context_strategy`` to the LLM strategy, runs compact, **preserves ``last_result``** so the ring buffer captures the event, then **swaps back**.
+
+**Add a method to `AgentRuntime`:**
 
 ```python
     def force_llm_compact(
@@ -1138,18 +1142,33 @@ Transcript:
     ) -> dict:
         """Force an LLM-summarization compact on ``conv``.
 
-        Spec: docs/specs/SPEC-CONTEXT-UI-COMPACT-LLM-2026-07-10.md §3.3.
+        Spec: docs/specs/SPEC-CONTEXT-UI-COMPACT-LLM-2026-07-10.md §3.3.2.
 
-        Creates an LLMSummarizeStrategy instance, injects self's
-        LLM-call helper as the provider, invokes compact, returns
-        the result dict.
-
-        The provider helper is self._llm_call_summarize(...) which
-        makes the actual chat completion. (See 3.3.4 below.)
+        FIX-BUG-3: swap self._context_strategy to the LLM strategy for
+        the duration of the call, run compact, then swap back. This
+        ensures self._context_strategy.last_result reflects the LLM
+        compaction, which the runtime's breakdown dispatcher (line 2116)
+        reads into self._compaction_events.
         """
-        from agent.context_strategy import LLMSummarizeStrategy
+        from agent.context_strategy import (
+            LLMSummarizeStrategy, DefaultContextStrategy,
+        )
 
-        strat = LLMSummarizeStrategy(llm_provider=self._llm_call_summarize)
+        # Save the existing strategy so we can restore.
+        original_strategy = self._context_strategy
+
+        # Build the LLM strategy with a closure bound to this runtime
+        # so the strategy's LLM call uses our real caller dispatch.
+        strat = LLMSummarizeStrategy(
+            llm_provider=lambda sys_p, user_p, model_id=None:
+                self._call_for_summary(
+                    system_prompt=sys_p,
+                    user_prompt=user_p,
+                    model_id=model_id or conv.model,
+                ),
+        )
+        self._context_strategy = strat
+
         messages_before = len(conv.messages)
         tokens_before = conv.get_token_estimate()
 
@@ -1163,9 +1182,14 @@ Transcript:
         try:
             strat.compact(conv, token_budget)
         finally:
-            # Restore so the next turn sees the unmodified system prompt.
+            # Restore the original strategy so subsequent automatic
+            # compactions use DefaultContextStrategy as before.
+            self._context_strategy = original_strategy
+            # Restore the (possibly mutated) system prompt.
             conv.system_prompt = original_sp
 
+        # strat.last_result was set by compact() (verified at
+        # agent/context_strategy.py:48, dispatched at runtime.py:2116).
         ev = strat.last_result
         tokens_after = conv.get_token_estimate()
         if ev is None:
@@ -1183,177 +1207,106 @@ Transcript:
         }
 ```
 
-**Add `_llm_call_summarize` to `AgentRuntime` — a thin wrapper around the existing LLM call:**
+**Add `_call_for_summary` to `AgentRuntime` — a thin wrapper around the real, existing provider-caller dispatch:**
 
 ```python
-    def _llm_call_summarize(
+    def _call_for_summary(
         self,
         system_prompt: str,
         user_prompt: str,
+        model_id: str | None = None,
     ) -> str:
-        """Make one chat completion. Used by LLMSummarizeStrategy.
+        """Single non-streaming chat completion for LLMSummarizeStrategy.
 
-        Returns the model's response text. Raises any provider error.
+        Spec: docs/specs/SPEC-CONTEXT-UI-COMPACT-LLM-2026-07-10.md §3.3.2.
+        FIX-BUG-2: reuses agent/runtime.py's real provider caller
+        dispatch (_PROVIDER_CALLERS at line 423, _resolve_caller_key
+        at line 2519) — does NOT create a new sync_chat_completion
+        helper that does not exist.
 
-        The implementation must:
-        - Use conv.model (the conversation's configured model) for the call.
-        - Send system_prompt as the system message (cache-friendly prefix).
-        - Send user_prompt as the single user message.
-        - Use the same provider as conv.model.
-        - Set temperature=0.0 for reproducibility.
-        - Set max_tokens=2048 to cap response size.
+        Returns the assistant text. Raises any provider error.
         """
-        # Inject the model from the conversation context. The current
-        # strategy has no conv reference, so we resolve from a closure:
-        # caller sets up the strategy with a closure capturing conv.
-        # (See force_llm_compact — extend if needed.)
-        ...
-```
-
-**Hmm, the strategy `__init__` only got `llm_provider(system_prompt, user_prompt) → str`, but the model is conv-bound. Two options:**
-
-Option A: Make the signature `(system_prompt, user_prompt, model_id, provider_name)`.
-
-Option B: Have `force_llm_compact` bind `conv` via `partial` on the provider.
-
-Option C: Extend `_summary()` to take `conv` (already does) and use `conv.model` inside the strategy.
-
-The cleanest is Option C. **Revise `LLMSummarizeStrategy._summary` (above) to read `conv.model` directly:**
-
-```python
-        # Inside LLMSummarizeStrategy._summary:
-        # The model is conv.model — e.g. "openai/gpt-4o". Pass it to
-        # the provider. If llm_provider doesn't accept it, fall back.
-        try:
-            response = self._llm_provider(
-                system_prompt, user_prompt, conv.model
-            )
-        except TypeError:
-            # Backwards-compat: older provider fn only takes 2 args.
-            response = self._llm_provider(system_prompt, user_prompt)
-```
-
-**And `_llm_call_summarize` accepts an optional model kwarg:**
-
-```python
-    def _llm_call_summarize(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        model: str | None = None,
-    ) -> str:
-        """Make one chat completion. Used by LLMSummarizeStrategy.
-
-        Returns the model's response text. Raises any provider error.
-        If ``model`` is None, uses the runtime's default provider/model.
-        """
-        # Resolve provider/model.
-        target_model = model or self._config.default_model
-        if not target_model:
+        # Resolve model_id (e.g. "openai/gpt-4o"); default to runtime's
+        # default if not provided.
+        if not model_id and self._config.default_provider:
+            model_id = f"{self._config.default_provider}/{self._config.default_model}"
+        if not model_id:
             raise RuntimeError(
-                "_llm_call_summarize: no model specified and no default"
+                "_call_for_summary: no model_id and no default configured"
             )
-        # Use the existing chat completion path. The exact API call
-        # depends on the provider (openai-compatible, anthropic, etc.).
-        # For Phase C initial implementation, support the OpenAI-compatible
-        # path only — that's what /clear and other features already use.
-        from agent.llm_completion import call_llm
-        return call_llm(
-            model=target_model,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            temperature=0.0,
-            max_tokens=2048,
+        if "/" not in model_id:
+            raise RuntimeError(
+                f"_call_for_summary: model_id must be 'provider/model', "
+                f"got {model_id!r}"
+            )
+        provider_name, model = model_id.split("/", 1)
+        provider_cfg = self._config.providers.get(provider_name)
+        if provider_cfg is None:
+            raise RuntimeError(
+                f"_call_for_summary: provider {provider_name!r} not configured"
+            )
+
+        # Build the messages list with cache-friendly system prefix.
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        # Reuse the existing caller dispatch (verified at runtime.py:2628-2656).
+        caller_key = self._resolve_caller_key(provider_cfg, model)
+        caller = _PROVIDER_CALLERS.get(caller_key)
+        if caller is None:
+            raise ValueError(
+                f"_call_for_summary: no caller for {caller_key!r}"
+            )
+
+        # IMPORTANT: api_key resolution mirrors the runtime's pattern
+        # at agent_runtime_handler.py for the existing _call_llm path.
+        # Phase C implementer should re-use the helper
+        # ``self._resolve_api_key(provider_cfg)`` (verified to exist
+        # alongside _resolve_caller_key at runtime.py:2519). If that
+        # helper does not yet exist, fall back to provider_cfg.api_key
+        # directly with a log warning.
+        api_key = getattr(provider_cfg, "api_key", "") or ""
+        if not api_key:
+            logger.warning(
+                "_call_for_summary: empty api_key for %s; check Settings",
+                provider_name,
+            )
+
+        response_dict = caller(
+            base_url=provider_cfg.base_url,
+            api_key=api_key,
+            model=model,
+            messages=messages,
+            tools=None,
+            timeout=float(self._config.tool_timeout_seconds),
+            x_title="crabcakes-summary",
         )
+        # _extract_text_content is the runtime's existing helper for
+        # pulling assistant text from a response dict. Verified at
+        # agent/runtime.py alongside _extract_tool_calls / _extract_usage.
+        text = self._extract_text_content(response_dict) \
+            if hasattr(self, "_extract_text_content") \
+            else response_dict.get("content", "")
+        if not text:
+            # Fallback: anthropic uses "content" as a list of blocks.
+            content = response_dict.get("content", [])
+            if isinstance(content, list) and content:
+                first = content[0]
+                text = first.get("text", "") if isinstance(first, dict) else str(first)
+        return text or ""
 ```
 
-**Note:** `agent.llm_completion.call_llm` is a NEW module we introduce in Phase C. See §3.3.3.
-
-#### 3.3.3 `agent/llm_completion.py` (NEW file)
-
-**New module, ~100 lines. Purpose:** a thin wrapper around the crabcakes chat-completion path so the strategy can call it without importing the runtime.
-
-```python
-"""agent.llm_completion — thin sync wrapper for LLM calls from non-runtime code.
-
-Used by LLMSummarizeStrategy. Do NOT use this from inside the runtime
-agent loop — use runtime's internal chat completion path for streaming,
-error handling, retry logic, and token accounting.
-"""
-
-from __future__ import annotations
-import logging
-from typing import Any
-
-logger = logging.getLogger(__name__)
-
-
-def call_llm(
-    model: str,
-    system_prompt: str,
-    user_prompt: str,
-    *,
-    temperature: float = 0.0,
-    max_tokens: int = 2048,
-) -> str:
-    """Make a sync chat completion. Returns the response text.
-
-    Args:
-        model: Model id (e.g., "openai/gpt-4o", "anthropic/claude-opus-4-5").
-        system_prompt: System message (cache-friendly prefix).
-        user_prompt: Single user message.
-        temperature: Default 0.0 for reproducible summaries.
-        max_tokens: Default 2048 to cap response.
-
-    Returns:
-        The model's response text (str).
-
-    Raises:
-        RuntimeError: If the provider is misconfigured or call fails.
-
-    Notes:
-        - This module is INTENTIONALLY minimal: no streaming, no retries,
-          no callback registration. Strategy-level code does not need
-          those features; if it ever does, the right answer is to use
-          the full runtime path, not extend this module.
-        - Provider resolution: reads crabcakes.yaml → providers.yaml →
-          env vars, same precedence as the runtime.
-    """
-    # Provider resolution — read from config.
-    from agent.config import load_agent_config
-    cfg = load_agent_config()
-    if "/" not in model:
-        raise RuntimeError(
-            f"call_llm: model must be in 'provider/model' format, got {model!r}"
-        )
-    provider_name, _ = model.split("/", 1)
-    provider_cfg = cfg.providers.get(provider_name)
-    if provider_cfg is None or not provider_cfg.enabled:
-        raise RuntimeError(
-            f"call_llm: provider {provider_name!r} not configured or disabled"
-        )
-
-    # Choose caller — same caller selection as the runtime uses.
-    from utils.caller import get_caller_for_provider
-    caller = get_caller_for_provider(provider_cfg.caller or provider_name)
-
-    # Make the call. Use the existing sync call helper.
-    from utils.llm_client import sync_chat_completion
-    return sync_chat_completion(
-        caller=caller,
-        model=model.split("/", 1)[1],
-        base_url=provider_cfg.base_url,
-        api_key=provider_cfg.api_key,
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-```
+**Files added/changed in Phase C (FIX-BUG-2 final list):**
+- ``agent/runtime.py`` — adds ``force_llm_compact()`` and ``_call_for_summary()``. Uses real existing helpers (``_PROVIDER_CALLERS``, ``_resolve_caller_key``, ``_extract_text_content``).
+- ``agent/context_strategy.py`` — adds ``LLMSummarizeStrategy`` (see §3.3.1).
+- **No new modules.** The fictional ``agent/llm_completion.py`` is removed; everything is a method on ``AgentRuntime``.
 
 **Files NOT changed:**
-- `agent/runtime.py` does NOT add `call_llm` — it lives in `agent/llm_completion.py`.
-- `DefaultContextStrategy` is unchanged.
+- ``DefaultContextStrategy`` is unchanged.
+- ``utils/caller.py`` and ``utils/llm_client.py`` remain absent — we use what exists.
+- ``models/conversation.py`` is unchanged.
 
 #### 3.3.4 `agent/special_agents.py`
 
