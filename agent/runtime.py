@@ -3017,3 +3017,128 @@ class AgentRuntime:
         own defensive behavior — see context_strategy.py:130).
         """
         self._context_strategy.compact(conv, token_budget)
+
+    def force_llm_compact(
+        self,
+        conv: "Conversation",
+        token_budget: int,
+        focus_text: str = "",
+    ) -> dict:
+        """Force an LLM-summarization compact on ``conv``.
+
+        Spec: docs/specs/SPEC-CONTEXT-UI-COMPACT-LLM-2026-07-10.md §3.3.2.
+
+        FIX-BUG-3: swap self._context_strategy to the LLM strategy for
+        the duration of the call, run compact, then swap back. This
+        ensures self._context_strategy.last_result reflects the LLM
+        compaction, which the runtime's breakdown dispatcher (line 2116)
+        reads into self._compaction_events.
+        """
+        from agent.context_strategy import LLMSummarizeStrategy
+
+        original_strategy = self._context_strategy
+
+        strat = LLMSummarizeStrategy(
+            llm_provider=lambda sys_p, user_p, model_id=None:
+                self._call_for_summary(
+                    system_prompt=sys_p,
+                    user_prompt=user_p,
+                    model_id=model_id or conv.model,
+                ),
+        )
+        self._context_strategy = strat
+
+        messages_before = len(conv.messages)
+        tokens_before = conv.get_token_estimate()
+
+        original_sp = conv.system_prompt
+        if focus_text:
+            conv.system_prompt = (
+                f"{original_sp}\n\n## Focus for compaction\n{focus_text}"
+            )
+        try:
+            strat.compact(conv, token_budget)
+        finally:
+            self._context_strategy = original_strategy
+            conv.system_prompt = original_sp
+
+        ev = strat.last_result
+        tokens_after = conv.get_token_estimate()
+        if ev is None:
+            return {
+                "messages_removed": 0,
+                "tokens_freed": max(0, tokens_before - tokens_after),
+                "summary_chars": 0,
+                "layer": 0,
+            }
+        return {
+            "messages_removed": ev.messages_removed,
+            "tokens_freed": ev.tokens_freed,
+            "summary_chars": ev.summary_tokens_injected,
+            "layer": ev.layer,
+        }
+
+    def _call_for_summary(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        model_id: str | None = None,
+    ) -> str:
+        """Single non-streaming chat completion for LLMSummarizeStrategy.
+
+        Spec: docs/specs/SPEC-CONTEXT-UI-COMPACT-LLM-2026-07-10.md §3.3.2.
+        FIX-BUG-2: reuses agent/runtime.py's real provider caller
+        dispatch (_PROVIDER_CALLERS, _resolve_caller_key) — does NOT
+        create a new sync_chat_completion helper that does not exist.
+
+        Returns the assistant text. Raises any provider error.
+        """
+        if not model_id and self._config.default_provider:
+            model_id = f"{self._config.default_provider}/{self._config.default_model}"
+        if not model_id:
+            raise RuntimeError(
+                "_call_for_summary: no model_id and no default configured"
+            )
+        if "/" not in model_id:
+            raise RuntimeError(
+                f"_call_for_summary: model_id must be 'provider/model', "
+                f"got {model_id!r}"
+            )
+        provider_name, model = model_id.split("/", 1)
+        provider_cfg = self._config.providers.get(provider_name)
+        if provider_cfg is None:
+            raise RuntimeError(
+                f"_call_for_summary: provider {provider_name!r} not configured"
+            )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        caller_key = self._resolve_caller_key(provider_cfg, model)
+        caller = _PROVIDER_CALLERS.get(caller_key)
+        if caller is None:
+            raise ValueError(
+                f"_call_for_summary: no caller for {caller_key!r}"
+            )
+
+        api_key = getattr(provider_cfg, "api_key", "") or ""
+        if not api_key:
+            logger.warning(
+                "_call_for_summary: empty api_key for %s; check Settings",
+                provider_name,
+            )
+
+        response_dict = caller(
+            base_url=provider_cfg.base_url,
+            api_key=api_key,
+            model=model,
+            messages=messages,
+            tools=None,
+            timeout=float(self._config.tool_timeout_seconds),
+            x_title="crabcakes-summary",
+        )
+        from agent.runtime import _extract_text_content
+        text = _extract_text_content(response_dict, provider_name)
+        return text
