@@ -391,13 +391,14 @@ DISCOVERY:
 
 **Lines to modify:** add context meter widget to the button_bar at ~line 191.
 
-**Insert before the bottom button_bar construction (around line 184), or extend it:**
+**SCOPE NOTE (FIX-BUG-6):** The widget creation below MUST live inside the MainContent class's ``__init__`` — NOT inside any helper/build method that uses a local-scope ``button_bar``. The setter method references ``self._context_meter`` and ``self._context_meter_label``, so they MUST be instance attributes. Do not place this in a method that does not return to ``__init__``'s scope.
+
+**Insert in MainContent.__init__ (around line 60, near other widget creation):**
 
 ```python
         # Phase A — Context meter (Claude Code style).
-        # Subscribes to breakdowns via window.py which calls
-        # set_context_meter_callback() each turn. Renders usage %
-        # on a horizontal ProgressBar plus a label "12%".
+        # These are instance attributes so set_context_meter() can find them.
+        # FIX-BUG-6: explicitly store as instance attributes.
         self._context_meter = Gtk.ProgressBar()
         self._context_meter.set_size_request(80, 6)
         self._context_meter.set_show_text(True)
@@ -408,8 +409,12 @@ DISCOVERY:
         meter_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         meter_box.append(self._context_meter)
         meter_box.append(self._context_meter_label)
-        # Append to bottom button_bar so it follows the chat box.
-        button_bar.append(meter_box)
+        # Then in the existing _build method (around line 184) append
+        # meter_box to the bottom button_bar:
+        #     button_bar.append(meter_box)
+        # (Two operations in two scopes. The widget creation lives in
+        # __init__ for instance-attr storage; the parent-mount lives in
+        # _build for layout consistency.)
 ```
 
 **Add helper method (after the existing button helpers, ~line 200):**
