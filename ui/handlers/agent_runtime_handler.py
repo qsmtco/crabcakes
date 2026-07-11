@@ -106,6 +106,18 @@ class AgentRuntimeHandler:
         # so _do_error can enrich the displayed message with provider/model context.
         self._last_error_exception: dict[str, "BaseException | None"] = {}
 
+        # Phase A — Context UI state.
+        # _last_breakdown: session_key → most recent breakdown dict.
+        # _last_warning_pct: session_key → last usage_pct at which we warned.
+        # _first_compaction_seen: session_key → bool, true after first
+        #   compaction bubble fired for this session (anti-spam).
+        # _on_token_breakdown_extra: optional extra listener for breakdown
+        #   events (used by the context meter in window.py).
+        self._last_breakdown: dict[str, dict] = {}
+        self._last_warning_pct: dict[str, float] = {}
+        self._first_compaction_seen: dict[str, bool] = {}
+        self._on_token_breakdown_extra: Callable | None = None
+
         # Ensure KB provider is registered, then start KB HTTP server if KB index is available
         try:
             from utils.providers_store import ensure_kb_provider
