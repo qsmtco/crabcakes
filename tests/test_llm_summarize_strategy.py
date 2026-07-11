@@ -21,12 +21,13 @@ class TestLLMSummarizeStrategy:
     def test_empty_llm_response_falls_back(self):
         """Empty LLM response falls back to textual."""
         from agent.context_strategy import LLMSummarizeStrategy
+        from models.conversation import Message, MessageRole
         strat = LLMSummarizeStrategy(llm_provider=lambda sys_p, user_p: "")
         conv = MagicMock()
-        msg = MagicMock()
-        msg.role = MagicMock(value="user")
-        msg.content = "hello"
-        conv.messages = [msg] * 10
+        conv.messages = [
+            Message(role=MessageRole.USER, content="hello", tokens_used=10)
+            for _ in range(10)
+        ]
         conv.system_prompt = "test"
         conv.get_token_estimate.return_value = 5000
         result = strat._summary(conv, token_budget=1000, keep_first=2)
@@ -35,16 +36,17 @@ class TestLLMSummarizeStrategy:
     def test_llm_exception_falls_back(self):
         """LLM call raising exception falls back to textual."""
         from agent.context_strategy import LLMSummarizeStrategy
+        from models.conversation import Message, MessageRole
 
         def raising_provider(sys_p, user_p):
             raise RuntimeError("network error")
 
         strat = LLMSummarizeStrategy(llm_provider=raising_provider)
         conv = MagicMock()
-        msg = MagicMock()
-        msg.role = MagicMock(value="user")
-        msg.content = "hello"
-        conv.messages = [msg] * 10
+        conv.messages = [
+            Message(role=MessageRole.USER, content="hello", tokens_used=10)
+            for _ in range(10)
+        ]
         conv.system_prompt = "test"
         conv.get_token_estimate.return_value = 5000
         result = strat._summary(conv, token_budget=1000, keep_first=2)

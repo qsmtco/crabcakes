@@ -135,8 +135,8 @@ class TestSetContextMeter:
         if usage_percent < 0:
             meter.set_fraction(0.0)
             label.set_text("")
-        assert meter.set_fraction.called_once_with(0.0)
-        assert label.set_text.called_once_with("")
+        meter.assert_called_once_with(0.0)
+        label.assert_called_once_with("")
 
     def test_none_does_not_crash(self):
         """None usage_percent is handled gracefully."""
