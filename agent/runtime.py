@@ -3049,9 +3049,6 @@ class AgentRuntime:
         )
         self._context_strategy = strat
 
-        messages_before = len(conv.messages)
-        tokens_before = conv.get_token_estimate()
-
         original_sp = conv.system_prompt
         if focus_text:
             conv.system_prompt = (
