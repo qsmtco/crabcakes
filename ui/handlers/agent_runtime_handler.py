@@ -1263,66 +1263,69 @@ class AgentRuntimeHandler:
           messages_removed_this_turn (int, 0 if no compaction)
           compaction_event      (dict, only when _compaction_happened)
         """
-        # Always log for observability (preserve existing behavior).
-        logger.info(
-            "[token-breakdown] sk=%s system_prompt=%d conv=%d total=%d/%d "
-            "remaining=%d (%.1f%%) trimmed=%s removed=%d",
-            session_key,
-            breakdown["system_prompt_tokens"],
-            breakdown["conversation_tokens"],
-            breakdown["total_used_tokens"],
-            breakdown["model_max_tokens"],
-            breakdown["remaining_tokens"],
-            breakdown["usage_percent"],
-            breakdown.get("trimmed_this_turn", False),
-            breakdown.get("messages_removed_this_turn", 0),
-        )
+        try:
+            # Always log for observability (preserve existing behavior).
+            logger.info(
+                "[token-breakdown] sk=%s system_prompt=%d conv=%d total=%d/%d "
+                "remaining=%d (%.1f%%) trimmed=%s removed=%d",
+                session_key,
+                breakdown["system_prompt_tokens"],
+                breakdown["conversation_tokens"],
+                breakdown["total_used_tokens"],
+                breakdown["model_max_tokens"],
+                breakdown["remaining_tokens"],
+                breakdown["usage_percent"],
+                breakdown.get("trimmed_this_turn", False),
+                breakdown.get("messages_removed_this_turn", 0),
+            )
 
-        # Cache for the UI meter (cheap, in-memory).
-        self._last_breakdown[session_key] = breakdown
+            # Cache for the UI meter (cheap, in-memory).
+            self._last_breakdown[session_key] = breakdown
 
-        # Fire compaction bubble on real compaction only.
-        if breakdown.get("trimmed_this_turn", False):
-            already_seen = self._first_compaction_seen.get(session_key, False)
-            if not already_seen:
-                self._first_compaction_seen[session_key] = True
-                ev = breakdown.get("compaction_event", {})
+            # Fire compaction bubble on real compaction only.
+            if breakdown.get("trimmed_this_turn", False):
+                already_seen = self._first_compaction_seen.get(session_key, False)
+                if not already_seen:
+                    self._first_compaction_seen[session_key] = True
+                    ev = breakdown.get("compaction_event", {})
+                    if self._GLib is not None:
+                        self._GLib.idle_add(
+                            self._do_compaction_bubble, session_key, ev
+                        )
+                    else:
+                        self._do_compaction_bubble(session_key, ev)
+
+            # Threshold warnings — 80% → "approaching limit", 95% → "auto-compact imminent".
+            # Anti-spam: hysteresis — only re-fire if we cross back below 75%.
+            usage_pct = breakdown.get("usage_percent", 0.0)
+            last_pct = self._last_warning_pct.get(session_key, -1.0)
+            new_warn_level: str | None = None
+            if usage_pct >= 95.0 and last_pct < 95.0:
+                new_warn_level = "auto-compact-imminent"
+            elif usage_pct >= 80.0 and last_pct < 80.0:
+                new_warn_level = "approaching-limit"
+            if new_warn_level is not None:
+                self._last_warning_pct[session_key] = usage_pct
                 if self._GLib is not None:
                     self._GLib.idle_add(
-                        self._do_compaction_bubble, session_key, ev
+                        self._do_usage_warning, session_key, new_warn_level, usage_pct
                     )
                 else:
-                    self._do_compaction_bubble(session_key, ev)
+                    self._do_usage_warning(session_key, new_warn_level, usage_pct)
+            # Reset hysteresis when we drop back well below threshold.
+            if usage_pct < 75.0 and last_pct >= 80.0:
+                self._last_warning_pct[session_key] = usage_pct
 
-        # Threshold warnings — 80% → "approaching limit", 95% → "auto-compact imminent".
-        # Anti-spam: hysteresis — only re-fire if we cross back below 75%.
-        usage_pct = breakdown.get("usage_percent", 0.0)
-        last_pct = self._last_warning_pct.get(session_key, -1.0)
-        new_warn_level: str | None = None
-        if usage_pct >= 95.0 and last_pct < 95.0:
-            new_warn_level = "auto-compact-imminent"
-        elif usage_pct >= 80.0 and last_pct < 80.0:
-            new_warn_level = "approaching-limit"
-        if new_warn_level is not None:
-            self._last_warning_pct[session_key] = usage_pct
-            if self._GLib is not None:
-                self._GLib.idle_add(
-                    self._do_usage_warning, session_key, new_warn_level, usage_pct
-                )
-            else:
-                self._do_usage_warning(session_key, new_warn_level, usage_pct)
-        # Reset hysteresis when we drop back well below threshold.
-        if usage_pct < 75.0 and last_pct >= 80.0:
-            self._last_warning_pct[session_key] = usage_pct
-
-        # Phase A — Forward to optional extra listener (context meter).
-        if self._on_token_breakdown_extra is not None:
-            try:
-                self._on_token_breakdown_extra(session_key, breakdown)
-            except Exception:
-                logger.exception(
-                    "_on_token_breakdown: extra listener raised; ignoring"
-                )
+            # Phase A — Forward to optional extra listener (context meter).
+            if self._on_token_breakdown_extra is not None:
+                try:
+                    self._on_token_breakdown_extra(session_key, breakdown)
+                except Exception:
+                    logger.exception(
+                        "_on_token_breakdown: extra listener raised; ignoring"
+                    )
+        except Exception:
+            logger.exception("_on_token_breakdown: failed for %s", session_key)
 
     def _do_compaction_bubble(self, session_key: str, ev: dict) -> None:
         """Main-thread portion of the compaction bubble dispatch.
