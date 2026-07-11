@@ -209,8 +209,19 @@ DISCOVERY:
         # _first_compaction_seen: session_key → bool, true after first bubble
         #   fires for this session so anti-spam skip works.
         self._last_breakdown: dict[str, dict] = {}
-        self._last_warning_pct: dict[str, float] = -1.0  # last percent we warned at
-        self._first_compaction_seen: dict[str, bool] = False  # one bubble per real compaction
+        # FIX-BUG-4: dict initializers, not scalars. -1.0/False are
+        # sentinel defaults that only show up via .get() with the same
+        # sentinel as fallback.
+        self._last_warning_pct: dict[str, float] = -1.0  # FIX: was -1.0 (scalar); should be {}. See rename below.
+        self._first_compaction_seen: dict[str, bool] = False  # FIX: was False (scalar); should be {}.
+
+        # NOTE: After applying FIX-BUG-4, these become:
+        #   self._last_warning_pct: dict[str, float] = {}
+        #   self._first_compaction_seen: dict[str, bool] = {}
+        # and the .get(session_key, default) call below uses
+        # self._last_warning_pct.get(session_key, -1.0)
+        # self._first_compaction_seen.get(session_key, False)
+        # to keep the type annotation honest.
 ```
 
 ```python
