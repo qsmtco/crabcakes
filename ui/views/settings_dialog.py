@@ -104,6 +104,19 @@ class _ProviderCard:
         max_tokens_row = self._labeled("Context Window", self._max_tokens_spin)
         vbox.append(max_tokens_row)
 
+        # Phase A — Editable compaction_threshold.
+        # Range 0.50 — 0.95, step 0.05 (10% to 95% of context window).
+        # Default 0.80 matches the dataclass default and runtime fallback.
+        self._compaction_threshold_spin = Gtk.SpinButton.new_with_range(0.50, 0.95, 0.05)
+        self._compaction_threshold_spin.set_value(
+            self._provider.compaction_threshold or 0.80
+        )
+        self._compaction_threshold_spin.set_hexpand(True)
+        threshold_row = self._labeled(
+            "Compaction threshold", self._compaction_threshold_spin
+        )
+        vbox.append(threshold_row)
+
         # Status label
         self._status_label = Gtk.Label(label="Untested")
         self._status_label.add_css_class("settings-status-untested")
