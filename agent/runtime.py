@@ -3016,9 +3016,8 @@ class AgentRuntime:
         token_budget <= 0 is silently ignored (matches the strategy's
         own defensive behavior — see context_strategy.py:130).
         """
-        self._context_strategy.compact(conv, token_budget)
-
-    def force_llm_compact(
+        with self._compaction_lock:
+            self._context_strategy.compact(conv, token_budget)
         self,
         conv: "Conversation",
         token_budget: int,
