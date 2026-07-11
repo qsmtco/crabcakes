@@ -374,6 +374,9 @@ def delete_agent_def(name: str) -> bool:
     return False
 
 
+VALID_COMPACTION_STRATEGIES: tuple[str, ...] = ("textual", "llm")
+
+
 def validate_agent_def(agent_def: dict) -> list[str]:
     """Validate an agent definition dict.
 
@@ -480,10 +483,10 @@ def validate_agent_def(agent_def: dict) -> list[str]:
 
     # Phase C — Validate compaction_strategy
     cs = agent_def.get("compaction_strategy", "textual")
-    if not isinstance(cs, str) or cs not in {"textual", "llm"}:
+    if not isinstance(cs, str) or cs not in VALID_COMPACTION_STRATEGIES:
         errors.append(
             f"Invalid compaction_strategy: {cs!r}. "
-            f"Must be 'textual' or 'llm'."
+            f"Must be one of: {', '.join(VALID_COMPACTION_STRATEGIES)}."
         )
 
     return errors

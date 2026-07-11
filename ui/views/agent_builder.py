@@ -16,6 +16,7 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gio, GLib
 
 from models.providers import ProviderConfig
+from utils.agent_defs import VALID_COMPACTION_STRATEGIES
 from utils.mcp_config import load_mcp_servers, MCPConfigError
 
 
@@ -133,7 +134,7 @@ class AgentBuilderDialog:
         self._add_labeled(form_box, "MCP Servers", mcp_section, expand=False)
 
         # Phase C — Compaction strategy dropdown
-        self._compaction_strategy_combo = Gtk.DropDown.new_from_strings(["textual", "llm"])
+        self._compaction_strategy_combo = Gtk.DropDown.new_from_strings(list(VALID_COMPACTION_STRATEGIES))
         self._compaction_strategy_combo.set_selected(0)
         strat_row = self._labeled_box("Compaction strategy", self._compaction_strategy_combo)
         form_box.append(strat_row)

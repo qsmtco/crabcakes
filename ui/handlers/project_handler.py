@@ -767,7 +767,7 @@ class ProjectHandler:
         Refuses to operate on project tabs (each member has its own
         conversation; compacting one would surprise the user).
         """
-        sk = cmd.source_session_key or session_key
+        sk = cmd.target_session_key or cmd.source_session_key or session_key
         if not sk:
             return CommandResult(
                 handled=True,
