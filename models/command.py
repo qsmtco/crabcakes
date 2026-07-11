@@ -105,7 +105,6 @@ class CommandRegistry:
         self._commands: dict[str, Callable[[Command], CommandResult]] = {}
         self._aliases: dict[str, str] = {}   # alias → canonical name
         self._help: dict[str, str] = {}      # canonical name → help text
-        self._payload_free: set[str] = set() # canonical names that don't require a quoted payload
 
     def register(
         self,
@@ -114,7 +113,6 @@ class CommandRegistry:
         *,
         aliases: list[str] | None = None,
         help_text: str = "",
-        payload_free: bool = False,
     ) -> None:
         """Register a command handler.
 
@@ -123,13 +121,10 @@ class CommandRegistry:
             handler:  Callable that receives a Command and returns a CommandResult.
             aliases:  Alternative names that resolve to this handler.
             help_text: Help string shown by `help <name>`.
-            payload_free: If True, the command does not require a quoted payload.
         """
         canonical = name.lower()
         self._commands[canonical] = handler
         self._help[canonical] = help_text
-        if payload_free:
-            self._payload_free.add(canonical)
         if aliases:
             for alias in aliases:
                 al = alias.lower()
@@ -154,16 +149,6 @@ class CommandRegistry:
     def list_aliases(self) -> dict[str, str]:   # BUG #12 fix: help shows aliases
         """Return mapping of alias → canonical name for all registered aliases."""
         return dict(self._aliases)
-
-    def is_payload_free(self, name: str) -> bool:
-        """Return True if the command is registered as payload-free.
-
-        Resolves aliases to canonical names before checking.
-        """
-        name_lower = name.lower()
-        if name_lower in self._aliases:
-            name_lower = self._aliases[name_lower]
-        return name_lower in self._payload_free
 
     def get_help(self, name: str) -> str | None:
         """Return help text for a command, or None if not registered.

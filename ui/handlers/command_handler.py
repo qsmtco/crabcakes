@@ -81,8 +81,7 @@ class CommandHandler:
 
         # Help — owned by CommandHandler itself (always registered)
         self.register_command("help", self.cmd_help, aliases=["?"],
-            help_text="List all commands or help for a specific command",
-            payload_free=True)
+            help_text="List all commands or help for a specific command")
 
         # Collaboration — requires CollabHandler
         if collab_handler is not None:
@@ -91,8 +90,7 @@ class CommandHandler:
             self.register_command("delegate", collab_handler.cmd_delegate, aliases=["d"],
                 help_text="PM delegates to agent: /delegate @agent — task")
             self.register_command("stop", collab_handler.cmd_stop,
-                help_text="PM stops the current collaboration: /stop @agent",
-                payload_free=True)
+                help_text="PM stops the current collaboration: /stop @agent")
             self.register_command("tell", collab_handler.cmd_tell,
                 help_text="One agent shares information with another: /tell @agent — info")
 
@@ -101,20 +99,15 @@ class CommandHandler:
             self.register_command("task", task_handler.cmd_task, aliases=["t"],
                 help_text="Create a task card assigned to agent")
             self.register_command("done", task_handler.cmd_done,
-                help_text="Mark task complete",
-                payload_free=True)
+                help_text="Mark task complete")
             self.register_command("start", task_handler.cmd_start,
-                help_text="Start working on a task",
-                payload_free=True)
+                help_text="Start working on a task")
             self.register_command("blocked", task_handler.cmd_blocked,
-                help_text="Report a blocker on a task",
-                payload_free=True)
+                help_text="Report a blocker on a task")
             self.register_command("cancel", task_handler.cmd_cancel,
-                help_text="Cancel a task",
-                payload_free=True)
+                help_text="Cancel a task")
             self.register_command("tasks", task_handler.cmd_tasks,
-                help_text="Show all tasks",
-                payload_free=True)
+                help_text="Show all tasks")
             self.register_command("assign", task_handler.cmd_assign,
                 help_text="Reassign a task to a different agent")
             self.register_command("priority", task_handler.cmd_priority,
@@ -123,33 +116,26 @@ class CommandHandler:
         # Review — requires ReviewHandler
         if review_handler is not None:
             self.register_command("review", review_handler.cmd_review,
-                help_text="Start a review checkpoint",
-                payload_free=True)
+                help_text="Start a review checkpoint")
             self.register_command("check", review_handler.cmd_check,
-                help_text="Show diff of changes since checkpoint",
-                payload_free=True)
+                help_text="Show diff of changes since checkpoint")
             self.register_command("accept", review_handler.cmd_accept,
-                help_text="Accept all changes (or single file)",
-                payload_free=True)
+                help_text="Accept all changes (or single file)")
             self.register_command("reject", review_handler.cmd_reject,
-                help_text="Reject all pending changes",
-                payload_free=True)
+                help_text="Reject all pending changes")
 
         # Project — requires ProjectHandler (always provided in production; None in tests)
         # Use hasattr guards so test fixtures with fake handlers don't crash.
         if project_handler is not None:
             if hasattr(project_handler, "cmd_status"):
                 self.register_command("status", project_handler.cmd_status, aliases=["st"],
-                    help_text="Project status summary",
-                    payload_free=True)
+                    help_text="Project status summary")
             if hasattr(project_handler, "cmd_agents"):
                 self.register_command("agents", project_handler.cmd_agents,
-                    help_text="List project agents and current state",
-                    payload_free=True)
+                    help_text="List project agents and current state")
             if hasattr(project_handler, "cmd_cost"):
                 self.register_command("cost", project_handler.cmd_cost,
-                    help_text="Spending summary for this project",
-                    payload_free=True)
+                    help_text="Spending summary for this project")
             if hasattr(project_handler, "cmd_clear"):
                 # Spec: docs/specs/STEP-COUNT-RESET-FIX.md Edit 1.
                 # /clear resets the current special agent's conversation
@@ -157,14 +143,12 @@ class CommandHandler:
                 # user can start fresh when step_count would otherwise
                 # hit step_limit=100 and kill the agent.
                 self.register_command("clear", project_handler.cmd_clear,
-                    help_text="Clear agent conversation history and reset step count",
-                    payload_free=True)
+                    help_text="Clear agent conversation history and reset step count")
 
         # Session — requires SessionHandler
         if session_handler is not None:
             self.register_command("session", session_handler.cmd_session, aliases=["s"],
-                help_text="Switch agent session in project: /session list @agent | /session <ref> @agent",
-                payload_free=True)
+                help_text="Switch agent session in project: /session list @agent | /session <ref> @agent")
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -189,10 +173,9 @@ class CommandHandler:
         *,
         aliases: list[str] | None = None,
         help_text: str = "",
-        payload_free: bool = False,
     ) -> None:
         """Register a command handler. Called by window during setup."""
-        self._registry.register(name, handler, aliases=aliases, help_text=help_text, payload_free=payload_free)
+        self._registry.register(name, handler, aliases=aliases, help_text=help_text)
 
     def set_prefix(self, char: str) -> None:
         """Change the command prefix character. Default: slash."""
@@ -358,9 +341,13 @@ class CommandHandler:
             else:
                 return resolved  # CommandResult error from _resolve_mention
 
-        # Payload-free commands: check via registry (derives from register_command payload_free=True)
-        # Commands marked payload_free: stop, tasks, review, check, accept, reject,
-        # status, agents, cost, help, done, start, blocked, cancel, clear, session
+        # Payload-free commands per spec §3.2: stop, done, start, blocked, cancel,
+        # tasks, review, check, accept, reject, status, agents, cost, help
+        _PAYLOAD_FREE = frozenset({
+            'stop', 'tasks', 'review', 'check', 'accept', 'reject',
+            'status', 'agents', 'cost', 'help',
+            'done', 'start', 'blocked', 'cancel',
+        })
 
         # After @mention, require quoted payload (unless command is payload-free)
         rest_text = " ".join(args_after_mentions)
@@ -385,7 +372,7 @@ class CommandHandler:
                 # Enforce 4K payload cap per spec §4.5
                 if len(body) > _PAYLOAD_MAX_CHARS:
                     body = body[:_PAYLOAD_MAX_CHARS] + '…'
-        elif self._registry.is_payload_free(cmd_name):
+        elif cmd_name in _PAYLOAD_FREE:
             # Payload-free command: no payload required, no error
             pass
         else:

@@ -602,33 +602,10 @@ class TestQuotedPayloadIntegration:
 
     def test_stop_no_payload_required(self, configured_handler):
         """§7.3 #6: `stop @QTR → handled, no error about missing payload."""
-        configured_handler.register_command("stop", lambda c: CommandResult(handled=True, response_text="ok"),
-            payload_free=True)
+        configured_handler.register_command("stop", lambda c: CommandResult(handled=True, response_text="ok"))
         result = configured_handler.process_input("agent:1", "/stop @Debugger")
         assert result.handled is True
         assert "Malformed" not in result.response_text
-
-    def test_clear_no_payload_required(self, configured_handler):
-        """`/clear → handled, no error about missing payload.
-        Bug: _PAYLOAD_FREE frozenset was missing 'clear', so /clear returned
-        'Malformed command — payload must be quoted' instead of clearing the
-        conversation. Structural fix: payload_free is now a register_command()
-        parameter checked via registry, not a hardcoded set."""
-        configured_handler.register_command("clear", lambda c: CommandResult(handled=True, response_text="Cleared."),
-            payload_free=True)
-        result = configured_handler.process_input("special:supervisor", "/clear")
-        assert result.handled is True
-        assert result.response_text == "Cleared."
-        assert "Malformed" not in result.response_text
-
-    def test_clear_without_payload_free_flag_fails(self, configured_handler):
-        """Regression guard: if register_command is called WITHOUT payload_free=True
-        for clear, the command must fail with Malformed — proving the test above
-        exercises the real payload_free mechanism, not a pass-through."""
-        configured_handler.register_command("clear", lambda c: CommandResult(handled=True, response_text="Cleared."))
-        result = configured_handler.process_input("special:supervisor", "/clear")
-        assert result.handled is True
-        assert "Malformed" in result.response_text
 
     def test_quoted_payload_body_passed_to_handler(self, configured_handler):
         """Payload extracted correctly and passed as cmd.body."""
