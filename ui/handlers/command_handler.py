@@ -123,13 +123,17 @@ class CommandHandler:
         # Review — requires ReviewHandler
         if review_handler is not None:
             self.register_command("review", review_handler.cmd_review,
-                help_text="Start a review checkpoint")
+                help_text="Start a review checkpoint",
+                payload_free=True)
             self.register_command("check", review_handler.cmd_check,
-                help_text="Show diff of changes since checkpoint")
+                help_text="Show diff of changes since checkpoint",
+                payload_free=True)
             self.register_command("accept", review_handler.cmd_accept,
-                help_text="Accept all changes (or single file)")
+                help_text="Accept all changes (or single file)",
+                payload_free=True)
             self.register_command("reject", review_handler.cmd_reject,
-                help_text="Reject all pending changes")
+                help_text="Reject all pending changes",
+                payload_free=True)
 
         # Project — requires ProjectHandler (always provided in production; None in tests)
         # Use hasattr guards so test fixtures with fake handlers don't crash.
