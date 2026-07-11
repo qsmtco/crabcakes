@@ -793,7 +793,7 @@ class ProjectHandler:
                         f"for {agent_name}. Restart the app and try again."
                     ),
                 )
-            focus_text = cmd.body.strip() if cmd.body else ""
+            focus_text = (cmd.body or "").strip()
             try:
                 result = self._compact_callback(sk, focus_text)
             except Exception as exc:
