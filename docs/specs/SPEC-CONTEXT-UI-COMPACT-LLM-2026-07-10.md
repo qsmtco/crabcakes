@@ -1347,7 +1347,27 @@ def validate_agent_def(d: dict) -> None:
         )
 ```
 
-**Verified:** `utils/agent_defs.py` already exists with a `validate_agent_def` function (inferred from `load_agent_defs`). The exact function name is verified at runtime in § 5 acceptance criteria.
+**Verified contract (FIX-BUG-9):** ``utils/agent_defs.py:377`` defines
+```python
+def validate_agent_def(agent_def: dict) -> list[str]:
+    """Returns list of error strings (empty if valid)."""
+```
+It **returns** a list — does NOT raise. The spec's earlier draft that used ``raise ValueError`` was wrong.
+
+**Add the new field check:**
+
+```python
+# In validate_agent_def (the function at utils/agent_defs.py:377):
+    # FIX-BUG-9: validate_agent_def returns a list[str], does NOT raise.
+    # Append the error to the existing ``errors`` list and let the
+    # caller decide what to do.
+    cs = agent_def.get("compaction_strategy", "textual")
+    if not isinstance(cs, str) or cs not in {"textual", "llm"}:
+        errors.append(
+            f"Invalid compaction_strategy: {cs!r}. "
+            f"Must be 'textual' or 'llm'."
+        )
+```
 
 #### 3.3.6 `ui/views/agent_builder.py`
 
