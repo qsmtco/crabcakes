@@ -859,15 +859,6 @@ Transcript:
             )
             return super()._summary(conv, token_budget, keep_first=keep_first)
 
-        if token_budget > 0:
-            response_tokens = len(response) // 4
-            if response_tokens > token_budget:
-                target_chars = token_budget * 4
-                cut_at = response.rfind("\n", 0, target_chars)
-                if cut_at <= 0:
-                    cut_at = target_chars
-                response = response[:cut_at] + "\n[... summary truncated ...]"
-
         expected_tags = [
             "task", "progress", "files", "decisions", "constraints",
             "errors", "open_questions", "next_steps", "user_preferences",
