@@ -75,6 +75,19 @@ class MainContent(Gtk.Box):
         # Unread tab tracking — session_keys with unseen messages
         self._unread_tabs: set[str] = set()
 
+        # Phase A — Context meter widget (Claude Code style).
+        # These are instance attributes so set_context_meter() can find them.
+        self._context_meter = Gtk.ProgressBar()
+        self._context_meter.set_size_request(80, 6)
+        self._context_meter.set_show_text(True)
+        self._context_meter.set_fraction(0.0)
+        self._context_meter.add_css_class("context-meter")
+        self._context_meter_label = Gtk.Label(label="")
+        self._context_meter_label.add_css_class("context-meter-label")
+        meter_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        meter_box.append(self._context_meter)
+        meter_box.append(self._context_meter_label)
+
         self._toolbar = ChatInputToolbar()
 
         # Top box minimum height — prevents it collapsing when notebook is empty
