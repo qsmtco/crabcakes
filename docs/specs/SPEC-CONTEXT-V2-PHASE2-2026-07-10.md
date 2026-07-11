@@ -84,7 +84,9 @@ DISCOVERY:
 - Read agent/runtime.py (~3006 lines): _compute_model_max at 1880,
     _compute_compaction_threshold at 1920, breakdown dispatch at 2187-2230,
     _get_conversation_file_path likely at ~890 (call to load_conversation),
-    _save_conversation_now used in clear_conversation (companion spec §3.2.3).
+    **_save_conversation_to_disk(conv, session_key)** at 1284 (NOT
+    `_save_conversation_now` — the latter does not exist; FIX-BUG-1
+    from companion spec audit applies).
 
 - Read utils/config.py (~100 lines): get_config_dir() returns the user's
     app config dir (verified at agent_runtime_handler.py:401-410). The
@@ -127,9 +129,12 @@ DISCOVERY:
     - T1.1 rollup model: same as main (cheaper fallback allowed).
     - T1.2 schema fields: trim to 4 fields for v1; expand later.
 
-- Read agent/llm_completion.py (NEW from companion spec §3.3.3): provides
-    call_llm(model, system_prompt, user_prompt, ...). T1.1/T1.2 use this
-    for rollup and digest LLM calls.
+- **`agent/llm_completion.py` was REMOVED during the companion spec's
+    adversarial-audit fixes (FIX-BUG-2).** All LLM-call glue now lives
+    in ``agent/runtime.py`` as the ``AgentRuntime._call_for_summary()``
+    method (companion spec §3.3.2) which reuses the existing
+    ``_PROVIDER_CALLERS`` dict at runtime.py:423. T1.1/T1.2 use this
+    method on the runtime — not an external helper.
 
 - Read models/conversation.py (476 lines): Message at line 124 with fields
     role, content, is_summary, tokens_used, tool_calls. T1.3 needs new
