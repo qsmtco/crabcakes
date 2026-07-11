@@ -81,7 +81,8 @@ class CommandHandler:
 
         # Help — owned by CommandHandler itself (always registered)
         self.register_command("help", self.cmd_help, aliases=["?"],
-            help_text="List all commands or help for a specific command")
+            help_text="List all commands or help for a specific command",
+            payload_free=True)
 
         # Collaboration — requires CollabHandler
         if collab_handler is not None:
@@ -90,7 +91,8 @@ class CommandHandler:
             self.register_command("delegate", collab_handler.cmd_delegate, aliases=["d"],
                 help_text="PM delegates to agent: /delegate @agent — task")
             self.register_command("stop", collab_handler.cmd_stop,
-                help_text="PM stops the current collaboration: /stop @agent")
+                help_text="PM stops the current collaboration: /stop @agent",
+                payload_free=True)
             self.register_command("tell", collab_handler.cmd_tell,
                 help_text="One agent shares information with another: /tell @agent — info")
 
