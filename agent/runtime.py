@@ -3065,7 +3065,7 @@ class AgentRuntime:
         if ev is None:
             return {
                 "messages_removed": 0,
-                "tokens_freed": max(0, tokens_before - tokens_after),
+                "tokens_freed": 0,
                 "summary_chars": 0,
                 "layer": 0,
             }
