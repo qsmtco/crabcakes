@@ -540,7 +540,8 @@ class SummaryRollupPolicy:
 
         Returns the new parent layers. Pure data operation — does NOT
         call the LLM. The runtime is responsible for invoking
-        agent.llm_completion.call_llm() to produce the parent content.
+        ``self._call_for_summary(...)`` (companion spec §3.3.2) to
+        produce the parent content.
 
         If there are fewer than ``threshold`` leaves, returns [].
 
