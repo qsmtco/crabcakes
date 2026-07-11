@@ -740,3 +740,144 @@ class DefaultContextStrategy:
             lines.append(f"  … and {len(user_contents) - 5} more turns")
 
         return "\n".join(lines)
+
+
+logger = logging.getLogger(__name__)
+
+
+class LLMSummarizeStrategy(DefaultContextStrategy):
+    """Strategy that uses an LLM call to generate the trim summary.
+
+    Spec: docs/specs/SPEC-CONTEXT-UI-COMPACT-LLM-2026-07-10.md §3.3.
+
+    Inherits from DefaultContextStrategy so it gets free Layer 1
+    (prune_tool_outputs) and Layer 2 (trim loop) for free. Only
+    Layer 3 (the summary text) is overridden.
+
+    The LLM call uses:
+      - Same provider as conv.model (e.g., "openai")
+      - Same model as conv.model (e.g., "openai/gpt-4o")
+      - Same system_prompt (via provider's chat completion)
+      - Cache-friendly prompt structure (system_prompt first, then
+        conversation transcript, then the summary prompt)
+
+    Failure modes:
+      - LLM call raises -> falls back to super()._summary() (textual preview)
+      - LLM call returns empty -> falls back to textual preview
+      - LLM call returns oversized -> truncates to fit budget
+      - LLM call is rate-limited -> does NOT retry; uses textual fallback
+    """
+
+    SUMMARY_PROMPT_TEMPLATE = """\
+You are a conversation compaction specialist. Produce a structured summary \
+of the conversation transcript below so a downstream LLM can continue the \
+task without losing important context. Be concise but preserve everything \
+that matters.
+
+Format your response with EXACTLY these nine sections, each on its own \
+line, no preamble:
+
+<task>One sentence: what the user originally asked.</task>
+<progress>Bulleted list of completed steps and intermediate results.</progress>
+<files>Comma-separated paths of files touched or relevant to the task.</files>
+<decisions>Bulleted list of decisions made, with brief rationale.</decisions>
+<constraints>Bulleted list of constraints in effect (e.g., user prefs, env limits).</constraints>
+<errors>Bulleted list of errors encountered and their resolutions.</errors>
+<open_questions>Bulleted list of unresolved threads or ambiguities.</open_questions>
+<next_steps>Bulleted list of suggested next actions for the agent.</next_steps>
+<user_preferences>Bulleted list of preferences the user expressed.</user_preferences>
+
+Transcript:
+{transcript}
+"""
+
+    def __init__(
+        self,
+        llm_provider: Callable[[str, str], str] | None = None,
+        llm_model_override: str | None = None,
+    ) -> None:
+        super().__init__()
+        self._llm_provider = llm_provider
+        self._llm_model_override = llm_model_override
+
+    def _summary(
+        self,
+        conv: Conversation,
+        token_budget: int = 0,
+        keep_first: int = 2,
+    ) -> str:
+        """LLM-generated structured summary. Falls back to textual on failure.
+
+        Signature mirrors DefaultContextStrategy._summary (line 678).
+        Uses llm_provider(system_prompt, user_prompt) for the LLM call.
+        """
+        if self._llm_provider is None:
+            logger.warning(
+                "LLMSummarizeStrategy: no llm_provider configured; "
+                "using textual fallback"
+            )
+            return super()._summary(conv, token_budget, keep_first=keep_first)
+
+        tail_preserve = 4
+        if len(conv.messages) <= tail_preserve:
+            return ""
+
+        head = conv.messages[:max(keep_first, len(conv.messages) - tail_preserve)]
+        if not head:
+            return ""
+
+        lines = []
+        for msg in head:
+            role_value = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+            content = (msg.content or "").replace("\n", " ")
+            if role_value == "tool":
+                content = content[:500]
+            else:
+                content = content[:2000]
+            lines.append(f"[{role_value}] {content}")
+        transcript = "\n".join(lines)
+        if len(transcript) > 8000:
+            transcript = transcript[:8000] + "\n[... transcript truncated for length ...]"
+
+        user_prompt = self.SUMMARY_PROMPT_TEMPLATE.format(transcript=transcript)
+        system_prompt = conv.system_prompt or "You are a helpful assistant."
+
+        try:
+            response = self._llm_provider(system_prompt, user_prompt)
+        except Exception as exc:
+            logger.warning(
+                "LLMSummarizeStrategy: LLM call failed (%s); "
+                "falling back to textual summary",
+                type(exc).__name__,
+            )
+            return super()._summary(conv, token_budget, keep_first=keep_first)
+
+        if not response or not response.strip():
+            logger.warning(
+                "LLMSummarizeStrategy: LLM returned empty response; "
+                "falling back to textual summary"
+            )
+            return super()._summary(conv, token_budget, keep_first=keep_first)
+
+        if token_budget > 0:
+            response_tokens = len(response) // 4
+            if response_tokens > token_budget:
+                target_chars = token_budget * 4
+                cut_at = response.rfind("\n", 0, target_chars)
+                if cut_at <= 0:
+                    cut_at = target_chars
+                response = response[:cut_at] + "\n[... summary truncated ...]"
+
+        expected_tags = [
+            "task", "progress", "files", "decisions", "constraints",
+            "errors", "open_questions", "next_steps", "user_preferences",
+        ]
+        missing = [t for t in expected_tags if f"<{t}>" not in response]
+        if missing:
+            logger.info(
+                "LLMSummarizeStrategy: response missing tags %s "
+                "(acceptable, using as-is)",
+                missing,
+            )
+
+        return response
