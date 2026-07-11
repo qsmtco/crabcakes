@@ -163,7 +163,7 @@ class CommandRegistry:
         name_lower = name.lower()
         if name_lower in self._aliases:
             name_lower = self._aliases[name_lower]
-        return False  # TEMP: simulating OLD bug, no command is payload-free
+        return name_lower in self._payload_free
 
     def get_help(self, name: str) -> str | None:
         """Return help text for a command, or None if not registered.
