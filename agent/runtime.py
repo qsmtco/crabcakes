@@ -3004,3 +3004,16 @@ class AgentRuntime:
                     self._pending_approvals.pop(key, None)
                     logger.info("Approval resolved for %s: %s", session_key, approved)
                     return
+
+    def force_compact(self, conv: "Conversation", token_budget: int) -> None:
+        """Public wrapper around self._context_strategy.compact().
+
+        Spec: docs/specs/SPEC-CONTEXT-UI-COMPACT-LLM-2026-07-10.md §3.2.
+        Allows external callers (like compact_conversation in
+        agent_runtime_handler) to invoke compaction without poking at
+        the private _context_strategy attribute.
+
+        token_budget <= 0 is silently ignored (matches the strategy's
+        own defensive behavior — see context_strategy.py:130).
+        """
+        self._context_strategy.compact(conv, token_budget)
