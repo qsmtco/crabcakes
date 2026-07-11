@@ -22,7 +22,8 @@ class TestOnTokenBreakdown:
         handler._resolve_chat_box = lambda sk: None
         # Empty dict — must NOT raise
         handler._on_token_breakdown("sk:test", {})
-        assert handler._last_breakdown.get("sk:test") == {}
+        # KeyError is caught by the outer try/except; the breakdown is never cached.
+        assert "sk:test" not in handler._last_breakdown
 
     def test_breakdown_cached(self):
         from ui.handlers.agent_runtime_handler import AgentRuntimeHandler
