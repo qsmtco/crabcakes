@@ -1514,10 +1514,12 @@ User: types "/compact @coder — focus on the auth changes"
 [Conversation.summary_injection]
    strat injects summary as Message(role=ASSISTANT, is_summary=True)
    ↓
-[rt._llm_call_summarize → agent.llm_completion.call_llm]
-   provider = utils.caller.get_caller_for_provider(provider_cfg.caller)
-   response = utils.llm_client.sync_chat_completion(...)
-   return response.text
+[rt._call_for_summary]  [FIX-BUG-2: no external llm_completion module]
+   caller_key = self._resolve_caller_key(provider_cfg, model)
+   caller = _PROVIDER_CALLERS.get(caller_key)
+   response_dict = caller(base_url, api_key, model, messages, None, timeout, x_title)
+   text = _extract_text_content(response_dict, provider_name)
+   return text
    ↓
 [rt.force_llm_compact — return]
    ev = strat.last_result
