@@ -3020,6 +3020,7 @@ class AgentRuntime:
             self._context_strategy.compact(conv, token_budget)
 
     def force_llm_compact(
+        self,
         conv: "Conversation",
         token_budget: int,
         focus_text: str = "",
