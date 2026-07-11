@@ -478,6 +478,14 @@ def validate_agent_def(agent_def: dict) -> list[str]:
             elif "/" in name or any(c.isspace() for c in name):
                 errors.append(f"Invalid MCP server name '{name}': must not contain '/' or whitespace")
 
+    # Phase C — Validate compaction_strategy
+    cs = agent_def.get("compaction_strategy", "textual")
+    if not isinstance(cs, str) or cs not in {"textual", "llm"}:
+        errors.append(
+            f"Invalid compaction_strategy: {cs!r}. "
+            f"Must be 'textual' or 'llm'."
+        )
+
     return errors
 
 
