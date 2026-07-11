@@ -608,7 +608,9 @@ class SummaryRollupPolicy:
                 parents = conv.rollup_summaries()
                 for parent_stub in parents:
                     # Call LLM to compress.
-                    from agent.llm_completion import call_llm
+                    # FIX-BUG-2 (companion spec): agent.llm_completion
+                    # was removed. Use AgentRuntime._call_for_summary()
+                    # directly, passing through the conversation model.
                     user_prompt = (
                         f"Combine these {parent_stub.rollup_count} adjacent "
                         f"summaries into a single coherent parent summary. "
@@ -616,16 +618,14 @@ class SummaryRollupPolicy:
                         + parent_stub.content
                     )
                     try:
-                        parent_content = call_llm(
-                            model=conv.model,
+                        parent_content = self._call_for_summary(
                             system_prompt=(
                                 "You are consolidating nested conversation "
                                 "summaries. Produce a coherent combined "
                                 "summary without losing detail."
                             ),
                             user_prompt=user_prompt,
-                            temperature=0.0,
-                            max_tokens=2048,
+                            model_id=conv.model,
                         )
                     except Exception:
                         # Rollup failed — keep the raw concat.
