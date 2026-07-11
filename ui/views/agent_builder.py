@@ -736,6 +736,13 @@ class AgentBuilderDialog:
                     self._fallback_dropdown.set_selected(i + 1)  # +1 for None offset
                     break
 
+        # Phase C — Restore compaction strategy
+        cs = agent_def.get("compaction_strategy", "textual")
+        if cs == "llm":
+            self._compaction_strategy_combo.set_selected(1)
+        else:
+            self._compaction_strategy_combo.set_selected(0)
+
         self._update_save_button()
 
     # ── Save button state ────────────────────────────────────────────
