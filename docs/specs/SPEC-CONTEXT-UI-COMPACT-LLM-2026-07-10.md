@@ -948,7 +948,7 @@ Add this to `__init__` near `self._session_usage` initialization at line 102.
         self._context_strategy.compact(conv, token_budget)
 ```
 
-**Note:** This is a thin wrapper. `_save_conversation_now()` is called from `agent_runtime_handler.compact_conversation()` directly, not here, because saving is the UI's responsibility.
+**Note:** This is a thin wrapper. The actual save call is `_save_conversation_to_disk(conv, session_key)` (module-level, runtime.py:1284) — NOT `_save_conversation_now` (which doesn't exist; FIX-BUG-1). The save is invoked from `agent_runtime_handler.compact_conversation()` directly in §3.2.3, not here, because saving is the UI's responsibility.
 
 ---
 
