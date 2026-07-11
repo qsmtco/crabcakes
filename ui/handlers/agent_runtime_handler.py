@@ -503,7 +503,10 @@ class AgentRuntimeHandler:
         tokens_before = conv.get_token_estimate()
 
         strat_name = getattr(agent_def, "compaction_strategy", "textual")
-        if strat_name == "llm":
+        if strat_name == "llm" and hasattr(rt, "force_llm_compact"):
+            # Phase C path — only fires when force_llm_compact exists.
+            # Phase B: this branch is unreachable (no compaction_strategy
+            # field on SpecialAgentDef, and force_llm_compact not implemented).
             try:
                 return rt.force_llm_compact(conv, target_budget, focus_text)
             except Exception:
