@@ -222,7 +222,8 @@ class TestLlmNameResolution:
 
     def test_no_llm_name_falls_back_to_conv_model(self):
         """When agent_def has no llm_name, falls back to conv.model."""
-        from agent.runtime import AgentRuntime, DefaultContextStrategy
+        from agent.runtime import AgentRuntime
+        from agent.context_strategy import DefaultContextStrategy
         rt = AgentRuntime.__new__(AgentRuntime)
         rt._context_strategy = DefaultContextStrategy()
         rt._compaction_lock = __import__("threading").Lock()
