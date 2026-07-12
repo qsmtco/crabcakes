@@ -186,7 +186,8 @@ class TestLlmNameResolution:
 
     def test_llm_name_overrides_conv_model(self):
         """When agent_def has llm_name, it takes precedence over conv.model."""
-        from agent.runtime import AgentRuntime, DefaultContextStrategy
+        from agent.runtime import AgentRuntime
+        from agent.context_strategy import DefaultContextStrategy
         rt = AgentRuntime.__new__(AgentRuntime)
         rt._context_strategy = DefaultContextStrategy()
         rt._compaction_lock = __import__("threading").Lock()
