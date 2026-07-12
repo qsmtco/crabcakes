@@ -201,7 +201,7 @@ class TestLlmNameResolution:
         ]
         conv.system_prompt = "test"
         conv.model = "openai/gpt-4o"
-        conv.get_token_estimate.return_value = 20000"
+        conv.get_token_estimate.return_value = 20000
 
         agent_def = MagicMock()
         agent_def.llm_name = "anthropic"
