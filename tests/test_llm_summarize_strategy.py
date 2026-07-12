@@ -188,15 +188,19 @@ class TestLlmNameResolution:
         """When agent_def has llm_name, it takes precedence over conv.model."""
         from agent.runtime import AgentRuntime
         from agent.context_strategy import DefaultContextStrategy
+        from models.conversation import Message, MessageRole
         rt = AgentRuntime.__new__(AgentRuntime)
         rt._context_strategy = DefaultContextStrategy()
         rt._compaction_lock = __import__("threading").Lock()
 
+        # Provide enough messages so the trim loop fires and _summary is called
         conv = MagicMock()
-        conv.messages = []
+        conv.messages = [
+            Message(role=MessageRole.USER, content=f"msg {i}", tokens_used=200)
+            for i in range(10)
+        ]
         conv.system_prompt = "test"
         conv.model = "openai/gpt-4o"
-        conv.get_token_estimate.return_value = 100
 
         agent_def = MagicMock()
         agent_def.llm_name = "anthropic"
@@ -208,6 +212,7 @@ class TestLlmNameResolution:
         rt._config.providers = {"anthropic": prov_cfg}
 
         captured_model = {}
+
         def mock_call_summary(system_prompt, user_prompt, model_id=None, conv=None):
             captured_model["model_id"] = model_id
             raise RuntimeError("stop here")  # prevent actual compact
@@ -224,15 +229,18 @@ class TestLlmNameResolution:
         """When agent_def has no llm_name, falls back to conv.model."""
         from agent.runtime import AgentRuntime
         from agent.context_strategy import DefaultContextStrategy
+        from models.conversation import Message, MessageRole
         rt = AgentRuntime.__new__(AgentRuntime)
         rt._context_strategy = DefaultContextStrategy()
         rt._compaction_lock = __import__("threading").Lock()
 
         conv = MagicMock()
-        conv.messages = []
+        conv.messages = [
+            Message(role=MessageRole.USER, content=f"msg {i}", tokens_used=200)
+            for i in range(10)
+        ]
         conv.system_prompt = "test"
         conv.model = "openai/gpt-4o"
-        conv.get_token_estimate.return_value = 100
 
         agent_def = MagicMock()
         agent_def.llm_name = None
@@ -241,6 +249,7 @@ class TestLlmNameResolution:
         rt._config.providers = {}
 
         captured_model = {}
+
         def mock_call_summary(system_prompt, user_prompt, model_id=None, conv=None):
             captured_model["model_id"] = model_id
             raise RuntimeError("stop here")
