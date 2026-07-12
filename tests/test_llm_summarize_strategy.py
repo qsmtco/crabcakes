@@ -179,3 +179,74 @@ class TestCallForSummary:
         rt._config.providers = {}
         with pytest.raises(RuntimeError, match="not configured"):
             rt._call_for_summary("sys", "user", model_id="unknown/gpt-4o", conv=None)
+
+
+class TestLlmNameResolution:
+    """Tests for agent_def.llm_name precedence in force_llm_compact."""
+
+    def test_llm_name_overrides_conv_model(self):
+        """When agent_def has llm_name, it takes precedence over conv.model."""
+        from agent.runtime import AgentRuntime, DefaultContextStrategy
+        rt = AgentRuntime.__new__(AgentRuntime)
+        rt._context_strategy = DefaultContextStrategy()
+        rt._compaction_lock = __import__("threading").Lock()
+
+        conv = MagicMock()
+        conv.messages = []
+        conv.system_prompt = "test"
+        conv.model = "openai/gpt-4o"
+        conv.get_token_estimate.return_value = 100
+
+        agent_def = MagicMock()
+        agent_def.llm_name = "anthropic"
+
+        # Mock config with anthropic provider
+        prov_cfg = MagicMock()
+        prov_cfg.default_model = "claude-3-5-sonnet"
+        rt._config = MagicMock()
+        rt._config.providers = {"anthropic": prov_cfg}
+
+        captured_model = {}
+        def mock_call_summary(system_prompt, user_prompt, model_id=None, conv=None):
+            captured_model["model_id"] = model_id
+            raise RuntimeError("stop here")  # prevent actual compact
+
+        with patch.object(rt, "_call_for_summary", side_effect=mock_call_summary):
+            try:
+                rt.force_llm_compact(conv, 5000, "", agent_def=agent_def)
+            except RuntimeError:
+                pass
+
+        assert captured_model.get("model_id", "").startswith("anthropic/")
+
+    def test_no_llm_name_falls_back_to_conv_model(self):
+        """When agent_def has no llm_name, falls back to conv.model."""
+        from agent.runtime import AgentRuntime, DefaultContextStrategy
+        rt = AgentRuntime.__new__(AgentRuntime)
+        rt._context_strategy = DefaultContextStrategy()
+        rt._compaction_lock = __import__("threading").Lock()
+
+        conv = MagicMock()
+        conv.messages = []
+        conv.system_prompt = "test"
+        conv.model = "openai/gpt-4o"
+        conv.get_token_estimate.return_value = 100
+
+        agent_def = MagicMock()
+        agent_def.llm_name = None
+
+        rt._config = MagicMock()
+        rt._config.providers = {}
+
+        captured_model = {}
+        def mock_call_summary(system_prompt, user_prompt, model_id=None, conv=None):
+            captured_model["model_id"] = model_id
+            raise RuntimeError("stop here")
+
+        with patch.object(rt, "_call_for_summary", side_effect=mock_call_summary):
+            try:
+                rt.force_llm_compact(conv, 5000, "", agent_def=agent_def)
+            except RuntimeError:
+                pass
+
+        assert captured_model.get("model_id") == "openai/gpt-4o"
