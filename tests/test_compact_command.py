@@ -114,3 +114,63 @@ class TestCompactConversation:
         handler = AgentRuntimeHandler.__new__(AgentRuntimeHandler)
         result = handler.compact_conversation(42, "")
         assert result["messages_removed"] == 0
+
+
+class TestTargetSessionKey:
+    """Tests for @Agent targeting via target_session_key."""
+
+    def test_cmd_compact_uses_target_session_key(self):
+        """When target_session_key is set, cmd_compact uses it over source."""
+        from ui.handlers.project_handler import ProjectHandler
+        handler = ProjectHandler.__new__(ProjectHandler)
+        captured = {}
+        def capture_cb(sk, focus):
+            captured["sk"] = sk
+            return {"messages_removed": 0, "tokens_freed": 0, "summary_chars": 0, "layer": 0}
+        handler._compact_callback = capture_cb
+        handler._compact_chat_callback = None
+        from models.command import Command
+        cmd = Command(
+            name="compact", args=[], flags={}, raw_text="/compact @Coder",
+            body="", source_session_key="project:foo",
+            target_session_key="special:coder"
+        )
+        result = handler.cmd_compact(cmd)
+        assert captured["sk"] == "special:coder"
+        assert result.handled is True
+
+    def test_cmd_clear_uses_target_session_key(self):
+        """When target_session_key is set, cmd_clear uses it over source."""
+        from ui.handlers.project_handler import ProjectHandler
+        handler = ProjectHandler.__new__(ProjectHandler)
+        captured = {}
+        handler._clear_callback = lambda sk: captured.__setitem__("sk", sk) or True
+        handler._clear_chat_callback = None
+        from models.command import Command
+        cmd = Command(
+            name="clear", args=[], flags={}, raw_text="/clear @Coder",
+            body="", source_session_key="project:foo",
+            target_session_key="special:coder"
+        )
+        result = handler.cmd_clear(cmd)
+        assert captured["sk"] == "special:coder"
+        assert result.handled is True
+
+    def test_cmd_compact_falls_back_to_source(self):
+        """When target_session_key is None, uses source_session_key."""
+        from ui.handlers.project_handler import ProjectHandler
+        handler = ProjectHandler.__new__(ProjectHandler)
+        captured = {}
+        def capture_cb(sk, focus):
+            captured["sk"] = sk
+            return {"messages_removed": 0, "tokens_freed": 0, "summary_chars": 0, "layer": 0}
+        handler._compact_callback = capture_cb
+        handler._compact_chat_callback = None
+        from models.command import Command
+        cmd = Command(
+            name="compact", args=[], flags={}, raw_text="/compact",
+            body="", source_session_key="special:coder",
+            target_session_key=None
+        )
+        result = handler.cmd_compact(cmd)
+        assert captured["sk"] == "special:coder"
