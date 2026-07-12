@@ -738,9 +738,9 @@ class AgentBuilderDialog:
                     break
 
         # Phase C — Restore compaction strategy
-        cs = agent_def.get("compaction_strategy", "textual")
-        if cs == "llm":
-            self._compaction_strategy_combo.set_selected(1)
+        cs = agent_def.get("compaction_strategy", VALID_COMPACTION_STRATEGIES[0])
+        if cs in VALID_COMPACTION_STRATEGIES:
+            self._compaction_strategy_combo.set_selected(VALID_COMPACTION_STRATEGIES.index(cs))
         else:
             self._compaction_strategy_combo.set_selected(0)
 

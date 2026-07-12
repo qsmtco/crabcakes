@@ -515,7 +515,7 @@ class AgentRuntimeHandler:
                 )
                 # Fall through to textual default.
 
-        rt._context_strategy.compact(conv, target_budget)
+        rt.force_compact(conv, target_budget)
 
         try:
             from agent.runtime import _save_conversation_to_disk
