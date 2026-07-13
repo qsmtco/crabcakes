@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-08
 **Author:** Supervisor
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — strict regex replaces lenient html.unescape
 **Implements:** Companion fix to `docs/specs/spec-angle-bracket-autolink.md`
 **Depends on:** None (orthogonal to the auto-link spec; both are valid without the other)
 **Target branch:** main
