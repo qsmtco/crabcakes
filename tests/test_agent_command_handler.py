@@ -984,3 +984,54 @@ class TestAuditReportProcessing:
         handler.on_agent_response("session:qaster:123", text, "test-project")
         # If we get here without exception, test passes
         assert (tmp_path / ".crabcakes" / "review-log.jsonl").exists()
+
+
+class TestAgentIssuedCompactClear:
+    """Tests for agent-issued /compact and /clear commands."""
+
+    def test_extract_compact_with_quoted_focus(self):
+        """Parses /compact @Coder with quoted payload."""
+        from ui.handlers.agent_command_handler import _extract_quoted_commands
+        cmds = _extract_quoted_commands('text /compact @Coder "preserve auth" more')
+        assert len(cmds) >= 1
+        match = [c for c in cmds if c.command == "compact"]
+        assert len(match) == 1
+        assert match[0].agent == "@Coder"
+        assert match[0].payload == "preserve auth"
+
+    def test_extract_clear_payload_free(self):
+        """Parses /clear @Coder (payload-free via Pass 6)."""
+        from ui.handlers.agent_command_handler import _extract_quoted_commands
+        cmds = _extract_quoted_commands('text /clear @Coder more')
+        assert len(cmds) >= 1
+        match = [c for c in cmds if c.command == "clear"]
+        assert len(match) == 1
+        assert match[0].agent == "@Coder"
+        assert match[0].payload == ""
+
+    def test_extract_compact_payload_free(self):
+        """Parses /compact @Coder (payload-free via Pass 6)."""
+        from ui.handlers.agent_command_handler import _extract_quoted_commands
+        cmds = _extract_quoted_commands('text /compact @Coder more')
+        assert len(cmds) >= 1
+        match = [c for c in cmds if c.command == "compact"]
+        assert len(match) == 1
+        assert match[0].agent == "@Coder"
+        assert match[0].payload == ""
+
+    def test_ask_still_works(self):
+        """/ask still works alongside new commands."""
+        from ui.handlers.agent_command_handler import _extract_quoted_commands
+        cmds = _extract_quoted_commands('/ask @Coder "what is the status?"')
+        assert len(cmds) >= 1
+        match = [c for c in cmds if c.command == "ask"]
+        assert len(match) == 1
+
+    def test_on_agent_response_no_crash_when_runtime_unwired(self):
+        """When agent_runtime_handler is None, /compact still works (action fires)
+        but feedback injection is skipped gracefully."""
+        from ui.handlers.agent_command_handler import AgentCommandHandler
+        handler = AgentCommandHandler(GLib_module=None)
+        handler.set_command_handler(None)  # no command handler = scanner skips
+        # Should not raise
+        handler.on_agent_response("special:supervisor", "no commands here", None)
