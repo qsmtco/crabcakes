@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-07
 **Author:** Supervisor
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — wire-name mapping, allowed_tools gate fix, mcp_config validation
 **Implements:** Fix for the HTTP 400 `tools.8.custom.name: String should match pattern '^[a-zA-Z0-9_-]{1,128}$'` error
 **Depends on:** None
 **Target branch:** main
