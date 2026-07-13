@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-10
 **Author:** Supervisor
-**Status:** Draft — for implementation (revised after Debugger audit)
+**Status:** ✅ IMPLEMENTED — @Agent targeting, enum DRY, concurrency guard, llm_name resolution
 **Depends on:** `docs/specs/SPEC-CONTEXT-UI-COMPACT-LLM-2026-07-10.md` (shipped)
 **Target branch:** main
 
