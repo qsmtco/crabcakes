@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-08
 **Author:** Supervisor
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — Step 3a pre-processing, broadened scheme regex, re.IGNORECASE
 **Depends on:** None
 **Target branch:** main
 
