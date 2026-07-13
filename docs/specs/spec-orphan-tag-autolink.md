@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-08
 **Author:** Supervisor
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — orphan tag sweep + auto-link lookbehind + entity exclusion
 **Depends on:** None
 **Target branch:** main
 
