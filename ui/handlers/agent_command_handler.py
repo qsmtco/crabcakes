@@ -167,7 +167,7 @@ def _extract_quoted_commands(text: str, command_names: set[str] | None = None) -
         _emit('stop', m.group(1), '', m.span())
 
     # ── Pass 6: payload-free /compact and /clear (no quotes at all) ────────
-    for m in re.finditer(r'(?:^|\s)/(compact|clear)\s+(@[^\s"]+)(?!\s*")', text):
+    for m in re.finditer(r'(?:^|\s)/(compact|clear)\s+(@[^\s"]+?)(?=\s|$)(?!\s*")', text):
         if m.span() in seen_spans:
             continue
         _emit(m.group(1), m.group(2), '', m.span())
