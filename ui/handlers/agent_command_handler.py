@@ -354,6 +354,65 @@ class AgentCommandHandler:
                     self._record_action_result(session_key, result.response_text)
                     command_count += 1
 
+    def _record_action_result(self, source_sk: str, text: str) -> None:
+        """Inject an action result into the issuing agent's own conversation.
+
+        Used for agent-issued commands that mutate peer state (e.g. /compact,
+        /clear) and return a response_text result with no forward target.
+        The supervisor's next turn will include this text in its LLM context.
+        """
+        if self._agent_runtime_handler is None:
+            logger.warning(
+                "[agent-cmd] Cannot record action result for %s — "
+                "agent_runtime_handler not wired",
+                source_sk,
+            )
+            return
+
+        agent_def = self._agent_runtime_handler.get_special_agent_def(source_sk)
+        if agent_def is None:
+            logger.debug(
+                "[agent-cmd] _record_action_result: no SpecialAgentDef for %s",
+                source_sk,
+            )
+            return
+
+        try:
+            rt = self._agent_runtime_handler._get_runtime(
+                agent_def.display_name, agent_def=agent_def
+            )
+        except Exception as exc:
+            logger.warning(
+                "[agent-cmd] _record_action_result: failed to get runtime for %s: %s",
+                source_sk, exc,
+            )
+            return
+
+        try:
+            conv = rt.get_conversation(source_sk)
+        except Exception as exc:
+            logger.warning(
+                "[agent-cmd] _record_action_result: get_conversation failed for %s: %s",
+                source_sk, exc,
+            )
+            return
+
+        if conv is None:
+            logger.debug(
+                "[agent-cmd] _record_action_result: no conversation for %s",
+                source_sk,
+            )
+            return
+
+        try:
+            with rt._lock:
+                conv.add_user_message(f"[Action result]: {text}")
+        except Exception as exc:
+            logger.warning(
+                "[agent-cmd] _record_action_result: add_user_message failed for %s: %s",
+                source_sk, exc,
+            )
+
     # ── Relay ─────────────────────────────────────────────────────────────────
 
     def _relay_response(self, source_sk: str, target_sk: str,
