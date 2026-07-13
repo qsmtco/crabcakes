@@ -161,7 +161,7 @@ def _extract_quoted_commands(text: str, command_names: set[str] | None = None) -
         _emit('ask', agent, raw_payload, m.span())
 
     # ── Pass 5: payload-free /stop @Agent (no quotes at all) ────────────────
-    for m in re.finditer(r'(?:^|\s)/stop\s+(@[^\s"]+)', text):
+    for m in re.finditer(r'(?:^|\s)/stop\s+(@[^\s"]+?)(?=\s|$)(?!\s*")', text):
         if m.span() in seen_spans:
             continue
         _emit('stop', m.group(1), '', m.span())
