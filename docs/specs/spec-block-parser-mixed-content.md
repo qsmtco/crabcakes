@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-07
 **Author:** Supervisor
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — iterative left-to-right scanner, interleaved block types
 **Implements:** Fix for heading body data loss + quote/task format degradation when block-typed lines are followed by non-matching lines within the same paragraph
 **Depends on:** None
 **Target branch:** main
