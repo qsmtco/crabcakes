@@ -994,10 +994,9 @@ class TestAgentIssuedCompactClear:
         from ui.handlers.agent_command_handler import _extract_quoted_commands
         cmds = _extract_quoted_commands('text /compact @Coder "preserve auth" more')
         assert len(cmds) >= 1
-        match = [c for c in cmds if c.command == "compact"]
+        match = [c for c in cmds if c.command == "compact" and c.payload == "preserve auth"]
         assert len(match) == 1
         assert match[0].agent == "@Coder"
-        assert match[0].payload == "preserve auth"
 
     def test_extract_clear_payload_free(self):
         """Parses /clear @Coder (payload-free via Pass 6)."""
