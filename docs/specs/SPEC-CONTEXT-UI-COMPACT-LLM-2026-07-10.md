@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-10
 **Author:** qtr
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — context meter, /compact command, LLM strategy, 3 phases + audit fixes
 **Implements:**
 - `docs/audits/2026-07-10-CONTEXT-MANAGEMENT-AUDIT.md` (motivating audit)
 - `docs/specs/SPEC-CONTEXT-MANAGEMENT-ROADMAP.md` (engine already shipped)
