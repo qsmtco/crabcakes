@@ -92,7 +92,7 @@ def _extract_quoted_commands(text: str, command_names: set[str] | None = None) -
         cmd = m.group(1).lower()
         agent = m.group(2)
         raw_payload = m.group(3)
-        if cmd not in ('ask', 'tell', 'delegate', 'stop', 'compact'):
+        if cmd not in ('ask', 'tell', 'delegate', 'stop', 'compact', 'clear'):
             continue
         if cmd == 'stop':
             _emit(cmd, agent, '', m.span())
@@ -119,7 +119,7 @@ def _extract_quoted_commands(text: str, command_names: set[str] | None = None) -
             continue
         cmd = m.group(1).lower()
         agent = m.group(2)
-        if cmd not in ('ask', 'tell', 'delegate', 'compact'):
+        if cmd not in ('ask', 'tell', 'delegate', 'compact', 'clear'):
             continue
         raw_payload = m.group(3)
         if not raw_payload:
