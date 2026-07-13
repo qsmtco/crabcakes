@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-11
 **Author:** Debugger (spec drafter)
-**Status:** Draft — ready for implementation
+**Status:** ✅ IMPLEMENTED — agents can issue /compact and /clear via A2A command pipeline
 **Depends on:** `docs/specs/SPEC-CONTEXT-UI-COMPACT-LLM-2026-07-10.md` (shipped, implements compact machinery)
 **Target branch:** main
 
