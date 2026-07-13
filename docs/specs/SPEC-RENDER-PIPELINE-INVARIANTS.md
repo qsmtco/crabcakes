@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-09
 **Author:** qtr (read-only audit + spec)
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — case normalization, attribute lowercasing, bare-hostname fix
 **Implements:** Two concrete bugs found in terminal-noise audit of `escape_for_pango → format_markdown → set_markup` pipeline
 **Depends on:** None (standalone pipeline fix)
 **Target branch:** `main`
