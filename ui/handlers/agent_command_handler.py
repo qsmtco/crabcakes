@@ -166,6 +166,12 @@ def _extract_quoted_commands(text: str, command_names: set[str] | None = None) -
             continue
         _emit('stop', m.group(1), '', m.span())
 
+    # ── Pass 6: payload-free /compact and /clear (no quotes at all) ────────
+    for m in re.finditer(r'(?:^|\s)/(compact|clear)\s+(@[^\s"]+)', text):
+        if m.span() in seen_spans:
+            continue
+        _emit(m.group(1), m.group(2), '', m.span())
+
     return results
 
 
@@ -340,6 +346,12 @@ class AgentCommandHandler:
                         self._route_to_target(
                             target, result.forward_text, project_name
                         )
+                    command_count += 1
+                elif result.handled and result.response_text:
+                    # Action result (e.g. /compact, /clear) — no forward target.
+                    # Inject the result into the issuing agent's own conversation
+                    # so the supervisor sees the outcome on its next turn.
+                    self._record_action_result(session_key, result.response_text)
                     command_count += 1
 
     # ── Relay ─────────────────────────────────────────────────────────────────
