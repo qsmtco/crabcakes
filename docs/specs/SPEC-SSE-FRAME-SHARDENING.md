@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-09
 **Author:** qtr (read-only audit)
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — _first_choice helper, 3 patched sites, error context annotation
 **Implements:** none (root-cause audit triggered by incident `agent.runtime ERROR Error in tool loop for special:coder` on 2026-07-09 08:26 PDT)
 **Depends on:** none
 **Target branch:** main
