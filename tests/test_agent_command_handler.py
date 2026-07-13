@@ -1034,3 +1034,60 @@ class TestAgentIssuedCompactClear:
         handler.set_command_handler(None)  # no command handler = scanner skips
         # Should not raise
         handler.on_agent_response("special:supervisor", "no commands here", None)
+
+    def test_no_duplicate_match_on_quoted_compact(self):
+        """BUG #1: /compact @Coder "x" must produce exactly 1 command, not 2."""
+        from ui.handlers.agent_command_handler import _extract_quoted_commands
+        cmds = _extract_quoted_commands('/compact @Coder "preserve auth"')
+        compact_cmds = [c for c in cmds if c.command == "compact"]
+        assert len(compact_cmds) == 1, f"Duplicate match: {compact_cmds}"
+
+    def test_clear_with_quoted_payload(self):
+        """BUG #2: /clear @Coder "x" must parse (symmetric with compact)."""
+        from ui.handlers.agent_command_handler import _extract_quoted_commands
+        cmds = _extract_quoted_commands('/clear @Coder "session"')
+        clear_cmds = [c for c in cmds if c.command == "clear"]
+        assert len(clear_cmds) == 1, f"No clear command found: {cmds}"
+
+    def test_record_action_result_calls_add_user_message(self):
+        """BUG #4: _record_action_result must inject text into conversation."""
+        from ui.handlers.agent_command_handler import AgentCommandHandler
+        from unittest.mock import MagicMock
+
+        handler = AgentCommandHandler(GLib_module=None)
+
+        # Mock runtime handler chain
+        mock_conv = MagicMock()
+        mock_rt = MagicMock()
+        mock_rt.get_conversation.return_value = mock_conv
+        import threading
+        mock_rt._lock = threading.Lock()
+
+        mock_agent_def = MagicMock()
+        mock_agent_def.display_name = "Supervisor"
+
+        mock_arh = MagicMock()
+        mock_arh.get_special_agent_def.return_value = mock_agent_def
+        mock_arh._get_runtime.return_value = mock_rt
+
+        handler._agent_runtime_handler = mock_arh
+
+        handler._record_action_result("special:supervisor", "Compacted. Freed 12K tokens.")
+
+        mock_conv.add_user_message.assert_called_once()
+        call_arg = mock_conv.add_user_message.call_args[0][0]
+        assert "[Action result]" in call_arg
+        assert "Compacted" in call_arg
+
+    def test_record_action_result_no_crash_when_agent_def_none(self):
+        """When get_special_agent_def returns None, must not crash."""
+        from ui.handlers.agent_command_handler import AgentCommandHandler
+        from unittest.mock import MagicMock
+
+        handler = AgentCommandHandler(GLib_module=None)
+        mock_arh = MagicMock()
+        mock_arh.get_special_agent_def.return_value = None
+        handler._agent_runtime_handler = mock_arh
+
+        handler._record_action_result("special:unknown", "test")
+        # No exception = pass
