@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-11
 **Author:** QTR
-**Status:** Draft — awaiting review
+**Status:** ❌ NOT IMPLEMENTED — the `agent/` package remains a single god package. `agent/runtime.py` is 3,183 lines. The proposed split into `llm/`, `domain/`, `policies/` packages was never done.
 **Related:** `docs/ARCHITECTURE.md`, PHASE-11 post-mortem, PHASE-FOLLOWUP-2 (validate_agent_def provider mismatch)
 
 > **Status (verified 2026-06-12):** ❌ **PENDING / NOT STARTED** — 

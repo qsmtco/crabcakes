@@ -1,12 +1,9 @@
 # Proposal: Agent-to-Agent Communication
 
-> **Status: NOT YET IMPLEMENTED** — Verified in code as of 2026-05-09
-> - No agent-to-agent messaging infrastructure found
-> - Remains a proposal
-
 **Author:** Lieutenant Qrusher
 **Date:** 2026-05-08
 **Target:** Crabcakes Phase 7 (completion) + Phase 5 (convergence wiring)
+**Status:** ⚠️ PARTIALLY SUPERSEDED — the intent crabcard + private thread + convergence detector design was not built. A simpler command-based design was implemented instead: agents use `` `ask @Agent ...` `` commands parsed by `ui/handlers/agent_command_handler.py`, with answers relayed via `pending-ask` tracking (`ui/window.py:496`).
 
 > **Status (verified 2026-06-12):** ⚠️ **PARTIALLY SUPERSEDED** — 
 > **status:** `PARTIAL` — sortable tag for `ls | grep STATUS` The full "intent crabcard + private thread + convergence detector" infrastructure described here was **not** built. The proposal's spirit (agents can consult each other) was achieved via the simpler `PLAN-a2a-simplification.md` command-based design: agents use `` `ask @Agent ...` `` commands (parsed by `ui/handlers/agent_command_handler.py`), answers are relayed back to the asking agent via `pending-ask` tracking (see `ui/window.py:496`). The convergence auto-close and private thread features were abandoned — the simpler design doesn't need them.

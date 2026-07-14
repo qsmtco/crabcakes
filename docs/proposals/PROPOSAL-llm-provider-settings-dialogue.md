@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-07
 **Author:** QTR
-**Status:** Draft — awaiting Captain JAQx review before spec creation
+**Status:** ✅ DONE — spec written (`docs/specs/SPEC-LLM-PROVIDER-SETTINGS-DIALOGUE.md`, 52K) and implementation shipped. Key files: `ui/views/settings_dialog.py` (17K), `ui/wiring.py` (3.6K), `utils/providers_store.py`. Providers load from `~/.config/crabcakes/providers.yaml`.
 **Related:** SPEC-LOCAL-AGENT-NO-RESPONSE-FIX (Phases 1–4), `docs/ARCHITECTURE.md`
 
 > **Status (verified 2026-06-12):** ✅ **DONE** — 

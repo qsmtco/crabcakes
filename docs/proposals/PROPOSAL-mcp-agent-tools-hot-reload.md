@@ -1,6 +1,6 @@
 # PROPOSAL: Hot-Reload MCP Server Config in Edit Agent Dialog
 
-> **Status (verified 2026-06-12):** ⚠️ **PARTIALLY DONE** — 
+**Status:** ⚠️ PARTIALLY DONE — MCP Servers section in Edit Agent dialog shipped (`ui/views/agent_builder.py:534` `_build_mcp_section()`). Hot-reload on next message partially confirmed — MCP client supports runtime connect/disconnect via `utils/mcp_client.py` and `agent/runtime.py:955-959` cleanup. Full end-to-end hot-reload verification not confirmed. 
 > **status:** `PARTIAL` — sortable tag for `ls | grep STATUS` The **MCP Servers section** in the Edit Agent dialog is shipped. See `ui/views/agent_builder.py:123-124` (`mcp_section = self._build_mcp_section()`) and `agent_builder.py:534` (`def _build_mcp_section(self)`). The visual UI is in place. However, the **hot-reload on next message** (no restart needed) part is **not verified** — the proposal's "no restart" claim requires confirming that MCP server changes take effect on the next agent invocation without a restart. The MCP client (`utils/mcp_client.py`) supports runtime connect/disconnect (per `agent/runtime.py:955-959` "BUG #22: Clean up existing MCP connections before replacing conversation"), which suggests hot-reload is at least partially in place. **Marked PARTIAL pending confirmation that the "no restart" claim holds end-to-end.**
 
 ---
