@@ -1,5 +1,7 @@
 # FIX: load_conversation() never called on startup — persisted conversations orphaned
 
+**Status:** ✅ IMPLEMENTED — rt.load_conversation(session_key) at agent_runtime_handler.py:738, runtime.load_conversation() at runtime.py:2888
+
 ## Problem
 
 When the app restarts, `send_to_special_agent` in `agent_runtime_handler.py` checks `rt.get_conversation(session_key)` — if it returns None (which it always does after restart since the in-memory `_conversations` dict is empty), it calls `rt.create_conversation()` which creates a fresh Conversation with `step_count=0`, empty messages, zero tokens/cost. The persisted JSON file (`~/.config/crabcakes/conversations/special:coder.json`) is never loaded.
