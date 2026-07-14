@@ -2159,6 +2159,22 @@ class AgentRuntime:
                 from models.conversation import MessageRole
                 messages = conv.to_api_messages()
 
+                # Pre-call budget guard: if the conversation still exceeds
+                # the model's context window after compaction, raise a clear
+                # error before sending to the provider. This prevents mid-stream
+                # HTTP 400 rejections (which corrupt conversation state because
+                # the assistant message is already added by the time the error
+                # surfaces).
+                post_trim_estimate = conv.get_token_estimate()
+                if post_trim_estimate > model_max:
+                    import math
+                    usage_pct = math.ceil((post_trim_estimate / model_max) * 100) if model_max > 0 else 0
+                    raise RuntimeError(
+                        f"Conversation is at {post_trim_estimate:,}/{model_max:,} tokens "
+                        f"({usage_pct}%) after compaction — exceeds model context window. "
+                        f"Use /clear to reset or /compact to summarize the conversation."
+                    )
+
                 # KB synthesis (Tier 2): prepare messages with KB context if applicable.
                 # The helper is called once per tool-loop iteration, but kb_lookup itself
                 # only runs once per _run_loop invocation (gated by the per-turn cache
