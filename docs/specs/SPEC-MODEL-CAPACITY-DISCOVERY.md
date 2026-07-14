@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-24
 **Author:** Qaster (implementation supervisor)
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — test_connection with context_window discovery via /v1/models, _CALLER_DEFAULT_MAX_TOKENS fallback table, ProviderConfig.context_mode
 **Implements:** User-reported gap (no UI to set `max_tokens`; hardcoded 128K ignores M3's actual 1M window)
 **Depends on:** None (Phase 1 — read-only on existing files; Phase 2 is additive UI)
 **Target branch:** main
