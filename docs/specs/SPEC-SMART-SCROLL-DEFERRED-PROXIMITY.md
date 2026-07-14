@@ -1,5 +1,7 @@
 # SPEC: Deferred Smart Scroll with Proximity Check
 
+**Status:** ✅ IMPLEMENTED — schedule_scroll_to_bottom, schedule_smart_scroll_to_bottom, stale-upper proximity check
+
 **Date:** 2026-06-21
 **Supervisor:** Qaster
 **Builder:** QTR
