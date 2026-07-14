@@ -3112,8 +3112,11 @@ class TestPreCallBudgetGuard:
         conv.system_prompt = "Test"
         conv.add_user_message("hello")
 
-        with pytest.raises(RuntimeError, match="exceeds model context window"):
-            rt._run_loop(sk, "test")
+        errors = []
+        rt._on_error = lambda session_key, msg: errors.append(str(msg))
+        rt._run_loop(sk, "test")
+        assert errors, "guard should have fired"
+        assert "exceeds model context window" in errors[0]
 
     def test_guard_message_includes_usage_percent_and_hint(self):
         """Error message must include usage percent and remediation hint."""
@@ -3142,14 +3145,14 @@ class TestPreCallBudgetGuard:
         conv.system_prompt = "Test"
         conv.add_user_message("hello")
 
-        try:
-            rt._run_loop(sk, "test")
-            assert False, "should have raised"
-        except RuntimeError as e:
-            msg = str(e)
-            assert "%" in msg, f"missing percent: {msg}"
-            assert "/clear" in msg, f"missing /clear hint: {msg}"
-            assert "/compact" in msg, f"missing /compact hint: {msg}"
+        errors = []
+        rt._on_error = lambda session_key, msg: errors.append(str(msg))
+        rt._run_loop(sk, "test")
+        assert errors, "guard should have fired"
+        msg = errors[0]
+        assert "%" in msg, f"missing percent: {msg}"
+        assert "/clear" in msg, f"missing /clear hint: {msg}"
+        assert "/compact" in msg, f"missing /compact hint: {msg}"
 
 
 # ═══════════════════════════════════════════════════════════════════
