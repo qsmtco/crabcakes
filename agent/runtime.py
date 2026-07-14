@@ -2157,23 +2157,24 @@ class AgentRuntime:
                 # Build API messages AFTER compact so the wire payload reflects
                 # the trimmed conversation. Bug fix: was captured before compact().
                 from models.conversation import MessageRole
-                messages = conv.to_api_messages()
 
                 # Pre-call budget guard: if the conversation still exceeds
                 # the model's context window after compaction, raise a clear
-                # error before sending to the provider. This prevents mid-stream
+                # error before serializing or sending. This prevents mid-stream
                 # HTTP 400 rejections (which corrupt conversation state because
                 # the assistant message is already added by the time the error
-                # surfaces).
+                # surfaces). Response reserve accounts for output tokens.
+                RESPONSE_RESERVE_TOKENS = 4096
                 post_trim_estimate = conv.get_token_estimate()
-                if post_trim_estimate > model_max:
-                    import math
-                    usage_pct = math.ceil((post_trim_estimate / model_max) * 100) if model_max > 0 else 0
+                effective_budget = model_max - RESPONSE_RESERVE_TOKENS
+                if post_trim_estimate >= effective_budget:
+                    usage_pct = int((post_trim_estimate / model_max) * 100) if model_max > 0 else 0
                     raise RuntimeError(
                         f"Conversation is at {post_trim_estimate:,}/{model_max:,} tokens "
                         f"({usage_pct}%) after compaction — exceeds model context window. "
                         f"Use /clear to reset or /compact to summarize the conversation."
                     )
+                messages = conv.to_api_messages()
 
                 # KB synthesis (Tier 2): prepare messages with KB context if applicable.
                 # The helper is called once per tool-loop iteration, but kb_lookup itself
