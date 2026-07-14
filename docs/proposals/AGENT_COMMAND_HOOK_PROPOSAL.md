@@ -2,7 +2,7 @@
 
 **Author:** Lieutenant Qrusher
 **Date:** 2026-05-12
-**Status:** Draft
+**Status:** ✅ SHIPPED — implemented as `AgentCommandHandler.on_agent_response()` in `ui/handlers/agent_command_handler.py` (25K). See `docs/proposals/AGENT_COMMAND_HOOK_PROPOSAL.md` body for details.
 **Tracking issue:** #ACMH-1
 
 > **Status (verified 2026-06-12):** ✅ **DONE** — 

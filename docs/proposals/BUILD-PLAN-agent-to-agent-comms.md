@@ -5,6 +5,7 @@
 **Author:** Qaster
 **Total steps:** 19 across 5 phases
 **Estimated new code:** ~430 lines | **Modified code:** ~110 lines across 5 files
+**Status:** ⚠️ PARTIALLY SUPERSEDED — Phases 1–2 shipped via slash command prefix migration. Phases 3–5 (intent crabcards, private threads, convergence detection) were abandoned in favor of `PLAN-a2a-simplification.md` command-based design.
 
 > **Status (verified 2026-06-12):** ⚠️ **PARTIALLY DONE** — 
 > **status:** `PARTIAL` — sortable tag for `ls | grep STATUS` Phases 1–2 (@mention resolution, special agent command set) shipped via the slash command prefix migration (`utils/config.py:71` sets `COMMAND_PREFIX = "/"`) and `AgentCommandHandler`. **Phases 3–5 (intent crabcards, private threads, convergence detection) were SUPERSEDED** by the simpler `PLAN-a2a-simplification.md` design — instead of auto-relay on @mentions, agents use explicit `` `ask @Agent ...` `` commands. The `BUILD-PLAN-agent-to-agent-comms.md` "intent crabcard" + "convergence detector" + "private thread" features were never built because the simpler command-based design doesn't need them.
