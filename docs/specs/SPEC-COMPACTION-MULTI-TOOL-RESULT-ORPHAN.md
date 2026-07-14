@@ -1,6 +1,6 @@
 # SPEC: Compaction Multi-Tool-Result Orphan Fix
 
-**Status:** Ready for implementation
+**Status:** ✅ IMPLEMENTED — all 4 changes (sibling TR pop, straddle skip, orphan sweep, iteration cap)
 **Date:** 2026-07-04
 **Implements:** `docs/bugs/BUG-compaction-multi-tool-result-orphan.md`
 **Depends on:** `SPEC-CODER-400-STALE-MESSAGES-AND-HTTPERROR-BODY` (landed)
