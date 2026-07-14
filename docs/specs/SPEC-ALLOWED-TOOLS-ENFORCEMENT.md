@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-03
 **Author:** qtr (OC Tech Writer)
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — allowed_tools gate moved before MCP routing, get_tool_definitions_for_api filters, execute_tool enforces
 **Implements:** N/A (bug fix)
 **Depends on:** None
 **Target branch:** main
