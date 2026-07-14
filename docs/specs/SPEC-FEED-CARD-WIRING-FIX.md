@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-12
 **Author:** Qaster (after adversarial review of QTR's report)
-**Status:** Ready for implementation
+**Status:** ✅ IMPLEMENTED — git_commit feed card wiring via on_feed_card callback in ReviewHandler, wired in window.py
 **Implements:** `docs/proposals/PROPOSAL-feed-card-wiring.md` (PARTIAL → DONE)
 **Closes:** Roadmap Tier 1.2 (revised: 11-line fix, not 52-line merge)
 **Target branch:** main
