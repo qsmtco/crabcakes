@@ -677,8 +677,8 @@ class TestRunLoopTrimsContext:
         conv = rt.get_conversation(sk)
         conv.system_prompt = "Test"  # minimize for predictable trim behavior
 
-        # Stuff the conversation with 20 large exchanges (~800 chars each = ~4K tokens)
-        for i in range(20):
+        # Stuff the conversation with 50 large exchanges (~800 chars each = ~20K tokens)
+        for i in range(50):
             conv.add_user_message(f"turn {i}: " + "x" * 800)
             conv.add_assistant_message("y" * 800, [])
 
