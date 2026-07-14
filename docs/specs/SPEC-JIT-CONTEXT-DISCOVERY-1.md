@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-27
 **Author:** Captain Q (with Qaster proposal)
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — resolve_context_mode, build_file_index, context_mode param in build_file_context_with_core_files, validate_provider_context_mode
 **Implements:** `docs/proposals/PROPOSAL-jit-context-discovery.md`
 **Depends on:** None (orthogonal to ContextStrategy protocol; uses existing tools)
 **Target branch:** main
