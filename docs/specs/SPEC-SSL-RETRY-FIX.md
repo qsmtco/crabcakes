@@ -1,7 +1,7 @@
 # SPEC: Three-Layer SSL Mid-Stream Drop Recovery
 
 **Date:** 2026-06-30
-**Status:** Approved
+**Status:** ✅ IMPLEMENTED — _urlopen_with_ssl_retry, _stream_with_ssl_retry, _is_retryable_ssl_error, _friendly_error_message all shipped
 **Scope:** `agent/runtime.py` only
 
 ## Problem
