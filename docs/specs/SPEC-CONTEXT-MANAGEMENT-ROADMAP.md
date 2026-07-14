@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-25 (last updated 2026-06-26 — added §0 Strategy Architecture per PROPOSAL-pluggable-context-strategy.md)
 **Author:** Qaster (supervisor)
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — all 7 phases (P1-P7) shipped. DefaultContextStrategy (874 lines), CompactionEvent telemetry, _compute_compaction_threshold, compaction_threshold config field, P7 dynamic budget, LLMSummarizeStrategy (Phase 2). Plus orphan sweep, pre-call guard, and all audit fixes from SPEC-CM-AUDIT-BUGFIX-1.
 **Implements:** `docs/proposals/PROPOSAL-context-management-roadmap.md`
 **Companion proposal:** `docs/proposals/PROPOSAL-pluggable-context-strategy.md` (adopted 2026-06-26)
 **Depends on:** `docs/specs/SPEC-CONTEXT-BLOAT-PHASE-1-INSTRUCTIONS.md` through PHASE-5 (all SHIPPED)
