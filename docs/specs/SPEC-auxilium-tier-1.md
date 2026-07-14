@@ -3,7 +3,7 @@
 **Date:** 2026-06-13
 **Author:** Qaster
 **Parent proposal:** `docs/proposals/PROPOSAL-auxilium-three-tier-help-agent.md`
-**Status:** Draft — pending Captain approval
+**Status:** ✅ IMPLEMENTED — AuxiliumWizardHandler state machine, is_auxilium_wizard_needed, wizard view, install check, gateway probe, provider config write
 **Phase:** 1 of 3 (shippable in ~1 week)
 **Effort:** ~5-7 days
 
