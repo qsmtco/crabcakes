@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-24
 **Author:** Qaster
-**Status:** STALE — spec targets pre-refactor code. Fix 2 (protected-pop) and 90% threshold already ship in `agent/context_strategy.py`. Only Fix 3 (pre-call guard) remains. Fix 1 (to_api_messages sanitizer) under investigation.
+**Status:** ✅ PARTIALLY IMPLEMENTED — Fix 3 (pre-call guard) done. Fix 2 (protected-pop) already ships in context_strategy.py. Fix 1 (to_api_messages sanitizer) investigated and confirmed NOT NEEDED (no code path creates orphans between compact and serialize).
 **Implements:** the four fixes outlined in `docs/audits/2026-06-24-WORKING-TREE-AUDIT.md` §"Audit Report (read-only)" (recommended fix plan)
 **Source bug report:** Coder agent MiniMax API 2013 error, "tool result's tool id(call_function_jq76xtokmtqh_2) not found" at iteration 50 of a 39-message tool-loop, conversation at 127,946/128,000 tokens.
 **Related to:** `docs/specs/SPEC-CONTEXT-BLOAT-PHASE-2.md` (the trim algorithm this spec augments), `docs/specs/SPEC-CONTEXT-BLOAT-PHASE-3.md` (§4.10 summary-on-trim)
