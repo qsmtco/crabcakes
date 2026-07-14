@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-21
 **Authors:** Qaster (with Captain JAQx)
-**Status:** Draft — Awaiting approval
+**Status:** ⚠️ PARTIALLY DONE — basic MCP client infrastructure shipped (`utils/mcp_client.py`), MCP section in agent builder UI (`agent_builder.py:534`), MCP cleanup in runtime (`runtime.py:955-959`). Full Phase B features (multi-server orchestration, SSE transport, server-initiated notifications) not confirmed shipped.
 
 > **Status (verified 2026-06-12):** ⚠️ **PARTIALLY DONE** — 
 > **status:** `PARTIAL` — sortable tag for `ls | grep STATUS` The MCP client infrastructure is **partially** built. `utils/mcp_client.py` exists (supports `mcp__connect`, `mcp__disconnect`, `mcp__tools` operations). `agent/runtime.py:955-959` cleans up existing MCP connections before replacing a conversation (BUG #22 fix). `agent/special_agents.py:50` has `mcp_servers: list[str]` field on `SpecialAgentDef`. `ui/views/agent_builder.py:534` has `_build_mcp_section()` for the agent builder UI. However, the **Phase B** features (MCP client library swap, multi-server orchestration, SSE transport, server-initiated notifications) described in this proposal are **not** confirmed as shipped. The MCP client appears to be a basic implementation sufficient for single-server tool calls, but the full Phase B capabilities (especially server-initiated notifications and multi-server orchestration) are not verified. **Marked PARTIAL; basic MCP works, full Phase B not confirmed.**

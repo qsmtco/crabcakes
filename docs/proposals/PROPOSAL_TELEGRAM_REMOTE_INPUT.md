@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-28
 **Author:** Qaster
-**Status:** Proposal — pending Captain approval
+**Status:** ❌ NOT IMPLEMENTED — SPEC file created then deleted. No Telegram integration code exists anywhere in the codebase. Never prioritized.
 
 > **Status (verified 2026-06-12):** ❌ **PENDING / NEVER IMPLEMENTED** — 
 > **status:** `PENDING` — sortable tag for `ls | grep STATUS` The SPEC file (`docs/SPEC_TELEGRAM_REMOTE_INPUT.md`) was created (commit `709390d`) and then **deleted** (confirmed via feed.json diff_text showing `deleted file mode 100644 ... SPEC_TELEGRAM_REMOTE_INPUT.md`). No Telegram integration code exists anywhere in the codebase (`find . -name "*telegram*"` returns nothing). The proposal was speculative from the start ("Medium priority, ~3-4 hours") and was never prioritized. **Filed as PENDING; not scheduled.**
