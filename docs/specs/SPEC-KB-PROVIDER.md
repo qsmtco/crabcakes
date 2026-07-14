@@ -3,7 +3,7 @@
 **Date:** 2026-06-14 (revised)
 **Author:** QTR (builder), directed by Qaster (supervisor)
 **Parent proposal:** `docs/proposals/PROPOSAL-auxilium-three-tier-help-agent.md`
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — kb_server (localhost:18790), KB_OUT_OF_SCOPE sentinel, ensure_kb_provider in providers_store, synthesis layer with fallback
 **Depends on:** KB Provider Phase 1 (shipped), Legacy dead code cleanup (shipped commit `d04c6ee`)
 **Target branch:** main
 
