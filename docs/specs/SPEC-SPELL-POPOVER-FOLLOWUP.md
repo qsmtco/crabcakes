@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-22 (synthesized 2026-06-23)
 **Author:** qaster
-**Status:** Draft — for implementation (synthesized with adversarial audit findings)
+**Status:** ✅ IMPLEMENTED — get_word_at_iter with click-time capture for verification, backward_word_start() fix, popover closed→unparent handler, replace_word_at_iter
 **Implements:** Audit findings from `SPEC-SPELL-SUGGESTION-POPOVER.md` Phase 1 deployment
 **Depends on:** `SPEC-SPELL-SUGGESTION-POPOVER.md` (Phase 1 — already merged)
 **Target branch:** main
