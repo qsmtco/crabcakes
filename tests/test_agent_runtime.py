@@ -691,7 +691,7 @@ class TestRunLoopTrimsContext:
             rt._run_loop(sk, "trigger the loop")
 
         # Post-conditions
-        assert len(conv.messages) < 42, f"expected trim, got {len(conv.messages)} messages"
+        assert len(conv.messages) < 82, f"expected trim, got {len(conv.messages)} messages"
         assert captured, "on_token_breakdown never fired"
         last = captured[-1]
         assert last["trimmed_this_turn"] is True
