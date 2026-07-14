@@ -1,12 +1,11 @@
 # Implementation Engine — Formal Proposal
 
-> **Status: NOT YET IMPLEMENTED** — Verified in code as of 2026-05-09
-> - No `utils/implementation_engine.py` or equivalent found
-> - Remains a proposal
-
 **Date:** 2026-04-26
 **Author:** Qaster
-**Affects:** `models/`, `utils/`, `ui/handlers/`, `ui/window.py`, `prompts/`
+**Status:** ❌ NOT IMPLEMENTED
+**Affects:** `models/`, `utils/`, `ui/handlers/`, `ui/window.py`
+
+> **Status (verified 2026-07-12):** ❌ **NOT IMPLEMENTED** — No `utils/implementation_engine.py` or equivalent found in the codebase. The proposal remains an unimplemented design., `prompts/`
 
 > **Status (verified 2026-06-12):** ⚠️ **PARTIALLY DONE** — 
 > **status:** `PARTIAL` — sortable tag for `ls | grep STATUS` The task system is shipped (8 task commands in `ui/handlers/task_handler.py` — `task`, `done`, `start`, `blocked`, `cancel`, `tasks`, `assign`, `priority`; `TaskStore` data model in `models/task.py`). However, the **deterministic PICK→BUILD→TEST→REVIEW→RECORD engine** described here is NOT built — there is no `utils/implementation_engine.py`, no automatic `task run` cycle, no per-task agent dispatch logic. The task system is manual-only today: PMs create and assign tasks, agents pick them up, but there's no automated engine that runs the cycle.

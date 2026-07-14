@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-28
 **Author:** QTR (audit), with QTR sub-agents (LLM layer, run loop, sibling modules, tools)
-**Status:** Draft — awaiting captain review
+**Status:** ❌ NOT IMPLEMENTED — spec (`SPEC-RUNTIME-MODULAR-EXTRACTION-PHASE-1.md`, 1,226 lines) was drafted, but no code changes were ever committed. `agent/tool_middleware.py` does not exist; `agent/llm/` package does not exist; `agent/runtime.py` remains at 3,183 lines (spec target was <1,800). The `_call_openai`, `_call_minimax`, `_call_anthropic` functions are still embedded in `runtime.py`. No `test_tool_middleware.py` or `test_llm_streaming.py` test files exist.
 **Severity:** LOW-MED — architectural refactor across the whole agent runtime. Not urgent individually, but the cumulative benefit is high (5+ independent extractions, each enabling a new capability). This is a *map*, not a single change.
 
 **Related proposals:**

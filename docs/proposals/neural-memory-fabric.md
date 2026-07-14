@@ -1,6 +1,10 @@
 # The Neural Memory Fabric: An Extreme Proposal for CrabCakes
 
-> **Status (verified 2026-06-12):** ❌ **PENDING / NOT STARTED** — 
+**Date:** 2026-06-23
+**Author:** Qaster
+**Status:** ❌ NOT IMPLEMENTED — exploratory concept only, never scoped for implementation
+
+> **Status (verified 2026-07-12):** ❌ **PENDING / NOT STARTED** — no code commits or specs found. Remains an aspirational concept. 
 > **status:** `PENDING` — sortable tag for `ls | grep STATUS` This is an "extreme" speculative proposal. No code in `agent/` or `utils/` implements a knowledge graph fabric. The standard `@modelcontextprotocol/server-memory` MCP server is wired (per the graph-enhanced-self-improvement proposal) but this "neural memory fabric" with temporal resonance, ghost nodes, etc. is a research-level proposal that has no implementation. **Filed as PENDING; no engineering work scheduled.**
 
 ## What's Wrong with Regular Memory
