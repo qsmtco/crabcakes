@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-04
 **Author:** Supervisor
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — stale messages fix (line 2160) + HTTPError body logging (lines 899, 964)
 **Implements:** `docs/bugs/BUG-coder-400-trim-order-and-httperror-body.md`
 **Depends on:** None
 **Target branch:** main
