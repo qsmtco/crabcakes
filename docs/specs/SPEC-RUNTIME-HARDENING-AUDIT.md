@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-24
 **Author:** qaster (audit-driven)
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — W1 session key fix, W2/W3 Anthropic streaming parity, W5-W8 unused imports removed, W9/W11 shared SSE helpers, W12 double-pop fixed
 **Implements:** Comprehensive audit findings from `agent/runtime.py` (2,291 lines)
 **Depends on:** SPEC-CONTEXT-BLOAT-PHASE-3.md §2.3 (BUG #4 fix — stuck-message injection)
 **Target branch:** main
