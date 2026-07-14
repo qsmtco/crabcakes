@@ -2166,7 +2166,7 @@ class AgentRuntime:
                 # HTTP 400 rejections (which corrupt conversation state because
                 # the assistant message is already added by the time the error
                 # surfaces). Response reserve accounts for output tokens.
-                RESPONSE_RESERVE_TOKENS = 4096
+                RESPONSE_RESERVE_TOKENS = self._RESPONSE_RESERVE_TOKENS
                 post_trim_estimate = conv.get_token_estimate()
                 effective_budget = model_max - RESPONSE_RESERVE_TOKENS
                 if post_trim_estimate >= effective_budget:
