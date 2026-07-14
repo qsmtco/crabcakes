@@ -1,9 +1,17 @@
 # Proposal: Context Management Roadmap — Compaction, Protection, and Adaptive Budgets
 
 **Author:** Qaster (supervisor)
-**Date:** 2026-06-25
-**Status:** Awaiting captain review
-**Severity:** HIGH — CrabCakes trims at 100% of context window (no soft ceiling), uses delete-only compaction (no cheap lossless layer), and has no `keep_first` invariant protecting the original task.
+**Date:** 2026-06-25 (revised: **2026-07-12 SHIPPED**)
+**Status:** ✅ SHIPPED — all 7 priorities complete across 9 phases + 2 audit bugfix rounds
+
+> **Status (verified 2026-07-12):** All priorities implemented, audited, and merged.
+> - **Batch A (P1–P3):** P1 soft ceiling at 80% (`_compute_compaction_threshold` return `tuple[int,int]`, configurable per-provider), P2 `keep_first=2` invariant, P3 `protect_is_summary` + `_select_prune_candidate` two-pass selector. All wired via `DefaultContextStrategy` at `agent/context_strategy.py`.
+> - **Batch B (P4–P6):** P4 backwards-walk `prune_tool_outputs` (Layer 1 cheap lossless stubbing), P5 `_find_split_index` with Aider-style role-anchoring, P6 `_fit_summary` with geometric-retry fallback.
+> - **P7:** Dynamic system prompt budget fraction (floor 0.15, ceiling 0.25) in `utils/prompt_loader.py:_apply_system_prompt_budget()`.
+> - **Beyond scope:** Phase 8 telemetry, Phase 9 CB-6 hardening, `LLMSummarizeStrategy` subclass, 2 audit bugfix rounds (SPEC-CM-AUDIT-BUGFIX-1 Phase A + B, 31 fixes).
+> - **Test coverage:** 3,161 lines of tests across 6 test files, 47 test classes.
+> - **Spec authority:** `docs/specs/SPEC-CONTEXT-MANAGEMENT-ROADMAP.md` (now marked SHIPPED).
+> - **Post-mortem:** `docs/post-mortems/2026-06-25-CONTEXT-MANAGEMENT-ROADMAP-POST-MORTEM.md`.
 
 **Source research:**
 - `docs/research/CONTEXT-MANAGEMENT-SOURCE-OF-TRUTH.md` (synthesized single-source-of-truth)
