@@ -3079,6 +3079,80 @@ class TestAllowedToolsFallback:
 
 
 # ═══════════════════════════════════════════════════════════════════
+#  Pre-Call Budget Guard
+# ═══════════════════════════════════════════════════════════════════
+
+class TestPreCallBudgetGuard:
+    """Tests for the pre-call RuntimeError guard in _run_loop."""
+
+    def test_guard_fires_when_post_trim_exceeds_budget(self):
+        """Guard raises RuntimeError when conversation exceeds model_max minus response reserve."""
+        from agent.config import AgentConfig, LLMProviderConfig
+        cfg = AgentConfig(
+            providers={
+                "openai": LLMProviderConfig(
+                    name="openai",
+                    base_url="https://api.openai.com/v1",
+                    api_key="test-key",
+                    default_model="gpt-4o",
+                    max_tokens=100,
+                )
+            },
+            default_provider="openai",
+            default_model="openai/gpt-4o",
+            max_tool_iterations=1,
+            tool_timeout_seconds=5,
+            auto_save_conversations=False,
+        )
+        rt = AgentRuntime(cfg)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        conv = rt.get_conversation(sk)
+        conv.system_prompt = "Test"
+        conv.add_user_message("hello")
+
+        with pytest.raises(RuntimeError, match="exceeds model context window"):
+            rt._run_loop(sk, "test")
+
+    def test_guard_message_includes_usage_percent_and_hint(self):
+        """Error message must include usage percent and remediation hint."""
+        from agent.config import AgentConfig, LLMProviderConfig
+        cfg = AgentConfig(
+            providers={
+                "openai": LLMProviderConfig(
+                    name="openai",
+                    base_url="https://api.openai.com/v1",
+                    api_key="test-key",
+                    default_model="gpt-4o",
+                    max_tokens=50,
+                )
+            },
+            default_provider="openai",
+            default_model="openai/gpt-4o",
+            max_tool_iterations=1,
+            tool_timeout_seconds=5,
+            auto_save_conversations=False,
+        )
+        rt = AgentRuntime(cfg)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        conv = rt.get_conversation(sk)
+        conv.system_prompt = "Test"
+        conv.add_user_message("hello")
+
+        try:
+            rt._run_loop(sk, "test")
+            assert False, "should have raised"
+        except RuntimeError as e:
+            msg = str(e)
+            assert "%" in msg, f"missing percent: {msg}"
+            assert "/clear" in msg, f"missing /clear hint: {msg}"
+            assert "/compact" in msg, f"missing /compact hint: {msg}"
+
+
+# ═══════════════════════════════════════════════════════════════════
 #  SSE Frame-Shape Hardening (Phase 1)
 # ═══════════════════════════════════════════════════════════════════
 
