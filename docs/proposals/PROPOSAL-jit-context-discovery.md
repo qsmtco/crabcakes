@@ -1,8 +1,11 @@
 # Proposal: Just-in-Time Context Discovery (P10) — Replace Upfront File Preloading with On-Demand Retrieval
 
 **Author:** Qaster (supervisor)
-**Date:** 2026-06-27
-**Status:** Awaiting captain review
+**Date:** 2026-06-27 (revised: **2026-06-27 SHIPPED**)
+**Status:** ✅ SHIPPED — fully implemented, audited, with post-audit fixes
+
+> **Status (verified 2026-07-12):** Implemented in commit `262af32` — replaces upfront 50K file-context preload with compact file index (~2K) plus new `file_search` tool. Three context modes (preload, jit, hybrid) resolved via model-window heuristics. Changes across `models/providers.py`, `agent/context.py`, `agent/tools.py`, `utils/prompt_loader.py`, `agent/runtime.py`. Adversarial audit found 10 bugs (`51bdede`); Phase 4 audit fixes shipped (`91cad8b`). 50 new tests in `tests/test_jit_context_discovery.py`. Spec: `SPEC-JIT-CONTEXT-DISCOVERY-1.md` (42KB).
+
 **Severity:** MEDIUM — Crabcakes injects up to 50,000 chars (~12,500 tokens) of project file context into the system prompt on every turn, even when the user's question is unrelated to most of those files. This wastes 10–15% of the context window on every single LLM call and accelerates context pressure on long sessions.
 
 **Source research:**

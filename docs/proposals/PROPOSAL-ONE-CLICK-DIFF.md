@@ -1,8 +1,8 @@
 # PROPOSAL: One-Click Diff — File Tree Diff Viewer with Historical Revert
 
-**Date:** 2026-06-22 (revised 2026-06-22)
+**Date:** 2026-06-22
 **Author:** Qaster
-**Status:** Proposal — revised per QTR review (REVIEW-ONE-CLICK-DIFF.md). Pending Captain approval.
+**Status:** ✅ SPEC WRITTEN — spec (`SPEC-ONE-CLICK-DIFF.md`, 73KB) and review (`REVIEW-ONE-CLICK-DIFF.md`, 51KB) exist, but **no implementation commits found** in git history as of 2026-07-12. The proposal was accepted as a spec but was never built.
 **Priority:** High
 **Effort:** ~10-14 hours (revised upward from 8-12 to account for QTR fixes)
 

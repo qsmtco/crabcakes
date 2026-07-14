@@ -3,7 +3,7 @@
 **Date:** 2026-06-13
 **Author:** Qaster
 **Supersedes:** `PROPOSAL-crabcakes-always-on-help-agent.md` (2026-05-30)
-**Status:** Proposal — pending Captain approval
+**Status:** ⚠️ PARTIALLY SHIPPED — **Tier 1 (KB) complete** (D1–D7: KB pipeline, lookup module, install/config content, first-run wizard — commits `dd7cd17` → `fa2fa19`). **Tier 2 (KB synthesis)** shipped (`e080a4e`) with multiple fix/refactor phases (`AUXILIUM-TIER-2-FIX-1/2/3`). **Tier 3** (MCP integration) has **no evidence of implementation**.
 **Priority:** High
 **Effort:** ~3-4 weeks across all three tiers (Tier 1 shippable in ~1 week)
 

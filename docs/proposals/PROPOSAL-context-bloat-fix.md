@@ -1,8 +1,18 @@
 # Proposal: Context Bloat Crisis — Fix Six Bugs That Inflate LLM Token Usage
 
 **Author:** Qaster (supervisor) — at the request of CaptJAQx
-**Date:** 2026-06-16
-**Status:** Awaiting captain review
+**Date:** 2026-06-16 (revised: **2026-06-19 SHIPPED**)
+**Status:** ✅ SHIPPED — all 5 phases (CB-1 through CB-5) implemented, audited, and merged
+
+> **Status (verified 2026-07-12):** All phases implemented and shipped.
+> - **CB-1:** `trim_to_token_limit()` wired into the production runtime (`d43539e`).
+> - **CB-2:** System prompt budget (15% ceiling) added (`d43539e`).
+> - **CB-3:** Streaming usage capture, transient stuck prefix fix, awareness caps (`9c9ab6e`).
+> - **CB-4:** tiktoken-based accurate token estimation, replacing chars//4 heuristic (`0c3db2b`).
+> - **CB-5:** Token-estimate cache, core-file preservation, None guard, summary gate hotfix (`43f9966`).
+> - **Post-mortems:** Phase CB-2 (`f0a8379`), CB-3 (`53b9f49`), CB-4 (`d6a5a1d`).
+> - **Spec authority:** `docs/specs/SPEC-CONTEXT-BLOAT-PHASE-{1..5}.md` (all shipped).
+
 **Source bug report:** `docs/bugs/BUG-high-input-token-context-bloat.md` (2026-06-16, "Adversarial Debugging Session")
 **Severity:** PRODUCTION CRISIS — OpenRouter data shows 106K–160K input tokens per request, ~11K token growth per turn, agents looping with `tool_calls` finish reason and never reaching a final answer
 

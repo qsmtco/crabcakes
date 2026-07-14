@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-29
 **Author:** qtr (OC Tech Writer)
-**Status:** Proposal — pending Captain approval
+**Status:** ⚠️ PARTIALLY SHIPPED — spec (`SPEC-AUTO-ACCEPT-GRANULAR-1.md`, 70KB) approved, proposal accepted in commit `c9d2985`. Bug fixes shipped for toggle-stuck-off (`4d3e33a`) and dialog cascade (`70149f3`), but **full 5-phase implementation is not confirmed** in git history. The granular auto-accept UX redesign remains unbuilt.
 **Priority:** Medium-High (touches trust model of every agent-driven change)
 **Effort:** ~10-14 hours across 5 phases
 **Related:** Phase 5 (auto-accept), Phase E (exec approvals), Bug B (label-tracking), Bug C (label tracking on disable)

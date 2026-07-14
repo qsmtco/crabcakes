@@ -1,8 +1,10 @@
 # PROPOSAL: Pluggable Context Management Strategy — Extract Compaction Logic into a Swappable Module
 
-**Date:** 2026-06-26
-**Author:** Qaster (supervisor)
-**Status:** Draft — awaiting captain review
+**Date:** 2026-06-26 (revised: **2026-07-12 SHIPPED**)
+**Status:** ✅ SHIPPED — `ContextStrategy` Protocol + `DefaultContextStrategy` + `LLMSummarizeStrategy` implemented
+
+> **Status (verified 2026-07-12):** `agent/context_strategy.py` (874 lines) implements the full pluggable strategy pattern. `ContextStrategy` Protocol (line 73), `DefaultContextStrategy` (line 98) with P1–P7 compaction algorithms, `LLMSummarizeStrategy` (line 748) subclass. `runtime.py` initializes `self._context_strategy = DefaultContextStrategy()` (line 1661) and delegates compaction via `self._context_strategy.compact(conv, soft_ceiling)` (line 2103). `models/conversation.py` retains delegation shims. The proposal was accepted in commit `3b3220b`. See `docs/proposals/PROPOSAL-context-management-roadmap.md` for full P1–P7 scope.
+
 **Severity:** MEDIUM — architectural refactor that enables rapid iteration on context management. Not urgent, but doing it now (before implementing the Context Management Roadmap) saves a painful extraction later and delivers pluggability from day one.
 
 **Related proposals:**
