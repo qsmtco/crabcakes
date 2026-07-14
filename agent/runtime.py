@@ -1582,6 +1582,8 @@ class AgentRuntime:
         on_error: (session_key, error_message) — error occurred.
     """
 
+    _RESPONSE_RESERVE_TOKENS = 4096  # reserve for model output tokens
+
     def __init__(
         self,
         config: Any,            # AgentConfig — imported lazily to avoid circular
