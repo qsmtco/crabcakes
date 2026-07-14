@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-23
 **Author:** Qaster (with adversarialDebugger.md verification)
-**Status:** Draft — for implementation
+**Status:** ⏸️ DEFERRED — decision: not implementing. 7-line fix for a settings dialog edge case already worked around by add_or_update's auto-detect. Low impact, not worth the implementation overhead.
 **Implements:** Bug fix only — no proposal backing
 **Depends on:** None
 **Target branch:** main
