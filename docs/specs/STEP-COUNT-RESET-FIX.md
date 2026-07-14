@@ -1,5 +1,7 @@
 # FIX: Step count never resets between tasks
 
+**Status:** ✅ IMPLEMENTED — /clear command with cmd_clear, clear_conversation, _clear_callback; wiring in window.py
+
 ## Problem
 
 `step_count` in `models/conversation.py` increments every assistant turn (line 190: `self.step_count += 1`) and is **never reset**. Over multiple tasks, it accumulates until it hits `step_limit=100` (from `agent/config.py:268`), at which point the agent is killed mid-work with:
