@@ -671,6 +671,7 @@ class TestRunLoopTrimsContext:
             auto_save_conversations=False,
         )
         rt = AgentRuntime(cfg)
+        rt._RESPONSE_RESERVE_TOKENS = 0  # disable reserve for trim test
         rt.start()
         sk = _uniq()
         rt.create_conversation("Coder", sk, "/tmp")
