@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-01
 **Author:** QTR (Kage-7)
-**Status:** ~~Proposal — pending Captain approval~~ **Pending post-toolbar-migration redesign.** References to `ChatControlBar` describe the stubbed label that was replaced by `ChatInputToolbar`. The "add a toggle in `ChatControlBar`" plan needs re-targeting to the new toolbar (or a different UX surface) — see `docs/specs/SPEC_CHAT_INPUT_TOOLBAR.md` for the current toolbar layout.
+**Status:** ❌ SUPERSEDED — the chat-inline bubble approach was abandoned. Production approach is `ui/views/activity_drawer.py` (32K) — a GTK4 drawer panel. `ActivityBubble` model exists (`models/activity.py`) but bubble-in-chat rendering as described here was not built. See `docs/proposals/PROPOSAL-activity-drawer.md` for the active implementation.
 
 > **Status (verified 2026-06-12):** ❌ **SUPERSEDED** — 
 > **status:** `SUPERSEDED` — sortable tag for `ls | grep STATUS` Phase 2 (event bubbles for tool calls, plan updates, approvals, command output, file edits) from `PROPOSAL-smarter-chat-ux.md` was abandoned. The production approach is now `ui/views/activity_drawer.py` (32K, 2026-06-07) — a GTK4 drawer panel, not inline chat bubbles. `ActivityBubble` model exists (`models/activity.py`) and `set_on_activity_bubble` callback exists in `activity_handler.py:155`, but the bubble-in-chat approach described here was not built. The activity-drawer is the active implementation.

@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-11
 **Author:** Qaster
-**Status:** Pending approval
+**Status:** ✅ DONE — implemented as the command-based A2A design. `ui/handlers/agent_command_handler.py` (25K) parses `` `ask @AgentName ...` `` from agent response text and routes through `CommandHandler.process_input()`. The old "intent crabcard" + "private thread" + "convergence detector" pattern was abandoned in favor of this simpler design.
 **Context:** A2A auto-detection of @mentions causes infinite relay loops with gateway agents
 
 > **Status (verified 2026-06-12):** ✅ **DONE** — 

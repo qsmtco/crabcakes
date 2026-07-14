@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-18
 **Authors:** Qaster (with Captain JAQx)
-**Status:** Draft — Awaiting approval
+**Status:** ⚠️ PARTIALLY DONE — YAML config layer shipped (every agent YAML has self-improvement block), but the 5-layer runtime system (separate layer modules, bug journal processor, etc.) was never built. The prompt files are role-specific system prompts, not the 5-layer runtime described in the proposal.
 **Repository:** github.com/qsmtco/crabcakes
 **Target Agent:** Coder (special:coder in CrabCakes)
 

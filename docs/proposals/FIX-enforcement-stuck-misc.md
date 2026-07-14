@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-09  
 **Author:** Qaster  
-**Status:** READY FOR IMPLEMENTATION  
+**Status:** ⚠️ PARTIALLY DONE — `agent/enforcement.py` is live with per-project `enforcement.json` overrides. However, the 5 specific bugs (3-7) listed in this proposal were never individually verified closed against the original bug descriptions. Per-bug audit would be needed for confirmation.
 **Scope:** 5 bugs found during adversarial review of Phase 6 code
 
 > **Status (verified 2026-06-12):** ⚠️ **PARTIALLY DONE** — 

@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-09  
 **Author:** Qaster  
-**Status:** READY FOR IMPLEMENTATION  
+**Status:** ⚠️ NEEDS PER-BUG VERIFICATION — the A2A infrastructure from Phase 6.2 may have incidentally fixed some issues, but the specific claims (gateway agents receiving identity-bearing prompts as user message content) require a targeted audit to confirm.
 **Severity:** CRITICAL  
 **Bug doc:** `docs/bugs/BUG_REPORT-identity-override.md`
 
