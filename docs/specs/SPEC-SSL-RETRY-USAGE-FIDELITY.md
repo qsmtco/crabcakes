@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-09
 **Author:** qtr (read-only audit)
-**Status:** Draft — for implementation
+**Status:** ⏸️ DEFERRED — decision: not implementing. SSL retries are rare, cost impact is negligible (pennies), and touching the streaming pipeline for a third time this session is high-risk for low reward. The `/cost` command and context meter work correctly for successful calls.
 **Implements:** partial fix for issue #1 surfaced in `docs/specs/SPEC-SSE-FRAME-SHARDENING.md` §1.1 / §7.1
 **Depends on:** `docs/specs/SPEC-SSE-FRAME-SHAPE-HARDENING.md` (companion spec, delivered in the same PR; provides the diagnostic warning text added in §2.1.7c)
 **Target branch:** main
