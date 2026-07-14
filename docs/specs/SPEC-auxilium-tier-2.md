@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-15
 **Author:** Qaster (supervisor)
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — _inject_kb_context, _prepare_kb_synthesis, agent_role="helper" gate, kb_lookup on every message, KB context injection into primary LLM call
 **Implements:** `PROPOSAL-auxilium-three-tier-help-agent.md` — Tier 2
 **Depends on:**
 - `docs/specs/SPEC-auxilium-tier-1.md` (Tier 1 — completed)
