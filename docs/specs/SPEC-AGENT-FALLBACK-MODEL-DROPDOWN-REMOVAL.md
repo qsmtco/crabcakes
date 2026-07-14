@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-15
 **Author:** Qaster (drafted for QTR implementation)
-**Status:** Draft — for implementation
+**Status:** ⏸️ DEFERRED — decision: not implementing. The fallback model dropdown is functional and removing it provides minimal value.
 **Implements:** User clarification (2026-06-15): "I think the fallback provider should work the same way as the primary provider. That way the user experience is consistent. And also that way we know that the fallback provider is just a provider that has been set up in the settings. It has been tested and we know that it works."
 **Depends on:**
 - `docs/specs/SPEC-AGENT-BUILDER-PROVIDER-DROPDOWN.md` (primary provider dropdown contract)
