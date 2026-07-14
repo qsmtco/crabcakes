@@ -661,7 +661,7 @@ class TestRunLoopTrimsContext:
                     base_url="https://api.openai.com/v1",
                     api_key="test-key",
                     default_model="gpt-4o",
-                    max_tokens=10000,  # large enough for 2K-token conv + 4096 response reserve
+                    max_tokens=10000,  # soft_ceiling=8K; conv is ~4K; trim fires but guard doesn't
                 )
             },
             default_provider="openai",
