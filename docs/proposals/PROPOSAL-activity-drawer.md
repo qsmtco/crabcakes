@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-01
 **Author:** Qaster
-**Status:** Proposal — pending Captain approval
+**Status:** ✅ DONE — implemented as `ui/views/activity_drawer.py` (32K, 2026-06-07). GTK4 drawer panel replacing chat-inline bubble approach. `ActivityBubble` model exists in `models/activity.py`; `set_on_activity_bubble` callback wired in `activity_handler.py:155`.
 
 > **Status (verified 2026-06-12):** ✅ **DONE** — 
 > **status:** `DONE` — sortable tag for `ls | grep STATUS` Implemented as `ui/views/activity_drawer.py` (32K, 2026-06-07). The activity drawer is the production approach for showing agent activity (tool calls, plan updates, approvals, command output, file edits) — a GTK4 drawer panel that slides in from the side, replacing the chat-inline bubble approach. `ActivityBubble` model exists in `models/activity.py` and `set_on_activity_bubble` callback is wired in `activity_handler.py:155`. The drawer is accessible via a toolbar button and shows activity for the current session.

@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-26
 **Authors:** QTR (with Captain JAQx)
-**Status:** Draft — Awaiting approval
+**Status:** ⚠️ PARTIALLY DONE — MCP memory server is wired (agents can create/query entities via MCP tool merge). The structured schema and layer wiring (typed/weighted/temporal nodes for bugs, rules, audits, code changes) was never built. No `agent/knowledge_graph.py` or `utils/memory_graph.py` exists.
 **Repository:** github.com/qsmtco/crabcakes
 
 > **Status (verified 2026-06-12):** ⚠️ **PARTIALLY DONE** — 

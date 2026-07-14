@@ -1,8 +1,8 @@
 # PROPOSAL: User-Defined Local Agents
 
-**Status:** Updated Draft
-
-> **Status (verified 2026-06-12):** ⚠️ **PARTIALLY DONE** — 
+**Date:** 2026-05-11 (updated 2026-05-18)
+**Author:** Qaster
+**Status:** ⚠️ PARTIALLY DONE — agent_builder UI (`ui/views/agent_builder.py`, 27K) shipped with create/edit workflows. YAML-based agent defs loaded from `~/.config/crabcakes/agents/`. Delete agent operation unconfirmed. Context injection/enforcement layers rely on generic runtime, not per-agent buildout. 
 > **status:** `PARTIAL` — sortable tag for `ls | grep STATUS` The **agent_builder UI** (`ui/views/agent_builder.py`, 27K) is shipped and supports create/edit agent workflows. The left panel has a "Create Agent" button wired to `agent_builder` (`ui/window.py:212`, `left_panel.py:157`). YAML-based agent definition files are loaded from `~/.config/crabcakes/agents/` (see `utils/agent_defs.py:151`). The `self_improvement` config block is per-agent (used by coder, debugger, crabcakes YAMLs). However, the **delete agent** operation is not clearly implemented (no `delete_agent` in `agent_builder.py` grep), and the full per-agent context injection and enforcement layers described in the proposal are not separately built — they rely on the generic agent runtime. **Marked PARTIAL; create/edit works, delete unconfirmed, context injection/enforcement layers are generic.**
 **Date:** 2026-05-11 (updated 2026-05-18)
 **Author:** Qaster

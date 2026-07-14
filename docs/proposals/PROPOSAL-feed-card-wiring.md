@@ -1,13 +1,7 @@
 # Proposal: Wire Task Commands and Git Operations to Feed
 
-> **Status: PARTIALLY IMPLEMENTED** — Verified in code as of 2026-05-09
-> - ✅ Task commands (`task_handler.py`) now emit feed cards via `_emit_feed_card()` and `on_feed_card` callback
-> - ❌ Review handler (`review_handler.py`) NOT yet wired to feed — no feed_card references found
-> - ❌ Git operation cards from accept/reject actions not yet implemented
-
-> **Status (verified 2026-06-12):** ✅ **DONE** — Review handler wired to feed in `ui/handlers/review_handler.py:70-87` (`_emit_feed_card` helper), `ui/window.py:458` (`on_feed_card=self._feed_handler.add_card`). `accept_changes` and `reject_changes` emit `git_commit` cards on success. Test suite: 9 new tests + 72 existing passing. Commit `56a6cee`.
-
 **Date:** 2026-05-01
+**Status:** ✅ DONE — task commands emit feed cards via `task_handler.py._emit_feed_card()`. Review handler wired to feed (`ui/handlers/review_handler.py:70-87`). `accept_changes` and `reject_changes` emit `git_commit` cards. Commit `56a6cee`.
 **Depends on:** ARCHITECTURE.md, existing FeedHandler, TaskHandler, ReviewHandler
 
 ---

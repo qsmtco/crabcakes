@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-30
 **Author:** Qaster
-**Status:** Proposal — pending Captain approval
+**Status:** ⚠️ PARTIALLY DONE — help agent exists with `auto_open: true` and `auto_add_to_projects: true` in `crabcakes.yaml`; system prompt at `prompts/system/crabcakes.md`; auto-open at `ui/window.py:167-179`. However, it has no built-in provider key (uses `openrouter` by default), so fresh installs get `RuntimeError: no provider configured`. Superseded by `PROPOSAL-auxilium-three-tier-help-agent.md`.
 
 > **Status (verified 2026-06-12):** ⚠️ **PARTIALLY DONE** — 
 > **status:** `PARTIAL` — sortable tag for `ls | grep STATUS` The help agent **is** implemented. Evidence: `prompts/system/crabcakes.md` (3.8K, May 30) is the help agent's system prompt; `~/.config/crabcakes/agents/crabcakes.yaml` has `auto_open: true` and `auto_add_to_projects: true`; `agent/special_agents.py:44-46` has the `auto_open` and `auto_add_to_projects` fields; `ui/window.py:167-179` opens a tab for each `auto_open` agent on app launch. The `SPEC-crabcakes-always-on-help-agent.md` (55K, May 30) exists and describes the full implementation plan. However, the SPEC is still in **"Draft — for implementation"** status — meaning the Captain never formally approved it. The core features (system prompt + auto-open) are live, but the full SPEC scope (per-conversation context injection, built-in provider, team.json integration) may be partially implemented. **Marked PARTIAL; full spec approval and implementation audit needed.**

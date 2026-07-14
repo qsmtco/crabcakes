@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-21
 **Authors:** Qaster (with Captain JAQx)
-**Status:** Draft — Awaiting approval
+**Status:** ✅ DONE — Phase 1 (missing message recovery) shipped via `_assistant_text_buffer` + `_chat_final_rendered` guard in `chat_handler.py`. Phase 2 (inline chat bubbles) was abandoned in favor of `ui/views/activity_drawer.py`.
 
 > **Status (verified 2026-06-12):** ✅ **DONE** — 
 > **status:** `DONE` — sortable tag for `ls | grep STATUS` Both phases reviewed against the codebase. **Phase 1 (missing message recovery) is implemented and tested** — `_assistant_text_buffer` and `_chat_final_rendered` guard in `chat_handler.py:69-70`; the `set_on_lifecycle_completed` callback (which fires the recovery) is wired in production at `ui/handlers/connection_sync_handler.py:168-169`; 5 tests pass in `tests/test_missing_message_fix.py` and `tests/test_chat_handler.py:380`. The `if not final_text: return` at `chat_handler.py:568-569` is NOT a bug — it's one half of a two-path recovery flow: empty `chat final` early-returns, then the `lifecycle end` event that follows renders the fallback bubble from the buffered text. **Phase 2 (inline chat bubbles) was abandoned** in favor of `ui/views/activity_drawer.py` (32K), which is the production approach. **Marked DONE; both phases resolved (Phase 1 shipped, Phase 2 superseded by activity-drawer).**

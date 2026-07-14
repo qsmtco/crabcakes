@@ -3,7 +3,7 @@
 **Document:** SPEC (implementation-ready)
 **Date:** 2026-05-12
 **Author:** Qaster
-**Status:** Pending approval
+**Status:** ✅ DONE — implemented as Phase 6.2. See `ui/handlers/agent_command_handler.py` (25K). Parses backtick commands from agent response text via `on_agent_response` callback and routes through `CommandHandler.process_input()`. Answer relay via `pending-ask` tracking (`ui/window.py:496`).
 **Phase:** 6.2 (builds on Phase 6.1 — A2A simplification)
 **Related:** `docs/ARCHITECTURE.md` §3.14, §3.21a, §3.21d, §4.5, §4.11, §5, §8.6
 
