@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-27
 **Author:** Qaster (spec writer)
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — Fix 1 hard_ceiling type, Fix 2 honest layer=0, Fix 4 backward walk, Fix 6 stub tokens_used, Fix 11 unknown tool fallback
 **Implements:** Verified bugs from `docs/audits/2026-06-27-CM-AUDIT-VERIFICATION.md`
 **Depends on:** Phases 1–9 of the Context Management Roadmap (all merged)
 **Target branch:** main
