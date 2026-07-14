@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-23
 **Author:** QTR (with steelFramedSpecWriter.md verification)
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — STREAM-ID-PRES markers throughout, Anthropic content_block_start handling, first-write-wins accumulator, round-trip id preservation
 **Implements:** Bug fix only — no proposal backing
 **Depends on:** None
 **Target branch:** main
