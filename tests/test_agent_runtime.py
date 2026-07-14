@@ -675,6 +675,7 @@ class TestRunLoopTrimsContext:
         sk = _uniq()
         rt.create_conversation("Coder", sk, "/tmp")
         conv = rt.get_conversation(sk)
+        conv.system_prompt = "Test"  # minimize for predictable trim behavior
 
         # Stuff the conversation with 20 long exchanges (~100 tokens each)
         for i in range(20):
