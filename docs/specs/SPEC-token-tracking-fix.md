@@ -1,6 +1,6 @@
 # SPEC: Token Tracking Display Fix
 
-**Status:** Ready for implementation
+**Status:** ✅ IMPLEMENTED — _session_usage dict, get_session_usage(), cmd_cost reads conversation files + in-memory cache
 **Scope:** 3 files, 1 feature — make token usage visible in the UI
 
 ## Problem
