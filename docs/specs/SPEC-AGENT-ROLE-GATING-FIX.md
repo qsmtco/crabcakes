@@ -1,7 +1,7 @@
 # SPEC: Tier 1.3 — Agent-Role Gating for Project Onboarding Template
 
 **Date:** 2026-06-12
-**Status:** SPEC — awaiting QTR implementation
+**Status:** ✅ IMPLEMENTED — auto_add_to_projects field, get_project_onboarding_agents(), auto-add in project_handler.open_project
 **Proposal:** `docs/proposals/PROPOSAL-project-onboarding.md`
 **Roadmap:** Tier 1.3, item #3 in priority list
 **Bug report:** `docs/bugs/BUG_REPORT-identity-override.md` (Bug #2)
