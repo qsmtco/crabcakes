@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-22
 **Author:** qaster
-**Status:** Draft — for implementation
+**Status:** ✅ IMPLEMENTED — spell-check context menu via Gtk.TextView.set_extra_menu, Gio.Menu suggestions, right-click handler, spell action group
 **Depends on:** None (builds on existing spell check infrastructure shipped in Phase 5)
 **Target branch:** main
 
