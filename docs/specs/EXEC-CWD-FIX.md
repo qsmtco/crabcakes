@@ -1,6 +1,6 @@
 # FIX: exec_command runs in scratch directory instead of project root
 
-## Problem
+**Status:** ✅ IMPLEMENTED — exec_cwd = project_path at tools.py:412
 
 When a special agent (Coder, Debugger) runs `exec_command`, the subprocess executes in the per-session scratch directory (`<project>/.crabcakes/tmp/special-coder/`) instead of the project root (`<project>/`). This was introduced as LOW-2 (per-session secure workspace).
 
