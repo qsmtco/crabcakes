@@ -1,5 +1,7 @@
 # Task: Per-agent thinking effort (Off / Low / High)
 
+**Status:** ❌ NOT IMPLEMENTED — no thinking_effort or reasoning_effort field found anywhere in codebase
+
 ## Context
 
 Crabcakes has three LLM caller families (`_call_openai`, `_call_minimax`,
