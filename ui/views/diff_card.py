@@ -249,7 +249,7 @@ def build_file_diff_card(
         bin_lbl.add_css_class("diff-line-context")
         body_box.append(bin_lbl)
     else:
-        lang = _get_lang_from_path(file_diff.display_path)
+        lang = get_lang_from_path(file_diff.display_path)
         for hunk in file_diff.hunks:
             body_box.append(_build_hunk_view(hunk, lang))
 
