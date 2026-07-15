@@ -448,36 +448,45 @@ class TestDiffViewerHistoryMultipleLoads:
         assert len(children) == 2
 
     def test_signal_not_connected_multiple_times(self):
-        """row-activated signal is connected once in _build_ui (not per load).
-
-        We verify by ensuring that after two loads, activating a row works
-        correctly (no stale references or duplicate handlers).
-        """
+        """row-activated signal is connected once in _build_ui — handler invoked once per activation."""
         viewer = DiffViewer(
             file_path="src/main.py",
             project_path="/tmp/test-project",
         )
 
-        # Load data twice
+        # Count handler invocations by wrapping the callback
+        activation_count = [0]
+        original = viewer._on_history_row_activated
+
+        def counting_handler(listbox, row):
+            activation_count[0] += 1
+            original(listbox, row)
+
+        viewer._on_history_row_activated = counting_handler
+
+        # Load data
         entries = [
             {"sha": "aaa001", "date": "2026-01-01", "message": "first"},
         ]
         viewer._on_history_loaded(entries, req_id=viewer._current_request_id)
-        viewer._current_request_id += 2
-        viewer._on_history_loaded(entries, req_id=viewer._current_request_id)
-
-        # Activate a row — should not raise (no duplicate signal issues)
         children = list(viewer._history_list)
         assert len(children) == 1
-        # Direct method call (bypasses signal)
-        viewer._on_history_row_activated(viewer._history_list, children[0])
-        assert viewer._selected_sha == "aaa001"
+        row1 = children[0]
 
-        # Load again and verify rows are correctly replaced
+        # Fire signal directly to count handler invocations
+        viewer._history_list.emit("row-activated", row1)
+        assert activation_count[0] == 1
+
+        # Load again and activate again
         viewer._current_request_id += 2
         viewer._on_history_loaded(entries, req_id=viewer._current_request_id)
         children = list(viewer._history_list)
         assert len(children) == 1
+        row2 = children[0]
+
+        viewer._history_list.emit("row-activated", row2)
+        # Should be 2, not 4 (no duplicate signal connections from load)
+        assert activation_count[0] == 2
 
 
 class TestDiffViewerStateGuards:
