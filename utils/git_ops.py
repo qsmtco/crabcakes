@@ -279,41 +279,28 @@ def file_log(project_path: str, file_path: str, count: int = 20) -> GitResult:
 
     try:
         repo = gitpython.Repo(project_path)
-        # Use git.log with --follow and a delimiter-free format; use
-        # %x00 (NUL) as field separator since no commit message can contain NUL.
+        # Use git.log with --follow and NUL separator.  %s is subject-only
+        # (single line), so each commit produces exactly one output line:
+        #   "SHA<NUL>ISO_DATE<NUL>SUBJECT"
+        # NUL bytes cannot appear in commit messages, so this is safe.
         raw = repo.git.log(
             "--follow",
             f"-{count}",
-            f"--format=%H%x00%cI%x00%B",
+            "--format=%H%x00%cI%x00%s",
             "--", file_path,
         )
         if not raw.strip():
             return GitResult(success=True, stdout="", error="", sha=None)
 
         lines = []
-        # Split on double-NUL: each commit record is separated by a blank
-        # line in the log output, but since we use %B (full body) we need
-        # to use GitPython's rev-list parser.  Instead, parse the raw
-        # output commit-by-commit, taking the first line as the subject.
-        for record in raw.strip().split("\n\n"):
-            record = record.strip()
-            if not record:
+        for line in raw.strip().split("\n"):
+            line = line.strip()
+            if not line:
                 continue
-            # First line: SHA\x00DATE\x00BODY
-            # The body may contain newlines, so split on the first NUL
-            # to get SHA, then split remaining on the next NUL for date vs body
-            first_nul = record.find("\x00")
-            if first_nul == -1:
-                continue  # malformed line, skip
-            commit_sha = record[:first_nul]
-            rest = record[first_nul + 1:]
-            second_nul = rest.find("\x00")
-            if second_nul == -1:
-                continue
-            date = rest[:second_nul]
-            body = rest[second_nul + 1:]
-            # Subject is first line of body
-            subject = body.split("\n", 1)[0].strip()
+            parts = line.split("\x00")
+            if len(parts) != 3:
+                continue  # malformed, skip
+            commit_sha, date, subject = parts
             # BUG #1: Reject subjects containing \\x1f (unsafe separator)
             if "\x1f" in subject:
                 return GitResult(
