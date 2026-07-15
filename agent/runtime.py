@@ -1189,7 +1189,14 @@ def _extract_tool_calls(response: dict, provider: str) -> list[tuple[str, str, d
         if message.get("tool_calls"):
             for tc in message["tool_calls"]:
                 func = tc.get("function", {})
-                call_id = tc.get("id", f"call_{uuid.uuid4().hex[:8]}")
+                # QTR-FIX: use `or` so that None / empty-string ids fall through
+                # to the synthetic fallback instead of propagating as an empty
+                # tool_call_id. The previous form `tc.get("id", default)` only
+                # substituted when the key was absent — explicit None / "" slipped
+                # through and later matched `if not call_id` guards in unexpected
+                # places. See `_extract_tool_calls (empty-id fallback)` regression
+                # test for the synthetic-id contract.
+                call_id = tc.get("id") or f"call_{uuid.uuid4().hex[:8]}"
                 name = func.get("name", "")
                 args_raw = func.get("arguments", "{}")
                 if isinstance(args_raw, str):
@@ -1205,7 +1212,8 @@ def _extract_tool_calls(response: dict, provider: str) -> list[tuple[str, str, d
             return []
         for block in content:
             if block.get("type") == "tool_use":
-                call_id = block.get("id", f"call_{uuid.uuid4().hex[:8]}")
+                # QTR-FIX: same None / empty-string fallback as the OpenAI path.
+                call_id = block.get("id") or f"call_{uuid.uuid4().hex[:8]}"
                 name = block.get("name", "")
                 args = block.get("input", {})
                 calls.append((call_id, name, args))
