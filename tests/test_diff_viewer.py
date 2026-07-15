@@ -359,7 +359,7 @@ class TestDiffViewerPangoInjection:
         assert "evil" in text
 
     def test_history_message_escapes_pango(self):
-        """Commit messages with Pango tags are safe (uses set_text)."""
+        """Commit messages use set_text (not set_markup), so Pango is inert."""
         viewer = DiffViewer(
             file_path="src/main.py",
             project_path="/tmp/test-project",
@@ -376,12 +376,8 @@ class TestDiffViewerPangoInjection:
             if hasattr(child, 'get_children'):
                 labels = [c for c in child if isinstance(c, Gtk.Label)]
                 for label in labels:
+                    # set_text means use_markup is False — markup won't render
                     assert not label.get_use_markup()
-                    text = label.get_text()
-                    # escape_for_pango would convert <script> to &lt;script&gt;
-                    # or set_text stores literally — either way <script> is not
-                    # rendered as active markup
-                    assert "<script>" not in text or not label.get_use_markup()
 
     def test_placeholder_escapes_pango(self):
         """Placeholder text uses set_text not label= constructor."""
