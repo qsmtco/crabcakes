@@ -61,8 +61,8 @@ class DiffViewer(Gtk.Box):
         file_path: str,
         project_path: str,
         checkpoint_sha: str | None = None,
-        on_back: GLib.SourceFunc | None = None,
-        on_revert: GLib.SourceFunc | None = None,
+        on_back: Callable[[], None] | None = None,
+        on_revert: Callable[[str, str], None] | None = None,
     ):
         # Validate inputs (H15 fix)
         if not file_path:
