@@ -66,6 +66,28 @@ class TestGetLangFromPath:
         assert get_lang_from_path(42) is None  # type: ignore
         assert get_lang_from_path([]) is None  # type: ignore
 
+    def test_dockerfile_prod_variant(self):
+        """Dockerfile.prod, Dockerfile.dev, Dockerfile.test all resolve."""
+        assert get_lang_from_path("Dockerfile.prod") == "dockerfile"
+        assert get_lang_from_path("Dockerfile.dev") == "dockerfile"
+        assert get_lang_from_path("Dockerfile.test") == "dockerfile"
+
+    def test_dockerfile_variant_case_insensitive(self):
+        """dockerfile.prod should also resolve."""
+        assert get_lang_from_path("dockerfile.prod") == "dockerfile"
+
+    def test_pathlib_path(self):
+        """Accepts pathlib.Path objects."""
+        assert get_lang_from_path(pathlib.Path("foo.py")) == "python"
+        assert get_lang_from_path(pathlib.Path("Dockerfile")) == "dockerfile"
+        assert get_lang_from_path(pathlib.Path("Dockerfile.prod")) == "dockerfile"
+
+    def test_trailing_slash_before_basename(self):
+        """Trailing slashes in path don't break basename detection."""
+        assert get_lang_from_path("/some/dir/Dockerfile/") == "dockerfile"
+        assert get_lang_from_path("Makefile/") == "makefile"
+        assert get_lang_from_path("foo.py/") is None
+
 
 class TestRenderDiffHunks:
     """render_diff_hunks renders hunks as a Gtk.Box."""
