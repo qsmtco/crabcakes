@@ -16,8 +16,7 @@ import tempfile
 from unittest.mock import MagicMock, patch
 
 from ui.views.diff_viewer import DiffViewer
-from ui.views.diff_card import get_lang_from_path, render_diff_hunks
-from utils.diff_parser import DiffHunk, DiffLine, FileDiff
+from ui.views.diff_card import get_lang_from_path
 
 
 # ═══════════════════════════════════════════════════════════════════════
