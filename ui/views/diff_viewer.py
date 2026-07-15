@@ -17,6 +17,7 @@ from utils.git_ops import (
     diff_file_against,
     file_log,
 )
+from utils.escaping import escape_for_pango
 from ui.views.diff_card import render_diff_hunks, get_lang_from_path
 
 
@@ -53,7 +54,10 @@ class DiffViewer(Gtk.Box):
         project_path: Absolute path to the project root.
         checkpoint_sha: Review checkpoint SHA, or None if no active review.
         on_back: Callable called when the Back button is clicked.
-        on_revert: Callable[[str, str], None] — (file_path, target_sha).
+        on_revert: Callable[[str, str, Callable[[], None] | None], None] —
+                   (file_path, target_sha, on_complete). The on_complete callback
+                   should be invoked by the revert handler when the revert is done,
+                   so the viewer can reload the current diff.
     """
 
     def __init__(
@@ -62,12 +66,12 @@ class DiffViewer(Gtk.Box):
         project_path: str,
         checkpoint_sha: str | None = None,
         on_back: Callable[[], None] | None = None,
-        on_revert: Callable[[str, str], None] | None = None,
+        on_revert: Callable[[str, str, Callable[[], None] | None], None] | None = None,
     ):
-        # Validate inputs (H15 fix)
-        if not file_path:
+        # BUG #6: Strengthen input validation — check type and strip whitespace
+        if not isinstance(file_path, str) or not file_path.strip():
             raise ValueError("file_path is required")
-        if not project_path:
+        if not isinstance(project_path, str) or not project_path.strip():
             raise ValueError("project_path is required")
 
         # H12 fix: call super().__init__() before any widget operations
@@ -105,8 +109,9 @@ class DiffViewer(Gtk.Box):
         self._back_btn.connect("clicked", self._on_back_clicked)
         self._header.append(self._back_btn)
 
-        # Title (file path)
-        self._title_label = Gtk.Label(label=self._file_path)
+        # Title (file path) — BUG #2: use set_text() to prevent Pango injection
+        self._title_label = Gtk.Label()
+        self._title_label.set_text(escape_for_pango(self._file_path))
         self._title_label.set_halign(Gtk.Align.START)
         self._title_label.set_ellipsize(3)  # Pango.EllipsizeMode.END
         self._title_label.set_hexpand(True)
@@ -155,6 +160,9 @@ class DiffViewer(Gtk.Box):
         self._history_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self._history_scroll.set_child(self._history_list)
         self._stack.add_named(self._history_scroll, "history")
+
+        # BUG #4: Connect row-activated once in _build_ui (not per load)
+        self._history_list.connect("row-activated", self._on_history_row_activated)
 
         # Action bar (revert button)
         self._action_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -304,13 +312,15 @@ class DiffViewer(Gtk.Box):
         while self._history_list.get_first_child() is not None:
             self._history_list.remove(self._history_list.get_first_child())
 
-        # H13 fix: handle empty history
+        # BUG #3: Wrap placeholder in Gtk.ListBoxRow before appending to ListBox
         if not entries:
+            row = Gtk.ListBoxRow()
             placeholder = Gtk.Label(label="No commit history for this file.")
             placeholder.set_halign(Gtk.Align.CENTER)
             placeholder.set_valign(Gtk.Align.CENTER)
             placeholder.add_css_class("diff-viewer-subtitle")
-            self._history_list.append(placeholder)
+            row.set_child(placeholder)
+            self._history_list.append(row)
             return
 
         for entry in entries:
@@ -325,7 +335,9 @@ class DiffViewer(Gtk.Box):
             date_lbl = Gtk.Label(label=entry["date"][:10])
             date_lbl.add_css_class("diff-history-row-date")
 
-            msg_lbl = Gtk.Label(label=entry["message"])
+            # BUG #2: escape commit message to prevent Pango injection
+            msg_lbl = Gtk.Label()
+            msg_lbl.set_text(escape_for_pango(entry["message"]))
             msg_lbl.add_css_class("diff-history-row-msg")
             msg_lbl.set_ellipsize(3)
             msg_lbl.set_hexpand(True)
@@ -336,8 +348,7 @@ class DiffViewer(Gtk.Box):
             row.set_child(row_box)
             self._history_list.append(row)
 
-        # Connect row activation
-        self._history_list.connect("row-activated", self._on_history_row_activated)
+        # BUG #4: row-activated signal is already connected in _build_ui (one-time init)
 
     # === UI callbacks ===
 
@@ -351,6 +362,9 @@ class DiffViewer(Gtk.Box):
             self._load_history()
 
     def _on_history_row_activated(self, listbox, row):
+        # BUG #3: guard against rows without sha (placeholder rows, etc.)
+        if not hasattr(row, 'sha'):
+            return
         self._selected_sha = row.sha
         self._load_historical_diff(row.sha)
 
@@ -382,18 +396,17 @@ class DiffViewer(Gtk.Box):
         self._selected_sha = None
         self._revert_btn.set_visible(False)
 
-        # H5 fix: don't reload immediately — give revert thread time to complete
+        # BUG #5: Replace time.sleep(1.0) with callback-based revert completion.
+        # The on_revert callback receives an on_complete parameter that is
+        # invoked when the revert is done.
         self._show_placeholder(f"Reverting to {target_sha[:7]}...")
 
-        def _delayed_reload():
-            import time
-            time.sleep(1.0)
-            GLib.idle_add(lambda: self._load_current_diff() if not self._disposed else None)
+        def _on_revert_complete():
+            if not self._disposed:
+                self._load_current_diff()
 
-        threading.Thread(target=_delayed_reload, daemon=True).start()
-
-        # Dispatch the actual revert
-        self._on_revert(self._file_path, target_sha)
+        # Dispatch the actual revert with completion callback
+        self._on_revert(self._file_path, target_sha, _on_revert_complete)
 
     # === Helpers ===
 
@@ -427,5 +440,7 @@ class DiffViewer(Gtk.Box):
         self._show_placeholder(f"Error: {error}")
 
     # H3/M16/M21/M25 fix: GTK4 dispose vfunc
+    # BUG #1: call super().do_dispose() at end
     def do_dispose(self):
         self._disposed = True
+        super().do_dispose()
