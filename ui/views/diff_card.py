@@ -11,7 +11,7 @@ from utils.escaping import escape_for_pango, xml_template
 from utils.syntax_highlight import highlight
 
 
-def _get_lang_from_path(file_path: str) -> str | None:
+def get_lang_from_path(file_path: str) -> str | None:
     """Infer language from file extension."""
     ext_map = {
         ".py": "python",
