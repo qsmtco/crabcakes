@@ -204,8 +204,8 @@ def checkout_paths(project_path: str, sha: str, paths: list[str]) -> GitResult:
 
     MED-11: Validates sha before passing to git to prevent argument injection.
     """
-    # MED-11: Validate SHA before git call
-    if sha != "HEAD" and not _VALID_SHA_RE.match(sha):
+    # BUG #5: Guard against non-string sha (TypeError from re.match)
+    if not isinstance(sha, str) or (sha != "HEAD" and not _VALID_SHA_RE.match(sha)):
         return GitResult(success=False, stdout="", error=f"Invalid git ref: {sha}", sha=None)
     try:
         repo = gitpython.Repo(project_path)
