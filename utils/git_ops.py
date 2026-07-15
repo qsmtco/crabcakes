@@ -244,6 +244,31 @@ def get_recent_commits(project_path: str, count: int = 10) -> GitResult:
         return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
 
 
+def file_log(project_path: str, file_path: str, count: int = 20) -> GitResult:
+    """Commit history for a single file.
+
+    Returns: GitResult with stdout = lines of "SHA\\x1FISO_DATE\\x1FMESSAGE"
+    Uses --follow to track renames. Caps at count entries.
+
+    Format: fields separated by ASCII Unit Separator (\\x1f) to avoid
+    collisions with pipe characters in commit messages.
+    """
+    # Clamp count to safe bounds (M13 fix)
+    count = max(1, min(count, 100))
+
+    try:
+        repo = gitpython.Repo(project_path)
+        log_text = repo.git.log(
+            "--follow",
+            "--format=%H%x1f%cI%x1f%s",
+            f"-n {count}",
+            "--", file_path,
+        )
+        return GitResult(success=True, stdout=log_text, error="", sha=None)
+    except Exception as e:
+        return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
+
+
 def push(project_path: str, remote: str = "origin", branch: str = "main") -> GitResult:
     """Push to remote."""
     try:
