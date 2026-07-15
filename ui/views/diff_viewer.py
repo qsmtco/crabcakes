@@ -60,6 +60,9 @@ class DiffViewer(Gtk.Box):
                    so the viewer can reload the current diff.
     """
 
+    # BUG #11: watchdog timeout (seconds) for revert completion
+    _REVERT_WATCHDOG_SECS = 30
+
     def __init__(
         self,
         file_path: str,
@@ -85,6 +88,7 @@ class DiffViewer(Gtk.Box):
         self._on_revert = on_revert
         self._selected_sha: str | None = None
         self._history_loaded = False
+        self._revert_watchdog_timer: threading.Timer | None = None
 
         # H3 fix: disposal flag
         self._disposed = False
@@ -99,6 +103,9 @@ class DiffViewer(Gtk.Box):
 
     def _build_ui(self):
         """Build the widget hierarchy as shown in class docstring."""
+        # BUG #1/16/18: connect destroy signal instead of do_dispose vfunc
+        self.connect("destroy", self._on_destroy)
+
         # Header
         self._header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self._header.add_css_class("diff-viewer-header")
@@ -329,13 +336,15 @@ class DiffViewer(Gtk.Box):
             row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             row_box.add_css_class("diff-history-row")
 
-            sha_lbl = Gtk.Label(label=entry["sha"][:7])
+            # BUG #2/10: use set_text(escape_for_pango(...)) for all labels
+            sha_lbl = Gtk.Label()
+            sha_lbl.set_text(escape_for_pango(entry["sha"][:7]))
             sha_lbl.add_css_class("diff-history-row-sha")
 
-            date_lbl = Gtk.Label(label=entry["date"][:10])
+            date_lbl = Gtk.Label()
+            date_lbl.set_text(escape_for_pango(entry["date"][:10]))
             date_lbl.add_css_class("diff-history-row-date")
 
-            # BUG #2: escape commit message to prevent Pango injection
             msg_lbl = Gtk.Label()
             msg_lbl.set_text(escape_for_pango(entry["message"]))
             msg_lbl.add_css_class("diff-history-row-msg")
@@ -373,17 +382,20 @@ class DiffViewer(Gtk.Box):
             return
 
         short_sha = self._selected_sha[:7]
+        # BUG #2/10: use set_text for dialog text to prevent Pango injection
         dialog = Gtk.MessageDialog(
             transient_for=self.get_root(),
             modal=True,
             message_type=Gtk.MessageType.QUESTION,
             buttons=Gtk.ButtonsType.YES_NO,
-            text=f"Revert {self._file_path}?",
-            secondary_text=(
-                f"This will restore the file to its state from commit {short_sha}. "
-                f"Any uncommitted changes to this file will be lost."
-            ),
         )
+        dialog.set_property("text", escape_for_pango(
+            f"Revert {self._file_path}?"
+        ))
+        dialog.set_property("secondary-text", escape_for_pango(
+            f"This will restore the file to its state from commit {short_sha}. "
+            f"Any uncommitted changes to this file will be lost."
+        ))
         dialog.connect("response", self._on_revert_confirmed)
         dialog.present()
 
@@ -398,16 +410,44 @@ class DiffViewer(Gtk.Box):
         self._revert_btn.set_visible(False)
 
         # BUG #5: Replace time.sleep(1.0) with callback-based revert completion.
-        # The on_revert callback receives an on_complete parameter that is
-        # invoked when the revert is done.
         self._show_placeholder(f"Reverting to {target_sha[:7]}...")
+
+        # BUG #11: revert completion timeout watchdog
+        self._start_revert_watchdog()
 
         def _on_revert_complete():
             if not self._disposed:
+                self._cancel_revert_watchdog()
                 self._load_current_diff()
 
         # Dispatch the actual revert with completion callback
         self._on_revert(self._file_path, target_sha, _on_revert_complete)
+
+    def _start_revert_watchdog(self):
+        """Start a watchdog timer that fires if revert completion is not called."""
+        self._cancel_revert_watchdog()
+
+        def _watchdog_fired():
+            GLib.idle_add(lambda: self._on_revert_watchdog_fired() if not self._disposed else None)
+
+        self._revert_watchdog_timer = threading.Timer(
+            self._REVERT_WATCHDOG_SECS, _watchdog_fired
+        )
+        self._revert_watchdog_timer.daemon = True
+        self._revert_watchdog_timer.start()
+
+    def _cancel_revert_watchdog(self):
+        """Cancel the watchdog timer if running."""
+        if self._revert_watchdog_timer is not None:
+            self._revert_watchdog_timer.cancel()
+            self._revert_watchdog_timer = None
+
+    def _on_revert_watchdog_fired(self):
+        """Watchdog fired — revert completion not received. Reload anyway."""
+        if self._disposed:
+            return
+        self._revert_watchdog_timer = None
+        self._load_current_diff()
 
     # === Helpers ===
 
@@ -429,7 +469,9 @@ class DiffViewer(Gtk.Box):
             return
         while self._diff_box.get_first_child() is not None:
             self._diff_box.remove(self._diff_box.get_first_child())
-        lbl = Gtk.Label(label=text)
+        # BUG #2/10: use set_text to prevent Pango injection
+        lbl = Gtk.Label()
+        lbl.set_text(escape_for_pango(text))
         lbl.add_css_class("diff-viewer-subtitle")
         lbl.set_margin_top(24)
         lbl.set_margin_bottom(24)
@@ -440,7 +482,7 @@ class DiffViewer(Gtk.Box):
     def _show_error(self, error: str):
         self._show_placeholder(f"Error: {error}")
 
-    # H3/M16/M21/M25 fix: GTK4 dispose flag
-    # BUG #1: mark disposed; super().do_dispose() not available in PyGObject
-    def do_dispose(self):
+    def _on_destroy(self, widget):
+        """Destroy signal handler — sets disposal flag and cancels any pending timers."""
         self._disposed = True
+        self._cancel_revert_watchdog()
