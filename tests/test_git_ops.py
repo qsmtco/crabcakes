@@ -289,3 +289,137 @@ class TestErrorHandling:
     def test_get_head_sha_nonexistent(self):
         result = get_head_sha("/nonexistent/path/12345")
         assert result.success is False
+
+
+class TestDiffFileAgainstWorkingTree:
+    """diff_file_against_working_tree: diff sha→working tree (includes uncommitted)."""
+
+    def test_diff_against_head(self, repo_with_commit):
+        """Diff HEAD against working tree with uncommitted changes."""
+        path, sha = repo_with_commit
+        # Make uncommitted changes
+        fpath = os.path.join(path, "hello.txt")
+        with open(fpath, "w") as f:
+            f.write("Modified but not committed\n")
+
+        result = diff_file_against_working_tree(path, "HEAD", "hello.txt")
+        assert result.success is True
+        assert "hello.txt" in result.stdout
+        assert "Modified but not committed" in result.stdout
+
+    def test_diff_against_specific_sha(self, temp_repo):
+        """Diff a specific SHA against working tree."""
+        repo = gitpython.Repo(temp_repo)
+        repo.config_writer().set_value("user", "name", "Test User").release()
+        repo.config_writer().set_value("user", "email", "test@test.com").release()
+
+        # Create initial commit
+        fpath = os.path.join(temp_repo, "hello.txt")
+        with open(fpath, "w") as f:
+            f.write("V1\n")
+        repo.index.add(["hello.txt"])
+        c1 = repo.index.commit("v1")
+
+        # Modify and commit v2
+        with open(fpath, "w") as f:
+            f.write("V2\n")
+        repo.index.add(["hello.txt"])
+        repo.index.commit("v2")
+
+        # Now edit working tree (uncommitted)
+        with open(fpath, "w") as f:
+            f.write("V3 (working tree)\n")
+
+        # Diff c1 (V1) against working tree (V3) — should show both changes
+        result = diff_file_against_working_tree(temp_repo, str(c1.hexsha), "hello.txt")
+        assert result.success is True
+        assert "V3 (working tree)" in result.stdout
+
+    def test_invalid_sha_rejected(self, repo_with_commit):
+        """Invalid SHA is rejected with error (MED-11 pattern)."""
+        path, _ = repo_with_commit
+        result = diff_file_against_working_tree(path, "not-a-sha!!!", "hello.txt")
+        assert result.success is False
+        assert "Invalid git ref" in result.error
+
+
+class TestFileLog:
+    """file_log: commit history for a single file."""
+
+    def test_history_for_tracked_file(self, temp_repo):
+        """Returns history for a tracked file."""
+        repo = gitpython.Repo(temp_repo)
+        repo.config_writer().set_value("user", "name", "Test User").release()
+        repo.config_writer().set_value("user", "email", "test@test.com").release()
+
+        fpath = os.path.join(temp_repo, "hello.txt")
+        with open(fpath, "w") as f:
+            f.write("V1\n")
+        repo.index.add(["hello.txt"])
+        repo.index.commit("First commit")
+
+        with open(fpath, "a") as f:
+            f.write("V2\n")
+        repo.index.add(["hello.txt"])
+        repo.index.commit("Second commit")
+
+        result = file_log(temp_repo, "hello.txt", count=10)
+        assert result.success is True
+        assert result.stdout != ""
+        lines = result.stdout.strip().split("\n")
+        assert len(lines) == 2
+        # Each line should have format: SHA\x1fDATE\x1fMESSAGE
+        for line in lines:
+            parts = line.split("\x1f")
+            assert len(parts) == 3, f"Expected 3 fields, got {len(parts)}: {line!r}"
+            # First part should be a SHA (hex)
+            assert len(parts[0]) == 40, f"Expected 40-char SHA, got {parts[0]!r}"
+            # Second part should be ISO date
+            assert parts[2] in ("First commit", "Second commit"), f"Unexpected message: {parts[2]!r}"
+
+    def test_empty_for_untracked_file(self, repo_with_commit):
+        """Returns empty stdout for an untracked file."""
+        path, _ = repo_with_commit
+        result = file_log(path, "nonexistent.txt", count=10)
+        assert result.success is True
+        assert result.stdout == ""
+
+    def test_count_clamping(self, temp_repo):
+        """Count is clamped to 1..100."""
+        repo = gitpython.Repo(temp_repo)
+        repo.config_writer().set_value("user", "name", "Test User").release()
+        repo.config_writer().set_value("user", "email", "test@test.com").release()
+
+        fpath = os.path.join(temp_repo, "hello.txt")
+        with open(fpath, "w") as f:
+            f.write("V1\n")
+        repo.index.add(["hello.txt"])
+        repo.index.commit("c1")
+
+        # count=0 should be clamped to 1
+        result = file_log(temp_repo, "hello.txt", count=0)
+        assert result.success is True
+
+        # count=999 should be clamped to 100
+        result = file_log(temp_repo, "hello.txt", count=999)
+        assert result.success is True
+
+    def test_pipe_in_message(self, temp_repo):
+        """Pipe characters in commit message don't break parsing due to \\x1f separator."""
+        repo = gitpython.Repo(temp_repo)
+        repo.config_writer().set_value("user", "name", "Test User").release()
+        repo.config_writer().set_value("user", "email", "test@test.com").release()
+
+        fpath = os.path.join(temp_repo, "hello.txt")
+        with open(fpath, "w") as f:
+            f.write("content\n")
+        repo.index.add(["hello.txt"])
+        repo.index.commit("feat: add |pipe| in message")
+
+        result = file_log(temp_repo, "hello.txt", count=5)
+        assert result.success is True
+        lines = result.stdout.strip().split("\n")
+        assert len(lines) == 1
+        parts = lines[0].split("\x1f")
+        assert len(parts) == 3
+        assert parts[2] == "feat: add |pipe| in message"
