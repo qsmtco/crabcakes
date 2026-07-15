@@ -270,8 +270,7 @@ def build_file_diff_card(
         body_box.append(bin_lbl)
     else:
         lang = get_lang_from_path(file_diff.display_path)
-        for hunk in file_diff.hunks:
-            body_box.append(_build_hunk_view(hunk, lang))
+        body_box.append(render_diff_hunks(file_diff.hunks, lang))
 
     card.append(body_box)
 
