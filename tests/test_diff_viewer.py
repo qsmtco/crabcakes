@@ -112,11 +112,37 @@ class TestDiffViewerCreation:
         with pytest.raises(ValueError, match="file_path is required"):
             DiffViewer(file_path="", project_path="/tmp/test-project")
 
+    def test_whitespace_file_path_raises(self):
+        """Whitespace-only file_path raises ValueError."""
+        import pytest
+        with pytest.raises(ValueError, match="file_path is required"):
+            DiffViewer(file_path="   ", project_path="/tmp/test-project")
+
     def test_empty_project_path_raises(self):
         """Empty project_path raises ValueError."""
         import pytest
         with pytest.raises(ValueError, match="project_path is required"):
             DiffViewer(file_path="src/main.py", project_path="")
+
+    def test_whitespace_project_path_raises(self):
+        """Whitespace-only project_path raises ValueError."""
+        import pytest
+        with pytest.raises(ValueError, match="project_path is required"):
+            DiffViewer(file_path="src/main.py", project_path="  \t  ")
+
+    def test_non_string_file_path_raises(self):
+        """Non-string file_path raises ValueError."""
+        import pytest
+        with pytest.raises(ValueError, match="file_path is required"):
+            DiffViewer(file_path=42, project_path="/tmp/test-project")  # type: ignore
+        with pytest.raises(ValueError, match="file_path is required"):
+            DiffViewer(file_path=None, project_path="/tmp/test-project")  # type: ignore
+
+    def test_non_string_project_path_raises(self):
+        """Non-string project_path raises ValueError."""
+        import pytest
+        with pytest.raises(ValueError, match="project_path is required"):
+            DiffViewer(file_path="src/main.py", project_path=None)  # type: ignore
 
     def test_creation_with_checkpoint(self):
         """Accepts optional checkpoint_sha."""
