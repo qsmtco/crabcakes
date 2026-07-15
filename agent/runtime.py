@@ -924,6 +924,14 @@ def _stream_openai_events(
                 # W11: text + tool_call deltas are shared with _stream_minimax_events
                 for out_ev in _parse_sse_delta(d):
                     yield out_ev
+                # OpenAI/OpenRouter may close after finish_reason without [DONE]
+                finish_reason = choice.get("finish_reason")
+                if finish_reason in ("stop", "tool_calls", "length"):
+                    usage = d.get("usage")
+                    if usage:
+                        yield SSEEvent(type="usage", data={"usage": usage})
+                    yield SSEEvent(type="done", data={})
+                    return
             # Capture usage regardless (some frames have both choices and usage)
             usage = d.get("usage")
             if usage:
