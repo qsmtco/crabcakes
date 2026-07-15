@@ -169,7 +169,8 @@ class TestBuildDiffSummaryCard:
         )
         f = FileDiff(
             display_path="test.py",
-            old_path=None,
+            old_path="a/test.py",
+            new_path="b/test.py",
             is_new=False,
             is_deleted=False,
             is_renamed=False,
@@ -177,11 +178,8 @@ class TestBuildDiffSummaryCard:
             additions=1,
             deletions=0,
             hunks=[hunk],
-            old_mode=None,
-            new_mode=None,
-            similarity=None,
         )
-        return ParsedDiff(summary="1 file changed", files=[f])
+        return ParsedDiff(summary="1 file changed", files=[f], total_additions=1, total_deletions=0)
 
     def test_summary_card_returns_box(self):
         card = build_diff_summary_card(self._make_parsed_diff())
