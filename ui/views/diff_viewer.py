@@ -439,8 +439,7 @@ class DiffViewer(Gtk.Box):
     def _show_error(self, error: str):
         self._show_placeholder(f"Error: {error}")
 
-    # H3/M16/M21/M25 fix: GTK4 dispose vfunc
-    # BUG #1: call super().do_dispose() at end
+    # H3/M16/M21/M25 fix: GTK4 dispose flag
+    # BUG #1: mark disposed; super().do_dispose() not available in PyGObject
     def do_dispose(self):
         self._disposed = True
-        super().do_dispose()
