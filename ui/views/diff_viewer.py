@@ -17,8 +17,8 @@ from utils.git_ops import (
     diff_file_against,
     file_log,
 )
-from utils.escaping import escape_for_pango
-from ui.views.diff_card import render_diff_hunks, get_lang_from_path
+from utils.diff_parser import parse_diff, FileDiff
+from utils.git_ops import (
 
 
 class DiffViewer(Gtk.Box):
