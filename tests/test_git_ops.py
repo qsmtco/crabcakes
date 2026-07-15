@@ -13,7 +13,8 @@ try:
     from utils.git_ops import (
         is_repo, init_repo, get_head_sha, stage_all, commit,
         diff_against, diff_stat_against, diff_file_against,
-        checkout_paths, log, push, status, GitResult,
+        diff_file_against_working_tree,
+        checkout_paths, log, file_log, push, status, GitResult,
     )
 except ImportError:
     pytest.skip("gitpython not available", allow_module_level=True)
