@@ -253,19 +253,46 @@ def file_log(project_path: str, file_path: str, count: int = 20) -> GitResult:
 
     Format: fields separated by ASCII Unit Separator (\\x1f) to avoid
     collisions with pipe characters in commit messages.
+
+    BUG #1: Uses repo.iter_commits() in Python instead of raw git.log pipe
+    to produce lines, rejecting subjects containing \\x1f (unsafe separator).
+    BUG #3: count is coerced via int() with clear error for non-int; bool rejected.
     """
-    # Clamp count to safe bounds (M13 fix)
+    # BUG #3: Reject bool (subclass of int) before coercion
+    if isinstance(count, bool):
+        return GitResult(
+            success=False, stdout="",
+            error="file_log: count must be an integer, got bool",
+            sha=None,
+        )
+    # Coerce count to int — reject non-int types with clear error
+    try:
+        count = int(count)
+    except (TypeError, ValueError):
+        return GitResult(
+            success=False, stdout="",
+            error=f"file_log: count must be an integer, got {type(count).__name__}",
+            sha=None,
+        )
+    # Clamp count to safe bounds (1..100)
     count = max(1, min(count, 100))
 
     try:
         repo = gitpython.Repo(project_path)
-        log_text = repo.git.log(
-            "--follow",
-            "--format=%H%x1f%cI%x1f%s",
-            f"-n {count}",
-            "--", file_path,
-        )
-        return GitResult(success=True, stdout=log_text, error="", sha=None)
+        lines = []
+        for commit in repo.iter_commits(paths=file_path, max_count=count, follow=True):
+            commit_sha = commit.hexsha
+            date = commit.committed_datetime.isoformat()
+            subject = commit.message.split("\n", 1)[0]
+            # BUG #1: Reject subjects containing \\x1f (unsafe separator)
+            if "\x1f" in subject:
+                return GitResult(
+                    success=False, stdout="",
+                    error=f"file_log: commit {commit_sha[:8]} subject contains unsafe \\x1f character",
+                    sha=None,
+                )
+            lines.append(f"{commit_sha}\x1f{date}\x1f{subject}")
+        return GitResult(success=True, stdout="\n".join(lines), error="", sha=None)
     except Exception as e:
         return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
 
