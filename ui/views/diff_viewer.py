@@ -336,13 +336,13 @@ class DiffViewer(Gtk.Box):
             row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             row_box.add_css_class("diff-history-row")
 
-            # BUG #2/10: use set_text(escape_for_pango(...)) for all labels
+            # BUG #21: set_text stores literally — no escape needed
             sha_lbl = Gtk.Label()
-            sha_lbl.set_text(escape_for_pango(entry["sha"][:7]))
+            sha_lbl.set_text(entry["sha"][:7])
             sha_lbl.add_css_class("diff-history-row-sha")
 
             date_lbl = Gtk.Label()
-            date_lbl.set_text(escape_for_pango(entry["date"][:10]))
+            date_lbl.set_text(entry["date"][:10])
             date_lbl.add_css_class("diff-history-row-date")
 
             msg_lbl = Gtk.Label()
