@@ -122,6 +122,8 @@ class TestBuildFileDiffCard:
     def _make_diff(self, is_binary=False, additions=1, deletions=1) -> FileDiff:
         hunk = DiffHunk(
             header="@@ -1 +1 @@",
+            old_start=1,
+            new_start=1,
             lines=[DiffLine(type="add", content="+new", old_line_no=None, new_line_no=1)],
         )
         return FileDiff(
@@ -163,6 +165,8 @@ class TestBuildDiffSummaryCard:
     def _make_parsed_diff(self) -> ParsedDiff:
         hunk = DiffHunk(
             header="@@ -1 +1 @@",
+            old_start=1,
+            new_start=1,
             lines=[DiffLine(type="add", content="+new", old_line_no=None, new_line_no=1)],
         )
         f = FileDiff(
