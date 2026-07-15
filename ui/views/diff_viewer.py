@@ -345,8 +345,9 @@ class DiffViewer(Gtk.Box):
             date_lbl.set_text(entry["date"][:10])
             date_lbl.add_css_class("diff-history-row-date")
 
+            # BUG #21: set_text stores literally — no escape needed
             msg_lbl = Gtk.Label()
-            msg_lbl.set_text(escape_for_pango(entry["message"]))
+            msg_lbl.set_text(entry["message"])
             msg_lbl.add_css_class("diff-history-row-msg")
             msg_lbl.set_ellipsize(3)
             msg_lbl.set_hexpand(True)
@@ -469,9 +470,9 @@ class DiffViewer(Gtk.Box):
             return
         while self._diff_box.get_first_child() is not None:
             self._diff_box.remove(self._diff_box.get_first_child())
-        # BUG #2/10: use set_text to prevent Pango injection
+        # BUG #21: set_text stores literally — no escape needed
         lbl = Gtk.Label()
-        lbl.set_text(escape_for_pango(text))
+        lbl.set_text(text)
         lbl.add_css_class("diff-viewer-subtitle")
         lbl.set_margin_top(24)
         lbl.set_margin_bottom(24)
