@@ -1410,6 +1410,91 @@ class TestStreaming:
         )
         assert tool_name == "read_file"
 
+    # ─────────────────────────────────────────────────────────────────────
+    # QTR-FIX: regression coverage for the empty/None-id synthetic fallback.
+    #
+    # The previous `_extract_tool_calls` used `tc.get("id", f"call_{...}")`,
+    # which only substituted the synthetic id when the `id` key was absent.
+    # A response with explicit `id: None` or `id: ""` slipped through and
+    # surfaced as an empty `tool_call_id`, which some providers reject on the
+    # next turn (status_code=2013 on MiniMax). The fix is `tc.get("id") or
+    # f"call_{...}"` so None / empty-string fall through to the fallback.
+    # These tests pin the contract for both the OpenAI/MiniMax path and the
+    # Anthropic path.
+    # ─────────────────────────────────────────────────────────────────────
+
+    def test_extract_tool_calls_openai_synthetic_id_when_id_is_null(self):
+        """`_extract_tool_calls` (OpenAI path) must synthesize an id when the
+        tool_call entry has explicit `id: None`. Regression test for the QTR
+        empty-id fix; `tc.get("id", default)` did not substitute when the key
+        was present with value None.
+        """
+        resp = {
+            "choices": [{"message": {
+                "tool_calls": [
+                    {"id": None, "function": {"name": "read_file", "arguments": '{"path":"a.py"}'}},
+                ]
+            }}],
+        }
+        calls = _extract_tool_calls(resp, "openai")
+        assert len(calls) == 1
+        call_id, tool_name, args = calls[0]
+        assert tool_name == "read_file"
+        assert args == {"path": "a.py"}
+        # Synthetic id contract: starts with "call_" and is non-empty.
+        assert call_id, f"call_id must be non-empty when source id was None; got {call_id!r}"
+        assert call_id.startswith("call_"), f"expected synthetic id with 'call_' prefix; got {call_id!r}"
+
+    def test_extract_tool_calls_openai_synthetic_id_when_id_is_empty_string(self):
+        """`_extract_tool_calls` (OpenAI path) must synthesize an id when the
+        tool_call entry has explicit `id: ""`. Empty string is falsy and must
+        fall through to the synthetic fallback.
+        """
+        resp = {
+            "choices": [{"message": {
+                "tool_calls": [
+                    {"id": "", "function": {"name": "list_files", "arguments": '{"path":"."}'}},
+                ]
+            }}],
+        }
+        calls = _extract_tool_calls(resp, "openai")
+        assert len(calls) == 1
+        call_id, tool_name, args = calls[0]
+        assert tool_name == "list_files"
+        assert args == {"path": "."}
+        assert call_id, f"call_id must be non-empty when source id was ''; got {call_id!r}"
+        assert call_id.startswith("call_"), f"expected synthetic id with 'call_' prefix; got {call_id!r}"
+
+    def test_extract_tool_calls_anthropic_synthetic_id_when_id_is_null(self):
+        """`_extract_tool_calls` (Anthropic path) must synthesize an id when
+        the tool_use block has explicit `id: None`.
+        """
+        resp = {"content": [
+            {"type": "tool_use", "id": None, "name": "read_file", "input": {"path": "b.py"}},
+        ]}
+        calls = _extract_tool_calls(resp, "anthropic")
+        assert len(calls) == 1
+        call_id, tool_name, args = calls[0]
+        assert tool_name == "read_file"
+        assert args == {"path": "b.py"}
+        assert call_id, f"call_id must be non-empty when source id was None; got {call_id!r}"
+        assert call_id.startswith("call_"), f"expected synthetic id with 'call_' prefix; got {call_id!r}"
+
+    def test_extract_tool_calls_anthropic_synthetic_id_when_id_is_empty_string(self):
+        """`_extract_tool_calls` (Anthropic path) must synthesize an id when
+        the tool_use block has explicit `id: ""`.
+        """
+        resp = {"content": [
+            {"type": "tool_use", "id": "", "name": "list_files", "input": {"path": "."}},
+        ]}
+        calls = _extract_tool_calls(resp, "anthropic")
+        assert len(calls) == 1
+        call_id, tool_name, args = calls[0]
+        assert tool_name == "list_files"
+        assert args == {"path": "."}
+        assert call_id, f"call_id must be non-empty when source id was ''; got {call_id!r}"
+        assert call_id.startswith("call_"), f"expected synthetic id with 'call_' prefix; got {call_id!r}"
+
 
 
 class TestStreamingSignature:
