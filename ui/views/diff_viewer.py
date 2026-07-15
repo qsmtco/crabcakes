@@ -415,9 +415,9 @@ class DiffViewer(Gtk.Box):
         self._start_revert_watchdog()
 
         def _on_revert_complete():
-            if not self._disposed:
-                self._cancel_revert_watchdog()
-                self._load_current_diff()
+            # BUG #20: on_complete may be called from background thread —
+            # use GLib.idle_add to ensure GTK calls are on the main thread.
+            GLib.idle_add(lambda: self._on_revert_complete_main_thread())
 
         # BUG #19: wrap in try/except to prevent uncaught exception
         try:
