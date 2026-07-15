@@ -419,8 +419,13 @@ class DiffViewer(Gtk.Box):
                 self._cancel_revert_watchdog()
                 self._load_current_diff()
 
-        # Dispatch the actual revert with completion callback
-        self._on_revert(self._file_path, target_sha, _on_revert_complete)
+        # BUG #19: wrap in try/except to prevent uncaught exception
+        try:
+            # Dispatch the actual revert with completion callback
+            self._on_revert(self._file_path, target_sha, _on_revert_complete)
+        except Exception:
+            # If the callback throws, cancel watchdog and fall through to placeholder
+            self._cancel_revert_watchdog()
 
     def _start_revert_watchdog(self):
         """Start a watchdog timer that fires if revert completion is not called."""
