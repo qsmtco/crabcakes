@@ -121,15 +121,16 @@ def _build_diff_line(line_widget_box: Gtk.Box, line: DiffLine, lang: str | None)
     new_lbl.set_margin_start(4)
 
     # Content
-    escaped = escape_for_pango(line.content)
+    # BUG #12: highlight raw content FIRST, then escape the highlighted output
+    # (matching chat_bubble.py:218 pattern — highlight(raw, lang))
     if lang and line.type != "context":
         try:
-            highlighted = highlight(escaped, lang)
-            content_lbl = Gtk.Label(label=highlighted)
+            highlighted = highlight(line.content, lang)
+            content_lbl = Gtk.Label(label=escape_for_pango(highlighted))
         except Exception:
-            content_lbl = Gtk.Label(label=escaped)
+            content_lbl = Gtk.Label(label=escape_for_pango(line.content))
     else:
-        content_lbl = Gtk.Label(label=escaped)
+        content_lbl = Gtk.Label(label=escape_for_pango(line.content))
 
     content_lbl.set_halign(Gtk.Align.START)
     content_lbl.set_valign(Gtk.Align.CENTER)
