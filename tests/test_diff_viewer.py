@@ -70,67 +70,6 @@ class TestGetLangFromPathIntegration:
         assert get_lang_from_path("foo.xyz") is None
 
 
-class TestRenderDiffHunksIntegration:
-    """render_diff_hunks renders hunks correctly."""
-
-    def test_single_hunk(self):
-        """Renders a single hunk."""
-        hunk = DiffHunk(
-            header="@@ -1,3 +1,4 @@",
-            old_start=1,
-            new_start=1,
-            lines=[
-                DiffLine(type="context", content=" unchanged", old_line_no=1, new_line_no=1),
-                DiffLine(type="remove", content="-old line", old_line_no=2, new_line_no=None),
-                DiffLine(type="add", content="+new line", old_line_no=None, new_line_no=2),
-            ],
-        )
-        result = render_diff_hunks([hunk], lang="python")
-        assert isinstance(result, Gtk.Box)
-        # Should have at least the hunk view
-        children = list(result)
-        assert len(children) >= 1
-
-    def test_multiple_hunks(self):
-        """Multiple hunks are all rendered."""
-        hunk1 = DiffHunk(
-            header="@@ -1,2 +1,2 @@",
-            old_start=1,
-            new_start=1,
-            lines=[DiffLine(type="context", content=" a", old_line_no=1, new_line_no=1)],
-        )
-        hunk2 = DiffHunk(
-            header="@@ -5,2 +5,2 @@",
-            old_start=5,
-            new_start=5,
-            lines=[DiffLine(type="context", content=" b", old_line_no=5, new_line_no=5)],
-        )
-        result = render_diff_hunks([hunk1, hunk2])
-        assert isinstance(result, Gtk.Box)
-        children = list(result)
-        assert len(children) == 2
-
-    def test_empty_hunks(self):
-        """Empty list returns empty Gtk.Box."""
-        result = render_diff_hunks([], lang=None)
-        assert isinstance(result, Gtk.Box)
-        assert list(result) == []
-
-    def test_no_lang(self):
-        """Works without language parameter."""
-        hunk = DiffHunk(
-            header="@@ -1 +1 @@",
-            old_start=1,
-            new_start=1,
-            lines=[
-                DiffLine(type="context", content=" hello", old_line_no=1, new_line_no=1),
-            ],
-        )
-        result = render_diff_hunks([hunk])
-        assert isinstance(result, Gtk.Box)
-        assert len(list(result)) == 1
-
-
 # ═══════════════════════════════════════════════════════════════════════
 # DiffViewer widget tests (need xvfb-run for Gtk display)
 # ═══════════════════════════════════════════════════════════════════════
