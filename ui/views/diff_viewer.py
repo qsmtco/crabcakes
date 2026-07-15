@@ -4,6 +4,7 @@
 
 import threading
 import os
+from typing import Callable, Optional
 
 import gi
 gi.require_version('Gtk', '4.0')
