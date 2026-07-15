@@ -2506,6 +2506,14 @@ class AgentRuntime:
 
         except Exception as e:
             logger.exception("Error in tool loop for %s", session_key)
+            # QTR-FIX: persist whatever partial progress was made before the
+            # exception so the next /resume / restart can recover it instead of
+            # silently dropping the in-memory conversation. conv is in scope
+            # from the surrounding `with self._lock` block above.
+            try:
+                self._auto_save(session_key, conv)
+            except Exception:
+                logger.exception("Failed to auto_save after tool-loop error for %s", session_key)
             self._dispatch(self._on_error, session_key, e)
 
     def _dispatch_approval(self, session_key: str, tool_name: str, args: dict) -> bool | None:
