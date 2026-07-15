@@ -164,15 +164,15 @@ class TestDiffViewerCreation:
         )
         assert viewer._checkpoint_sha == "abc123def456"
 
-    # BUG #1/16/18: use destroy() instead of do_dispose()
+    # BUG #1/16/18: emit destroy signal instead of do_dispose vfunc
     def test_destroy_sets_disposed_flag(self):
-        """viewer.destroy() sets _disposed flag via destroy signal."""
+        """viewer.emit('destroy') sets _disposed flag."""
         viewer = DiffViewer(
             file_path="src/main.py",
             project_path="/tmp/test-project",
         )
         assert not viewer._disposed
-        viewer.destroy()
+        viewer.emit("destroy")
         assert viewer._disposed
 
 
@@ -503,7 +503,7 @@ class TestDiffViewerStateGuards:
             file_path="src/main.py",
             project_path="/tmp/test-project",
         )
-        viewer.destroy()
+        viewer.emit("destroy")
         # This should not crash
         viewer._on_diff_loaded(MagicMock(), "test", 1)
 
