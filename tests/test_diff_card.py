@@ -100,10 +100,14 @@ class TestRenderDiffHunks:
         """Multiple hunks are all rendered."""
         hunk1 = DiffHunk(
             header="@@ -1,2 +1,2 @@",
+            old_start=1,
+            new_start=1,
             lines=[DiffLine(type="context", content=" a", old_line_no=1, new_line_no=1)],
         )
         hunk2 = DiffHunk(
             header="@@ -5,2 +5,2 @@",
+            old_start=5,
+            new_start=5,
             lines=[DiffLine(type="context", content=" b", old_line_no=5, new_line_no=5)],
         )
         result = render_diff_hunks([hunk1, hunk2])
