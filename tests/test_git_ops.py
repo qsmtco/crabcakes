@@ -423,3 +423,89 @@ class TestFileLog:
         parts = lines[0].split("\x1f")
         assert len(parts) == 3
         assert parts[2] == "feat: add |pipe| in message"
+
+    def test_reject_x1f_in_subject(self, temp_repo):
+        """BUG #1: Commit subject containing \\x1f is rejected with error."""
+        repo = gitpython.Repo(temp_repo)
+        repo.config_writer().set_value("user", "name", "Test User").release()
+        repo.config_writer().set_value("user", "email", "test@test.com").release()
+
+        fpath = os.path.join(temp_repo, "hello.txt")
+        with open(fpath, "w") as f:
+            f.write("content\n")
+        repo.index.add(["hello.txt"])
+        # Create a commit with \\x1f in the message using low-level API
+        repo.index.commit("safe subject")
+        # Append another commit with unsafe char
+        with open(fpath, "a") as f:
+            f.write("more\n")
+        repo.index.add(["hello.txt"])
+        # GitPython allows unicode control chars, so \\x1f in message works
+        repo.index.commit(f"unsafe\x1fchar")
+
+        result = file_log(temp_repo, "hello.txt", count=5)
+        assert result.success is False
+        assert "unsafe" in result.error.lower()
+        assert "\\x1f" in result.error or "separator" in result.error
+
+    def test_count_non_int(self, temp_repo):
+        """BUG #3: Non-int count values return clear error; bool rejected explicitly."""
+        repo = gitpython.Repo(temp_repo)
+        repo.config_writer().set_value("user", "name", "Test User").release()
+        repo.config_writer().set_value("user", "email", "test@test.com").release()
+
+        fpath = os.path.join(temp_repo, "hello.txt")
+        with open(fpath, "w") as f:
+            f.write("content\n")
+        repo.index.add(["hello.txt"])
+        repo.index.commit("init")
+
+        # bool is explicitly rejected
+        result = file_log(temp_repo, "hello.txt", count=True)
+        assert result.success is False
+        assert "bool" in result.error
+
+        # string count is coerced (valid string)
+        result = file_log(temp_repo, "hello.txt", count="3")
+        assert result.success is True
+        assert result.stdout != ""
+
+        # invalid string returns error
+        result = file_log(temp_repo, "hello.txt", count="not_a_number")
+        assert result.success is False
+        assert "count must be an integer" in result.error or "invalid" in result.error.lower()
+
+        # float is coerced (valid float)
+        result = file_log(temp_repo, "hello.txt", count=3.0)
+        assert result.success is True
+
+    def test_count_clamping(self, temp_repo):
+        """BUG #4: Count is clamped to 1..100. Assert actual line counts."""
+        repo = gitpython.Repo(temp_repo)
+        repo.config_writer().set_value("user", "name", "Test User").release()
+        repo.config_writer().set_value("user", "email", "test@test.com").release()
+
+        fpath = os.path.join(temp_repo, "hello.txt")
+        for i in range(3):
+            with open(fpath, "w") as f:
+                f.write(f"V{i}\n")
+            repo.index.add(["hello.txt"])
+            repo.index.commit(f"c{i}")
+
+        # count=0 → clamped to 1 → 1 line
+        result = file_log(temp_repo, "hello.txt", count=0)
+        assert result.success is True
+        lines = result.stdout.strip().split("\n")
+        assert len(lines) == 1, f"Expected 1 line for count=0, got {len(lines)}"
+
+        # count=999 → clamped to 100 → 3 lines (all commits exist)
+        result = file_log(temp_repo, "hello.txt", count=999)
+        assert result.success is True
+        lines = result.stdout.strip().split("\n")
+        assert len(lines) == 3, f"Expected 3 lines for count=999, got {len(lines)}"
+
+        # count=-5 → clamped to 1 → 1 line
+        result = file_log(temp_repo, "hello.txt", count=-5)
+        assert result.success is True
+        lines = result.stdout.strip().split("\n")
+        assert len(lines) == 1, f"Expected 1 line for count=-5, got {len(lines)}"
