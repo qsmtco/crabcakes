@@ -3241,3 +3241,99 @@ class TestSSEFrameShapeHardening:
         )
         count = int(result.stdout.strip())
         assert count >= 4, f"Expected >= 4 _first_choice references, got {count}"
+
+
+class TestStreamOpenaiEventsFinishReason:
+    """_stream_openai_events emits done on finish_reason (not just [DONE])."""
+
+    def _fake_urlopen(self, raw_sse: bytes):
+        class _FakeResp:
+            def __init__(self, buf):
+                self._buf = buf
+            def __iter__(self):
+                return iter(self._buf.splitlines(keepends=True))
+
+        class _Ctx:
+            def __enter__(self_ctx):
+                return _FakeResp(raw_sse)
+            def __exit__(self_ctx, *a):
+                pass
+        return _Ctx()
+
+    def _run_streamer(self, raw_sse: bytes):
+        from agent import runtime as rt_module
+        from agent.runtime import _stream_openai_events
+
+        with unittest.mock.patch.object(
+            rt_module, "_urlopen_with_ssl_retry",
+            lambda req, timeout: self._fake_urlopen(raw_sse),
+        ):
+            return list(_stream_openai_events(
+                base_url="https://api.openai.com/v1",
+                api_key="***",
+                model="openai/gpt-4o",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=None,
+                timeout=30.0,
+                x_title="",
+            ))
+
+    def _text_delta_sse(self, text: str, finish_reason: str | None = None) -> bytes:
+        """Build a two-frame SSE: one text delta, one optional finish_reason."""
+        lines = [
+            b'data: {"choices":[{"delta":{"content":"' + text.encode() + b'"}}]}\n\n',
+        ]
+        if finish_reason is not None:
+            lines.append(
+                b'data: {"choices":[{"finish_reason":"' + finish_reason.encode() + b'"}]}\n\n'
+            )
+        return b"".join(lines)
+
+    # --- finish_reason variants ---
+
+    def test_emits_done_on_finish_reason_stop(self):
+        """done event emitted when finish_reason='stop'."""
+        events = self._run_streamer(self._text_delta_sse("ok", finish_reason="stop"))
+        types = [ev.type for ev in events]
+        assert "text_delta" in types
+        assert "done" in types, f"expected done event, got types={types}"
+        # done should be the last event
+        assert types[-1] == "done"
+
+    def test_emits_done_on_finish_reason_tool_calls(self):
+        """done event emitted when finish_reason='tool_calls'."""
+        events = self._run_streamer(self._text_delta_sse("ok", finish_reason="tool_calls"))
+        types = [ev.type for ev in events]
+        assert "done" in types, f"expected done event, got types={types}"
+        assert types[-1] == "done"
+
+    def test_emits_done_on_finish_reason_length(self):
+        """done event emitted when finish_reason='length'."""
+        events = self._run_streamer(self._text_delta_sse("ok", finish_reason="length"))
+        types = [ev.type for ev in events]
+        assert "done" in types, f"expected done event, got types={types}"
+        assert types[-1] == "done"
+
+    # --- [DONE] sentinel regression ---
+
+    def test_handles_done_sentinel(self):
+        """Regression: [DONE] sentinel still works when finish_reason absent."""
+        raw = (
+            b'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
+            b'data: [DONE]\n\n'
+        )
+        events = self._run_streamer(raw)
+        types = [ev.type for ev in events]
+        assert "done" in types, f"expected done event from [DONE], got types={types}"
+        assert types[-1] == "done"
+
+    # --- no termination ---
+
+    def test_no_done_when_no_finish_reason_and_no_done_sentinel(self):
+        """No done event when stream has neither finish_reason nor [DONE] sentinel."""
+        raw = (
+            b'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
+        )
+        events = self._run_streamer(raw)
+        types = [ev.type for ev in events]
+        assert "done" not in types, f"unexpected done event, got types={types}"
