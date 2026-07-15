@@ -75,6 +75,9 @@ class DiffViewer(Gtk.Box):
             raise ValueError("file_path is required")
         if not isinstance(project_path, str) or not project_path.strip():
             raise ValueError("project_path is required")
+        # BUG #26: validate on_revert is callable if provided
+        if on_revert is not None and not callable(on_revert):
+            raise ValueError("on_revert must be callable")
 
         # H12 fix: call super().__init__() before any widget operations
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
