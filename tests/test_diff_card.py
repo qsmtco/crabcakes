@@ -72,7 +72,6 @@ class TestRenderDiffHunks:
         result = render_diff_hunks([hunk], lang="python")
         assert isinstance(result, Gtk.Box)
         # Should contain the hunk header and each line
-        assert result.get_children() is not None
         children = list(result)
         assert len(children) >= 1  # at least the hunk view
 
