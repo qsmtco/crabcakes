@@ -61,6 +61,8 @@ class TestRenderDiffHunks:
         """Renders hunks correctly, returns Gtk.Box."""
         hunk = DiffHunk(
             header="@@ -1,3 +1,4 @@",
+            old_start=1,
+            new_start=1,
             lines=[
                 DiffLine(type="context", content=" unchanged", old_line_no=1, new_line_no=1),
                 DiffLine(type="remove", content="-old line", old_line_no=2, new_line_no=None),
@@ -84,6 +86,8 @@ class TestRenderDiffHunks:
         """Works without language parameter."""
         hunk = DiffHunk(
             header="@@ -1 +1 @@",
+            old_start=1,
+            new_start=1,
             lines=[
                 DiffLine(type="context", content=" hello", old_line_no=1, new_line_no=1),
             ],
