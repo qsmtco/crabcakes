@@ -163,7 +163,7 @@ def _build_hunk_view(hunk: DiffHunk, lang: str | None) -> Gtk.Widget:
     return vbox
 
 
-def render_diff_hunks(hunks: list[DiffHunk], lang: str | None = None) -> Gtk.Widget:
+def render_diff_hunks(hunks: list[DiffHunk], lang: str | None = None) -> Gtk.Box:
     """Render diff hunks as a Gtk.Box. Shared by diff_card and diff_viewer.
 
     Pure renderer — does NOT handle binary files. Caller must check
