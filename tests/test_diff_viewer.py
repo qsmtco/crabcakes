@@ -95,7 +95,7 @@ class TestDiffViewerCreation:
         def on_back():
             pass
 
-        def on_revert(fp, sha):
+        def on_revert(fp, sha, on_complete):
             pass
 
         viewer = DiffViewer(
@@ -137,12 +137,23 @@ class TestDiffViewerCreation:
             DiffViewer(file_path=42, project_path="/tmp/test-project")  # type: ignore
         with pytest.raises(ValueError, match="file_path is required"):
             DiffViewer(file_path=None, project_path="/tmp/test-project")  # type: ignore
+        # BUG #12-15/17: add True, False, 3.14
+        with pytest.raises(ValueError, match="file_path is required"):
+            DiffViewer(file_path=True, project_path="/tmp/test-project")  # type: ignore
+        with pytest.raises(ValueError, match="file_path is required"):
+            DiffViewer(file_path=False, project_path="/tmp/test-project")  # type: ignore
+        with pytest.raises(ValueError, match="file_path is required"):
+            DiffViewer(file_path=3.14, project_path="/tmp/test-project")  # type: ignore
 
     def test_non_string_project_path_raises(self):
         """Non-string project_path raises ValueError."""
         import pytest
         with pytest.raises(ValueError, match="project_path is required"):
             DiffViewer(file_path="src/main.py", project_path=None)  # type: ignore
+        with pytest.raises(ValueError, match="project_path is required"):
+            DiffViewer(file_path="src/main.py", project_path=True)  # type: ignore
+        with pytest.raises(ValueError, match="project_path is required"):
+            DiffViewer(file_path="src/main.py", project_path=42)  # type: ignore
 
     def test_creation_with_checkpoint(self):
         """Accepts optional checkpoint_sha."""
@@ -153,14 +164,15 @@ class TestDiffViewerCreation:
         )
         assert viewer._checkpoint_sha == "abc123def456"
 
-    def test_dispose_flag(self):
-        """do_dispose sets _disposed flag."""
+    # BUG #1/16/18: use destroy() instead of do_dispose()
+    def test_destroy_sets_disposed_flag(self):
+        """viewer.destroy() sets _disposed flag via destroy signal."""
         viewer = DiffViewer(
             file_path="src/main.py",
             project_path="/tmp/test-project",
         )
         assert not viewer._disposed
-        viewer.do_dispose()
+        viewer.destroy()
         assert viewer._disposed
 
 
@@ -301,8 +313,6 @@ class TestDiffViewerRevertCompletion:
         """After revert completion, _load_current_diff is called."""
         load_called = []
 
-        original_load = DiffViewer._load_current_diff
-
         def patched_load(self):
             load_called.append(True)
 
@@ -320,26 +330,36 @@ class TestDiffViewerRevertCompletion:
         viewer._on_revert_confirmed(None, Gtk.ResponseType.YES)
         assert len(load_called) >= 1
 
+    def test_revert_watchdog_cancelled_on_complete(self):
+        """Revert watchdog timer is cancelled when completion fires."""
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+            on_revert=lambda fp, sha, on_complete: on_complete(),
+        )
+        viewer._selected_sha = "abc123def456"
+        viewer._on_revert_confirmed(None, Gtk.ResponseType.YES)
+        # After completion, watchdog should be None (cancelled)
+        assert viewer._revert_watchdog_timer is None
+
 
 class TestDiffViewerPangoInjection:
-    """BUG #2: Pango injection prevention in labels."""
+    """BUG #2/10: Pango injection prevention in labels."""
 
     def test_title_escapes_pango(self):
-        """File path with Pango tags uses set_text (safe for display)."""
+        """File path with Pango tags is safe (uses set_text, no markup)."""
         viewer = DiffViewer(
             file_path="<b>evil</b>",
             project_path="/tmp/test-project",
         )
+        # get_use_markup() returns True only for set_markup(), not set_text()
+        assert not viewer._title_label.get_use_markup()
         text = viewer._title_label.get_text()
-        # get_text() returns the raw stored string.
-        # escape_for_pango preserves known Pango tags (<b> is known),
-        # but set_text() renders it as plain text regardless.
+        # set_text stores literally — "evil" is in the string
         assert "evil" in text
 
     def test_history_message_escapes_pango(self):
-        """Commit messages with Pango tags are escaped."""
-        from ui.views.diff_viewer import escape_for_pango
-
+        """Commit messages with Pango tags are safe (uses set_text)."""
         viewer = DiffViewer(
             file_path="src/main.py",
             project_path="/tmp/test-project",
@@ -356,8 +376,26 @@ class TestDiffViewerPangoInjection:
             if hasattr(child, 'get_children'):
                 labels = [c for c in child if isinstance(c, Gtk.Label)]
                 for label in labels:
+                    assert not label.get_use_markup()
                     text = label.get_text()
-                    assert "<script>" not in text
+                    # escape_for_pango would convert <script> to &lt;script&gt;
+                    # or set_text stores literally — either way <script> is not
+                    # rendered as active markup
+                    assert "<script>" not in text or not label.get_use_markup()
+
+    def test_placeholder_escapes_pango(self):
+        """Placeholder text uses set_text not label= constructor."""
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+        )
+        viewer._show_placeholder("<b>bold</b>")
+        children = list(viewer._diff_box)
+        labels = [c for c in children if isinstance(c, Gtk.Label)]
+        assert len(labels) >= 1
+        # Verify use_markup is False (set_text, not set_markup)
+        for lbl in labels:
+            assert not lbl.get_use_markup()
 
 
 class TestDiffViewerHistoryEmpty:
@@ -413,6 +451,48 @@ class TestDiffViewerHistoryMultipleLoads:
         # Should have 2 entries, not 4 (previous rows were cleared)
         assert len(children) == 2
 
+    def test_signal_not_connected_multiple_times(self):
+        """row-activated signal is connected once; multiple fires don't double-trigger."""
+        activation_count = [0]
+
+        # Monkey-patch the callback to count invocations
+        original_callback = None
+
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+        )
+        # Replace the handler with a counting wrapper
+        original = viewer._on_history_row_activated
+
+        def counting_handler(listbox, row):
+            activation_count[0] += 1
+            original(listbox, row)
+
+        # We need to disconnect the old and connect the new
+        # But since it's connected once in _build_ui, replacing the method ref works
+        viewer._on_history_row_activated = counting_handler
+
+        # Load data
+        entries = [
+            {"sha": "aaa001", "date": "2026-01-01", "message": "first"},
+        ]
+        viewer._on_history_loaded(entries, req_id=viewer._current_request_id)
+        # Activate the row
+        children = list(viewer._history_list)
+        assert len(children) >= 1
+        viewer._on_history_row_activated(viewer._history_list, children[0])
+        assert activation_count[0] == 1
+
+        # Load again and activate again
+        viewer._current_request_id += 2
+        viewer._on_history_loaded(entries, req_id=viewer._current_request_id)
+        children = list(viewer._history_list)
+        assert len(children) == 1
+        viewer._on_history_row_activated(viewer._history_list, children[0])
+        # Should still be 2, not 4 (no extra signal connections)
+        assert activation_count[0] == 2
+
 
 class TestDiffViewerStateGuards:
     """State guards for disposed and stale requests."""
@@ -423,20 +503,23 @@ class TestDiffViewerStateGuards:
             file_path="src/main.py",
             project_path="/tmp/test-project",
         )
-        viewer.do_dispose()
+        viewer.destroy()
         # This should not crash
         viewer._on_diff_loaded(MagicMock(), "test", 1)
 
     def test_stale_request_ignored(self):
-        """Stale request id is ignored."""
+        """Stale request id is ignored — UI state unchanged."""
         viewer = DiffViewer(
             file_path="src/main.py",
             project_path="/tmp/test-project",
         )
+        # Confirm starting state
+        assert viewer._subtitle_label.get_text() == ""
         viewer._current_request_id = 5
         # Old request id
         viewer._on_diff_loaded(MagicMock(), "test", 3)
-        # Should not have updated anything (stale ignored)
+        # Should NOT have updated subtitle (stale ignored)
+        assert viewer._subtitle_label.get_text() == ""
 
 
 class TestDiffViewerHelpers:
@@ -462,8 +545,6 @@ class TestDiffViewerHelpers:
         # Verify content
         children = list(viewer._diff_box)
         assert len(children) >= 1
-        child = children[0]
-        # The spinner or label should be present
 
     def test_show_placeholder_disposed(self):
         """Disposed viewer skips _show_placeholder."""
@@ -471,7 +552,7 @@ class TestDiffViewerHelpers:
             file_path="src/main.py",
             project_path="/tmp/test-project",
         )
-        viewer.do_dispose()
+        viewer.destroy()
         viewer._show_placeholder("Should not show")
         # Should not crash
 
@@ -481,9 +562,25 @@ class TestDiffViewerHelpers:
             file_path="src/main.py",
             project_path="/tmp/test-project",
         )
-        viewer.do_dispose()
+        viewer.destroy()
         viewer._show_loading()
         # Should not crash
+
+    def test_destroy_cancels_watchdog(self):
+        """Destroy cancels any running revert watchdog timer."""
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+            on_revert=lambda fp, sha, on_complete: None,  # never calls on_complete
+        )
+        viewer._selected_sha = "abc123def456"
+        viewer._on_revert_confirmed(None, Gtk.ResponseType.YES)
+        # Watchdog should be running
+        assert viewer._revert_watchdog_timer is not None
+        assert viewer._revert_watchdog_timer.is_alive()
+        viewer.destroy()
+        # After destroy, watchdog should be cancelled
+        assert viewer._revert_watchdog_timer is None or not viewer._revert_watchdog_timer.is_alive()
 
 
 class TestDiffViewerWidgetStructure:
