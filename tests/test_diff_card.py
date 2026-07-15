@@ -128,7 +128,8 @@ class TestBuildFileDiffCard:
         )
         return FileDiff(
             display_path="test.py",
-            old_path=None,
+            old_path="a/test.py",
+            new_path="b/test.py",
             is_new=False,
             is_deleted=False,
             is_renamed=False,
@@ -136,9 +137,6 @@ class TestBuildFileDiffCard:
             additions=additions,
             deletions=deletions,
             hunks=[hunk],
-            old_mode=None,
-            new_mode=None,
-            similarity=None,
         )
 
     def test_build_file_diff_card_returns_box(self):
