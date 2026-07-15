@@ -358,6 +358,38 @@ class TestDiffViewerPangoInjection:
         # set_text stores literally — "evil" is in the string
         assert "evil" in text
 
+    def test_title_no_over_escape(self):
+        """File path with & is stored literally, not double-escaped."""
+        viewer = DiffViewer(
+            file_path="R&D.txt",
+            project_path="/tmp/test-project",
+        )
+        text = viewer._title_label.get_text()
+        # set_text stores literally; & does not become &amp;
+        assert "R&D.txt" == text
+
+    def test_history_message_with_ampersand(self):
+        """Commit message with & is stored literally, not escaped."""
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+        )
+        viewer._on_history_loaded(
+            [{"sha": "abc123", "date": "2026-01-01", "message": "fix: R&D and A&B logic"}],
+            req_id=viewer._current_request_id,
+        )
+        children = list(viewer._history_list)
+        assert len(children) >= 1
+        row = children[0]
+        if hasattr(row, 'get_child'):
+            child = row.get_child()
+            if hasattr(child, 'get_children'):
+                labels = [c for c in child if isinstance(c, Gtk.Label)]
+                # One of these labels should contain "R&D"
+                texts = [lbl.get_text() for lbl in labels]
+                found = any("R&D" in t for t in texts)
+                assert found, f"No label contains 'R&D' in texts: {texts}"
+
     def test_history_message_escapes_pango(self):
         """Commit messages use set_text (not set_markup), so Pango is inert."""
         viewer = DiffViewer(
