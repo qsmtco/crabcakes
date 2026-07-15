@@ -429,4 +429,3 @@ class DiffViewer(Gtk.Box):
     # H3/M16/M21/M25 fix: GTK4 dispose vfunc
     def do_dispose(self):
         self._disposed = True
-        Gtk.Widget.do_dispose(self)
