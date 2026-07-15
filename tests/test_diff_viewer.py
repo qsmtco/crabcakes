@@ -106,6 +106,16 @@ class TestDiffViewerCreation:
         )
         assert isinstance(viewer, Gtk.Box)
 
+    def test_non_callable_on_revert_raises(self):
+        """BUG #26: non-callable on_revert raises ValueError."""
+        import pytest
+        with pytest.raises(ValueError, match="on_revert must be callable"):
+            DiffViewer(
+                file_path="src/main.py",
+                project_path="/tmp/test-project",
+                on_revert="not_callable",  # type: ignore
+            )
+
     def test_empty_file_path_raises(self):
         """Empty file_path raises ValueError."""
         import pytest
