@@ -385,7 +385,8 @@ class DiffViewer(Gtk.Box):
             return
 
         short_sha = self._selected_sha[:7]
-        # BUG #21: set_text property stores literally — no escape needed
+        # MessageDialog text= and secondary_text= constructor params accept
+        # plain text (stored literally, not interpreted as Pango markup).
         dialog = Gtk.MessageDialog(
             transient_for=self.get_root(),
             modal=True,
@@ -421,13 +422,15 @@ class DiffViewer(Gtk.Box):
             # use GLib.idle_add to ensure GTK calls are on the main thread.
             GLib.idle_add(lambda: self._on_revert_complete_main_thread())
 
-        # BUG #19: wrap in try/except to prevent uncaught exception
+        # BUG #26: catch specific runtime exceptions (narrower than bare Exception)
+        # BUG #25: show placeholder error on failure so user sees it
         try:
             # Dispatch the actual revert with completion callback
             self._on_revert(self._file_path, target_sha, _on_revert_complete)
-        except Exception:
-            # If the callback throws, cancel watchdog and fall through to placeholder
+        except (RuntimeError, OSError, ValueError) as e:
+            # If the callback throws, cancel watchdog and show error
             self._cancel_revert_watchdog()
+            self._show_placeholder(f"Revert failed: {e}")
 
     def _start_revert_watchdog(self):
         """Start a watchdog timer that fires if revert completion is not called."""
