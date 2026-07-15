@@ -175,6 +175,29 @@ def diff_file_against(project_path: str, sha: str, file_path: str) -> GitResult:
         return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
 
 
+def diff_file_against_working_tree(project_path: str, sha: str, file_path: str) -> GitResult:
+    """Diff for a single file between commit sha and working tree.
+
+    Unlike diff_file_against() (which diffs sha→HEAD), this includes
+    uncommitted changes. Equivalent to: git diff <sha> -- <file_path>
+
+    Use during active review when agents have edited files but not committed.
+
+    SHA validation: sha is validated via _VALID_SHA_RE before being passed
+    to git, matching the MED-11 fix pattern in checkout_paths().
+    """
+    # Validate SHA — prevent git argument injection (MED-11 pattern)
+    if sha != "HEAD" and not _VALID_SHA_RE.match(sha):
+        return GitResult(success=False, stdout="", error=f"Invalid git ref: {sha}", sha=None)
+
+    try:
+        repo = gitpython.Repo(project_path)
+        diff_text = repo.git.diff(sha, "--", file_path)
+        return GitResult(success=True, stdout=diff_text, error="", sha=repo.head.commit.hexsha)
+    except Exception as e:
+        return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
+
+
 def checkout_paths(project_path: str, sha: str, paths: list[str]) -> GitResult:
     """Revert file(s) to their state at sha. Equivalent to git checkout <sha> -- <paths>.
 
