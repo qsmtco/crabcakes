@@ -386,6 +386,87 @@ class TestDiffFileAgainstWorkingTree:
         assert result.success is False
         assert "Invalid git ref" in result.error
 
+    # ----- BUG #2: staged+unstaged edits -----
+    def test_diff_working_tree_staged_and_unstaged(self, temp_repo):
+        """diff_file_against_working_tree shows both staged and unstaged changes.
+
+        A 2-way diff (sha vs working tree) includes both staged modifications
+        and unstaged modifications on top of them.
+        """
+        repo = gitpython.Repo(temp_repo)
+        repo.config_writer().set_value("user", "name", "Test User").release()
+        repo.config_writer().set_value("user", "email", "test@test.com").release()
+
+        fpath = os.path.join(temp_repo, "hello.txt")
+        with open(fpath, "w") as f:
+            f.write("V1\n")
+        repo.index.add(["hello.txt"])
+        c1 = repo.index.commit("v1")
+
+        # Stage a change
+        with open(fpath, "w") as f:
+            f.write("V2 (staged)\n")
+        repo.index.add(["hello.txt"])
+
+        # Make an unstaged change on top
+        with open(fpath, "w") as f:
+            f.write("V2 (staged)\nV3 (unstaged)\n")
+
+        # The 2-way diff against c1 should capture both
+        result = diff_file_against_working_tree(temp_repo, str(c1.hexsha), "hello.txt")
+        assert result.success is True
+        # Both changes should appear in the diff
+        assert "V2 (staged)" in result.stdout
+        assert "V3 (unstaged)" in result.stdout
+
+
+class TestShaRegex:
+    """BUG #9: SHA regex acceptance tests."""
+
+    def test_valid_full_sha(self, repo_with_commit):
+        """A full 40-hex SHA is accepted by diff_file_against_working_tree."""
+        path, sha = repo_with_commit
+        result = diff_file_against_working_tree(path, sha, "hello.txt")
+        assert result.success is True
+
+    def test_valid_short_sha(self, repo_with_commit):
+        """A short (4+ hex) SHA is accepted."""
+        path, sha = repo_with_commit
+        result = diff_file_against_working_tree(path, sha[:8], "hello.txt")
+        assert result.success is True
+
+    def test_valid_head(self, repo_with_commit):
+        """'HEAD' is accepted by the SHA guard."""
+        path, _ = repo_with_commit
+        result = diff_file_against_working_tree(path, "HEAD", "hello.txt")
+        assert result.success is True
+
+    def test_valid_hex_lowercase(self, repo_with_commit):
+        """Lowercase hex SHA is accepted."""
+        path, sha = repo_with_commit
+        result = diff_file_against_working_tree(path, sha.lower(), "hello.txt")
+        assert result.success is True
+
+    def test_valid_hex_uppercase(self, repo_with_commit):
+        """Uppercase hex SHA is accepted."""
+        path, sha = repo_with_commit
+        result = diff_file_against_working_tree(path, sha.upper(), "hello.txt")
+        assert result.success is True
+
+    def test_head_tilde_rejected(self, repo_with_commit):
+        """HEAD~ is NOT accepted by the current regex (BUG #9 — known limitation)."""
+        path, _ = repo_with_commit
+        result = diff_file_against_working_tree(path, "HEAD~1", "hello.txt")
+        assert result.success is False
+        assert "Invalid git ref" in result.error
+
+    def test_head_caret_rejected(self, repo_with_commit):
+        """HEAD^ is NOT accepted by the current regex (BUG #9 — known limitation)."""
+        path, _ = repo_with_commit
+        result = diff_file_against_working_tree(path, "HEAD^", "hello.txt")
+        assert result.success is False
+        assert "Invalid git ref" in result.error
+
 
 class TestFileLog:
     """file_log: commit history for a single file."""
