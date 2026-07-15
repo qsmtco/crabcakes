@@ -388,7 +388,8 @@ class DiffViewer(Gtk.Box):
         dialog.present()
 
     def _on_revert_confirmed(self, dialog, response_id):
-        dialog.destroy()
+        if dialog is not None:
+            dialog.destroy()
         if response_id != Gtk.ResponseType.YES:
             return
 
