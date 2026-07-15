@@ -383,20 +383,18 @@ class DiffViewer(Gtk.Box):
             return
 
         short_sha = self._selected_sha[:7]
-        # BUG #2/10: use set_text for dialog text to prevent Pango injection
+        # BUG #21: set_text property stores literally — no escape needed
         dialog = Gtk.MessageDialog(
             transient_for=self.get_root(),
             modal=True,
             message_type=Gtk.MessageType.QUESTION,
             buttons=Gtk.ButtonsType.YES_NO,
+            text=("Revert " + self._file_path + "?"),
+            secondary_text=(
+                f"This will restore the file to its state from commit {short_sha}. "
+                f"Any uncommitted changes to this file will be lost."
+            ),
         )
-        dialog.set_property("text", escape_for_pango(
-            f"Revert {self._file_path}?"
-        ))
-        dialog.set_property("secondary-text", escape_for_pango(
-            f"This will restore the file to its state from commit {short_sha}. "
-            f"Any uncommitted changes to this file will be lost."
-        ))
         dialog.connect("response", self._on_revert_confirmed)
         dialog.present()
 
