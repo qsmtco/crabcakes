@@ -291,6 +291,28 @@ class TestErrorHandling:
         assert result.success is False
 
 
+class TestCheckoutPathsShaGuards:
+    """BUG #5: checkout_paths guards against non-string sha."""
+
+    def test_checkout_paths_sha_int(self, repo_with_commit):
+        path, _ = repo_with_commit
+        result = checkout_paths(path, 42, ["hello.txt"])  # type: ignore[arg-type]
+        assert result.success is False
+        assert "Invalid git ref" in result.error
+
+    def test_checkout_paths_sha_none(self, repo_with_commit):
+        path, _ = repo_with_commit
+        result = checkout_paths(path, None, ["hello.txt"])  # type: ignore[arg-type]
+        assert result.success is False
+        assert "Invalid git ref" in result.error
+
+    def test_checkout_paths_sha_list(self, repo_with_commit):
+        path, _ = repo_with_commit
+        result = checkout_paths(path, ["HEAD"], ["hello.txt"])  # type: ignore[arg-type]
+        assert result.success is False
+        assert "Invalid git ref" in result.error
+
+
 class TestDiffFileAgainstWorkingTree:
     """diff_file_against_working_tree: diff sha→working tree (includes uncommitted)."""
 
@@ -339,6 +361,28 @@ class TestDiffFileAgainstWorkingTree:
         """Invalid SHA is rejected with error (MED-11 pattern)."""
         path, _ = repo_with_commit
         result = diff_file_against_working_tree(path, "not-a-sha!!!", "hello.txt")
+        assert result.success is False
+        assert "Invalid git ref" in result.error
+
+    # ----- BUG #5: non-string sha guards -----
+    def test_diff_against_working_tree_sha_int(self, repo_with_commit):
+        """Non-string sha (int) returns error instead of TypeError."""
+        path, _ = repo_with_commit
+        result = diff_file_against_working_tree(path, 42, "hello.txt")  # type: ignore[arg-type]
+        assert result.success is False
+        assert "Invalid git ref" in result.error
+
+    def test_diff_against_working_tree_sha_none(self, repo_with_commit):
+        """None sha returns error instead of TypeError."""
+        path, _ = repo_with_commit
+        result = diff_file_against_working_tree(path, None, "hello.txt")  # type: ignore[arg-type]
+        assert result.success is False
+        assert "Invalid git ref" in result.error
+
+    def test_diff_against_working_tree_sha_list(self, repo_with_commit):
+        """List sha returns error instead of TypeError."""
+        path, _ = repo_with_commit
+        result = diff_file_against_working_tree(path, ["HEAD"], "hello.txt")  # type: ignore[arg-type]
         assert result.success is False
         assert "Invalid git ref" in result.error
 
