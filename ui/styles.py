@@ -782,6 +782,62 @@ notebook > header > tabs > tab {
     background: #e11d48;
 }
 
+/* -- Diff Viewer Widget ------------------------------------------------- */
+.diff-viewer {
+    background: rgba(0, 0, 0, 0.02);
+}
+.diff-viewer-header {
+    padding: 8px 12px;
+    border-bottom: 1px solid alpha(@theme_fg_color, 0.08);
+    background: rgba(0, 0, 0, 0.05);
+}
+.diff-viewer-title {
+    font-size: 1.1em;
+    font-weight: bold;
+    font-family: monospace;
+    margin-left: 8px;
+}
+.diff-viewer-subtitle {
+    font-size: 0.85em;
+    color: alpha(@theme_fg_color, 0.5);
+    margin-left: 8px;
+}
+.diff-viewer-action-bar {
+    padding: 6px 12px;
+    border-top: 1px solid alpha(@theme_fg_color, 0.08);
+    background: rgba(0, 0, 0, 0.03);
+}
+.diff-viewer-revert-btn {
+    background: rgba(244, 63, 94, 0.2);
+    color: #f43f5e;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-size: 0.9em;
+}
+.diff-viewer-revert-btn:hover {
+    background: rgba(244, 63, 94, 0.3);
+}
+.diff-history-row {
+    padding: 6px 12px;
+    border-bottom: 1px solid alpha(@theme_fg_color, 0.06);
+}
+.diff-history-row:hover {
+    background: alpha(@theme_fg_color, 0.03);
+}
+.diff-history-row-sha {
+    font-family: monospace;
+    font-size: 0.85em;
+    color: #06b6d4;
+    min-width: 6em;
+}
+.diff-history-row-date {
+    font-size: 0.85em;
+    color: alpha(@theme_fg_color, 0.5);
+    min-width: 8em;
+}
+.diff-history-row-msg {
+    font-size: 0.9em;
+}
 /* -- Feed Cards -------------------------------------------------------- */
 .feed-card {
     border-radius: 6px;
