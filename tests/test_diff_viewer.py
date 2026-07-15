@@ -254,7 +254,7 @@ class TestDiffViewerRevertCancel:
         viewer = DiffViewer(
             file_path="src/main.py",
             project_path="/tmp/test-project",
-            on_revert=lambda fp, sha: None,
+            on_revert=lambda fp, sha, on_complete: None,
         )
         viewer._selected_sha = None
         viewer._on_revert_clicked(None)
@@ -271,6 +271,145 @@ class TestDiffViewerRevertCancel:
         viewer._on_revert_clicked(None)
         # Should return early without dialog
         assert viewer._selected_sha == "abc123"
+
+
+class TestDiffViewerRevertCompletion:
+    """BUG #5: Revert completion callback behavior."""
+
+    def test_revert_completion_callback_called(self):
+        """Revert calls on_revert with on_complete callback."""
+        captured = []
+
+        def on_revert(fp, sha, on_complete):
+            captured.append((fp, sha))
+            # Simulate revert completion
+            if on_complete:
+                on_complete()
+
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+            on_revert=on_revert,
+        )
+        viewer._selected_sha = "abc123def456"
+        # Bypass the dialog — call _on_revert_confirmed directly with YES
+        viewer._on_revert_confirmed(None, Gtk.ResponseType.YES)
+        assert len(captured) == 1
+        assert captured[0] == ("src/main.py", "abc123def456")
+
+    def test_revert_completion_reloads_diff(self):
+        """After revert completion, _load_current_diff is called."""
+        load_called = []
+
+        original_load = DiffViewer._load_current_diff
+
+        def patched_load(self):
+            load_called.append(True)
+
+        def on_revert(fp, sha, on_complete):
+            if on_complete:
+                on_complete()
+
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+            on_revert=on_revert,
+        )
+        viewer._load_current_diff = lambda: patched_load(viewer)
+        viewer._selected_sha = "abc123def456"
+        viewer._on_revert_confirmed(None, Gtk.ResponseType.YES)
+        assert len(load_called) >= 1
+
+
+class TestDiffViewerPangoInjection:
+    """BUG #2: Pango injection prevention in labels."""
+
+    def test_title_escapes_pango(self):
+        """File path with Pango tags is escaped in title."""
+        viewer = DiffViewer(
+            file_path="<b>evil</b>",
+            project_path="/tmp/test-project",
+        )
+        text = viewer._title_label.get_text()
+        assert "<b>" not in text
+        assert "evil" in text
+
+    def test_history_message_escapes_pango(self):
+        """Commit messages with Pango tags are escaped."""
+        from ui.views.diff_viewer import escape_for_pango
+
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+        )
+        viewer._on_history_loaded(
+            [{"sha": "abc123", "date": "2026-01-01", "message": "<script>alert(1)</script>"}],
+            req_id=viewer._current_request_id,
+        )
+        children = list(viewer._history_list)
+        assert len(children) >= 1
+        row = children[0]
+        if hasattr(row, 'get_child'):
+            child = row.get_child()
+            if hasattr(child, 'get_children'):
+                labels = [c for c in child if isinstance(c, Gtk.Label)]
+                for label in labels:
+                    text = label.get_text()
+                    assert "<script>" not in text
+
+
+class TestDiffViewerHistoryEmpty:
+    """BUG #3: Empty history keyboard nav safety."""
+
+    def test_empty_history_placeholder_in_listboxrow(self):
+        """Empty history placeholder is wrapped in ListBoxRow."""
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+        )
+        viewer._on_history_loaded([], req_id=viewer._current_request_id)
+        children = list(viewer._history_list)
+        assert len(children) >= 1
+        child = children[0]
+        # Should be a ListBoxRow (not a raw Label)
+        assert isinstance(child, Gtk.ListBoxRow)
+
+    def test_empty_history_row_activation_does_not_crash(self):
+        """Activating empty history placeholder row does not crash."""
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+        )
+        viewer._on_history_loaded([], req_id=viewer._current_request_id)
+        children = list(viewer._history_list)
+        assert len(children) >= 1
+        row = children[0]
+        # This should not crash even though row has no .sha attribute
+        viewer._on_history_row_activated(viewer._history_list, row)
+        assert viewer._selected_sha is None
+
+
+class TestDiffViewerHistoryMultipleLoads:
+    """BUG #4: Multiple history loads do not duplicate signal connections."""
+
+    def test_multiple_history_loads_no_duplicate_rows(self):
+        """Loading history twice does not duplicate entries."""
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+        )
+        entries = [
+            {"sha": "aaa001", "date": "2026-01-01", "message": "first commit"},
+            {"sha": "aaa002", "date": "2026-01-02", "message": "second commit"},
+        ]
+        # First load
+        viewer._on_history_loaded(entries, req_id=viewer._current_request_id + 1)
+        # Second load (simulate different request id)
+        viewer._current_request_id += 2
+        viewer._on_history_loaded(entries, req_id=viewer._current_request_id)
+        children = list(viewer._history_list)
+        # Should have 2 entries, not 4 (previous rows were cleared)
+        assert len(children) == 2
 
 
 class TestDiffViewerStateGuards:
