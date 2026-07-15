@@ -288,13 +288,14 @@ class TestDiffViewerRevertCancel:
 class TestDiffViewerRevertCompletion:
     """BUG #5: Revert completion callback behavior."""
 
-    def test_revert_completion_callback_called(self):
+    def test_revert_completion_callback_sent_to_handler(self):
         """Revert calls on_revert with on_complete callback."""
         captured = []
 
         def on_revert(fp, sha, on_complete):
             captured.append((fp, sha))
-            # Simulate revert completion
+            # Simulate revert completion — call on_complete directly
+            # (handler must invoke on_complete; we test the protocol here)
             if on_complete:
                 on_complete()
 
@@ -306,17 +307,24 @@ class TestDiffViewerRevertCompletion:
         viewer._selected_sha = "abc123def456"
         # Bypass the dialog — call _on_revert_confirmed directly with YES
         viewer._on_revert_confirmed(None, Gtk.ResponseType.YES)
+        # Capture is populated synchronously (on_revert is called inline)
         assert len(captured) == 1
         assert captured[0] == ("src/main.py", "abc123def456")
 
-    def test_revert_completion_reloads_diff(self):
-        """After revert completion, _load_current_diff is called."""
-        load_called = []
+    def test_revert_completion_main_thread_method_called(self):
+        """After revert completion dispatches, _on_revert_complete_main_thread runs."""
+        main_thread_called = []
 
-        def patched_load(self):
-            load_called.append(True)
+        def patched_main_thread(self):
+            main_thread_called.append(True)
+            # Call the original to keep behavior correct
+            if not self._disposed:
+                self._cancel_revert_watchdog()
+                self._load_current_diff()
 
         def on_revert(fp, sha, on_complete):
+            # Simulate the revert handler calling on_complete
+            # on_complete wraps in GLib.idle_add which is test-safe
             if on_complete:
                 on_complete()
 
@@ -325,10 +333,21 @@ class TestDiffViewerRevertCompletion:
             project_path="/tmp/test-project",
             on_revert=on_revert,
         )
-        viewer._load_current_diff = lambda: patched_load(viewer)
+        viewer._on_revert_complete_main_thread = lambda: patched_main_thread(viewer)
         viewer._selected_sha = "abc123def456"
+
+        # When on_complete is called, it idle_adds _on_revert_complete_main_thread
+        # We can test that the idle callback gets dispatched by running GLib iteration
+        old_load = viewer._load_current_diff
+        viewer._load_current_diff = lambda: None  # prevent actual thread spawn
+
         viewer._on_revert_confirmed(None, Gtk.ResponseType.YES)
-        assert len(load_called) >= 1
+
+        # Run GLib main context to dispatch idle callback
+        while GLib.MainContext.default().iteration(False):
+            pass
+
+        assert len(main_thread_called) >= 1
 
     def test_revert_watchdog_cancelled_on_complete(self):
         """Revert watchdog timer is cancelled when completion fires."""
@@ -339,8 +358,30 @@ class TestDiffViewerRevertCompletion:
         )
         viewer._selected_sha = "abc123def456"
         viewer._on_revert_confirmed(None, Gtk.ResponseType.YES)
+
+        # Run GLib iteration to dispatch the idle callback from on_complete
+        while GLib.MainContext.default().iteration(False):
+            pass
+
         # After completion, watchdog should be None (cancelled)
         assert viewer._revert_watchdog_timer is None
+
+    def test_revert_exception_safe(self):
+        """BUG #19: on_revert throwing does not crash viewer."""
+        def broken_revert(fp, sha, on_complete):
+            raise RuntimeError("simulated revert failure")
+
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+            on_revert=broken_revert,
+        )
+        viewer._selected_sha = "abc123def456"
+        # This should not raise — exception is caught
+        viewer._on_revert_confirmed(None, Gtk.ResponseType.YES)
+        # Viewer should still be in valid state
+        assert viewer._selected_sha is None
+        assert not viewer._revert_btn.get_visible()
 
 
 class TestDiffViewerPangoInjection:
