@@ -56,6 +56,14 @@ class TestGetLangFromPath:
     def test_uuid_no_extension(self):
         assert get_lang_from_path("LICENSE") is None
 
+    def test_empty_string_returns_none(self):
+        assert get_lang_from_path("") is None
+
+    def test_non_string_input_returns_none(self):
+        assert get_lang_from_path(None) is None  # type: ignore
+        assert get_lang_from_path(42) is None  # type: ignore
+        assert get_lang_from_path([]) is None  # type: ignore
+
 
 class TestRenderDiffHunks:
     """render_diff_hunks renders hunks as a Gtk.Box."""
