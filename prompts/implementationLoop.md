@@ -4,7 +4,7 @@
 >
 > **Scope:** This prompt defines the **loop architecture** — the diagram, role boundaries, the four-prompt composition, the spec/architecture authority hierarchy, entry/exit conditions, and the **mandatory post-mortem format**. It does **not** repeat the supervisor's day-to-day tactics (channel trust, `/ask` payload mechanics, COMPLETENESS checklist, verification grep patterns, post-mortem trigger conditions). Those live in [`implementationSupervisor.md`](./implementationSupervisor.md) and are referenced, not duplicated, here.
 >
-> **Genericity:** This prompt is written for the crabcakes project but is **agent-pair-agnostic**. The roles `{{SUPERVISOR_AGENT}}` and `{{BUILDER_AGENT}}` are placeholders. For the canonical crabcakes instance, the supervisor is **Qaster** and the builder is **QTR**. To port this loop to another project, copy this file and substitute the prompt paths, the architecture document, and the spec convention.
+> **Genericity:** This prompt is written for the crabcakes project but is **agent-pair-agnostic**. The roles `{{SUPERVISOR_AGENT}}` and `{{BUILDER_AGENT}}` are placeholders. For the canonical crabcakes instance, the supervisor is who ever has the role SUPERVISOR and the builder is who ever has the role BUILDER. To port this loop to another project, copy this file and substitute the prompt paths, the architecture document, and the spec convention.
 
 ---
 
@@ -30,7 +30,7 @@ Multi-agent implementation work is hard to supervise. The supervisor and the bui
                                         ▼
                  ┌────────────────────────────────────────────┐
                  │   {{SUPERVISOR_AGENT}} — implementation    │
-                 │   supervisor (e.g. Qaster)                 │
+                 │   supervisor                  │
                  │                                            │
                  │  1. Read spec + ARCHITECTURE.md            │
                  │  2. Phase the work (1-3 files per phase)   │
@@ -52,7 +52,7 @@ Multi-agent implementation work is hard to supervise. The supervisor and the bui
                         ▼                             │
                  ┌────────────────────────────────────┴───────┐
                  │   {{BUILDER_AGENT}} — code writer           │
-                 │   (e.g. QTR)                                │
+                 │                                             │
                  │                                             │
                  │  - Reads phase-instructions file            │
                  │  - Writes code per steelFramedCodeWriter    │
@@ -496,3 +496,4 @@ This file is the **fifth canonical prompt** in the project's prompt set. It is r
 3. Preserve the mandatory adversarial-audit rule in §3.1a (or explicitly deprecate the rule with a documented rationale and migration plan)
 4. Be reviewed by the captain before merge (this is a meta-prompt; mistakes here propagate to every future loop)
 5. Be committed in a single commit with a `meta:` prefix in the message
+
