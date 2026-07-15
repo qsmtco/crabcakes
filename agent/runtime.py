@@ -2583,7 +2583,15 @@ class AgentRuntime:
                     + "\n\n---\n\n".join(pending)
                 ),
             }
-            messages = [stuck_prefix] + messages
+            # QTR-FIX: inject the stuck prefix AFTER the system prompt, not
+            # before it. `to_api_messages()` puts the system message at index 0
+            # when `conv.system_prompt` is set; prepending the stuck message at
+            # index 0 caused role:user to appear before role:system, which some
+            # providers reject and which always loses the system's priority.
+            if messages and messages[0].get("role") == "system":
+                messages = [messages[0], stuck_prefix] + messages[1:]
+            else:
+                messages = [stuck_prefix] + messages
             logger.debug("[stuck-injection] sk=%s: prepended %d stuck message(s)", session_key, len(pending))
 
         # Use self._config (already loaded once at startup) — Bug #12 fix
