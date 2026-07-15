@@ -2,6 +2,7 @@
 # Diff card widget factories for display in project chat tabs.
 # Pure view — no git calls, no state. All actions go through callbacks.
 
+import os.path
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
@@ -11,85 +12,92 @@ from utils.escaping import escape_for_pango, xml_template
 from utils.syntax_highlight import highlight
 
 
+# Language mapping: file extension → Pygments lexer name
+_EXTENSION_LANG_MAP: dict[str, str] = {
+    ".py": "python",
+    ".js": "javascript",
+    ".ts": "typescript",
+    ".jsx": "javascript",
+    ".tsx": "typescript",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".c": "c",
+    ".cpp": "cpp",
+    ".h": "c",
+    ".hpp": "cpp",
+    ".cs": "csharp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".swift": "swift",
+    ".kt": "kotlin",
+    ".scala": "scala",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".zsh": "bash",
+    ".fish": "bash",
+    ".ps1": "powershell",
+    ".psm1": "powershell",
+    ".sql": "sql",
+    ".html": "html",
+    ".htm": "html",
+    ".css": "css",
+    ".scss": "scss",
+    ".sass": "scss",
+    ".less": "less",
+    ".json": "json",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".xml": "xml",
+    ".toml": "toml",
+    ".md": "markdown",
+    ".markdown": "markdown",
+    ".rst": "rst",
+    ".tex": "latex",
+    ".lua": "lua",
+    ".r": "r",
+    ".R": "r",
+    ".clj": "clojure",
+    ".cljs": "clojure",
+    ".ex": "elixir",
+    ".exs": "elixir",
+    ".erl": "erlang",
+    ".hrl": "erlang",
+    ".fs": "fsharp",
+    ".fsx": "fsharp",
+    ".ml": "ocaml",
+    ".mli": "ocaml",
+    ".hs": "haskell",
+    ".jl": "julia",
+    ".nim": "nim",
+    ".v": "verilog",
+    ".vhd": "vhdl",
+    ".vlog": "verilog",
+    ".sv": "systemverilog",
+    ".tf": "hcl",
+    ".hcl": "hcl",
+    ".dockerfile": "dockerfile",
+    ".makefile": "makefile",
+    ".mk": "makefile",
+    ".cmake": "cmake",
+    ".proto": "protobuf",
+}
+
+
 def get_lang_from_path(file_path: str) -> str | None:
     """Infer language from file extension."""
-    ext_map = {
-        ".py": "python",
-        ".js": "javascript",
-        ".ts": "typescript",
-        ".jsx": "javascript",
-        ".tsx": "typescript",
-        ".go": "go",
-        ".rs": "rust",
-        ".java": "java",
-        ".c": "c",
-        ".cpp": "cpp",
-        ".h": "c",
-        ".hpp": "cpp",
-        ".cs": "csharp",
-        ".rb": "ruby",
-        ".php": "php",
-        ".swift": "swift",
-        ".kt": "kotlin",
-        ".scala": "scala",
-        ".sh": "bash",
-        ".bash": "bash",
-        ".zsh": "bash",
-        ".fish": "bash",
-        ".ps1": "powershell",
-        ".psm1": "powershell",
-        ".sql": "sql",
-        ".html": "html",
-        ".htm": "html",
-        ".css": "css",
-        ".scss": "scss",
-        ".sass": "scss",
-        ".less": "less",
-        ".json": "json",
-        ".yaml": "yaml",
-        ".yml": "yaml",
-        ".xml": "xml",
-        ".toml": "toml",
-        ".md": "markdown",
-        ".markdown": "markdown",
-        ".rst": "rst",
-        ".tex": "latex",
-        ".lua": "lua",
-        ".r": "r",
-        ".R": "r",
-        ".scala": "scala",
-        ".clj": "clojure",
-        ".cljs": "clojure",
-        ".ex": "elixir",
-        ".exs": "elixir",
-        ".erl": "erlang",
-        ".hrl": "erlang",
-        ".fs": "fsharp",
-        ".fsx": "fsharp",
-        ".ml": "ocaml",
-        ".mli": "ocaml",
-        ".hs": "haskell",
-        ".jl": "julia",
-        ".nim": "nim",
-        ".v": "verilog",
-        ".vhd": "vhdl",
-        ".vlog": "verilog",
-        ".sv": "systemverilog",
-        ".tf": "hcl",
-        ".hcl": "hcl",
-        ".dockerfile": "dockerfile",
-        ".makefile": "makefile",
-        ".mk": "makefile",
-        ".cmake": "cmake",
-        ".proto": "protobuf",
-    }
-    import os.path
+    # Guard: reject non-string or empty input
+    if not isinstance(file_path, str) or not file_path:
+        return None
+
     _, ext = os.path.splitext(file_path)
-    if ext.lower() in ext_map:
-        return ext_map[ext.lower()]
-    if file_path.lower().endswith("makefile"):
+    if ext.lower() in _EXTENSION_LANG_MAP:
+        return _EXTENSION_LANG_MAP[ext.lower()]
+
+    basename = os.path.basename(file_path).lower()
+    if basename in {"makefile", "gnumakefile"}:
         return "makefile"
-    if "dockerfile" in file_path.lower():
+    if basename == "dockerfile":
         return "dockerfile"
     return None
 
