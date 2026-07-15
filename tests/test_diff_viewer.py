@@ -377,7 +377,7 @@ class TestDiffViewerRevertCompletion:
         assert viewer._revert_watchdog_timer is None
 
     def test_revert_exception_safe(self):
-        """BUG #19: on_revert throwing does not crash viewer."""
+        """BUG #19/#25: on_revert throwing does not crash viewer and shows error."""
         def broken_revert(fp, sha, on_complete):
             raise RuntimeError("simulated revert failure")
 
@@ -392,6 +392,13 @@ class TestDiffViewerRevertCompletion:
         # Viewer should still be in valid state
         assert viewer._selected_sha is None
         assert not viewer._revert_btn.get_visible()
+        # Error text should be shown in the placeholder
+        children = list(viewer._diff_box)
+        labels = [c for c in children if isinstance(c, Gtk.Label)]
+        texts = [lbl.get_text() for lbl in labels]
+        assert any("Revert failed" in t and "simulated" in t for t in texts), (
+            f"Expected 'Revert failed' in placeholder, got {texts}"
+        )
 
 
 class TestDiffViewerPangoInjection:
