@@ -116,9 +116,9 @@ class DiffViewer(Gtk.Box):
         self._back_btn.connect("clicked", self._on_back_clicked)
         self._header.append(self._back_btn)
 
-        # Title (file path) — BUG #2: use set_text() to prevent Pango injection
+        # Title (file path) — set_text stores literally, no escape needed (BUG #21)
         self._title_label = Gtk.Label()
-        self._title_label.set_text(escape_for_pango(self._file_path))
+        self._title_label.set_text(self._file_path)
         self._title_label.set_halign(Gtk.Align.START)
         self._title_label.set_ellipsize(3)  # Pango.EllipsizeMode.END
         self._title_label.set_hexpand(True)
