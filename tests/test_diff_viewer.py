@@ -344,14 +344,17 @@ class TestDiffViewerWidgetStructure:
         assert hasattr(viewer, '_back_btn')
 
     def test_toggles_are_grouped(self):
-        """Diff and History toggles are in a radio group."""
+        """Diff and History toggles are in a radio group (set_group works)."""
         viewer = DiffViewer(
             file_path="src/main.py",
             project_path="/tmp/test-project",
         )
-        # History toggle should be grouped with diff toggle
-        group = viewer._history_toggle.get_group()
-        assert viewer._diff_toggle in group
+        # In GTK4, CheckButton.set_group means the other button is in the group.
+        # We verify by checking that setting active on one deactivates the other.
+        assert viewer._diff_toggle.get_active()
+        viewer._history_toggle.set_active(True)
+        assert not viewer._diff_toggle.get_active()
+        assert viewer._history_toggle.get_active()
 
     def test_diff_active_by_default(self):
         """Diff tab is active, history is not."""
