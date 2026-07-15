@@ -1432,6 +1432,8 @@ class SessionHandler:
 
 **Public API:**
 ```python
+get_lang_from_path(file_path: str) -> str | None
+render_diff_hunks(hunks: list[DiffHunk], lang: str | None = None) -> Gtk.Box
 build_file_diff_card(file_diff, on_accept_file=None, on_reject_file=None) -> Gtk.Widget
 build_diff_summary_card(parsed_diff, on_accept_all=None, on_reject_all=None) -> Gtk.Widget
 ```

@@ -45,7 +45,10 @@ class TestGetLangFromPath:
         assert get_lang_from_path("Makefile") == "makefile"
 
     def test_dockerfile_detection(self):
-        assert get_lang_from_path("Dockerfile.prod") == "dockerfile"
+        assert get_lang_from_path("Dockerfile") == "dockerfile"
+
+    def test_dockerfile_case_insensitive(self):
+        assert get_lang_from_path("dockerfile") == "dockerfile"
 
     def test_unknown_extension(self):
         assert get_lang_from_path("foo.xyz") is None
