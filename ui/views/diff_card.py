@@ -84,9 +84,14 @@ _EXTENSION_LANG_MAP: dict[str, str] = {
 }
 
 
-def get_lang_from_path(file_path: str) -> str | None:
-    """Infer language from file extension."""
-    # Guard: reject non-string or empty input
+def get_lang_from_path(file_path: str | os.PathLike) -> str | None:
+    """Infer language from file extension.
+
+    Accepts str or os.PathLike (pathlib.Path).
+    """
+    # Guard: reject non-strings or empty input
+    if isinstance(file_path, os.PathLike):
+        file_path = os.fspath(file_path)
     if not isinstance(file_path, str) or not file_path:
         return None
 
@@ -94,10 +99,10 @@ def get_lang_from_path(file_path: str) -> str | None:
     if ext.lower() in _EXTENSION_LANG_MAP:
         return _EXTENSION_LANG_MAP[ext.lower()]
 
-    basename = os.path.basename(file_path).lower()
+    basename = os.path.basename(file_path.rstrip("/\\")).lower()
     if basename in {"makefile", "gnumakefile"}:
         return "makefile"
-    if basename == "dockerfile":
+    if basename == "dockerfile" or basename.startswith("dockerfile."):
         return "dockerfile"
     return None
 
