@@ -552,7 +552,7 @@ class TestDiffViewerHelpers:
             file_path="src/main.py",
             project_path="/tmp/test-project",
         )
-        viewer.destroy()
+        viewer.emit("destroy")
         viewer._show_placeholder("Should not show")
         # Should not crash
 
@@ -562,7 +562,7 @@ class TestDiffViewerHelpers:
             file_path="src/main.py",
             project_path="/tmp/test-project",
         )
-        viewer.destroy()
+        viewer.emit("destroy")
         viewer._show_loading()
         # Should not crash
 
@@ -578,7 +578,7 @@ class TestDiffViewerHelpers:
         # Watchdog should be running
         assert viewer._revert_watchdog_timer is not None
         assert viewer._revert_watchdog_timer.is_alive()
-        viewer.destroy()
+        viewer.emit("destroy")
         # After destroy, watchdog should be cancelled
         assert viewer._revert_watchdog_timer is None or not viewer._revert_watchdog_timer.is_alive()
 
