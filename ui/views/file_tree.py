@@ -577,8 +577,7 @@ class FileTree(Gtk.Box):
             return False
         return entry[2]  # is_open flag
 
-    def _load_drawer_diff(self, file_path: str, drawer_revealer: Gtk.Revealer,
-                          drawer_box: Gtk.Box, project_path: str,
+    def _load_drawer_diff(self, file_path: str, drawer_box: Gtk.Box, project_path: str,
                           checkpoint_sha: str | None = None) -> None:
         """Load current diff for a file into the drawer box on background thread."""
         def _do():
@@ -589,12 +588,11 @@ class FileTree(Gtk.Box):
                 result = diff_working_tree(project_path, file_path)
                 subtitle = "since HEAD"
             GLib.idle_add(lambda: self._on_drawer_diff_loaded(
-                result, subtitle, drawer_revealer, drawer_box, file_path
+                result, subtitle, drawer_box, file_path
             ))
         threading.Thread(target=_do, daemon=True).start()
 
     def _on_drawer_diff_loaded(self, result, subtitle: str,
-                               drawer_revealer: Gtk.Revealer,
                                drawer_box: Gtk.Box, file_path: str) -> None:
         """Handle diff load result for drawer — update the Diff page on main thread."""
         # Check if drawer still exists (not cleaned up)
