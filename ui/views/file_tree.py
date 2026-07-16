@@ -430,6 +430,12 @@ class FileTree(Gtk.Box):
 
     def _toggle_drawer(self, file_path: str) -> None:
         """Toggle a file's drawer revealer open/closed."""
+        # Debounce: prevent double-click race during revealer animation
+        now = time.monotonic()
+        if now - getattr(self, '_last_toggle_time', 0) < 0.3:
+            return
+        self._last_toggle_time = now
+
         entry = self._drawers.get(file_path)
         if entry is None:
             return
