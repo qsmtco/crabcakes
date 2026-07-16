@@ -442,7 +442,10 @@ class FileTree(Gtk.Box):
         self._drawers[file_path] = (revealer, display_name, False, drawer_box)
 
     def _toggle_drawer(self, file_path: str) -> None:
-        """Toggle a file's drawer revealer open/closed."""
+        """Toggle a file's drawer revealer open/closed.
+
+        On first open, triggers lazy loading of diff content from git.
+        """
         # Debounce: prevent double-click race during revealer animation
         now = time.monotonic()
         if now - getattr(self, '_last_toggle_time', 0) < 0.3:
@@ -452,10 +455,27 @@ class FileTree(Gtk.Box):
         entry = self._drawers.get(file_path)
         if entry is None:
             return
-        revealer, display_name, is_open = entry
+        revealer, display_name, is_open, drawer_box = entry
         new_state = not is_open
         revealer.set_reveal_child(new_state)
-        self._drawers[file_path] = (revealer, display_name, new_state)
+
+        # Trigger lazy load when opening for the first time
+        if new_state and file_path not in self._loaded_drawers:
+            self._loaded_drawers.add(file_path)
+            project_path = self._project_path or ""
+            # Resolve checkpoint SHA from active review if ProjectHandler is available
+            checkpoint_sha = None
+            if self._project_handler and self._project_name:
+                try:
+                    from models.review_state import ReviewState
+                    review_state = self._project_handler.get_review_state(self._project_name)
+                    if review_state and review_state.is_active():
+                        checkpoint_sha = review_state.checkpoint_sha
+                except Exception:
+                    pass  # Non-fatal — fall back to HEAD
+            self._load_drawer_diff(file_path, revealer, drawer_box, project_path, checkpoint_sha)
+
+        self._drawers[file_path] = (revealer, display_name, new_state, drawer_box)
 
         # Update the tree row display name to show ▶ or ▼
         model = self._store
