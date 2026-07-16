@@ -616,7 +616,7 @@ class FileTree(Gtk.Box):
             entries: list[dict] = []
             if result.success and result.stdout.strip():
                 for line in result.stdout.strip().splitlines():
-                    parts = line.split("\x1f")
+                    parts = line.split("\x00")
                     if len(parts) == 3:
                         entries.append({
                             "sha": parts[0],
