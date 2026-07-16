@@ -852,6 +852,16 @@ class ProjectHandler:
         """"Inject ReviewHandler for review state queries in cmd_status."""
         self._review_handler = review_handler
 
+    def get_review_state(self, project_name: str):
+        """Get the ReviewState for a project, or None if no active review.
+
+        Delegates to ReviewHandler.get_state(). Returns None if the review
+        handler hasn't been wired yet (e.g. during startup or in tests).
+        """
+        if not hasattr(self, '_review_handler') or self._review_handler is None:
+            return None
+        return self._review_handler.get_state(project_name)
+
     # ── Git commit helper ───────────────────────────────────────────────
 
     def _git_commit_if_available(self, path: str, message: str) -> None:
