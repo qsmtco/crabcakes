@@ -443,7 +443,8 @@ class ReviewHandler:
 
         threading.Thread(target=_do, daemon=True).start()
 
-    def revert_file_to_sha(self, project_name: str, file_path: str, target_sha: str) -> None:
+    def revert_file_to_sha(self, project_name: str, file_path: str, target_sha: str,
+                           on_complete: callable = None) -> None:
         """Revert a single file to its state at an arbitrary commit SHA.
 
         Unlike reject_file() (which requires an active review session and reverts
@@ -456,6 +457,8 @@ class ReviewHandler:
         get_active_project_path() which could return a different project's path.
 
         SHA validation is handled by git_ops.checkout_paths() via _VALID_SHA_RE.
+
+        on_complete: Optional callback (zero args) called on main thread after revert succeeds.
         """
         # M17 fix: require active review session
         state = self._states.get(project_name)
