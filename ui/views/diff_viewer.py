@@ -8,7 +8,7 @@ from typing import Callable, Optional
 
 import gi
 gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk, GLib
+from gi.repository import Gtk, Gdk, GLib
 
 from utils.diff_parser import parse_diff, FileDiff
 from utils.git_ops import (
