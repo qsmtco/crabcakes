@@ -657,12 +657,11 @@ class TestDiffViewerHelpers:
         )
         viewer._selected_sha = "abc123def456"
         viewer._on_revert_confirmed(None, Gtk.ResponseType.YES)
-        # Watchdog should be running
-        assert viewer._revert_watchdog_timer is not None
-        assert viewer._revert_watchdog_timer.is_alive()
+        # Watchdog should be running (source_id set)
+        assert viewer._revert_watchdog_source_id is not None
         viewer.emit("destroy")
         # After destroy, watchdog should be cancelled
-        assert viewer._revert_watchdog_timer is None or not viewer._revert_watchdog_timer.is_alive()
+        assert viewer._revert_watchdog_source_id is None
 
 
 class TestDiffViewerKeyboardNavigation:
