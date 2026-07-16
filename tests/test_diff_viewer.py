@@ -374,7 +374,7 @@ class TestDiffViewerRevertCompletion:
             pass
 
         # After completion, watchdog should be None (cancelled)
-        assert viewer._revert_watchdog_timer is None
+        assert viewer._revert_watchdog_source_id is None
 
     def test_revert_exception_safe(self):
         """BUG #19/#25: on_revert throwing does not crash viewer and shows error."""
