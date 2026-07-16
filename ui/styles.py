@@ -817,6 +817,16 @@ notebook > header > tabs > tab {
 .diff-viewer-revert-btn:hover {
     background: rgba(244, 63, 94, 0.3);
 }
+.diff-viewer-copy-btn {
+    background: rgba(6, 182, 212, 0.2);
+    color: #06b6d4;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-size: 0.9em;
+}
+.diff-viewer-copy-btn:hover {
+    background: rgba(6, 182, 212, 0.3);
+}
 .diff-history-row {
     padding: 6px 12px;
     border-bottom: 1px solid alpha(@theme_fg_color, 0.06);
