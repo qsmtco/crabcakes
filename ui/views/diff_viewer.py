@@ -173,9 +173,11 @@ class DiffViewer(Gtk.Box):
         # BUG #4: Connect row-activated once in _build_ui (not per load)
         self._history_list.connect("row-activated", self._on_history_row_activated)
 
-        # Keyboard navigation for history list
+        # Keyboard navigation for history list — GTK4 uses EventControllerKey
         self._history_list.set_focus_on_click(True)
-        self._history_list.connect("key-press-event", self._on_history_key_press)
+        self._history_key_controller = Gtk.EventControllerKey()
+        self._history_key_controller.connect("key-pressed", self._on_history_key_pressed)
+        self._history_list.add_controller(self._history_key_controller)
 
         # Global Escape key — closes viewer from anywhere
         self._key_controller = Gtk.EventControllerKey()
