@@ -384,7 +384,10 @@ class FileTree(Gtk.Box):
         self._title_lbl.set_hexpand(True)
         self._search_entry.set_visible(False)
 
-        entries = scan_directory(path)
+        try:
+            entries = scan_directory(path)
+        except (PermissionError, OSError) as e:
+            entries = [(f"[error: {e}]", "", False)]
         for entry_name, full_path, is_dir in entries:
             prefix = "📁 " if is_dir else "  "
             parent = self._store.append(None, [
