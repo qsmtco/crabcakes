@@ -547,21 +547,24 @@ class FileTree(Gtk.Box):
     def _on_drawer_diff_loaded(self, result, subtitle: str,
                                drawer_revealer: Gtk.Revealer,
                                drawer_box: Gtk.Box, file_path: str) -> None:
-        """Handle diff load result for drawer — update UI on main thread."""
+        """Handle diff load result for drawer — update the Diff page on main thread."""
         # Check if drawer still exists (not cleaned up)
         if file_path not in self._drawers:
             return
 
-        # Clear loading placeholder
-        while drawer_box.get_first_child() is not None:
-            drawer_box.remove(drawer_box.get_first_child())
+        # Populate the diff_box inside the tabbed stack, not drawer_box directly
+        diff_box = getattr(drawer_box, '_diff_box', drawer_box)
+
+        # Clear loading placeholder / previous content
+        while diff_box.get_first_child() is not None:
+            diff_box.remove(diff_box.get_first_child())
 
         if not result.success:
             error_lbl = Gtk.Label(label=f"Error: {result.error}")
             error_lbl.add_css_class("diff-viewer-subtitle")
             error_lbl.set_margin_top(12)
             error_lbl.set_margin_bottom(12)
-            drawer_box.append(error_lbl)
+            diff_box.append(error_lbl)
             return
 
         if not result.stdout.strip():
@@ -569,7 +572,7 @@ class FileTree(Gtk.Box):
             no_changes_lbl.add_css_class("diff-viewer-subtitle")
             no_changes_lbl.set_margin_top(12)
             no_changes_lbl.set_margin_bottom(12)
-            drawer_box.append(no_changes_lbl)
+            diff_box.append(no_changes_lbl)
             return
 
         parsed = parse_diff(result.stdout)
@@ -578,7 +581,7 @@ class FileTree(Gtk.Box):
             no_changes_lbl.add_css_class("diff-viewer-subtitle")
             no_changes_lbl.set_margin_top(12)
             no_changes_lbl.set_margin_bottom(12)
-            drawer_box.append(no_changes_lbl)
+            diff_box.append(no_changes_lbl)
             return
 
         file_diff = parsed.files[0]
@@ -589,11 +592,11 @@ class FileTree(Gtk.Box):
             bin_lbl.add_css_class("diff-viewer-subtitle")
             bin_lbl.set_margin_top(12)
             bin_lbl.set_margin_bottom(12)
-            drawer_box.append(bin_lbl)
+            diff_box.append(bin_lbl)
             return
 
         lang = get_lang_from_path(file_diff.display_path)
-        drawer_box.append(render_diff_hunks(file_diff.hunks, lang))
+        diff_box.append(render_diff_hunks(file_diff.hunks, lang))
 
     def _toggle_drawer(self, file_path: str) -> None:
         """Toggle a file's drawer revealer open/closed.
