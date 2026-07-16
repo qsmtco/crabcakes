@@ -518,11 +518,23 @@ class FileTree(Gtk.Box):
         revert_btn.connect("clicked", lambda btn:
             self._on_drawer_revert_clicked(file_path, drawer_box))
 
+        # Wire copy to clipboard button
+        copy_btn.connect("clicked", lambda btn:
+            self._on_copy_diff_to_clipboard(file_path, drawer_box))
+
         # Wire history row activation — guard against non-activatable rows (e.g. placeholder)
         history_list.connect("row-activated", lambda lb, row:
             self._load_historical_diff(file_path, getattr(row, 'sha', 'HEAD'), stack)
             if isinstance(row, Gtk.ListBoxRow) and row.get_activatable()
             else None)
+
+        # Keyboard navigation in history list: Enter activates selected row
+        history_list.connect("keynav-failed", lambda lb, direction: True)  # prevent focus escape
+        history_list_controller = Gtk.EventControllerKey()
+        history_list_controller.connect("key-pressed", lambda ctrl, keyval, keycode, state:
+            self._on_history_key_pressed(keyval, history_list))
+
+        history_list.add_controller(history_list_controller)
 
         revealer.set_child(drawer_box)
 
@@ -533,7 +545,9 @@ class FileTree(Gtk.Box):
         drawer_box._diff_box = diff_box
         drawer_box._history_list = history_list
         drawer_box._revert_btn = revert_btn
+        drawer_box._copy_btn = copy_btn
         drawer_box._history_selected_sha = None
+        drawer_box._diff_text = ""  # populated when diff is loaded
 
         # Keep drawer in the area but collapsed
         self._drawer_area.append(revealer)
@@ -612,6 +626,9 @@ class FileTree(Gtk.Box):
 
         lang = get_lang_from_path(file_diff.display_path)
         diff_box.append(render_diff_hunks(file_diff.hunks, lang))
+
+        # Store diff text for clipboard
+        drawer_box._diff_text = result.stdout
 
     # ── History Tab ─────────────────────────────────────────────────────────
 
