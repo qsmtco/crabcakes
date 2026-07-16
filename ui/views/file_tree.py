@@ -41,6 +41,9 @@ class FileTree(Gtk.Box):
         # The notebook page container (set by LeftPanel)
         self._page = None
 
+        # Drawer state: file_path -> (revealer, label, is_open)
+        self._drawers: dict[str, tuple[Gtk.Revealer, str, bool]] = {}
+
         # ── Header ────────────────────────────────────────────────────────
         self._header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         self._header.set_halign(Gtk.Align.FILL)
