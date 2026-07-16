@@ -640,11 +640,15 @@ class FileTree(Gtk.Box):
             history_list.remove(history_list.get_first_child())
 
         if not entries:
+            placeholder_row = Gtk.ListBoxRow()
+            placeholder_row.set_activatable(False)
+            placeholder_row.set_selectable(False)
             placeholder = Gtk.Label(label="No commit history for this file.")
             placeholder.set_halign(Gtk.Align.CENTER)
             placeholder.set_valign(Gtk.Align.CENTER)
             placeholder.add_css_class("diff-viewer-subtitle")
-            history_list.append(placeholder)
+            placeholder_row.set_child(placeholder)
+            history_list.append(placeholder_row)
             return
 
         for entry in entries:
