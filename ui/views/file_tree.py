@@ -876,7 +876,7 @@ class FileTree(Gtk.Box):
             except Exception:
                 pass
 
-        self._load_drawer_diff(file_path, None, drawer_box, project_path, checkpoint_sha)
+        self._load_drawer_diff(file_path, drawer_box, project_path, checkpoint_sha)
 
     # ── Clipboard Copy ─────────────────────────────────────────────────────
 
