@@ -521,7 +521,10 @@ class FileTree(Gtk.Box):
 
         # Load real children
         parent_path = model.get_value(it, 1)
-        entries = scan_directory(parent_path)
+        try:
+            entries = scan_directory(parent_path)
+        except (PermissionError, OSError) as e:
+            entries = [(f"[error: {e}]", "", False)]
         for entry_name, full_path, is_dir in entries:
             prefix = "📁 " if is_dir else "  "
             child = model.append(it, [prefix + entry_name, full_path, is_dir, False])
