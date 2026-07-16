@@ -722,11 +722,8 @@ class TestDiffViewerKeyboardNavigation:
             project_path="/tmp/test-project",
             on_back=on_back,
         )
-        # Simulate GdkEvent-style event with keyval
-        class FakeEvent:
-            keyval = Gdk.KEY_Escape
 
-        result = viewer._on_history_key_pressed(None, FakeEvent())
+        result = viewer._on_history_key_pressed(None, Gdk.KEY_Escape, 0, 0)
         assert result is True
         assert len(called) == 1
 
@@ -737,10 +734,7 @@ class TestDiffViewerKeyboardNavigation:
             project_path="/tmp/test-project",
         )
 
-        class FakeEvent:
-            keyval = Gdk.KEY_Escape
-
-        result = viewer._on_history_key_pressed(None, FakeEvent())
+        result = viewer._on_history_key_pressed(None, Gdk.KEY_Escape, 0, 0)
         assert result is False
 
 
