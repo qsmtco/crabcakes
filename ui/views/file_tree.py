@@ -19,7 +19,7 @@ import time
 
 from utils.escaping import escape_for_pango
 from utils.projects import scan_directory
-from utils.git_ops import diff_file_against_working_tree, diff_working_tree
+from utils.git_ops import diff_file_against_working_tree, diff_working_tree, file_log, diff_file_against
 from utils.diff_parser import parse_diff, FileDiff
 from ui.views.diff_card import render_diff_hunks, get_lang_from_path
 
