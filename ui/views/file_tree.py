@@ -384,6 +384,7 @@ class FileTree(Gtk.Box):
         for revealer, _, _, _ in self._drawers.values():
             self._drawer_area.remove(revealer)
         self._drawers.clear()
+        self._loaded_drawers.clear()
         self._back_btn.set_visible(True)
         self._folder_icon.set_visible(True)
         safe_name = escape_for_pango(name)
@@ -828,10 +829,13 @@ class FileTree(Gtk.Box):
         On first open, triggers lazy loading of diff content from git.
         """
         # Debounce: prevent double-click race during revealer animation
+        # Per-file debounce — avoids blocking toggles on different files
         now = time.monotonic()
-        if now - getattr(self, '_last_toggle_time', 0) < 0.3:
+        last_times = getattr(self, '_last_toggle_per_file', {})
+        if now - last_times.get(file_path, 0) < 0.3:
             return
-        self._last_toggle_time = now
+        last_times[file_path] = now
+        self._last_toggle_per_file = last_times
 
         entry = self._drawers.get(file_path)
         if entry is None:
