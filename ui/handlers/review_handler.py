@@ -482,6 +482,9 @@ class ReviewHandler:
 
             self._GLib.idle_add(lambda sk=session_key: self._on_display_text(
                 sk, f"↩ {file_path} reverted to {target_sha[:7]}"))
+            # BUG #1: fire on_complete callback on main thread after success
+            if on_complete is not None:
+                self._GLib.idle_add(lambda cb=on_complete: cb())
 
         threading.Thread(target=_do, daemon=True).start()
 
