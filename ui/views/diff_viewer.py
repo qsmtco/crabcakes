@@ -494,13 +494,6 @@ class DiffViewer(Gtk.Box):
         self._revert_watchdog_timer = None
         self._load_current_diff()
 
-    # BUG #20: on_complete from background thread — GLib.idle_add routes here
-    def _on_revert_complete_main_thread(self):
-        """Called from the main thread via GLib.idle_add when revert completes."""
-        if not self._disposed:
-            self._cancel_revert_watchdog()
-            self._load_current_diff()
-
     def _on_copy_clicked(self, button):
         """Copy current diff text to clipboard."""
         if self._stack.get_visible_child_name() != "diff":
