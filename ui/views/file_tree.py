@@ -549,6 +549,9 @@ class FileTree(Gtk.Box):
         drawer_box._history_selected_sha = None
         drawer_box._diff_text = ""  # populated when diff is loaded
 
+        # Wire Escape key on revealer to close drawer
+        self._wire_escape_key(revealer, file_path)
+
         # Keep drawer in the area but collapsed
         self._drawer_area.append(revealer)
         self._drawers[file_path] = (revealer, display_name, False, drawer_box)
