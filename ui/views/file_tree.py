@@ -16,6 +16,7 @@ from gi.repository import Gtk, GLib
 
 import time
 
+from utils.escaping import escape_for_pango
 from utils.projects import scan_directory
 
 
@@ -41,9 +42,6 @@ class FileTree(Gtk.Box):
         self._project_name = None
         self._project_path = None
         self._project_history = []  # stack of paths for back navigation
-        # The notebook page container (set by LeftPanel)
-        self._page = None
-
         # Drawer state: file_path -> (revealer, label, is_open)
         self._drawers: dict[str, tuple[Gtk.Revealer, str, bool]] = {}
 
@@ -91,8 +89,8 @@ class FileTree(Gtk.Box):
         self._scroll.set_vexpand(True)
         self._scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
 
-        # TreeStore columns: (display_name, full_path, is_dir, is_loaded)
-        self._store = Gtk.TreeStore.new([str, str, bool, bool])
+        # TreeStore columns: (display_name, full_path, is_dir)
+        self._store = Gtk.TreeStore.new([str, str, bool])
         self._tree = Gtk.TreeView(model=self._store)
         self._tree.set_show_expanders(True)
         self._tree.set_activate_on_single_click(False)
@@ -163,10 +161,6 @@ class FileTree(Gtk.Box):
             self._on_navigate_back(project_name)
         self._show_project_picker()
 
-    def set_page(self, page):
-        """Set the notebook page container (for clearing content)."""
-        self._page = page
-
     def set_on_navigate_back(self, cb):
         """Set callback for when navigate_back is called. cb(project_name)."""
         self._on_navigate_back = cb
@@ -189,6 +183,10 @@ class FileTree(Gtk.Box):
 
     def _show_project_picker(self):
         """Show project cards (replaces TreeView picker rows)."""
+        # Clear drawer state before replacing content
+        for revealer, _, _ in self._drawers.values():
+            self._drawer_area.remove(revealer)
+        self._drawers.clear()
         self._store.clear()
         self._back_btn.set_visible(False)
         self._folder_icon.set_visible(False)
@@ -379,7 +377,8 @@ class FileTree(Gtk.Box):
         self._drawers.clear()
         self._back_btn.set_visible(True)
         self._folder_icon.set_visible(True)
-        self._title_lbl.set_markup(f"<b>{name}</b>")
+        safe_name = escape_for_pango(name)
+        self._title_lbl.set_markup(f"<b>{safe_name}</b>")
         self._title_lbl.set_use_markup(True)
         self._title_lbl.set_hexpand(True)
         self._search_entry.set_visible(False)
