@@ -390,9 +390,9 @@ class DiffViewer(Gtk.Box):
                 return True
         return False
 
-    def _on_history_key_press(self, widget, event):
+    def _on_history_key_pressed(self, controller, keyval, keycode, state):
         """Keyboard navigation in history list — Escape closes viewer."""
-        if event.keyval == Gdk.KEY_Escape:
+        if keyval == Gdk.KEY_Escape:
             if self._on_back:
                 self._on_back()
                 return True
