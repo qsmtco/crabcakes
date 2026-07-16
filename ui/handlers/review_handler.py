@@ -444,7 +444,7 @@ class ReviewHandler:
         threading.Thread(target=_do, daemon=True).start()
 
     def revert_file_to_sha(self, project_name: str, file_path: str, target_sha: str,
-                           on_complete: callable = None) -> None:
+                           on_complete: Callable[[], None] | None = None) -> None:
         """Revert a single file to its state at an arbitrary commit SHA.
 
         Unlike reject_file() (which requires an active review session and reverts
