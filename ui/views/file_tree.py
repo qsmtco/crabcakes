@@ -2,7 +2,8 @@
 # File tree widget — GTK4 TreeView with lazy-loading directory expansion.
 #
 # Single-click expands/collapses directories, loads children on first expand.
-# Fires on_file_selected(path) callback when a file is activated.
+# Double-click on a file toggles the inline diff drawer.
+# Fires on_file_selected(path) callback when a file is activated (fallback).
 #
 # Public API:
 #   tree = FileTree(on_file_selected=None)
@@ -237,7 +238,7 @@ class FileTree(Gtk.Box):
         Colored folder icon with first letter of project name.
         """
         from utils.icons import render_folder_icon
-        from ui.styles import apply_styles  # ensure CSS loaded
+        # CSS loaded globally at startup from main.py via apply_styles()
 
         card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         card.set_halign(Gtk.Align.FILL)
