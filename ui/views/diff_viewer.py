@@ -173,6 +173,15 @@ class DiffViewer(Gtk.Box):
         # BUG #4: Connect row-activated once in _build_ui (not per load)
         self._history_list.connect("row-activated", self._on_history_row_activated)
 
+        # Keyboard navigation for history list
+        self._history_list.set_focus_on_click(True)
+        self._history_list.connect("key-press-event", self._on_history_key_press)
+
+        # Global Escape key — closes viewer from anywhere
+        self._key_controller = Gtk.EventControllerKey()
+        self._key_controller.connect("key-pressed", self._on_key_pressed)
+        self.add_controller(self._key_controller)
+
         # Action bar (revert button)
         self._action_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self._action_bar.add_css_class("diff-viewer-action-bar")
