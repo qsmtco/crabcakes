@@ -483,7 +483,7 @@ class FileTree(Gtk.Box):
 
         drawer_box.append(stack)
 
-        # ── Action bar (revert button) ───────────────────────────────────
+        # ── Action bar (revert + copy buttons) ──────────────────────────
         action_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         action_bar.add_css_class("diff-viewer-action-bar")
         action_bar.set_margin_top(8)
@@ -495,7 +495,16 @@ class FileTree(Gtk.Box):
         revert_btn.add_css_class("diff-viewer-revert-btn")
         revert_btn.set_visible(False)
 
+        copy_btn = Gtk.Button(label="Copy diff")
+        copy_btn.add_css_class("diff-viewer-copy-btn")
+
+        # Spacer to push buttons apart
+        spacer = Gtk.Label()
+        spacer.set_hexpand(True)
+
         action_bar.append(revert_btn)
+        action_bar.append(spacer)
+        action_bar.append(copy_btn)
         drawer_box.append(action_bar)
 
         # ── Wire tab switching ───────────────────────────────────────────
