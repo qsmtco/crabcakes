@@ -3,7 +3,7 @@
 #
 # Single-click expands/collapses directories, loads children on first expand.
 # Double-click on a file toggles the inline diff drawer.
-# Fires on_file_selected(path) callback when a file is activated (fallback).
+# Fires on_file_selected(path) callback when a directory row is activated (fallback).
 #
 # Public API:
 #   tree = FileTree(on_file_selected=None)
@@ -390,11 +390,11 @@ class FileTree(Gtk.Box):
         for entry_name, full_path, is_dir in entries:
             prefix = "📁 " if is_dir else "  "
             parent = self._store.append(None, [
-                prefix + entry_name, full_path, is_dir, False
+                prefix + entry_name, full_path, is_dir
             ])
             if is_dir:
                 # Placeholder row — children loaded on first expand
-                self._store.append(parent, ["…", "", True, False])
+                self._store.append(parent, ["…", "", True])
             else:
                 # Create drawer revealer for file rows
                 self._add_drawer_for_file(full_path, entry_name)
@@ -457,7 +457,11 @@ class FileTree(Gtk.Box):
             # Check if this is a file row (is_dir=False) matching our path
             if not model.get_value(it, 2) and model.get_value(it, 1) == file_path:
                 current = model.get_value(it, 0)
-                name_part = current.lstrip("  ").lstrip("▶ ").lstrip("▼ ")
+                for prefix in ("  ", "▶ ", "▼ "):
+                    if current.startswith(prefix):
+                        current = current[len(prefix):]
+                        break
+                name_part = current
                 new_prefix = "▼ " if is_open else "▶ "
                 model.set_value(it, 0, new_prefix + name_part)
                 return True
@@ -483,7 +487,12 @@ class FileTree(Gtk.Box):
         if it is None:
             return
 
-        display_name = model.get_value(it, 0).lstrip("📁 ").lstrip("  ").lstrip("▶ ").lstrip("▼ ")
+        current = model.get_value(it, 0)
+        for prefix in ("📁 ", "  ", "▶ ", "▼ "):
+            if current.startswith(prefix):
+                current = current[len(prefix):]
+                break
+        display_name = current
         full_path = model.get_value(it, 1)
         is_dir = model.get_value(it, 2)
         parent_it = model.iter_parent(it)
@@ -498,11 +507,9 @@ class FileTree(Gtk.Box):
             else:
                 tree.expand_row(path, open_all=False)
         else:
-            # File row - toggle drawer if we have one, otherwise fire callback
+            # File row - toggle drawer
             if full_path in self._drawers:
                 self._toggle_drawer(full_path)
-            elif self._on_file_selected:
-                self._on_file_selected(full_path)
 
     def _on_row_expanded(self, tree, it, path):
         """Lazy load children on first expand."""
@@ -526,9 +533,9 @@ class FileTree(Gtk.Box):
             entries = [(f"[error: {e}]", "", False)]
         for entry_name, full_path, is_dir in entries:
             prefix = "📁 " if is_dir else "  "
-            child = model.append(it, [prefix + entry_name, full_path, is_dir, False])
+            child = model.append(it, [prefix + entry_name, full_path, is_dir])
             if is_dir:
-                model.append(child, ["…", "", True, False])
+                model.append(child, ["…", "", True])
             else:
                 # Create drawer revealer for file children
                 self._add_drawer_for_file(full_path, entry_name)
