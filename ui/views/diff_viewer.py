@@ -90,7 +90,7 @@ class DiffViewer(Gtk.Box):
         self._on_revert = on_revert
         self._selected_sha: str | None = None
         self._history_loaded = False
-        self._revert_watchdog_timer: threading.Timer | None = None
+        self._revert_watchdog_source_id: int | None = None
 
         # H3 fix: disposal flag
         self._disposed = False
