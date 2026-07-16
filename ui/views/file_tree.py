@@ -860,6 +860,52 @@ class FileTree(Gtk.Box):
 
         self._load_drawer_diff(file_path, None, drawer_box, project_path, checkpoint_sha)
 
+    # ── Clipboard Copy ─────────────────────────────────────────────────────
+
+    def _on_copy_diff_to_clipboard(self, file_path: str, drawer_box: Gtk.Box) -> None:
+        """Copy the diff text to system clipboard."""
+        diff_text = getattr(drawer_box, '_diff_text', None)
+        if not diff_text:
+            return
+        clipboard = Gdk.Display.get_default().get_clipboard()
+        clipboard.set(diff_text)
+
+    # ── Keyboard Navigation ────────────────────────────────────────────────
+
+    def _on_history_key_pressed(self, keyval: int, history_list: Gtk.ListBox) -> bool:
+        """Handle Enter key in history list to activate selected row."""
+        if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+            selected = history_list.get_selected_row()
+            if selected is not None and isinstance(selected, Gtk.ListBoxRow) and selected.get_activatable():
+                history_list.emit("row-activated", selected)
+                return True
+        return False
+
+    # ── Escape key to close drawer ─────────────────────────────────────────
+
+    def _wire_escape_key(self, container: Gtk.Widget, file_path: str) -> None:
+        """Wire Escape key to close the drawer for this file."""
+        controller = Gtk.EventControllerKey()
+        controller.connect("key-pressed", lambda ctrl, keyval, keycode, state:
+            self._on_escape_pressed(keyval, file_path))
+        container.add_controller(controller)
+
+    def _on_escape_pressed(self, keyval: int, file_path: str) -> bool:
+        """Close the drawer on Escape key press."""
+        if keyval != Gdk.KEY_Escape:
+            return False
+        entry = self._drawers.get(file_path)
+        if entry is None:
+            return False
+        revealer = entry[0]
+        if not revealer.get_reveal_child():
+            return False
+        # Close the drawer by toggling
+        self._toggle_drawer(file_path)
+        # Re-focus the tree
+        self._tree.grab_focus()
+        return True
+
     def _toggle_drawer(self, file_path: str) -> None:
         """Toggle a file's drawer revealer open/closed.
 
