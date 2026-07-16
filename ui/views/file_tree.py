@@ -103,7 +103,15 @@ class FileTree(Gtk.Box):
         column.set_expand(True)
         self._tree.append_column(column)
 
-        self._scroll.set_child(self._tree)
+        # ── Drawer area (below tree view, inside scroll) ──────────────────
+        self._drawer_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        # Wrap tree + drawer_area in a vertical box so drawers scroll with tree
+        self._tree_and_drawers = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self._tree_and_drawers.append(self._tree)
+        self._tree_and_drawers.append(self._drawer_area)
+
+        self._scroll.set_child(self._tree_and_drawers)
         # Content widget — switches between TreeView (tree mode) and card box (picker mode)
         self._content = self._scroll
         self.append(self._header)
