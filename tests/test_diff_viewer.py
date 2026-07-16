@@ -726,7 +726,7 @@ class TestDiffViewerKeyboardNavigation:
         class FakeEvent:
             keyval = Gdk.KEY_Escape
 
-        result = viewer._on_history_key_press(None, FakeEvent())
+        result = viewer._on_history_key_pressed(None, FakeEvent())
         assert result is True
         assert len(called) == 1
 
@@ -740,7 +740,7 @@ class TestDiffViewerKeyboardNavigation:
         class FakeEvent:
             keyval = Gdk.KEY_Escape
 
-        result = viewer._on_history_key_press(None, FakeEvent())
+        result = viewer._on_history_key_pressed(None, FakeEvent())
         assert result is False
 
 
