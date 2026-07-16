@@ -46,8 +46,12 @@ class FileTree(Gtk.Box):
         self._project_name = None
         self._project_path = None
         self._project_history = []  # stack of paths for back navigation
+        # ProjectHandler reference — set externally for checkpoint SHA resolution
+        self._project_handler = None
         # Drawer state: file_path -> (revealer, display_name, is_open, drawer_box)
         self._drawers: dict[str, tuple[Gtk.Revealer, str, bool, Gtk.Box]] = {}
+        # Track which drawers have had their diff content loaded (lazy load once)
+        self._loaded_drawers: set[str] = set()
 
         # ── Header ────────────────────────────────────────────────────────
         self._header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -149,7 +153,7 @@ class FileTree(Gtk.Box):
         self._project_path = None
         self._project_history.clear()
         # Clear open drawers
-        for revealer, _, _ in self._drawers.values():
+        for revealer, _, _, _ in self._drawers.values():
             self._drawer_area.remove(revealer)
         self._drawers.clear()
         # Clear search when returning to picker
