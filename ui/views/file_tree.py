@@ -549,8 +549,11 @@ class FileTree(Gtk.Box):
         drawer_box._history_selected_sha = None
         drawer_box._diff_text = ""  # populated when diff is loaded
 
-        # Wire Escape key on revealer to close drawer
-        self._wire_escape_key(revealer, file_path)
+        # Unified key controller: Escape closes drawer, Ctrl+C copies diff
+        key_controller = Gtk.EventControllerKey()
+        key_controller.connect("key-pressed", lambda ctrl, keyval, keycode, state:
+            self._on_drawer_key_pressed(keyval, keycode, state, file_path, drawer_box))
+        drawer_box.add_controller(key_controller)
 
         # Keep drawer in the area but collapsed
         self._drawer_area.append(revealer)
