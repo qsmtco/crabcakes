@@ -192,7 +192,7 @@ class FileTree(Gtk.Box):
     def _show_project_picker(self):
         """Show project cards (replaces TreeView picker rows)."""
         # Clear drawer state before replacing content
-        for revealer, _, _ in self._drawers.values():
+        for revealer, _, _, _ in self._drawers.values():
             self._drawer_area.remove(revealer)
         self._drawers.clear()
         self._store.clear()
@@ -380,7 +380,7 @@ class FileTree(Gtk.Box):
             self.append(self._content)
         self._store.clear()
         # Clear drawer state
-        for revealer, _, _ in self._drawers.values():
+        for revealer, _, _, _ in self._drawers.values():
             self._drawer_area.remove(revealer)
         self._drawers.clear()
         self._back_btn.set_visible(True)
