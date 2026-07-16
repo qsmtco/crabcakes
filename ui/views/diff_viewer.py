@@ -182,7 +182,7 @@ class DiffViewer(Gtk.Box):
         self._key_controller.connect("key-pressed", self._on_key_pressed)
         self.add_controller(self._key_controller)
 
-        # Action bar (revert button)
+        # Action bar (revert button + copy button)
         self._action_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self._action_bar.add_css_class("diff-viewer-action-bar")
         self._revert_btn = Gtk.Button(label="Revert file to this version")
@@ -190,6 +190,13 @@ class DiffViewer(Gtk.Box):
         self._revert_btn.set_visible(False)  # only shown on historical entries
         self._revert_btn.connect("clicked", self._on_revert_clicked)
         self._action_bar.append(self._revert_btn)
+
+        # Copy diff to clipboard button
+        self._copy_btn = Gtk.Button(label="Copy diff to clipboard")
+        self._copy_btn.add_css_class("diff-viewer-copy-btn")
+        self._copy_btn.connect("clicked", self._on_copy_clicked)
+        self._action_bar.append(self._copy_btn)
+
         self.append(self._action_bar)
 
     # === Async load methods with race guards ===
