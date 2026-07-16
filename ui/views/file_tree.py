@@ -156,6 +156,7 @@ class FileTree(Gtk.Box):
         for revealer, _, _, _ in self._drawers.values():
             self._drawer_area.remove(revealer)
         self._drawers.clear()
+        self._loaded_drawers.clear()
         # Clear search when returning to picker
         if self._project_list_handler:
             self._project_list_handler.clear_search()

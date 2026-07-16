@@ -862,6 +862,15 @@ class ProjectHandler:
             return None
         return self._review_handler.get_state(project_name)
 
+    def revert_file_to_sha(self, project_name: str, file_path: str, target_sha: str) -> None:
+        """Delegate file revert to ReviewHandler.
+
+        Requires a wired review handler; no-op otherwise.
+        """
+        if not hasattr(self, '_review_handler') or self._review_handler is None:
+            return
+        self._review_handler.revert_file_to_sha(project_name, file_path, target_sha)
+
     # ── Git commit helper ───────────────────────────────────────────────
 
     def _git_commit_if_available(self, path: str, message: str) -> None:
