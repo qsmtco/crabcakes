@@ -560,6 +560,20 @@ class FileTree(Gtk.Box):
         """Set ProjectHandler reference for checkpoint SHA resolution in diff loading."""
         self._project_handler = handler
 
+    def toggle_drawer_for_file(self, file_path: str) -> None:
+        """Public method to toggle a file's diff drawer open/closed from outside.
+
+        Called by MainContent when the user requests a file diff from a tab.
+        """
+        self._toggle_drawer(file_path)
+
+    def is_drawer_open(self, file_path: str) -> bool:
+        """Return True if the drawer for the given file path is currently open."""
+        entry = self._drawers.get(file_path)
+        if entry is None:
+            return False
+        return entry[2]  # is_open flag
+
     def _load_drawer_diff(self, file_path: str, drawer_revealer: Gtk.Revealer,
                           drawer_box: Gtk.Box, project_path: str,
                           checkpoint_sha: str | None = None) -> None:
