@@ -471,30 +471,27 @@ class DiffViewer(Gtk.Box):
             self._show_placeholder(f"Revert failed: {e}")
 
     def _start_revert_watchdog(self):
-        """Start a watchdog timer that fires if revert completion is not called."""
+        """Start a GLib timeout that fires _on_revert_watchdog_fired seconds later."""
         self._cancel_revert_watchdog()
 
-        def _watchdog_fired():
-            GLib.idle_add(lambda: self._on_revert_watchdog_fired() if not self._disposed else None)
-
-        self._revert_watchdog_timer = threading.Timer(
-            self._REVERT_WATCHDOG_SECS, _watchdog_fired
+        self._revert_watchdog_source_id = GLib.timeout_add_seconds(
+            self._REVERT_WATCHDOG_SECS,
+            self._on_revert_watchdog_fired,
         )
-        self._revert_watchdog_timer.daemon = True
-        self._revert_watchdog_timer.start()
 
     def _cancel_revert_watchdog(self):
-        """Cancel the watchdog timer if running."""
-        if self._revert_watchdog_timer is not None:
-            self._revert_watchdog_timer.cancel()
-            self._revert_watchdog_timer = None
+        """Cancel the watchdog GLib source if running."""
+        if self._revert_watchdog_source_id is not None:
+            GLib.source_remove(self._revert_watchdog_source_id)
+            self._revert_watchdog_source_id = None
 
     def _on_revert_watchdog_fired(self):
         """Watchdog fired — revert completion not received. Reload anyway."""
         if self._disposed:
-            return
-        self._revert_watchdog_timer = None
+            return False  # GLib.SOURCE_REMOVE
+        self._revert_watchdog_source_id = None
         self._load_current_diff()
+        return False  # GLib.SOURCE_REMOVE — one-shot
 
     def _on_copy_clicked(self, button):
         """Copy current diff text to clipboard."""
