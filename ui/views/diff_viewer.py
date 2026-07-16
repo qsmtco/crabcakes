@@ -10,7 +10,7 @@ import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gdk, GLib
 
-from utils.diff_parser import parse_diff, FileDiff
+from utils.diff_parser import parse_diff
 from utils.git_ops import (
     diff_file_against_working_tree,
     diff_working_tree,
