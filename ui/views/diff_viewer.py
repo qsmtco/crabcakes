@@ -452,19 +452,21 @@ class DiffViewer(Gtk.Box):
         self._start_revert_watchdog()
 
         def _on_revert_complete():
-            # Inline: cancel watchdog and reload diff on main thread
-            GLib.idle_add(lambda: (
-                self._cancel_revert_watchdog(),
-                self._load_current_diff(),
-            ) if not self._disposed else None)
+            # Cancel watchdog and reload diff on main thread
+            # Use a named inner function so idle_add returns None (not a tuple)
+            def _do_complete():
+                if self._disposed:
+                    return False
+                self._cancel_revert_watchdog()
+                self._load_current_diff()
+                return False  # GLib.SOURCE_REMOVE — don't repeat
+            GLib.idle_add(_do_complete)
 
-        # BUG #26: catch specific runtime exceptions (narrower than bare Exception)
-        # BUG #25: show placeholder error on failure so user sees it
+        # BUG #2: Catch all exceptions in case the callback throws — the revert
+        # itself is async (threaded), but the on_complete wrapper could fail.
         try:
-            # Dispatch the actual revert with completion callback
             self._on_revert(self._file_path, target_sha, _on_revert_complete)
-        except (RuntimeError, OSError, ValueError) as e:
-            # If the callback throws, cancel watchdog and show error
+        except Exception as e:
             self._cancel_revert_watchdog()
             self._show_placeholder(f"Revert failed: {e}")
 
