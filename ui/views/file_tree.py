@@ -443,7 +443,6 @@ class FileTree(Gtk.Box):
     def _update_drawer_prefix(self, model, it, file_path: str, is_open: bool) -> bool:
         """Recursively search for a file path in the tree and update its prefix."""
         while it is not None:
-            full_path = model.get_value(it, 2)  # is_dir
             # Check if this is a file row (is_dir=False) matching our path
             if not model.get_value(it, 2) and model.get_value(it, 1) == file_path:
                 current = model.get_value(it, 0)
