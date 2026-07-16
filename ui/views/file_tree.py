@@ -46,8 +46,8 @@ class FileTree(Gtk.Box):
         self._project_name = None
         self._project_path = None
         self._project_history = []  # stack of paths for back navigation
-        # Drawer state: file_path -> (revealer, label, is_open)
-        self._drawers: dict[str, tuple[Gtk.Revealer, str, bool]] = {}
+        # Drawer state: file_path -> (revealer, display_name, is_open, drawer_box)
+        self._drawers: dict[str, tuple[Gtk.Revealer, str, bool, Gtk.Box]] = {}
 
         # ── Header ────────────────────────────────────────────────────────
         self._header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -408,7 +408,8 @@ class FileTree(Gtk.Box):
 
         The drawer is hidden by default. It lives below the tree view so it
         scrolls in sync with the tree rows. On toggle, the revealer slides
-        open to reveal the drawer content.
+        open to reveal the drawer content. Diff content is loaded lazily on
+        first open via _load_drawer_diff.
         """
         revealer = Gtk.Revealer()
         revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
@@ -416,23 +417,25 @@ class FileTree(Gtk.Box):
         revealer.set_transition_duration(150)
         revealer.add_css_class("file-tree-drawer")
 
-        # Skeleton content box — will be populated in Phase B
+        # Content box — populated lazily when drawer is first opened
         drawer_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         drawer_box.set_margin_start(20)
         drawer_box.set_margin_end(8)
         drawer_box.set_margin_top(4)
         drawer_box.set_margin_bottom(4)
 
-        # Phase A: Just a placeholder label
-        placeholder = Gtk.Label(label=" ")
-        placeholder.set_size_request(-1, 1)
-        drawer_box.append(placeholder)
+        # Loading placeholder (shown while diff is loading)
+        loading_lbl = Gtk.Label(label="Loading diff...")
+        loading_lbl.set_margin_top(8)
+        loading_lbl.set_margin_bottom(8)
+        loading_lbl.set_opacity(0.6)
+        drawer_box.append(loading_lbl)
 
         revealer.set_child(drawer_box)
 
         # Keep drawer in the area but collapsed
         self._drawer_area.append(revealer)
-        self._drawers[file_path] = (revealer, display_name, False)
+        self._drawers[file_path] = (revealer, display_name, False, drawer_box)
 
     def _toggle_drawer(self, file_path: str) -> None:
         """Toggle a file's drawer revealer open/closed."""
