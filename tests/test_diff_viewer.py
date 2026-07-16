@@ -665,6 +665,124 @@ class TestDiffViewerHelpers:
         assert viewer._revert_watchdog_timer is None or not viewer._revert_watchdog_timer.is_alive()
 
 
+class TestDiffViewerKeyboardNavigation:
+    """Phase 3: Keyboard navigation in history list."""
+
+    def test_escape_calls_on_back(self):
+        """Escape key press calls on_back."""
+        called = []
+
+        def on_back():
+            called.append(True)
+
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+            on_back=on_back,
+        )
+        # Simulate Escape key press via the handler
+        result = viewer._on_key_pressed(None, Gdk.KEY_Escape, 0, 0)
+        assert result is True
+        assert len(called) == 1
+
+    def test_escape_no_callback(self):
+        """Escape without on_back does not crash."""
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+        )
+        result = viewer._on_key_pressed(None, Gdk.KEY_Escape, 0, 0)
+        assert result is False
+
+    def test_non_escape_key_ignored(self):
+        """Non-Escape key press does not trigger on_back."""
+        called = []
+
+        def on_back():
+            called.append(True)
+
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+            on_back=on_back,
+        )
+        result = viewer._on_key_pressed(None, Gdk.KEY_Return, 0, 0)
+        assert result is False
+        assert len(called) == 0
+
+    def test_history_escape_calls_on_back(self):
+        """Escape in history list calls on_back."""
+        called = []
+
+        def on_back():
+            called.append(True)
+
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+            on_back=on_back,
+        )
+        # Simulate GdkEvent-style event with keyval
+        class FakeEvent:
+            keyval = Gdk.KEY_Escape
+
+        result = viewer._on_history_key_press(None, FakeEvent())
+        assert result is True
+        assert len(called) == 1
+
+    def test_history_escape_no_callback(self):
+        """Escape without on_back does not crash in history."""
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+        )
+
+        class FakeEvent:
+            keyval = Gdk.KEY_Escape
+
+        result = viewer._on_history_key_press(None, FakeEvent())
+        assert result is False
+
+
+class TestDiffViewerCopyButton:
+    """Phase 3: Copy diff to clipboard button."""
+
+    def test_copy_button_exists(self):
+        """Copy diff to clipboard button is present."""
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+        )
+        assert hasattr(viewer, '_copy_btn')
+        assert viewer._copy_btn.get_label() == "Copy diff to clipboard"
+
+    def test_copy_no_diff_history_page(self):
+        """Copy on History page does nothing."""
+        viewer = DiffViewer(
+            file_path="src/main.py",
+            project_path="/tmp/test-project",
+        )
+        # Switch to history page
+        viewer._stack.set_visible_child_name("history")
+        # Should not crash
+        viewer._on_copy_clicked(None)
+
+    def test_collect_label_text(self):
+        """_collect_label_text recursively gathers text from labels in boxes."""
+        lines = []
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        lbl1 = Gtk.Label(label="line1")
+        inner_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        lbl2 = Gtk.Label(label="line2")
+        inner_box.append(lbl2)
+        box.append(lbl1)
+        box.append(inner_box)
+
+        DiffViewer._collect_label_text(box, lines)
+        assert "line1" in lines
+        assert "line2" in lines
+
+
 class TestDiffViewerWidgetStructure:
     """Widget structure matches documentation."""
 
