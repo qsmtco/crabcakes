@@ -464,12 +464,14 @@ class FileTree(Gtk.Box):
         diff_scroll.set_child(diff_box)
         stack.add_named(diff_scroll, "diff")
 
-        # Loading placeholder in diff_box
-        loading_lbl = Gtk.Label(label="Loading diff...")
-        loading_lbl.set_margin_top(8)
-        loading_lbl.set_margin_bottom(8)
-        loading_lbl.set_opacity(0.6)
-        diff_box.append(loading_lbl)
+        # Loading spinner in diff_box
+        loading_spinner = Gtk.Spinner()
+        loading_spinner.set_margin_top(8)
+        loading_spinner.set_margin_bottom(8)
+        loading_spinner.set_halign(Gtk.Align.CENTER)
+        loading_spinner.set_size_request(24, 24)
+        loading_spinner.start()
+        diff_box.append(loading_spinner)
 
         # History page
         history_scroll = Gtk.ScrolledWindow()
