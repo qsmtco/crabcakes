@@ -882,13 +882,20 @@ class FileTree(Gtk.Box):
 
     # ── Clipboard Copy ─────────────────────────────────────────────────────
 
-    def _on_copy_diff_to_clipboard(self, file_path: str, drawer_box: Gtk.Box) -> None:
-        """Copy the diff text to system clipboard."""
+    def _copy_drawer_diff_to_clipboard(self, drawer_box: Gtk.Box) -> None:
+        """Copy the diff text from a drawer to the system clipboard.
+
+        Called from both the key shortcut (Ctrl+C) and the copy button click.
+        """
         diff_text = getattr(drawer_box, '_diff_text', None)
         if not diff_text:
             return
         clipboard = Gdk.Display.get_default().get_clipboard()
         clipboard.set(diff_text)
+
+    def _on_copy_diff_to_clipboard(self, file_path: str, drawer_box: Gtk.Box) -> None:
+        """Button click handler — delegates to _copy_drawer_diff_to_clipboard."""
+        self._copy_drawer_diff_to_clipboard(drawer_box)
 
     # ── Keyboard Navigation ────────────────────────────────────────────────
 
@@ -901,30 +908,29 @@ class FileTree(Gtk.Box):
                 return True
         return False
 
-    # ── Escape key to close drawer ─────────────────────────────────────────
+    # ── Unified Drawer Key Handler ─────────────────────────────────────────
 
-    def _wire_escape_key(self, container: Gtk.Widget, file_path: str) -> None:
-        """Wire Escape key to close the drawer for this file."""
-        controller = Gtk.EventControllerKey()
-        controller.connect("key-pressed", lambda ctrl, keyval, keycode, state:
-            self._on_escape_pressed(keyval, file_path))
-        container.add_controller(controller)
+    def _on_drawer_key_pressed(self, keyval: int, keycode: int, state: Gdk.ModifierType,
+                               file_path: str, drawer_box: Gtk.Box) -> bool:
+        """Handle keyboard shortcuts in the drawer: Escape closes, Ctrl+C copies."""
+        # Escape: close the drawer
+        if keyval == Gdk.KEY_Escape:
+            entry = self._drawers.get(file_path)
+            if entry is None:
+                return False
+            revealer = entry[0]
+            if not revealer.get_reveal_child():
+                return False
+            self._toggle_drawer(file_path)
+            self._tree.grab_focus()
+            return True
 
-    def _on_escape_pressed(self, keyval: int, file_path: str) -> bool:
-        """Close the drawer on Escape key press."""
-        if keyval != Gdk.KEY_Escape:
-            return False
-        entry = self._drawers.get(file_path)
-        if entry is None:
-            return False
-        revealer = entry[0]
-        if not revealer.get_reveal_child():
-            return False
-        # Close the drawer by toggling
-        self._toggle_drawer(file_path)
-        # Re-focus the tree
-        self._tree.grab_focus()
-        return True
+        # Ctrl+C: copy diff text to clipboard
+        if (keyval == Gdk.KEY_c or keyval == Gdk.KEY_C) and (state & Gdk.ModifierType.CONTROL_MASK):
+            self._copy_drawer_diff_to_clipboard(drawer_box)
+            return True
+
+        return False
 
     def _toggle_drawer(self, file_path: str) -> None:
         """Toggle a file's drawer revealer open/closed.
