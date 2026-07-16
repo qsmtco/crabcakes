@@ -965,7 +965,7 @@ class FileTree(Gtk.Box):
                         checkpoint_sha = review_state.checkpoint_sha
                 except Exception:
                     pass  # Non-fatal — fall back to HEAD
-            self._load_drawer_diff(file_path, revealer, drawer_box, project_path, checkpoint_sha)
+            self._load_drawer_diff(file_path, drawer_box, project_path, checkpoint_sha)
 
         self._drawers[file_path] = (revealer, display_name, new_state, drawer_box)
 
