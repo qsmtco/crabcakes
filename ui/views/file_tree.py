@@ -507,9 +507,11 @@ class FileTree(Gtk.Box):
         revert_btn.connect("clicked", lambda btn:
             self._on_drawer_revert_clicked(file_path, drawer_box))
 
-        # Wire history row activation
+        # Wire history row activation — guard against non-activatable rows (e.g. placeholder)
         history_list.connect("row-activated", lambda lb, row:
-            self._load_historical_diff(file_path, getattr(row, 'sha', 'HEAD'), stack))
+            self._load_historical_diff(file_path, getattr(row, 'sha', 'HEAD'), stack)
+            if isinstance(row, Gtk.ListBoxRow) and row.get_activatable()
+            else None)
 
         revealer.set_child(drawer_box)
 
