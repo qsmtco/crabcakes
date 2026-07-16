@@ -863,7 +863,7 @@ class ProjectHandler:
         return self._review_handler.get_state(project_name)
 
     def revert_file_to_sha(self, project_name: str, file_path: str, target_sha: str,
-                           on_complete: callable = None) -> None:
+                           on_complete: Callable[[], None] | None = None) -> None:
         """Delegate file revert to ReviewHandler.
 
         Requires a wired review handler; no-op otherwise.
