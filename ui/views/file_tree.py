@@ -366,6 +366,10 @@ class FileTree(Gtk.Box):
             self._content = self._scroll
             self.append(self._content)
         self._store.clear()
+        # Clear drawer state
+        for revealer, _, _ in self._drawers.values():
+            self._drawer_area.remove(revealer)
+        self._drawers.clear()
         self._back_btn.set_visible(True)
         self._folder_icon.set_visible(True)
         self._title_lbl.set_markup(f"<b>{name}</b>")
@@ -382,6 +386,9 @@ class FileTree(Gtk.Box):
             if is_dir:
                 # Placeholder row — children loaded on first expand
                 self._store.append(parent, ["…", "", True, False])
+            else:
+                # Create drawer revealer for file rows
+                self._add_drawer_for_file(full_path, entry_name)
 
     def _on_row_activated(self, tree, path, column):
         """
