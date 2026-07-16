@@ -408,12 +408,20 @@ class FileTree(Gtk.Box):
                 self._add_drawer_for_file(full_path, entry_name)
 
     def _add_drawer_for_file(self, file_path: str, display_name: str) -> None:
-        """Create a drawer revealer for a file row and attach it to the drawer area.
+        """Create a drawer revealer for a file row with Diff/History tabs.
 
         The drawer is hidden by default. It lives below the tree view so it
         scrolls in sync with the tree rows. On toggle, the revealer slides
         open to reveal the drawer content. Diff content is loaded lazily on
         first open via _load_drawer_diff.
+
+        Layout:
+            [Diff] [History]       ← toggle tab bar
+            ┌──────────────────┐
+            │  diff content or  │  ← Gtk.Stack
+            │  history list     │
+            └──────────────────┘
+            [Revert file...   ]  ← action bar (hidden until history diff loaded)
         """
         revealer = Gtk.Revealer()
         revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
@@ -421,21 +429,96 @@ class FileTree(Gtk.Box):
         revealer.set_transition_duration(150)
         revealer.add_css_class("file-tree-drawer")
 
-        # Content box — populated lazily when drawer is first opened
-        drawer_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        # Root content box — vertical, no extra spacing
+        drawer_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         drawer_box.set_margin_start(20)
         drawer_box.set_margin_end(8)
         drawer_box.set_margin_top(4)
         drawer_box.set_margin_bottom(4)
 
-        # Loading placeholder (shown while diff is loading)
+        # ── Tab bar ─────────────────────────────────────────────────────
+        tab_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        tab_bar.add_css_class("file-tree-drawer-tab-bar")
+        tab_bar.set_margin_bottom(4)
+
+        diff_tab = Gtk.ToggleButton(label="Diff")
+        diff_tab.set_active(True)
+        history_tab = Gtk.ToggleButton(label="History")
+        history_tab.set_group(diff_tab)
+
+        tab_bar.append(diff_tab)
+        tab_bar.append(history_tab)
+        drawer_box.append(tab_bar)
+
+        # ── Stack ────────────────────────────────────────────────────────
+        stack = Gtk.Stack()
+        stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        stack.set_vexpand(True)
+
+        # Diff page
+        diff_scroll = Gtk.ScrolledWindow()
+        diff_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        diff_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        diff_scroll.set_child(diff_box)
+        stack.add_named(diff_scroll, "diff")
+
+        # Loading placeholder in diff_box
         loading_lbl = Gtk.Label(label="Loading diff...")
         loading_lbl.set_margin_top(8)
         loading_lbl.set_margin_bottom(8)
         loading_lbl.set_opacity(0.6)
-        drawer_box.append(loading_lbl)
+        diff_box.append(loading_lbl)
+
+        # History page
+        history_scroll = Gtk.ScrolledWindow()
+        history_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        history_list = Gtk.ListBox()
+        history_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        history_scroll.set_child(history_list)
+        stack.add_named(history_scroll, "history")
+
+        drawer_box.append(stack)
+
+        # ── Action bar (revert button) ───────────────────────────────────
+        action_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        action_bar.add_css_class("diff-viewer-action-bar")
+        action_bar.set_margin_top(8)
+        action_bar.set_margin_bottom(8)
+        action_bar.set_margin_start(20)
+        action_bar.set_margin_end(8)
+
+        revert_btn = Gtk.Button(label="Revert file to this version")
+        revert_btn.add_css_class("diff-viewer-revert-btn")
+        revert_btn.set_visible(False)
+
+        action_bar.append(revert_btn)
+        drawer_box.append(action_bar)
+
+        # ── Wire tab switching ───────────────────────────────────────────
+        diff_tab.connect("toggled", lambda btn:
+            stack.set_visible_child_name("diff") if btn.get_active() else None)
+        history_tab.connect("toggled", lambda btn:
+            (stack.set_visible_child_name("history"),
+             self._load_history(file_path, history_list)) if btn.get_active() else None)
+
+        # Wire revert button
+        revert_btn.connect("clicked", lambda btn:
+            self._on_drawer_revert_clicked(file_path, drawer_box))
+
+        # Wire history row activation
+        history_list.connect("row-activated", lambda lb, row:
+            self._load_historical_diff(file_path, getattr(row, 'sha', 'HEAD'), stack))
 
         revealer.set_child(drawer_box)
+
+        # Store references on drawer_box for later access
+        drawer_box._diff_tab = diff_tab
+        drawer_box._history_tab = history_tab
+        drawer_box._stack = stack
+        drawer_box._diff_box = diff_box
+        drawer_box._history_list = history_list
+        drawer_box._revert_btn = revert_btn
+        drawer_box._history_selected_sha = None
 
         # Keep drawer in the area but collapsed
         self._drawer_area.append(revealer)
