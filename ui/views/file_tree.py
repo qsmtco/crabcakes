@@ -3,7 +3,7 @@
 #
 # Single-click expands/collapses directories, loads children on first expand.
 # Double-click on a file toggles the inline diff drawer.
-# Fires on_file_selected(path) callback when a directory row is activated (fallback).
+# Fires on_file_selected(path) callback when a file is activated without a drawer (fallback).
 #
 # Public API:
 #   tree = FileTree(on_file_selected=None)
