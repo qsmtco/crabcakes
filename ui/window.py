@@ -892,7 +892,8 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # M22 fix: session_key captured in closure, not passed through DiffViewer
         def on_revert(file_path: str, target_sha: str, on_complete=None):
-            self._review_handler.revert_file_to_sha(project_name, file_path, target_sha)
+            self._review_handler.revert_file_to_sha(project_name, file_path, target_sha,
+                                                    on_complete=on_complete)
 
         viewer = DiffViewer(
             file_path=rel_path,
