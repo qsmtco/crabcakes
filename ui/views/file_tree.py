@@ -441,6 +441,77 @@ class FileTree(Gtk.Box):
         self._drawer_area.append(revealer)
         self._drawers[file_path] = (revealer, display_name, False, drawer_box)
 
+    def set_project_handler(self, handler) -> None:
+        """Set ProjectHandler reference for checkpoint SHA resolution in diff loading."""
+        self._project_handler = handler
+
+    def _load_drawer_diff(self, file_path: str, drawer_revealer: Gtk.Revealer,
+                          drawer_box: Gtk.Box, project_path: str,
+                          checkpoint_sha: str | None = None) -> None:
+        """Load current diff for a file into the drawer box on background thread."""
+        def _do():
+            if checkpoint_sha:
+                result = diff_file_against_working_tree(project_path, checkpoint_sha, file_path)
+                subtitle = f"since checkpoint {checkpoint_sha[:7]}"
+            else:
+                result = diff_working_tree(project_path, file_path)
+                subtitle = "since HEAD"
+            GLib.idle_add(lambda: self._on_drawer_diff_loaded(
+                result, subtitle, drawer_revealer, drawer_box, file_path
+            ))
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _on_drawer_diff_loaded(self, result, subtitle: str,
+                               drawer_revealer: Gtk.Revealer,
+                               drawer_box: Gtk.Box, file_path: str) -> None:
+        """Handle diff load result for drawer — update UI on main thread."""
+        # Check if drawer still exists (not cleaned up)
+        if file_path not in self._drawers:
+            return
+
+        # Clear loading placeholder
+        while drawer_box.get_first_child() is not None:
+            drawer_box.remove(drawer_box.get_first_child())
+
+        if not result.success:
+            error_lbl = Gtk.Label(label=f"Error: {result.error}")
+            error_lbl.add_css_class("diff-viewer-subtitle")
+            error_lbl.set_margin_top(12)
+            error_lbl.set_margin_bottom(12)
+            drawer_box.append(error_lbl)
+            return
+
+        if not result.stdout.strip():
+            no_changes_lbl = Gtk.Label(label="No changes to this file.")
+            no_changes_lbl.add_css_class("diff-viewer-subtitle")
+            no_changes_lbl.set_margin_top(12)
+            no_changes_lbl.set_margin_bottom(12)
+            drawer_box.append(no_changes_lbl)
+            return
+
+        parsed = parse_diff(result.stdout)
+        if not parsed.files:
+            no_changes_lbl = Gtk.Label(label="No changes to this file.")
+            no_changes_lbl.add_css_class("diff-viewer-subtitle")
+            no_changes_lbl.set_margin_top(12)
+            no_changes_lbl.set_margin_bottom(12)
+            drawer_box.append(no_changes_lbl)
+            return
+
+        file_diff = parsed.files[0]
+
+        # Binary file handling
+        if file_diff.is_binary:
+            bin_lbl = Gtk.Label(label="Binary file — not shown")
+            bin_lbl.add_css_class("diff-viewer-subtitle")
+            bin_lbl.set_margin_top(12)
+            bin_lbl.set_margin_bottom(12)
+            drawer_box.append(bin_lbl)
+            return
+
+        lang = get_lang_from_path(file_diff.display_path)
+        drawer_box.append(render_diff_hunks(file_diff.hunks, lang))
+
     def _toggle_drawer(self, file_path: str) -> None:
         """Toggle a file's drawer revealer open/closed.
 
