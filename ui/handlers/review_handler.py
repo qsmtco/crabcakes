@@ -443,6 +443,45 @@ class ReviewHandler:
 
         threading.Thread(target=_do, daemon=True).start()
 
+    def revert_file_to_sha(self, project_name: str, file_path: str, target_sha: str) -> None:
+        """Revert a single file to its state at an arbitrary commit SHA.
+
+        Unlike reject_file() (which requires an active review session and reverts
+        to checkpoint_sha), this method works on any commit.
+
+        M17 fix: Requires an active review session for safety — reverting outside
+        a review session risks losing untracked work without audit trail.
+
+        H6 fix: Uses state.project_path (per-project lookup), not
+        get_active_project_path() which could return a different project's path.
+
+        SHA validation is handled by git_ops.checkout_paths() via _VALID_SHA_RE.
+        """
+        # M17 fix: require active review session
+        state = self._states.get(project_name)
+        if state is None or not state.is_active():
+            session_key = f"project:{project_name}"
+            self._GLib.idle_add(lambda sk=session_key: self._on_display_text(
+                sk, "⚠ Revert requires an active review session. Run /review first."))
+            return
+
+        # H6 fix: use state.project_path, not get_active_project_path()
+        project_path = state.project_path
+
+        session_key = f"project:{project_name}"
+
+        def _do():
+            result = git_ops.checkout_paths(project_path, target_sha, [file_path])
+            if not result.success:
+                self._GLib.idle_add(lambda sk=session_key: self._on_display_text(
+                    sk, f"⚠ Failed to revert {file_path}: {result.error}"))
+                return
+
+            self._GLib.idle_add(lambda sk=session_key: self._on_display_text(
+                sk, f"↩ {file_path} reverted to {target_sha[:7]}"))
+
+        threading.Thread(target=_do, daemon=True).start()
+
     def _send_rejection_messages(self, project_name: str, reason: str, sha: str) -> None:
         """Send rejection reason to all project members via gateway."""
         if self._gw is None:
