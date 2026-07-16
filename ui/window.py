@@ -867,8 +867,39 @@ class MainWindow(Gtk.ApplicationWindow):
 
 
     def _on_project_selected(self, path):
-        """Handle file tree selection — no-op; project card clicks route via ProjectHandler."""
-        pass
+        """Handle file tree selection — open diff viewer for the clicked file."""
+        project_path = self._project_handler.get_active_project_path()
+        if project_path is None:
+            return
+
+        project_name = self._project_handler.get_active_project_name()
+        if project_name is None:
+            return
+
+        import os
+        rel_path = os.path.relpath(path, project_path)
+
+        # M11 fix: reject paths that escape the project root
+        if rel_path.startswith(".."):
+            return
+
+        review_state = self._review_handler.get_state(project_name)
+        checkpoint_sha = review_state.checkpoint_sha if review_state and review_state.is_active() else None
+
+        from ui.views.diff_viewer import DiffViewer
+
+        # M22 fix: session_key captured in closure, not passed through DiffViewer
+        def on_revert(file_path: str, target_sha: str, on_complete=None):
+            self._review_handler.revert_file_to_sha(project_name, file_path, target_sha)
+
+        viewer = DiffViewer(
+            file_path=rel_path,
+            project_path=project_path,
+            checkpoint_sha=checkpoint_sha,
+            on_back=lambda: self._main_content.hide_diff_viewer(),
+            on_revert=on_revert,
+        )
+        self._main_content.show_diff_viewer(viewer)
 
     def _clear_chat_box(self, session_key: str) -> None:
         """Empty the chat box for a session. /clear UI side effect.
