@@ -1345,6 +1345,14 @@ button.settings-remove-btn:hover {
     color: #a5b4fc;
     border-radius: 4px;
 }
+
+/* ── File Tree Diff Drawer (Phase A) ──────────────────────────────────── */
+.file-tree-drawer {
+    padding: 0;
+    margin-left: 24px;
+    border-left: 2px solid alpha(@theme_selected_bg_color, 0.3);
+    background-color: alpha(@theme_bg_color, 0.3);
+}
 """
 
 

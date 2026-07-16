@@ -143,6 +143,10 @@ class FileTree(Gtk.Box):
         self._project_name = None
         self._project_path = None
         self._project_history.clear()
+        # Clear open drawers
+        for revealer, _, _ in self._drawers.values():
+            self._drawer_area.remove(revealer)
+        self._drawers.clear()
         # Clear search when returning to picker
         if self._project_list_handler:
             self._project_list_handler.clear_search()
@@ -512,6 +516,9 @@ class FileTree(Gtk.Box):
             child = model.append(it, [prefix + entry_name, full_path, is_dir, False])
             if is_dir:
                 model.append(child, ["…", "", True, False])
+            else:
+                # Create drawer revealer for file children
+                self._add_drawer_for_file(full_path, entry_name)
 
     def _on_search_changed(self, entry):
         """Filter project cards on search-changed. Mirrors LeftPanel._on_prompt_search_changed."""
