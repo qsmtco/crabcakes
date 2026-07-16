@@ -778,6 +778,9 @@ class FileTree(Gtk.Box):
         # Store selected sha on drawer for revert
         drawer_box._history_selected_sha = sha
 
+        # Store diff text for clipboard
+        drawer_box._diff_text = result.stdout
+
         # Show revert button
         revert_btn = getattr(drawer_box, '_revert_btn', None)
         if revert_btn is not None:
