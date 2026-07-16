@@ -322,15 +322,15 @@ class TestDiffViewerRevertCompletion:
         assert captured[0] == ("src/main.py", "abc123def456")
 
     def test_revert_completion_main_thread_method_called(self):
-        """After revert completion dispatches, _on_revert_complete_main_thread runs."""
-        main_thread_called = []
+        """After revert completion dispatches, cancel watchdog and reload diff."""
+        watchdog_called = []
+        diff_loaded = []
 
-        def patched_main_thread(self):
-            main_thread_called.append(True)
-            # Call the original to keep behavior correct
-            if not self._disposed:
-                self._cancel_revert_watchdog()
-                self._load_current_diff()
+        def patched_cancel(self):
+            watchdog_called.append(True)
+
+        def patched_load(self):
+            diff_loaded.append(True)
 
         def on_revert(fp, sha, on_complete):
             # Simulate the revert handler calling on_complete
@@ -343,13 +343,12 @@ class TestDiffViewerRevertCompletion:
             project_path="/tmp/test-project",
             on_revert=on_revert,
         )
-        viewer._on_revert_complete_main_thread = lambda: patched_main_thread(viewer)
+        viewer._cancel_revert_watchdog = lambda: patched_cancel(viewer)
         viewer._selected_sha = "abc123def456"
 
-        # When on_complete is called, it idle_adds _on_revert_complete_main_thread
-        # We can test that the idle callback gets dispatched by running GLib iteration
+        # When on_complete is called, it idle_adds cancel watchdog + load current diff
         old_load = viewer._load_current_diff
-        viewer._load_current_diff = lambda: None  # prevent actual thread spawn
+        viewer._load_current_diff = lambda: patched_load(viewer)
 
         viewer._on_revert_confirmed(None, Gtk.ResponseType.YES)
 
@@ -357,7 +356,8 @@ class TestDiffViewerRevertCompletion:
         while GLib.MainContext.default().iteration(False):
             pass
 
-        assert len(main_thread_called) >= 1
+        assert len(watchdog_called) >= 1
+        assert len(diff_loaded) >= 1
 
     def test_revert_watchdog_cancelled_on_complete(self):
         """Revert watchdog timer is cancelled when completion fires."""
