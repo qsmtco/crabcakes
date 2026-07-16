@@ -805,6 +805,7 @@ class TestDiffViewerWidgetStructure:
         assert hasattr(viewer, '_history_list')
         assert hasattr(viewer, '_action_bar')
         assert hasattr(viewer, '_revert_btn')
+        assert hasattr(viewer, '_copy_btn')
         assert hasattr(viewer, '_back_btn')
 
     def test_toggles_are_grouped(self):
