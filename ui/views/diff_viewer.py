@@ -497,6 +497,40 @@ class DiffViewer(Gtk.Box):
             self._cancel_revert_watchdog()
             self._load_current_diff()
 
+    def _on_copy_clicked(self, button):
+        """Copy current diff text to clipboard."""
+        if self._stack.get_visible_child_name() != "diff":
+            return
+
+        lines = []
+        child = self._diff_box.get_first_child()
+        while child:
+            if hasattr(child, 'get_text'):  # Gtk.Label
+                lines.append(child.get_text())
+            elif isinstance(child, Gtk.Box):  # hunk view
+                self._collect_label_text(child, lines)
+            child = child.get_next_sibling()
+
+        diff_text = "\n".join(lines)
+        if not diff_text.strip():
+            return
+
+        display = self.get_display()
+        if display:
+            clipboard = display.get_clipboard()
+            clipboard.set(diff_text)
+
+    @staticmethod
+    def _collect_label_text(box: Gtk.Box, lines: list[str]) -> None:
+        """Recursively collect text from labels inside a Gtk.Box."""
+        child = box.get_first_child()
+        while child:
+            if hasattr(child, 'get_text'):
+                lines.append(child.get_text())
+            elif isinstance(child, Gtk.Box):
+                DiffViewer._collect_label_text(child, lines)
+            child = child.get_next_sibling()
+
     # === Helpers ===
 
     def _show_loading(self):
