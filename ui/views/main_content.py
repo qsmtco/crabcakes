@@ -784,6 +784,16 @@ class MainContent(Gtk.Box):
         """Inject ProjectHandler instance. Called by window.py._build()."""
         self._project_handler = handler
 
+    def set_file_tree(self, file_tree) -> None:
+        """Inject FileTree instance for integrated diff navigation."""
+        self._file_tree = file_tree
+
+    def toggle_file_diff(self, file_path: str) -> None:
+        """Toggle file diff drawer open/closed for a path via FileTree."""
+        ft = getattr(self, '_file_tree', None)
+        if ft is not None:
+            ft.toggle_drawer_for_file(file_path)
+
     def set_on_project_tab_closed(self, callback):
         """Set callback for when a project tab is closed via (X) or middle-click.
         Signature: callback(project_name: str). Called by window.py._build().
