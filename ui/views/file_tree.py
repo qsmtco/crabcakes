@@ -390,11 +390,76 @@ class FileTree(Gtk.Box):
                 # Create drawer revealer for file rows
                 self._add_drawer_for_file(full_path, entry_name)
 
+    def _add_drawer_for_file(self, file_path: str, display_name: str) -> None:
+        """Create a drawer revealer for a file row and attach it to the drawer area.
+
+        The drawer is hidden by default. It lives below the tree view so it
+        scrolls in sync with the tree rows. On toggle, the revealer slides
+        open to reveal the drawer content.
+        """
+        revealer = Gtk.Revealer()
+        revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        revealer.set_reveal_child(False)
+        revealer.set_transition_duration(150)
+        revealer.add_css_class("file-tree-drawer")
+
+        # Skeleton content box — will be populated in Phase B
+        drawer_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        drawer_box.set_margin_start(20)
+        drawer_box.set_margin_end(8)
+        drawer_box.set_margin_top(4)
+        drawer_box.set_margin_bottom(4)
+
+        # Phase A: Just a placeholder label
+        placeholder = Gtk.Label(label=" ")
+        placeholder.set_size_request(-1, 1)
+        drawer_box.append(placeholder)
+
+        revealer.set_child(drawer_box)
+
+        # Keep drawer in the area but collapsed
+        self._drawer_area.append(revealer)
+        self._drawers[file_path] = (revealer, display_name, False)
+
+    def _toggle_drawer(self, file_path: str) -> None:
+        """Toggle a file's drawer revealer open/closed."""
+        entry = self._drawers.get(file_path)
+        if entry is None:
+            return
+        revealer, display_name, is_open = entry
+        new_state = not is_open
+        revealer.set_reveal_child(new_state)
+        self._drawers[file_path] = (revealer, display_name, new_state)
+
+        # Update the tree row display name to show ▶ or ▼
+        model = self._store
+        root_iter = model.get_iter_first()
+        self._update_drawer_prefix(model, root_iter, file_path, new_state)
+
+    def _update_drawer_prefix(self, model, it, file_path: str, is_open: bool) -> bool:
+        """Recursively search for a file path in the tree and update its prefix."""
+        while it is not None:
+            full_path = model.get_value(it, 2)  # is_dir
+            # Check if this is a file row (is_dir=False) matching our path
+            if not model.get_value(it, 2) and model.get_value(it, 1) == file_path:
+                current = model.get_value(it, 0)
+                name_part = current.lstrip("  ").lstrip("▶ ").lstrip("▼ ")
+                new_prefix = "▼ " if is_open else "▶ "
+                model.set_value(it, 0, new_prefix + name_part)
+                return True
+            # Recurse into children
+            child = model.iter_children(it)
+            if child is not None:
+                if self._update_drawer_prefix(model, child, file_path, is_open):
+                    return True
+            it = model.iter_next(it)
+        return False
+
     def _on_row_activated(self, tree, path, column):
         """
         In picker mode (no project loaded): double-click on a project row loads it.
         In tree mode: double-click on a directory expands/collapses it; on a file
-        fires on_file_selected.
+        toggles the inline diff drawer.
 
         Note: set_activate_on_single_click(False) means row-activated fires on
         double-click only — no timing hack needed for picker mode.
@@ -404,7 +469,7 @@ class FileTree(Gtk.Box):
         if it is None:
             return
 
-        display_name = model.get_value(it, 0).lstrip("📁 ").lstrip("  ")
+        display_name = model.get_value(it, 0).lstrip("📁 ").lstrip("  ").lstrip("▶ ").lstrip("▼ ")
         full_path = model.get_value(it, 1)
         is_dir = model.get_value(it, 2)
         parent_it = model.iter_parent(it)
@@ -419,7 +484,10 @@ class FileTree(Gtk.Box):
             else:
                 tree.expand_row(path, open_all=False)
         else:
-            if self._on_file_selected:
+            # File row - toggle drawer if we have one, otherwise fire callback
+            if full_path in self._drawers:
+                self._toggle_drawer(full_path)
+            elif self._on_file_selected:
                 self._on_file_selected(full_path)
 
     def _on_row_expanded(self, tree, it, path):
