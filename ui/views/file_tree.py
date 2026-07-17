@@ -754,8 +754,8 @@ class FileTree(Gtk.Box):
         def _do():
             try:
                 entries = scan_directory(parent_path)
-            except (PermissionError, OSError) as e:
-                entries = [(f"[error: {e}]", "", False)]
+            except Exception as e:
+                entries = [(f"[error: {type(e).__name__}: {e}]", "", False)]
             GLib.idle_add(lambda: self._on_directory_loaded(
                 entries, row_index, parent_depth, request_id
             ))
