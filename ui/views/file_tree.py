@@ -114,6 +114,8 @@ class FileTreeRowWidget(Gtk.Box):
 
         # Track bound row for cleanup
         self._bound_row: Optional[FileTreeRow] = None
+        # Phase 2: expander button signal handler ID
+        self._expander_handler_id: Optional[int] = None
 
     def set_depth(self, depth: int) -> None:
         """Set indentation via CSS margin-left on the whole row."""
