@@ -53,7 +53,10 @@ class FileTreeRow(GObject.Object):
     def __init__(self, display_name: str = "", full_path: str = "",
                  is_dir: bool = False, is_drawer: bool = False,
                  depth: int = 0, expanded: bool = False,
-                 has_children: bool = False):
+                 has_children: bool = False,
+                 drawer_widget=None, is_open: bool = False,
+                 diff_text: str = "", history_selected_sha=None,
+                 history_loaded: bool = False):
         super().__init__()
         self.props.display_name = display_name
         self.props.full_path = full_path
@@ -62,6 +65,11 @@ class FileTreeRow(GObject.Object):
         self.props.depth = depth
         self.props.expanded = expanded
         self.props.has_children = has_children
+        self.props.drawer_widget = drawer_widget
+        self.props.is_open = is_open
+        self.props.diff_text = diff_text
+        self.props.history_selected_sha = history_selected_sha
+        self.props.history_loaded = history_loaded
 
 
 # ── Phase 1: FileTreeRowWidget — Per-row Gtk.Box ─────────────────────────
