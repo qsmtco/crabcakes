@@ -1201,13 +1201,59 @@ class FileTree(Gtk.Box):
             revert_btn.set_visible(True)
 
     def _on_drawer_revert_clicked(self, file_path: str, drawer_box: Gtk.Box) -> None:
-        """(Phase 7+) Stub — show confirmation dialog before reverting a file."""
-        pass
+        """Show confirmation dialog before reverting a file to a historical commit."""
+        if file_path not in self._drawer_paths:
+            return
+        drawer_row: FileTreeRow = self._drawer_paths[file_path]
+        target_sha = drawer_row.props.history_selected_sha
+        if not target_sha or not self._project_handler or not self._project_name:
+            return
+
+        root = self.get_root()
+        dialog = Gtk.MessageDialog(
+            transient_for=root if isinstance(root, Gtk.Window) else None,
+            modal=True,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text=f"Revert {file_path}?",
+            secondary_text=f"This will restore the file to its state from commit "
+                           f"{target_sha[:7]}. Any uncommitted changes will be lost."
+        )
+        dialog.connect("response", lambda d, r:
+            self._on_drawer_revert_confirmed(d, r, file_path, target_sha, drawer_box))
+        dialog.present()
 
     def _on_drawer_revert_confirmed(self, dialog, response_id: int, file_path: str,
                                     target_sha: str, drawer_box: Gtk.Box) -> None:
-        """(Phase 7+) Stub — handle revert confirmation, call ProjectHandler."""
-        pass
+        """Handle revert confirmation — call ProjectHandler and reload diff."""
+        dialog.destroy()
+        if response_id != Gtk.ResponseType.YES:
+            return
+
+        # Validate drawer still exists
+        if file_path not in self._drawer_paths:
+            return
+        drawer_row: FileTreeRow = self._drawer_paths[file_path]
+        revealer = drawer_row.props.drawer_widget
+        if revealer is None:
+            return
+        current_drawer_box = revealer.get_child()
+        if current_drawer_box is not drawer_box:
+            return  # Stale drawer_box
+
+        if self._project_name:
+            self._project_handler.revert_file_to_sha(self._project_name, file_path, target_sha)
+
+        # Switch back to Diff tab
+        diff_tab = getattr(drawer_box, '_diff_tab', None)
+        if diff_tab is not None:
+            diff_tab.set_active(True)
+
+        # Reset history tab so it can be re-fetched after revert
+        drawer_row.props.history_loaded = False
+
+        # Reload current diff content
+        self._load_current_diff(file_path)
 
     def _load_current_diff(self, file_path: str) -> None:
         """Reload the current working-tree diff for a file (e.g. after revert)."""
