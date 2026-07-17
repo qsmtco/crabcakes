@@ -599,14 +599,8 @@ class FileTree(Gtk.Box):
             self.remove(self._content)
             self._content = self._scroll
             self.append(self._content)
-        # BUG #4: Increment request ID to invalidate any in-flight async loads
-        self._current_request_id += 1
-        # Clear store with while-loop to ensure full removal
-        while self._store.get_n_items() > 0:
-            self._store.remove(0)
-        self._drawer_paths.clear()
-        self._loaded_drawers.clear()
-        self._last_toggle_per_file.clear()
+        # Clear all FileTree state
+        self._clear_all_state()
         self._back_btn.set_visible(True)
         self._folder_icon.set_visible(True)
         safe_name = escape_for_pango(name)
