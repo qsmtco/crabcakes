@@ -398,20 +398,12 @@ class FileTree(Gtk.Box):
         """Public method to toggle a file's diff drawer open/closed from outside.
 
         Called by MainContent when the user requests a file diff from a tab.
-        Phase 2+: will insert/remove drawer rows in the ListStore.
         """
-        # Placeholder — drawer toggle implemented in Phase 4
-        pass
+        self._toggle_drawer(file_path)
 
     def is_drawer_open(self, file_path: str) -> bool:
         """Return True if the drawer for the given file path is currently open."""
-        idx = self._drawer_paths.get(file_path)
-        if idx is None:
-            return False
-        if idx < self._store.get_n_items():
-            row = cast(FileTreeRow, self._store.get_item(idx))
-            return row.props.is_open
-        return False
+        return file_path in self._drawer_paths
 
     # ── Private ───────────────────────────────────────────────────────────
 
