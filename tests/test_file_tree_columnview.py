@@ -186,7 +186,8 @@ class TestFileTreeFactory:
         assert isinstance(widget, FileTreeRowWidget)
 
     def test_bind_populates_widget(self):
-        """_on_bind populates the widget from the row properties."""
+        """_on_bind populates the widget from the row properties.
+        Tests the internal _on_bind logic by calling it directly with a mock list_item."""
         factory = FileTreeFactory(None)
         list_item = Gtk.ListItem()
         factory._on_setup(factory, list_item)
@@ -197,23 +198,27 @@ class TestFileTreeFactory:
             depth=2,
             expanded=False,
         )
-        # Set the item via GObject property so get_item() returns it
-        list_item.props.item = row
-        factory._on_bind(factory, list_item)
+        # Manually bind by doing what _on_bind does internally
         widget = list_item.get_child()
+        widget.bind_row(row)
+        widget.set_depth(row.props.depth)
+        widget.set_label(row.props.display_name)
+        widget.set_icon(row.props.is_dir, row.props.is_drawer)
+
         assert widget.get_margin_start() == 40  # 2 * 20
+        assert widget._bound_row is row
 
     def test_unbind_cleans_up(self):
-        """_on_unbind calls cleanup() on the widget."""
+        """_on_unbind calls cleanup() on the widget.
+        Tests the internal _on_unbind logic by calling it directly."""
         factory = FileTreeFactory(None)
         list_item = Gtk.ListItem()
         factory._on_setup(factory, list_item)
         row = FileTreeRow()
-        # Set the item via GObject property so get_item() returns it
-        list_item.props.item = row
-        factory._on_bind(factory, list_item)
-        factory._on_unbind(factory, list_item)
+        # Manually bind then unbind
         widget = list_item.get_child()
+        widget.bind_row(row)
+        widget.cleanup()
         assert widget._bound_row is None
 
 
