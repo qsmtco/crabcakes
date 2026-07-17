@@ -333,6 +333,23 @@ class FileTree(Gtk.Box):
 
     # ── Public API ────────────────────────────────────────────────────────
 
+    def _clear_all_state(self) -> None:
+        """Clear all FileTree state — store, drawers, async requests.
+
+        Called on project switch (navigate_back) and when switching to project picker.
+        """
+        # Clear the store
+        while self._store.get_n_items() > 0:
+            self._store.remove(0)
+
+        # Clear drawer state
+        self._drawer_paths.clear()
+        self._loaded_drawers.clear()
+        self._last_toggle_per_file.clear()
+
+        # Invalidate any in-flight async requests
+        self._current_request_id += 1
+
     def load_project(self, name, path):
         """Load a project root and show its directory tree."""
         self._project_name = name
