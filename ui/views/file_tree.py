@@ -541,18 +541,19 @@ class FileTree(Gtk.Box):
         GLib.idle_add(lambda: name_entry.grab_focus() and False)
 
     def _show_tree(self, name, path):
-        """Show the directory tree for a project. Restores TreeView."""
-        # Swap card box back to TreeView
+        """Show the directory tree for a project using ColumnView + ListStore."""
+        # Swap card box back to scroll/ColumnView
         if self._content != self._scroll:
             self.remove(self._content)
             self._content = self._scroll
             self.append(self._content)
-        self._store.clear()
-        # Clear drawer state
-        for revealer, _, _, _ in self._drawers.values():
-            self._drawer_area.remove(revealer)
-        self._drawers.clear()
+        # Clear existing store
+        n = self._store.get_n_items()
+        if n > 0:
+            self._store.splice(0, n, [])
+        self._drawer_paths.clear()
         self._loaded_drawers.clear()
+        self._last_toggle_per_file.clear()
         self._back_btn.set_visible(True)
         self._folder_icon.set_visible(True)
         safe_name = escape_for_pango(name)
@@ -566,16 +567,19 @@ class FileTree(Gtk.Box):
         except (PermissionError, OSError) as e:
             entries = [(f"[error: {e}]", "", False)]
         for entry_name, full_path, is_dir in entries:
-            prefix = "📁 " if is_dir else "  "
-            parent = self._store.append(None, [
-                prefix + entry_name, full_path, is_dir
-            ])
-            if is_dir:
-                # Placeholder row — children loaded on first expand
-                self._store.append(parent, ["…", "", True])
-            else:
-                # Create drawer revealer for file rows
-                self._add_drawer_for_file(full_path, entry_name)
+            prefix = "📁 " if is_dir else "▶ "
+            row = FileTreeRow(
+                display_name=prefix + entry_name,
+                full_path=full_path,
+                is_dir=is_dir,
+                depth=0,
+                expanded=False,
+                has_children=is_dir,
+            )
+            self._store.append(row)
+            # Track file rows for drawer lookup
+            if not is_dir:
+                self._drawer_paths[full_path] = self._store.get_n_items() - 1
 
     def _add_drawer_for_file(self, file_path: str, display_name: str) -> None:
         """Create a drawer revealer for a file row with Diff/History tabs.
