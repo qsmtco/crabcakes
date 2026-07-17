@@ -183,7 +183,6 @@ class FileTreeFactory(Gtk.SignalListItemFactory):
     def _on_bind(self, factory: 'FileTreeFactory', list_item: Gtk.ListItem) -> None:
         row = cast(FileTreeRow, list_item.get_item())
         widget: FileTreeRowWidget = list_item.get_child()
-        position = list_item.get_position()
 
         widget.bind_row(row)
         widget.set_depth(row.props.depth)
@@ -199,8 +198,10 @@ class FileTreeFactory(Gtk.SignalListItemFactory):
             # Disconnect previous handler if re-binding
             if widget._expander_handler_id is not None:
                 widget._expander_btn.disconnect(widget._expander_handler_id)
+            # BUG #2: Pass `row` object instead of stale `position`.
+            # The current position is re-queried at click time via _find_row_index.
             widget._expander_handler_id = widget._expander_btn.connect(
-                "clicked", lambda btn, pos=position: self._on_expander_clicked(row, pos)
+                "clicked", lambda btn: self._on_expander_clicked(row)
             )
             widget._expander_btn.set_visible(True)
         else:
