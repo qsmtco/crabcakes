@@ -211,33 +211,20 @@ The `DiffViewer` widget (used in main content area) is **unaffected**. It remain
 
 ---
 
-### 2.4 `ui/handlers/project_handler.py` — Add `revert_file_to_sha()`
+### 2.4 `ui/handlers/project_handler.py` — `revert_file_to_sha()` Delegation
+
+**Already implemented** at `project_handler.py:865–874`. Signature:
 
 ```python
-def revert_file_to_sha(self, project_name: str, file_path: str, target_sha: str) -> GitResult:
-    """
-    Revert a single file to its state at a specific commit.
-    Equivalent to: git checkout <sha> -- <file_path>
-    """
-    project_path = self.get_project_path(project_name)
-    if not project_path:
-        return GitResult(success=False, stdout="", error="Project not found")
-
-    try:
-        repo = gitpython.Repo(project_path)
-        # git checkout <sha> -- <file_path>
-        repo.git.checkout(target_sha, "--", file_path)
-        return GitResult(success=True, stdout=f"Reverted {file_path} to {sha[:7]}", error="")
-    except Exception as e:
-        return GitResult(success=False, stdout="", error=str(e))
+def revert_file_to_sha(self, project_name: str, file_path: str, target_sha: str,
+                       on_complete: Callable[[], None] | None = None) -> None:
 ```
 
-**Also add `revert_file_to_sha` to `ProjectHandler` public API** and wire in `window.py` when constructing `FileTree`:
+This method delegates to `ReviewHandler.revert_file_to_sha()` (which performs `git checkout <sha> -- <file>` on a background thread). The `on_complete` callback is fired via `GLib.idle_add` after the git checkout succeeds.
 
-```python
-# In window.py _build() after creating FileTree:
-left_panel._file_tree.set_project_handler(self._project_handler)
-```
+**Key difference from the original spec draft:** The method returns `None`, not `GitResult`. Completion notification uses the callback pattern, not a return value, because the git operation runs on a background thread.
+
+**Validation note:** File paths are validated by `ReviewHandler.revert_file_to_sha()` via `git_ops.checkout_paths()` which uses `_VALID_SHA_RE` for the SHA. File paths beginning with `-` could cause argument injection in `git checkout` — this is a known limitation tracked as BUG #12 in the spec audit.
 
 ---
 
