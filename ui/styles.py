@@ -1353,6 +1353,30 @@ button.settings-remove-btn:hover {
     border-left: 2px solid alpha(@theme_selected_bg_color, 0.3);
     background-color: alpha(@theme_bg_color, 0.3);
 }
+
+/* ColumnView row styling */
+.file-tree-row {
+    padding: 2px 8px;
+    min-height: 24px;
+}
+.file-tree-row:selected {
+    background: alpha(@theme_selected_bg_color, 0.3);
+}
+.file-tree-row-expander {
+    margin-right: 4px;
+    min-width: 16px;
+}
+.file-tree-row-icon {
+    margin-right: 6px;
+}
+.file-tree-row-label {
+    /* existing label styles apply */
+}
+
+/* Inline drawer row */
+.file-tree-drawer-row {
+    /* drawer row has no label, just the revealer child */
+}
 """
 
 
