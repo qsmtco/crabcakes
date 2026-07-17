@@ -905,6 +905,27 @@ class FileTree(Gtk.Box):
 
     # ── Phase 4: Drawer Content — Diff Tab ────────────────────────────
 
+    # BUG #1: Set of known binary file extensions for quick check
+    _BINARY_EXTENSIONS: frozenset = frozenset({
+        '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.svg', '.webp',
+        '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+        '.so', '.dll', '.dylib', '.o', '.a', '.lib',
+        '.pyc', '.pyo', '.pyd',
+        '.zip', '.tar', '.gz', '.bz2', '.xz', '.zst', '.7z', '.rar',
+        '.exe', '.bin', '.dat', '.db', '.sqlite', '.sqlite3',
+        '.mp3', '.mp4', '.avi', '.mov', '.mkv', '.wav', '.flac', '.ogg',
+        '.ttf', '.otf', '.woff', '.woff2', '.eot',
+    })
+
+    @staticmethod
+    def _is_binary_path(file_path: str) -> bool:
+        """Return True if the file path has a known binary extension."""
+        idx = file_path.rfind('.')
+        if idx == -1:
+            return False
+        ext = file_path[idx:].lower()
+        return ext in FileTree._BINARY_EXTENSIONS
+
     def _load_drawer_diff(self, file_path: str, drawer_box: Gtk.Box, project_path: str,
                           checkpoint_sha: str | None = None) -> None:
         """Load current diff for a file into the drawer box on background thread."""
