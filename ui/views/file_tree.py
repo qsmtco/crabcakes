@@ -762,25 +762,28 @@ class FileTree(Gtk.Box):
                 entries = scan_directory(parent_path)
             except Exception as e:
                 entries = [(f"[error: {type(e).__name__}: {e}]", "", False)]
+            # BUG #1: Capture loading_row object identity, not position.
+            # Store mutations (sibling expand/collapse) can shift positions.
+            _loading_row = loading_row
             GLib.idle_add(lambda: self._on_directory_loaded(
-                entries, row_index, parent_depth, request_id
+                entries, _loading_row, parent_depth, request_id
             ))
 
         threading.Thread(target=_do, daemon=True).start()
 
-    def _on_directory_loaded(self, entries, row_index: int, parent_depth: int, request_id: int) -> None:
+    def _on_directory_loaded(self, entries, loading_row: FileTreeRow, parent_depth: int, request_id: int) -> None:
         """Handle directory scan result on main thread. Guard against stale requests.
 
-        Unconditionally removes the loading spinner row before any early return
-        to prevent orphan "Loading..." rows (BUG #1).
+        Unconditionally removes the loading spinner row (by object identity)
+        before any early return to prevent orphan "Loading..." rows (BUG #1).
         """
-        # Unconditionally remove loading spinner row (first child at row_index + 1)
-        loading_removed = False
-        if row_index + 1 < self._store.get_n_items():
-            candidate = self._store.get_item(row_index + 1)
-            if candidate.props.display_name == "Loading...":
-                self._store.remove(row_index + 1)
-                loading_removed = True
+        # Unconditionally remove loading spinner row by object identity
+        # Walk the store to find it — survives intervening store mutations
+        n = self._store.get_n_items()
+        for i in range(n):
+            if self._store.get_item(i) is loading_row:
+                self._store.remove(i)
+                break
 
         # BUG #7: Ignore stale callbacks
         if request_id != self._current_request_id:
