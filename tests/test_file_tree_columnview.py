@@ -210,12 +210,12 @@ class TestFileTreeFactory:
 
     def test_bind_populates_widget(self):
         """_on_bind populates the widget from the row properties.
-        Tests the internal logic by exercising widget setter methods directly,
-        since Gtk.ListItem.item is read-only and cannot be set in isolation.
+        Uses a MagicMock for list_item since Gtk.ListItem.item is read-only.
         """
+        from unittest.mock import MagicMock
         factory = FileTreeFactory(None)
-        list_item = Gtk.ListItem()
-        factory._on_setup(factory, list_item)
+        list_item = MagicMock(spec=Gtk.ListItem)
+        list_item.get_position.return_value = 0
         row = FileTreeRow(
             display_name="test.txt",
             full_path="/tmp/test.txt",
@@ -223,28 +223,28 @@ class TestFileTreeFactory:
             depth=2,
             expanded=False,
         )
-        # Test the widget bind logic that _on_bind performs
-        widget = list_item.get_child()
-        widget.bind_row(row)
-        widget.set_depth(row.props.depth)
-        widget.set_label(row.props.display_name)
-        widget.set_icon(row.props.is_dir, row.props.is_drawer)
+        # Mock get_item to return our row
+        list_item.get_item.return_value = row
+        widget = FileTreeRowWidget()
+        list_item.get_child.return_value = widget
+        factory._on_bind(factory, list_item)
         assert widget.get_margin_start() == 40  # 2 * 20
         assert widget._bound_row is row
 
     def test_unbind_cleans_up(self):
         """_on_unbind calls cleanup() on the widget.
-        Tests the internal logic by exercising widget cleanup directly,
-        since Gtk.ListItem.item is read-only and cannot be set in isolation.
+        Uses a MagicMock for list_item since Gtk.ListItem.item is read-only.
         """
+        from unittest.mock import MagicMock
         factory = FileTreeFactory(None)
-        list_item = Gtk.ListItem()
-        factory._on_setup(factory, list_item)
+        list_item = MagicMock(spec=Gtk.ListItem)
         row = FileTreeRow()
-        # Test the widget cleanup logic that _on_unbind performs
-        widget = list_item.get_child()
+        list_item.get_item.return_value = row
+        widget = FileTreeRowWidget()
         widget.bind_row(row)
-        widget.cleanup()
+        list_item.get_child.return_value = widget
+        factory._on_bind(factory, list_item)
+        factory._on_unbind(factory, list_item)
         assert widget._bound_row is None
 
 
