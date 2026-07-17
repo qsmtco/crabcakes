@@ -868,8 +868,13 @@ class ProjectHandler:
 
         Requires a wired review handler; no-op otherwise.
         on_complete: Forwarded to ReviewHandler.revert_file_to_sha().
+
+        BUG #12: Reject file paths starting with '--' to prevent argument
+        injection in GitPython's git.checkout() subprocess call.
         """
         if not hasattr(self, '_review_handler') or self._review_handler is None:
+            return
+        if not isinstance(file_path, str) or file_path.startswith("-"):
             return
         self._review_handler.revert_file_to_sha(project_name, file_path, target_sha,
                                                   on_complete=on_complete)
