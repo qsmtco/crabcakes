@@ -771,7 +771,7 @@ class FileTree(Gtk.Box):
 
         threading.Thread(target=_do, daemon=True).start()
 
-    def _on_directory_loaded(self, entries, loading_row: FileTreeRow, parent_depth: int, request_id: int) -> None:
+    def _on_directory_loaded(self, entries, loading_row: FileTreeRow, row_index: int, parent_depth: int, request_id: int) -> None:
         """Handle directory scan result on main thread. Guard against stale requests.
 
         Unconditionally removes the loading spinner row (by object identity)
