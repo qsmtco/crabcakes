@@ -785,29 +785,28 @@ class FileTree(Gtk.Box):
         self._last_toggle_per_file[file_path] = now
 
         if file_path in self._drawer_paths:
-            # Drawer entry exists — validate it's still live before using it.
-            # BUG #1: Parent collapse removes drawer rows, leaving stale _drawer_paths entries.
-            drawer_index = self._drawer_paths[file_path]
-            drawer_valid = False
-            if drawer_index < self._store.get_n_items():
-                candidate = cast(FileTreeRow, self._store.get_item(drawer_index))
-                if candidate.props.is_drawer:
-                    drawer_valid = True
+            # Drawer entry exists — get the row object directly (BUG #1-R)
+            drawer_row: FileTreeRow = self._drawer_paths[file_path]
+            # Verify the row is still alive in the store (not removed by collapse)
+            alive = False
+            n = self._store.get_n_items()
+            for i in range(n):
+                if self._store.get_item(i) is drawer_row:
+                    alive = True
+                    break
 
-            if not drawer_valid:
+            if not alive:
                 # Stale entry from ancestor collapse — clean up and re-open
                 del self._drawer_paths[file_path]
-                # Fall through to open path below
             else:
-                # Drawer exists — close it
-                drawer_row: FileTreeRow = self._store.get_item(drawer_index)
+                # Drawer row is alive — close it
                 revealer = drawer_row.props.drawer_widget
                 if revealer is not None:
                     revealer.set_reveal_child(False)
                     # Row removal happens in _on_revealer_child_revealed
                 else:
                     # BUG #2: Revealer is None — orphan state. Remove row directly.
-                    self._store.remove(drawer_index)
+                    self._store.remove(i)  # i is the index from the scan above
                     del self._drawer_paths[file_path]
                 return  # Close path done
 
@@ -831,7 +830,8 @@ class FileTree(Gtk.Box):
                 is_open=True,
             )
             self._store.insert(file_index + 1, drawer_row)
-            self._drawer_paths[file_path] = file_index + 1
+            # BUG #1-R: Store the row object, not the index
+            self._drawer_paths[file_path] = drawer_row
 
             # Animate open
             revealer.set_reveal_child(True)
