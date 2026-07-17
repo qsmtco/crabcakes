@@ -352,9 +352,8 @@ class FileTree(Gtk.Box):
         self._project_path = None
         self._project_history.clear()
         # Clear list store
-        n = self._store.get_n_items()
-        if n > 0:
-            self._store.splice(0, n, [])
+        while self._store.get_n_items() > 0:
+            self._store.remove(0)
         self._drawer_paths.clear()
         self._loaded_drawers.clear()
         self._last_toggle_per_file.clear()
@@ -416,9 +415,8 @@ class FileTree(Gtk.Box):
     def _show_project_picker(self):
         """Show project cards (replaces ColumnView tree rows)."""
         # Clear store before replacing content
-        n = self._store.get_n_items()
-        if n > 0:
-            self._store.splice(0, n, [])
+        while self._store.get_n_items() > 0:
+            self._store.remove(0)
         self._drawer_paths.clear()
         self._loaded_drawers.clear()
         self._last_toggle_per_file.clear()
