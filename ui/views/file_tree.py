@@ -582,154 +582,12 @@ class FileTree(Gtk.Box):
                 self._drawer_paths[full_path] = self._store.get_n_items() - 1
 
     def _add_drawer_for_file(self, file_path: str, display_name: str) -> None:
-        """Create a drawer revealer for a file row with Diff/History tabs.
+        """(Phase 4+) Create drawer revealer for a file row with Diff/History tabs.
 
-        The drawer is hidden by default. It lives below the tree view so it
-        scrolls in sync with the tree rows. On toggle, the revealer slides
-        open to reveal the drawer content. Diff content is loaded lazily on
-        first open via _load_drawer_diff.
-
-        Layout:
-            [Diff] [History]       ← toggle tab bar
-            ┌──────────────────┐
-            │  diff content or  │  ← Gtk.Stack
-            │  history list     │
-            └──────────────────┘
-            [Revert file...   ]  ← action bar (hidden until history diff loaded)
+        This is a stub for Phase 1. Full drawer widget construction will be
+        reimplemented in Phase 4 when drawer rows are inserted inline.
         """
-        revealer = Gtk.Revealer()
-        revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
-        revealer.set_reveal_child(False)
-        revealer.set_transition_duration(150)
-        revealer.add_css_class("file-tree-drawer")
-
-        # Root content box — vertical, no extra spacing
-        drawer_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        drawer_box.set_margin_start(20)
-        drawer_box.set_margin_end(8)
-        drawer_box.set_margin_top(4)
-        drawer_box.set_margin_bottom(4)
-
-        # ── Tab bar ─────────────────────────────────────────────────────
-        tab_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        tab_bar.add_css_class("file-tree-drawer-tab-bar")
-        tab_bar.set_margin_bottom(4)
-
-        diff_tab = Gtk.ToggleButton(label="Diff")
-        diff_tab.set_active(True)
-        history_tab = Gtk.ToggleButton(label="History")
-        history_tab.set_group(diff_tab)
-
-        tab_bar.append(diff_tab)
-        tab_bar.append(history_tab)
-        drawer_box.append(tab_bar)
-
-        # ── Stack ────────────────────────────────────────────────────────
-        stack = Gtk.Stack()
-        stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
-        stack.set_vexpand(True)
-
-        # Diff page
-        diff_scroll = Gtk.ScrolledWindow()
-        diff_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        diff_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        diff_scroll.set_child(diff_box)
-        stack.add_named(diff_scroll, "diff")
-
-        # Loading spinner in diff_box
-        loading_spinner = Gtk.Spinner()
-        loading_spinner.set_margin_top(8)
-        loading_spinner.set_margin_bottom(8)
-        loading_spinner.set_halign(Gtk.Align.CENTER)
-        loading_spinner.set_size_request(24, 24)
-        loading_spinner.start()
-        diff_box.append(loading_spinner)
-
-        # History page
-        history_scroll = Gtk.ScrolledWindow()
-        history_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        history_list = Gtk.ListBox()
-        history_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        history_scroll.set_child(history_list)
-        stack.add_named(history_scroll, "history")
-
-        drawer_box.append(stack)
-
-        # ── Action bar (revert + copy buttons) ──────────────────────────
-        action_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        action_bar.add_css_class("diff-viewer-action-bar")
-        action_bar.set_margin_top(8)
-        action_bar.set_margin_bottom(8)
-        action_bar.set_margin_start(20)
-        action_bar.set_margin_end(8)
-
-        revert_btn = Gtk.Button(label="Revert file to this version")
-        revert_btn.add_css_class("diff-viewer-revert-btn")
-        revert_btn.set_visible(False)
-
-        copy_btn = Gtk.Button(label="Copy diff")
-        copy_btn.add_css_class("diff-viewer-copy-btn")
-
-        # Spacer to push buttons apart
-        spacer = Gtk.Label()
-        spacer.set_hexpand(True)
-
-        action_bar.append(revert_btn)
-        action_bar.append(spacer)
-        action_bar.append(copy_btn)
-        drawer_box.append(action_bar)
-
-        # ── Wire tab switching ───────────────────────────────────────────
-        diff_tab.connect("toggled", lambda btn:
-            stack.set_visible_child_name("diff") if btn.get_active() else None)
-        history_tab.connect("toggled", lambda btn:
-            (stack.set_visible_child_name("history"),
-             self._load_history(file_path, history_list)) if btn.get_active() else None)
-
-        # Wire revert button
-        revert_btn.connect("clicked", lambda btn:
-            self._on_drawer_revert_clicked(file_path, drawer_box))
-
-        # Wire copy to clipboard button
-        copy_btn.connect("clicked", lambda btn:
-            self._on_copy_diff_to_clipboard(file_path, drawer_box))
-
-        # Wire history row activation — guard against non-activatable rows (e.g. placeholder)
-        history_list.connect("row-activated", lambda lb, row:
-            self._load_historical_diff(file_path, getattr(row, 'sha', 'HEAD'), stack)
-            if isinstance(row, Gtk.ListBoxRow) and row.get_activatable()
-            else None)
-
-        # Keyboard navigation in history list: Enter activates selected row
-        history_list.connect("keynav-failed", lambda lb, direction: True)  # prevent focus escape
-        history_list_controller = Gtk.EventControllerKey()
-        history_list_controller.connect("key-pressed", lambda ctrl, keyval, keycode, state:
-            self._on_history_key_pressed(keyval, history_list))
-
-        history_list.add_controller(history_list_controller)
-
-        revealer.set_child(drawer_box)
-
-        # Store references on drawer_box for later access
-        drawer_box._diff_tab = diff_tab
-        drawer_box._history_tab = history_tab
-        drawer_box._stack = stack
-        drawer_box._diff_box = diff_box
-        drawer_box._history_list = history_list
-        drawer_box._revert_btn = revert_btn
-        drawer_box._copy_btn = copy_btn
-        drawer_box._history_selected_sha = None
-        drawer_box._diff_text = ""  # populated when diff is loaded
-
-        # Unified key controller: Escape closes drawer, Ctrl+C copies diff
-        key_controller = Gtk.EventControllerKey()
-        key_controller.connect("key-pressed", lambda ctrl, keyval, keycode, state:
-            self._on_drawer_key_pressed(keyval, keycode, state, file_path, drawer_box))
-        drawer_box.add_controller(key_controller)
-
-        # Keep drawer in the area but collapsed
-        self._drawer_area.append(revealer)
-        self._drawers[file_path] = (revealer, display_name, False, drawer_box)
+        pass
 
     def set_project_handler(self, handler) -> None:
         """Set ProjectHandler reference for checkpoint SHA resolution in diff loading."""
@@ -739,8 +597,8 @@ class FileTree(Gtk.Box):
         """Public method to toggle a file's diff drawer open/closed from outside.
 
         Called by MainContent when the user requests a file diff from a tab.
-        """
-        self._toggle_drawer(file_path)
+        (Phase 4+ full implementation.)"""
+        pass
 
     def is_drawer_open(self, file_path: str) -> bool:
         """Return True if the drawer for the given file path is currently open."""
