@@ -100,79 +100,25 @@ Key invariants:
 
 #### 2.1.4 `_update_drawer_prefix()` — Update Row Prefix (▶/▼)
 
+See current implementation at `file_tree.py:956–978`. This method recursively walks the TreeStore to find a matching file path and updates the prefix character. No changes needed — the current implementation is correct.
+
+#### 2.1.5 `_load_drawer_diff()` / `_on_drawer_diff_loaded()` — Load Diff Into `diff_box`
+
+**Current signatures** (file_tree.py:580, 597):
 ```python
-def _update_drawer_prefix(self, model, it, file_path: str, is_open: bool) -> bool:
-    """Update the prefix (▶/▼) on the file row."""
-    while it is not None:
-        if not model.get_value(it, 2) and model.get_value(it, 1) == file_path:
-            current = model.get_value(it, 0)
-            # Strip existing prefix
-            for prefix in ("  ", "▶ ", "▼ "):
-                if current.startswith(prefix):
-                    current = current[len(prefix):]
-                    break
-            new_prefix = "▼ " if is_open else "▶ "
-            model.set_value(it, 0, new_prefix + current[len("▶ "):] if current.startswith(("▶ ", "▼ ")) else new_prefix + current)
-            return True
-        # Recurse into children
-        child = model.iter_children(it)
-        if child and self._update_drawer_prefix(model, child, file_path, is_open):
-            return True
-        it = model.iter_next(it)
-    return False
+def _load_drawer_diff(self, file_path: str, drawer_box: Gtk.Box, project_path: str,
+                       checkpoint_sha: str | None = None) -> None:
+def _on_drawer_diff_loaded(self, result, subtitle: str,
+                            drawer_box: Gtk.Box, file_path: str) -> None:
 ```
 
-#### 2.1.5 `_load_drawer_diff()` / `_on_drawer_diff_loaded()` — Update `diff_box` In-Place
+Both populate `drawer_box._diff_box` (inside the tabbed stack), handling: error labels, "no changes" labels, binary file labels, and syntax-highlighted diff hunks via `render_diff_hunks()`. Diff text is stored on `drawer_box._diff_text` for clipboard access. See `file_tree.py:580–634`.
 
-```python
-def _load_drawer_diff(self, file_path: str, project_path: str, checkpoint_sha: str | None = None) -> None:
-    """Load current diff for a file into the drawer box on background thread."""
-    def _do():
-        if checkpoint_sha:
-            result = diff_file_against_working_tree(project_path, checkpoint_sha, file_path)
-            subtitle = f"since checkpoint {checkpoint_sha[:7]}"
-        else:
-            result = diff_working_tree(project_path, file_path)
-            subtitle = "since HEAD"
-        GLib.idle_add(lambda: self._on_drawer_diff_loaded(
-            result, subtitle, file_path
-        ))
-    threading.Thread(target=_do, daemon=True).start()
-
-def _on_drawer_diff_loaded(self, result, subtitle: str, file_path: str) -> None:
-    if file_path not in self._drawers:
-        return
-    _, _, _, drawer_box = self._drawers[file_path]
-    diff_box = getattr(drawer_box, '_diff_box', None)
-    if diff_box is None:
-        return
-
-    # Update subtitle in drawer header (if we add one)
-    # Clear and populate diff_box
-    while diff_box.get_first_child() is not None:
-        diff_box.remove(diff_box.get_first_child())
-
-    if not result.success:
-        # ... error handling ...
-        return
-
-    if not result.stdout.strip():
-        # ... no changes label ...
-        return
-
-    parsed = parse_diff(result.stdout)
-    if not parsed.files:
-        return
-
-    file_diff = parsed.files[0]
-    if file_diff.is_binary:
-        # ... binary label ...
-        return
-
-    lang = get_lang_from_path(file_diff.display_path)
-    diff_box.append(render_diff_hunks(file_diff.hunks, lang))
-    drawer_box._diff_text = result.stdout  # for clipboard
-```
+The `_on_drawer_diff_loaded` method handles all UI states explicitly:
+- Git error → error label with `result.error`
+- Empty diff → "No changes to this file."
+- Binary file → "Binary file — not shown"
+- Normal diff → syntax-highlighted hunks
 
 #### 2.1.6 History Tab — `_load_history()` / `_on_history_loaded()`
 
