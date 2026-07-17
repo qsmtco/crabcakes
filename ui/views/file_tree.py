@@ -1336,22 +1336,31 @@ class FileTree(Gtk.Box):
 
         # Ctrl+C: copy diff text to clipboard
         if (keyval == Gdk.KEY_c or keyval == Gdk.KEY_C) and (state & Gdk.ModifierType.CONTROL_MASK):
-            self._copy_drawer_diff_to_clipboard(drawer_box)
-            return True
+            # BUG #1: Only return True if copy succeeded
+            return self._copy_drawer_diff_to_clipboard(drawer_box)
 
         return False
 
-    def _on_copy_diff_to_clipboard(self, file_path: str, drawer_box: Gtk.Box) -> None:
-        """Button click handler — delegates to _copy_drawer_diff_to_clipboard."""
-        self._copy_drawer_diff_to_clipboard(drawer_box)
+    def _on_copy_diff_to_clipboard(self, file_path: str, drawer_box: Gtk.Box) -> bool:
+        """Button click handler — delegates to _copy_drawer_diff_to_clipboard.
+        Returns True if the copy succeeded, False otherwise.
+        """
+        return self._copy_drawer_diff_to_clipboard(drawer_box)
 
-    def _copy_drawer_diff_to_clipboard(self, drawer_box: Gtk.Box) -> None:
-        """Copy the diff text from a drawer to the system clipboard."""
+    def _copy_drawer_diff_to_clipboard(self, drawer_box: Gtk.Box) -> bool:
+        """Copy the diff text from a drawer to the system clipboard.
+        Returns True if the copy succeeded, False otherwise.
+        """
         diff_text = getattr(drawer_box, '_diff_text', None)
         if not diff_text:
-            return
-        clipboard = Gdk.Display.get_default().get_clipboard()
+            return False
+        # BUG #2: None check for display
+        display = Gdk.Display.get_default()
+        if display is None:
+            return False
+        clipboard = display.get_clipboard()
         clipboard.set(diff_text)
+        return True
 
     def _update_drawer_prefix(self, model, it, file_path: str, is_open: bool) -> bool:
         """No-op in ColumnView. The expander button label is set by the factory."""
