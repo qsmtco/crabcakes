@@ -1524,33 +1524,39 @@ class FileTree(Gtk.Box):
     def _on_key_pressed(self, controller, keyval: int, keycode: int, state: Gdk.ModifierType) -> bool:
         """Handle keyboard shortcuts at the ColumnView level.
 
-        Esc closes the active drawer. Ctrl+C copies the current diff.
+        Esc closes the active drawer (any open drawer, not just selected).
+        Ctrl+C copies the current diff from the selected drawer row.
         """
         selected_pos = self._selection.get_selected()
         if selected_pos == Gtk.INVALID_LIST_POSITION:
             return False
         if selected_pos < 0 or selected_pos >= self._store.get_n_items():
             return False
-        row: FileTreeRow = self._store.get_item(selected_pos)
 
-        # Escape: close the active drawer
+        # BUG #3: Escape closes any active drawer — not just the selected row.
+        # Iterate the store to find any open drawer and close it.
         if keyval == Gdk.KEY_Escape:
-            if row.props.is_drawer and row.props.drawer_widget is not None:
-                revealer = row.props.drawer_widget
-                if revealer.get_reveal_child():
-                    file_path = self._find_file_path_for_drawer(selected_pos)
-                    if file_path:
-                        self._toggle_drawer(file_path)
-                        return True
+            n = self._store.get_n_items()
+            for i in range(n):
+                row = cast(FileTreeRow, self._store.get_item(i))
+                if row.props.is_drawer and row.props.drawer_widget is not None:
+                    revealer = row.props.drawer_widget
+                    if revealer.get_reveal_child():
+                        file_path = self._find_file_path_for_drawer(i)
+                        if file_path:
+                            self._toggle_drawer(file_path)
+                            self._column_view.grab_focus()
+                            return True
             return False
 
-        # Ctrl+C: copy the current diff
+        # Ctrl+C: copy the current diff from the selected drawer row
         if (keyval == Gdk.KEY_c or keyval == Gdk.KEY_C) and (state & Gdk.ModifierType.CONTROL_MASK):
+            row: FileTreeRow = self._store.get_item(selected_pos)
             if row.props.is_drawer and row.props.drawer_widget is not None:
                 drawer_box = row.props.drawer_widget.get_child()
                 if drawer_box is not None:
-                    self._copy_drawer_diff_to_clipboard(drawer_box)
-                    return True
+                    # BUG #1: Only return True if copy succeeded
+                    return self._copy_drawer_diff_to_clipboard(drawer_box)
             return False
 
         return False
