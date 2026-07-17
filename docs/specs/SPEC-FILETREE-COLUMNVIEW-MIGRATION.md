@@ -454,7 +454,7 @@ Same for history, historical diff, revert.
 - Reset `_last_toggle_time`, `_loaded_drawers`, etc.
 - Populate root entries from `scan_directory(path)`
 
-`navigate_back()` / `navigate_into(dir_name)` — same logic, rebuild store.
+`navigate_back()` — same logic, rebuild store. (No `navigate_into` method exists — Bug #10.)
 
 ---
 
