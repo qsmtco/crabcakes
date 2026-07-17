@@ -157,6 +157,9 @@ This mirrors the current `_on_row_expanded` / `_on_row_collapsed` logic but oper
 - All `TreeIter` manipulation (`_find_file_iter`, `_store.append`, `model.iter_children`, etc.)
 - `_drawer_area` box (drawers become inline rows)
 - `_drawers` dict mapping `file_path → (revealer, name, is_open, box)` — replaced by drawer rows in the list store
+- **But**: a `_drawer_paths: dict[str, int]` index is REQUIRED to find drawer rows without O(n) iteration. Maps `file_path → store_index` for the drawer row. Updated on insert/remove. See Bug #3.
+- **Drawer cleanup on collapse**: When a file row's drawer is closed (second click or project switch), the drawer row must be removed from the ListStore AND its revealer's child widgets must be properly disposed to prevent GTK "already has a parent" errors on reopen. This means `unbind()` must detach the revealer, and `cleanup()` must work even if called while the revealer is still in the animation.
+- **Missing state fields**: The `FileTreeRow` class also needs `_diff_text: str`, `_history_selected_sha: str | None`, `_is_open: bool`, `_history_loaded: bool` to fully mirror the current `self._drawers` dict. These are GObject properties with getters/setters.
 
 **Add:**
 - `Gio.ListStore` of `FileTreeRow` objects
