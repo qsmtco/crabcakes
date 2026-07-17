@@ -1,185 +1,479 @@
 # SPEC: Inline File Tree Diff Drawer
 
 **Date:** 2025-07-12
-**Author:** Supervisor
+**Author:** Supervisor (Qaster)
 **Status:** Draft — for implementation
 **Implements:** Follow-up to SPEC-ONE-CLICK-DIFF.md
-**Depends on:** Phase 1-3 of SPEC-ONE-CLICK-DIFF (DiffViewer widget exists)
+**Depends on:** SPEC-ONE-CLICK-DIFF.md (phases A-E implemented)
 **Target branch:** main
 
-> **Architecture compliance (ARCHITECTURE.md):**
-> - `ui/views/file_tree.py` is a pure view — widgets only, no business logic.
-> - `ui/handlers/project_handler.py` owns project state and git operations.
-> - `ui/window.py` is the composition root — wires callbacks.
-> - All CSS in `ui/styles.py`.
-> - Background threads use `GLib.idle_add()`.
-> - Handler pattern (§8.6): new logic in `ui/handlers/`, not in views.
+> **Architecture compliance:** This spec modifies `ui/views/file_tree.py` (view) and `ui/handlers/project_handler.py` (handler). Per ARCHITECTURE.md §3.6, views contain no business logic; handlers own git operations. CSS lives only in `ui/styles.py`.
 
 ---
 
 ## 1. Overview
 
-### Problem
-Currently, clicking a file in the left panel's file tree opens a full-width `DiffViewer` in the right `main_content`, pushing the chat down. The PM loses file tree context while reviewing.
+### Problem Statement
+
+Currently, when a user double-clicks a file in the FileTree, its diff drawer opens in a fixed `_drawer_area` at the bottom of the entire tree view — far from the clicked file row. This forces the user to scroll back and forth between the file row and its diff.
 
 ### Solution
-Add an **inline diff drawer** to each file row in the file tree:
-- Each file row gets a small `▶` button at the right edge
-- Click `▶` → rotates to `▼` → **drawer expands inline** below that file row
-- Drawer shows the same diff content as `DiffViewer` (current diff + history + revert)
-- Click `▼` → rotates to `▶` → drawer collapses
-- Multiple files can have drawers open simultaneously
-- File tree remains fully visible; no context switch
+
+Transform the diff drawer from a **fixed bottom panel** into an **inline tree row** that expands directly below the clicked file, pushing subsequent rows down. This mirrors the standard tree expander pattern used by file managers and IDEs.
 
 ### Scope
 
 | In Scope | Out of Scope |
-|----------|-------------|
-| Expandable drawer per file row in `FileTree` | Moving DiffViewer out of main_content (keep both) |
-| Diff content rendered via existing `render_diff_hunks()` | Syntax highlighting beyond current |
-| History tab + revert button (reuse DiffViewer logic) | Cross-file revert |
-| Keyboard: Escape closes drawer | Diff between arbitrary commits |
-| CSS in `ui/styles.py` only | Live file watching (future) |
+|----------|--------------|
+| Convert drawer from `_drawer_area` child to inline TreeStore row | Breadcrumb navigation (separate proposal) |
+| Drawer content: Diff tab + History tab + Revert button | Cross-file revert (multi-file revert) |
+| Inline reveal/hide animation via `Gtk.Revealer` | Syntax highlighting changes (separate) |
+| History tab with commit list + revert button | Git blame integration |
+| Keyboard navigation (Esc, Ctrl+C, Enter) | Git blame inline annotations |
+| Copy diff to clipboard (button + Ctrl+C) | Three-way merge UI |
+| Escape closes drawer, Ctrl+C copies diff | Multi-repo support |
+
+### Architecture Principles (per ARCHITECTURE.md)
+
+- **View layer** (`ui/views/file_tree.py`): Pure GTK widgets, callbacks only. No git calls.
+- **Handler layer** (`ui/handlers/project_handler.py`): Owns git operations, called via callbacks.
+- **Utils** (`utils/git_ops.py`, `utils/diff_parser.py`): Pure functions, no GTK.
+- **CSS**: All new classes in `ui/styles.py` only.
+- **Threading**: Background threads for git ops; `GLib.idle_add` for UI updates.
 
 ---
 
 ## 2. Changes by File
 
-### 2.1 `ui/views/file_tree.py` — Add Drawer to File Rows
+### 2.1 `ui/views/file_tree.py` — Core Changes
 
-**Current file row structure** (lines 287-310):
+#### 2.1.1 TreeStore Column Addition
+
+**Current:** `Gtk.TreeStore.new([str, str, bool])` → (display_name, full_path, is_dir)
+
+**New:** `Gtk.TreeStore.new([str, str, bool, bool, object])`  
+Columns: `display_name`, `full_path`, `is_dir`, `is_drawer_row`, `drawer_revealer_ref`
+
+| Index | Name | Type | Purpose |
+|-------|------|------|---------|
+| 0 | display_name | str | Visible text (with prefix ▶/▼/📁/␣␣) |
+| 1 | full_path | str | Absolute file path (empty for drawer rows) |
+| 2 | is_dir | bool | True for directories |
+| 3 | is_drawer_row | bool | **NEW** — True for drawer detail rows |
+| 4 | drawer_revealer | object | Reference to `Gtk.Revealer` (None for normal rows) |
+
+#### 2.1.2 `_show_tree()` — Clear Drawer State on Project Load
+
 ```python
-def _on_row_activated(self, tree, path, column):
-    # fires on_file_selected(full_path) for files
+def _show_tree(self, name, path):
+    # ... existing code ...
+    self._store.clear()
+    # Clear ALL drawer state on project load
+    for revealer, _, _, _ in self._drawers.values():
+        self._drawer_area.remove(revealer)  # Will be removed with TreeStore clear
+    self._drawers.clear()
+    self._loaded_drawers.clear()
+    # ... rest unchanged
 ```
 
-**New file row structure:**
-```
-[expander] [icon] [name]                    [▶/▼ button]  ← file row
-[drawer content — diff/history/revert]                   ← drawer row (hidden by default)
-```
+#### 2.1.3 `_add_drawer_for_file()` — Insert as Child Row in TreeStore
 
-**Changes:**
-1. Add `Gtk.Revealer` + `Gtk.Box` as a child row *below* each file row in the `TreeStore`
-2. File row gets a `Gtk.Button` (▶/▼) at right edge
-3. Click button → toggle revealer → rotate arrow
-4. Drawer content: reuse `render_diff_hunks()` + history list + revert button (subset of `DiffViewer`)
+**Replace** current implementation (which appends to `_drawer_area` box) with:
 
-**New imports:**
 ```python
-from ui.views.diff_card import render_diff_hunks, get_lang_from_path
-from utils.git_ops import (
-    diff_file_against_working_tree,
-    diff_working_tree,
-    diff_file_against,
-    file_log,
-)
-from utils.diff_parser import parse_diff
+def _add_drawer_for_file(self, file_path: str, display_name: str) -> None:
+    """Create a drawer row as a CHILD of the file's TreeStore row."""
+    # Find the file's TreeIter in the store
+    file_iter = self._find_file_iter(file_path)
+    if file_iter is None:
+        return  # File not currently in tree (e.g., filtered out)
+
+    # Create revealer + content box (same UI as before)
+    revealer = Gtk.Revealer()
+    revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+    revealer.set_reveal_child(False)
+    revealer.set_transition_duration(150)
+    revealer.add_css_class("file-tree-drawer")
+
+    # ... build drawer_box with tabs, stack, history, action bar ...
+    # (identical UI construction as current _add_drawer_for_file)
+
+    # Store reference on drawer_box for later access
+    drawer_box._diff_tab = diff_tab
+    drawer_box._history_tab = history_tab
+    drawer_box._stack = stack
+    drawer_box._diff_box = diff_box
+    drawer_box._history_list = history_list
+    drawer_box._revert_btn = revert_btn
+    drawer_box._copy_btn = copy_btn
+    drawer_box._history_selected_sha = None
+    drawer_box._diff_text = ""
+
+    # KEY CHANGE: Insert as CHILD row in TreeStore, not in _drawer_area
+    drawer_iter = self._store.append(file_iter, [
+        "",              # display_name (empty — no label)
+        "",              # full_path (empty for drawer rows)
+        False,           # is_dir = False
+        True,            # is_drawer_row = True
+        revealer         # drawer_revealer_ref
+    ])
+
+    # Store mapping for toggle/load operations
+    self._drawers[file_path] = (revealer, display_name, False, drawer_box)
+    self._loaded_drawers.discard(file_path)  # reset lazy-load flag
+
+    # Initially hidden
+    self._store.set_value(drawer_iter, 0, "")  # empty display name
 ```
 
-**Key methods to add:**
+#### 2.1.3 `_toggle_drawer()` — Toggle Revealer + Update Prefix
+
 ```python
-def _on_drawer_toggled(self, button, tree_path):
-    """Toggle drawer revealer for the file at tree_path."""
-    # Get the drawer row (child of the file row)
-    # Toggle revealer.set_reveal_child()
-    # Rotate button arrow: ▶ ↔ ▼
+def _toggle_drawer(self, file_path: str) -> None:
+    # Debounce (per-file)
+    now = time.monotonic()
+    last_times = getattr(self, '_last_toggle_per_file', {})
+    if now - self._last_toggle_per_file.get(file_path, 0) < 0.3:
+        return
+    self._last_toggle_per_file[file_path] = now
 
-def _load_drawer_diff(self, file_path, drawer_box):
-    """Background load: current diff → history → revert callback."""
-    # Same pattern as DiffViewer._load_current_diff()
-    # Uses diff_file_against_working_tree / diff_working_tree
-    # On success: parse_diff → render_diff_hunks → append to drawer_box
+    entry = self._drawers.get(file_path)
+    if entry is None:
+        return
+    revealer, display_name, is_open, drawer_box = entry
+    new_state = not is_open
+
+    # Toggle revealer
+    revealer.set_reveal_child(new_state)
+
+    # Update file row prefix (▶/▼)
+    file_iter = self._find_file_iter(file_path)
+    if file_iter:
+        self._update_drawer_prefix(file_iter, new_state)
+
+    # Update state
+    self._drawers[file_path] = (revealer, display_name, new_state, drawer_box)
+
+    # Lazy load on first open
+    if new_state and file_path not in self._loaded_drawers:
+        self._loaded_drawers.add(file_path)
+        project_path = self._project_path or ""
+        checkpoint_sha = self._resolve_checkpoint_sha()
+        self._load_drawer_diff(file_path, project_path, checkpoint_sha)
 ```
 
-**TreeStore modification:** Current columns are `(str, str, bool, bool)` — display_name, full_path, is_dir, is_loaded.  
-**Better approach:** Use a separate dict mapping `tree_path` → `(revealer, button, drawer_box)` stored on the `FileTree` instance. TreeStore only holds data, not widgets.
+#### 2.1.4 `_update_drawer_prefix()` — Update Row Prefix (▶/▼)
+
+```python
+def _update_drawer_prefix(self, model, it, file_path: str, is_open: bool) -> bool:
+    """Update the prefix (▶/▼) on the file row."""
+    while it is not None:
+        if not model.get_value(it, 2) and model.get_value(it, 1) == file_path:
+            current = model.get_value(it, 0)
+            # Strip existing prefix
+            for prefix in ("  ", "▶ ", "▼ "):
+                if current.startswith(prefix):
+                    current = current[len(prefix):]
+                    break
+            new_prefix = "▼ " if is_open else "▶ "
+            model.set_value(it, 0, new_prefix + current[len("▶ "):] if current.startswith(("▶ ", "▼ ")) else new_prefix + current)
+            return True
+        # Recurse into children
+        child = model.iter_children(it)
+        if child and self._update_drawer_prefix(model, child, file_path, is_open):
+            return True
+        it = model.iter_next(it)
+    return False
+```
+
+#### 2.1.5 `_load_drawer_diff()` / `_on_drawer_diff_loaded()` — Update `diff_box` In-Place
+
+```python
+def _load_drawer_diff(self, file_path: str, project_path: str, checkpoint_sha: str | None = None) -> None:
+    """Load current diff for a file into the drawer box on background thread."""
+    def _do():
+        if checkpoint_sha:
+            result = diff_file_against_working_tree(project_path, checkpoint_sha, file_path)
+            subtitle = f"since checkpoint {checkpoint_sha[:7]}"
+        else:
+            result = diff_working_tree(project_path, file_path)
+            subtitle = "since HEAD"
+        GLib.idle_add(lambda: self._on_drawer_diff_loaded(
+            result, subtitle, file_path
+        ))
+    threading.Thread(target=_do, daemon=True).start()
+
+def _on_drawer_diff_loaded(self, result, subtitle: str, file_path: str) -> None:
+    if file_path not in self._drawers:
+        return
+    _, _, _, drawer_box = self._drawers[file_path]
+    diff_box = getattr(drawer_box, '_diff_box', None)
+    if diff_box is None:
+        return
+
+    # Update subtitle in drawer header (if we add one)
+    # Clear and populate diff_box
+    while diff_box.get_first_child() is not None:
+        diff_box.remove(diff_box.get_first_child())
+
+    if not result.success:
+        # ... error handling ...
+        return
+
+    if not result.stdout.strip():
+        # ... no changes label ...
+        return
+
+    parsed = parse_diff(result.stdout)
+    if not parsed.files:
+        return
+
+    file_diff = parsed.files[0]
+    if file_diff.is_binary:
+        # ... binary label ...
+        return
+
+    lang = get_lang_from_path(file_diff.display_path)
+    diff_box.append(render_diff_hunks(file_diff.hunks, lang))
+    drawer_box._diff_text = result.stdout  # for clipboard
+```
+
+#### 2.1.6 History Tab — `_load_history()` / `_on_history_loaded()`
+
+```python
+def _load_history(self, file_path: str, history_list: Gtk.ListBox) -> None:
+    if getattr(history_list, '_loaded', False):
+        return
+    history_list._loaded = True
+
+    def _do():
+        project_path = self._project_path or ""
+        result = file_log(self._project_path or "", file_path, count=20)
+        entries = []
+        if result.success and result.stdout.strip():
+            for line in result.stdout.strip().splitlines():
+                parts = line.split("\x1f")
+                if len(parts) == 3:
+                    entries.append({"sha": parts[0], "date": parts[1], "message": parts[2]})
+        GLib.idle_add(lambda: self._on_history_loaded(entries, history_list, file_path))
+
+    threading.Thread(target=_do, daemon=True).start()
+```
+
+#### 2.1.7 History Row Activation → `_load_historical_diff()`
+
+```python
+def _on_history_row_activated(self, listbox, row):
+    if not hasattr(row, 'sha'):
+        return
+    self._load_historical_diff(file_path, row.sha, stack)
+
+def _load_historical_diff(self, file_path: str, sha: str, stack: Gtk.Stack):
+    def _do():
+        project_path = self._project_path or ""
+        result = diff_file_against(self._project_path or "", sha, file_path)
+        GLib.idle_add(lambda: self._on_historical_diff_loaded(result, sha, file_path, stack))
+    threading.Thread(target=_do, daemon=True).start()
+```
+
+#### 2.1.8 Revert Handling — `_on_drawer_revert_clicked()` / `_on_drawer_revert_confirmed()`
+
+```python
+def _on_drawer_revert_clicked(self, file_path: str, drawer_box: Gtk.Box):
+    target_sha = getattr(drawer_box, '_history_selected_sha', None)
+    if not target_sha or not self._project_handler or not self._project_name:
+        return
+    # ... show confirmation dialog ...
+    # On confirm: call self._project_handler.revert_file_to_sha(...)
+    # then self._load_current_diff(file_path)
+```
+
+#### 2.1.7 `_load_current_diff()` — Reload Current Diff After Revert
+
+```python
+def _load_current_diff(self, file_path: str) -> None:
+    entry = self._drawers.get(file_path)
+    if not entry:
+        return
+    _, _, is_open, drawer_box = entry
+    if not is_open:
+        return
+    # ... same as _load_drawer_diff but uses current working tree vs checkpoint
+```
+
+#### 2.1.8 Keyboard Navigation — `_on_drawer_key_pressed()`
+
+```python
+def _on_drawer_key_pressed(self, keyval, keycode, state, file_path, drawer_box):
+    if keyval == Gdk.KEY_Escape:
+        self._toggle_drawer(file_path)
+        self._tree.grab_focus()
+        return True
+    if (keyval in (Gdk.KEY_c, Gdk.KEY_C)) and (state & Gdk.ModifierType.CONTROL_MASK):
+        self._copy_drawer_diff_to_clipboard(drawer_box)
+        return True
+    return False
+```
+
+#### 2.1.9 Copy to Clipboard
+
+```python
+def _copy_drawer_diff_to_clipboard(self, drawer_box):
+    diff_text = getattr(drawer_box, '_diff_text', '')
+    if not diff_text:
+        return
+    clipboard = Gdk.Display.get_default().get_clipboard()
+    clipboard.set(diff_text)
+```
+
+#### 2.1.9 Escape Key Handler — `_on_drawer_key_pressed()`
+
+```python
+def _on_drawer_key_pressed(self, keyval, keycode, state, file_path, drawer_box):
+    if keyval == Gdk.KEY_Escape:
+        self._toggle_drawer(file_path)
+        self._tree.grab_focus()
+        return True
+    if (keyval in (Gdk.KEY_c, Gdk.KEY_C)) and (state & Gdk.ModifierType.CONTROL_MASK):
+        self._copy_drawer_diff_to_clipboard(drawer_box)
+        return True
+    return False
+```
 
 ---
 
-### 2.2 `ui/views/diff_card.py` — Export `render_diff_hunks` (Already Done)
+### 2.2 `ui/views/diff_card.py` — Reuse `render_diff_hunks()`
 
-**Verify:** `render_diff_hunks(hunks, lang)` and `get_lang_from_path(path)` are public and imported by `file_tree.py`.  
-**Status:** ✅ Done in Phase 1b.
+**No functional changes needed.** The existing `render_diff_hunks()` function is already used by `FileTree._on_drawer_diff_loaded()` and `_on_historical_diff_loaded()`. Verify it's imported and used correctly.
+
+**Verification:** `FileTree._on_drawer_diff_loaded()` calls `render_diff_hunks(file_diff.hunks, lang)` — **already correct**.
 
 ---
 
-### 2.3 `ui/styles.py` — Add Drawer CSS
+### 2.3 `ui/views/diff_viewer.py` — No Changes Needed
 
-Add to `APP_CSS`:
+The `DiffViewer` widget (used in main content area) is **unaffected**. It remains the full-width diff viewer for the chat/feed context. The inline drawer is a separate UX for the file tree.
+
+---
+
+### 2.4 `ui/handlers/project_handler.py` — Add `revert_file_to_sha()`
+
+```python
+def revert_file_to_sha(self, project_name: str, file_path: str, target_sha: str) -> GitResult:
+    """
+    Revert a single file to its state at a specific commit.
+    Equivalent to: git checkout <sha> -- <file_path>
+    """
+    project_path = self.get_project_path(project_name)
+    if not project_path:
+        return GitResult(success=False, stdout="", error="Project not found")
+
+    try:
+        repo = gitpython.Repo(project_path)
+        # git checkout <sha> -- <file_path>
+        repo.git.checkout(target_sha, "--", file_path)
+        return GitResult(success=True, stdout=f"Reverted {file_path} to {sha[:7]}", error="")
+    except Exception as e:
+        return GitResult(success=False, stdout="", error=str(e))
+```
+
+**Also add `revert_file_to_sha` to `ProjectHandler` public API** and wire in `window.py` when constructing `FileTree`:
+
+```python
+# In window.py _build() after creating FileTree:
+left_panel._file_tree.set_project_handler(self._project_handler)
+```
+
+---
+
+### 2.5 `ui/styles.py` — New CSS Classes
+
 ```css
-/* ── File Tree Diff Drawer ─────────────────────────────────── */
-.file-tree-drawer-btn {
-    min-width: 24px;
-    min-height: 24px;
-    padding: 2px 6px;
-}
-.file-tree-drawer-btn:checked {
-    /* arrow rotated via CSS transform or swapped icon */
-}
+/* ── File Tree Inline Drawer ──────────────────────────────────────── */
 .file-tree-drawer {
-    padding: 8px 12px;
+    padding: 0;
+    margin-left: 24px;
     border-left: 2px solid alpha(@theme_selected_bg_color, 0.3);
-    margin-left: 20px;  /* align with file name */
-    background-color: alpha(@theme_bg_color, 0.5);
+    background-color: alpha(@theme_bg_color, 0.3);
 }
-.file-tree-drawer-history {
-    margin-top: 8px;
-}
-.file-tree-drawer-history-row {
+
+.file-tree-drawer-tab-bar {
     padding: 4px 8px;
+    border-bottom: 1px solid alpha(@theme_fg_color, 0.1);
 }
-.file-tree-drawer-revert-btn {
-    margin-top: 8px;
+
+.file-tree-drawer-tab-bar > togglebutton {
+    padding: 2px 12px;
+    border-radius: 4px 4px 0 0;
+    margin-right: 4px;
 }
-```
 
----
+.file-tree-drawer-tab-bar > togglebutton:checked {
+    background: alpha(@theme_selected_bg_color, 0.3);
+    color: @theme_selected_fg_color;
+}
 
-### 2.4 `ui/handlers/project_handler.py` — Add `get_file_diff()` Method
+.diff-history-row {
+    padding: 4px 12px;
+    border-bottom: 1px solid alpha(@theme_fg_color, 0.06);
+}
 
-**Current:** `ProjectHandler` has `get_active_project_path()`, `get_active_project_name()`.
+.diff-history-row:hover {
+    background: alpha(@theme_selected_bg_color, 0.1);
+}
 
-**Add:**
-```python
-def get_file_diff(self, project_name: str, file_path: str, checkpoint_sha: str | None = None) -> GitResult:
-    """Get diff for a file in a project. Used by file tree drawer."""
-    project_path = self.get_project_path(project_name)
-    if not project_path:
-        return GitResult(success=False, stdout="", error="Project not open", sha=None)
-    
-    if checkpoint_sha:
-        return diff_file_against_working_tree(project_path, checkpoint_sha, file_path)
-    else:
-        return diff_working_tree(project_path, file_path)
+.diff-history-row-sha {
+    font-family: monospace;
+    font-size: 0.85em;
+    color: #06b6d4;
+    min-width: 6em;
+}
 
-def get_file_history(self, project_name: str, file_path: str, count: int = 20) -> GitResult:
-    """Get commit history for a file."""
-    project_path = self.get_project_path(project_name)
-    if not project_path:
-        return GitResult(success=False, stdout="", error="Project not open", sha=None)
-    return file_log(project_path, file_path, count)
-```
+.diff-history-row-date {
+    font-size: 0.85em;
+    color: alpha(@theme_fg_color, 0.5);
+    min-width: 8em;
+}
 
----
+.diff-history-row-msg {
+    font-size: 0.9em;
+}
 
-### 2.5 `ui/window.py` — Wire File Tree Callbacks
+.file-tree-drawer-tab-bar {
+    padding: 4px 8px;
+    border-bottom: 1px solid alpha(@theme_fg_color, 0.08);
+    background: alpha(@theme_bg_color, 0.05);
+}
 
-**Current:** `FileTree` created with `on_file_selected=self._on_project_selected` (line 708).
+.file-tree-drawer-action-bar {
+    padding: 6px 12px;
+    border-top: 1px solid alpha(@theme_fg_color, 0.08);
+    background: rgba(0, 0, 0, 0.03);
+}
 
-**Change:** Add `on_revert_requested` callback to `FileTree` constructor:
-```python
-# In window.py _build() where FileTree is created:
-self._file_tree = FileTree(
-    on_file_selected=self._on_project_selected,
-    on_revert_requested=self._on_file_revert_requested  # NEW
-)
-```
+.diff-viewer-revert-btn {
+    background: rgba(244, 63, 94, 0.2);
+    color: #f43f5e;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-size: 0.9em;
+}
 
-Add handler:
-```python
-def _on_file_revert_requested(self, project_name, file_path, target_sha):
-    self._review_handler.revert_file_to_sha(project_name, file_path, target_sha)
+.diff-viewer-revert-btn:hover {
+    background: rgba(244, 63, 94, 0.3);
+}
+
+.diff-viewer-copy-btn {
+    background: rgba(6, 182, 212, 0.2);
+    color: #06b6d4;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-size: 0.9em;
+}
+
+.diff-viewer-copy-btn:hover {
+    background: rgba(6, 182, 212, 0.3);
+}
 ```
 
 ---
@@ -187,17 +481,60 @@ def _on_file_revert_requested(self, project_name, file_path, target_sha):
 ## 3. Data Flow
 
 ```
-User clicks ▶ button on file row
-    → FileTree._on_drawer_toggled(button, tree_path)
-    → revealer.set_reveal_child(True)
-    → button.set_label("▼") / rotate icon
-    → _load_drawer_diff(file_path, drawer_box)
-        → ProjectHandler.get_file_diff() [background thread]
-        → parse_diff() → render_diff_hunks() [GLib.idle_add]
-        → append to drawer_box
-    → _load_history(file_path, drawer_box) [on history tab click]
-        → ProjectHandler.get_file_history() → file_log()
-        → build history list with revert buttons
+User double-clicks file row
+    │
+    ▼
+FileTree._on_row_activated() → _toggle_drawer(file_path)
+    │
+    ├─► revealer.set_reveal_child(True)
+    ├─► Update row prefix (▶ → ▼)
+    ├─► If first open: _loaded_drawers.add(file_path)
+    │
+    ▼
+_load_drawer_diff() ──────────────────────────────────────┐
+    │                                                     │
+    ▼                                                     │
+git_ops.diff_file_against_working_tree()                  │
+    │                                                     │
+    ▼                                                     │
+parse_diff() ─────────────────────────────────────────────┤
+    │                                                     │
+    ▼                                                     │
+GLib.idle_add(_on_drawer_diff_loaded) ◄───────────────────┘
+    │
+    ▼
+_on_drawer_diff_loaded():
+    1. Clear diff_box children
+    2. Parse diff → render_diff_hunks() → append to diff_box
+    2. Store diff text in drawer_box._diff_text for clipboard
+```
+
+**History tab flow:**
+```
+History tab clicked → _load_history() → file_log() → _on_history_loaded()
+    │
+    ▼
+User clicks history row → _on_history_row_activated() → _load_historical_diff()
+    │
+    ▼
+diff_file_against() → parse_diff() → render_diff_hunks() → diff_box.append()
+    │
+    ▼
+Show revert button, store sha in drawer_box._history_selected_sha
+```
+
+**Revert flow:**
+```
+Click "Revert" → confirmation dialog → YES
+    │
+    ▼
+ProjectHandler.revert_file_to_sha(project_name, file_path, target_sha)
+    │
+    ▼
+ReviewHandler.revert_file_to_sha() → git checkout <sha> -- <file>
+    │
+    ▼
+_on_revert_confirmed() → _load_current_diff(file_path)  # reload current diff
 ```
 
 ---
@@ -206,50 +543,69 @@ User clicks ▶ button on file row
 
 | File | Change Type | Est. Lines | Risk |
 |------|-------------|------------|------|
-| `ui/views/file_tree.py` | Major — add drawer rows, toggle logic, async loading | +150 | Medium |
-| `ui/styles.py` | Add CSS | +30 | Low |
-| `ui/handlers/project_handler.py` | Add 2 methods | +25 | Low |
-| `ui/window.py` | Wire revert callback | +10 | Low |
-| `ui/views/diff_card.py` | No change (verify exports) | 0 | — |
+| `ui/views/file_tree.py` | Major rewrite | +300/-150 | High |
+| `ui/handlers/project_handler.py` | Add `revert_file_to_sha()` | +25 | Medium |
+| `ui/views/file_tree.py` | Add inline drawer logic | +200 | High |
+| `ui/styles.py` | Add CSS classes | +60 | Low |
+| `ui/window.py` | Wire `set_project_handler` | 1 line | Low |
 
 ---
 
 ## 5. Implementation Order
 
-1. **Phase A** — `file_tree.py`: Add drawer row structure, toggle button, revealer, basic expand/collapse (no diff content yet). Test expand/collapse.
-2. **Phase B** — `file_tree.py`: Implement `_load_drawer_diff()` using `ProjectHandler` + `render_diff_hunks()`. Test current diff rendering.
-3. **Phase C** — `file_tree.py`: Add history tab inside drawer (toggle between diff/history), revert button wiring.
-4. **Phase D** — `project_handler.py`: Add `get_file_diff()` / `get_file_history()`.
-5. **Phase E** — `window.py`: Wire `on_revert_requested` callback.
-6. **Phase F** — CSS in `styles.py`, keyboard (Escape), polish.
+| Step | Description | Verification |
+|------|-------------|--------------|
+| 1 | Add TreeStore column 3/4 (`is_drawer_row`, `drawer_revealer`) | `grep -n "TreeStore.new" ui/views/file_tree.py` |
+| 2 | Modify `_show_tree()` to clear drawers on project load | `grep -n "_show_tree" ui/views/file_tree.py` |
+| 3 | Rewrite `_add_drawer_for_file()` to insert child row in TreeStore | `grep -n "_add_drawer_for_file" ui/views/file_tree.py` |
+| 4 | Implement `_toggle_drawer()` with lazy load | `grep -n "_toggle_drawer" ui/views/file_tree.py` |
+| 5 | Implement `_update_drawer_prefix()` | `grep -n "_update_drawer_prefix"` |
+| 6 | Implement `_load_drawer_diff()` / `_on_drawer_diff_loaded()` | `grep -n "_load_drawer_diff" ui/views/file_tree.py` |
+| 7 | Implement history tab (`_load_history`, `_on_history_loaded`) | `grep -n "_load_history" ui/views/file_tree.py` |
+| 8 | Implement historical diff (`_load_historical_diff`, `_on_historical_diff_loaded`) | `grep -n "_load_historical_diff"` |
+| 8 | Implement revert flow (`_on_drawer_revert_clicked`, `_on_drawer_revert_confirmed`, `_load_current_diff`) | `grep -n "_on_drawer_revert" ui/views/file_tree.py` |
+| 9 | Add keyboard handlers (`_on_drawer_key_pressed`, `_on_history_key_pressed`) | `grep -n "_on_drawer_key_pressed\|_on_history_key_pressed"` |
+| 9 | Implement clipboard copy (`_copy_drawer_diff_to_clipboard`) | `grep -n "_copy_drawer_diff_to_clipboard"` |
+| 10 | Add `revert_file_to_sha()` to `ProjectHandler` | `grep -n "class ProjectHandler" ui/handlers/project_handler.py` |
+| 11 | Wire `set_project_handler()` in `window.py` | `grep -n "set_project_handler" ui/window.py` |
+| 11 | Add CSS classes to `ui/styles.py` | `grep -n "file-tree-drawer" ui/styles.py` |
+| 12 | Run full test suite | `xvfb-run -a pytest tests/ -x -q` |
 
 ---
 
 ## 6. Acceptance Criteria
 
-- [ ] Click `▶` on any file row → drawer expands inline below that row
-- [ ] Drawer shows current diff (working tree vs checkpoint/HEAD)
-- [ ] Click `▼` → drawer collapses
-- [ ] Multiple drawers can be open simultaneously
-- [ ] History tab shows commit list with `▶` to load historical diff
-- [ ] Revert button on historical diff works (prompts, calls ReviewHandler)
-- [ ] Escape key closes drawer
-- [ ] File tree remains fully visible and navigable
-- [ ] All existing tests pass + new drawer tests
+| # | Criterion | Test Method |
+|---|-----------|-------------|
+| 1 | Double-click file → drawer opens inline below row | Manual: open project, double-click file, verify drawer appears below row |
+| 2 | Drawer shows Diff tab with syntax-highlighted diff | Visual: syntax colors present |
+| 3 | History tab shows commit list (SHA, date, message) | Click History tab → list populated |
+| 4 | Click history row → loads that commit's diff | Click row → diff updates |
+| 5 | Revert button appears on historical diff, reverts file | Click Revert → confirm → file restored, diff reloads |
+| 4 | Escape closes drawer | Press Esc → drawer closes, focus returns to tree |
+| 5 | Ctrl+C copies diff to clipboard | Ctrl+C → paste in editor shows diff text |
+| 6 | Enter on history row activates it | Press Enter on row → loads diff |
+| 6 | Escape closes drawer | Press Esc → drawer closes |
+| 7 | Multiple drawers can be open simultaneously | Open file A, then file B → both open |
+| 8 | Drawer scrolls with tree | Scroll tree → drawer moves with its file row |
+| 9 | Project switch clears all drawers | Switch projects → no drawers remain open |
+| 10 | All existing tests pass | `xvfb-run -a pytest tests/ -x -q` → 0 failures |
 
 ---
 
 ## 7. Edge Cases
 
-| Case | Handling |
-|------|----------|
-| Binary file | Show "Binary file — not shown" |
-| No changes | Show "No changes to this file" |
-| File not in git | Show "Not tracked by git" |
-| Very large diff | Truncate at 1000 lines + "Show more" (future) |
-| Rapid toggle | Guard against double-load (check `_history_loaded` flag) |
-| Project closed with open drawers | `navigate_back()` clears all drawers |
-| Revert during active review | Same as ReviewHandler — updates working tree |
+| Case | Expected Behavior |
+|------|-------------------|
+| Binary file diff | Show "Binary file — not shown" label |
+| No changes | Show "No changes to this file." |
+| Git error (permission, corrupt repo) | Show error label in diff area |
+| Empty history (new file) | Show "No commit history for this file." |
+| Revert during active edit | Revert succeeds, diff reloads to show no changes |
+| Rapid toggle (debounce) | Second click within 300ms ignored |
+| Project switch with open drawers | All drawers closed, state cleared |
+| File deleted externally | Drawer shows "File not found" or closes |
+| Revert to commit where file didn't exist | Show "File did not exist at this commit" |
 
 ---
 
@@ -257,34 +613,46 @@ User clicks ▶ button on file row
 
 | Section | Update |
 |---------|--------|
-| §3.8 `ui/views/file_tree.py` | Document new drawer API: `on_drawer_toggled`, drawer content structure |
-| §3.x `ui/handlers/project_handler.py` | Add `get_file_diff()`, `get_file_history()` to public API |
-| §5 CSS | Add `.file-tree-drawer*` classes |
+| §3.8 `ui/views/file_tree.py` | Document inline drawer architecture, TreeStore column layout |
+| §3.9 `ui/handlers/project_handler.py` | Add `revert_file_to_sha()` to public API |
+| §5 CSS | Document new `.file-tree-drawer*`, `.diff-history-row*` classes |
+| §8.6 Handler Pattern | Note `ProjectHandler.revert_file_to_sha()` delegates to `ReviewHandler` |
 
 ---
 
-## Rule 10 Completion Verification
+## 9. Implementation Notes for Coder
 
-**Scope checklist — every file changed:**
-- [ ] `ui/views/file_tree.py` — drawer implementation
-- [ ] `ui/styles.py` — CSS
-- [ ] `ui/handlers/project_handler.py` — new methods
-- [ ] `ui/window.py` — revert callback wiring
+### Critical Implementation Details
 
-**Test suite:**
-```bash
-xvfb-run -a pytest tests/test_file_tree.py -v
-xvfb-run -a pytest tests/test_git_ops.py -v
-xvfb-run -a pytest tests/test_review_handler.py -v
-```
+1. **TreeStore column order matters** — new columns at index 3 (`is_drawer_row`), 4 (`drawer_revealer`). Update ALL `append()` calls.
 
-**Pattern sweep:**
-```bash
-# No old diff rendering patterns in file_tree.py
-grep -n "render_diff_hunks" ui/views/file_tree.py
-# Should show usage, not duplication
-```
+2. **Row iteration in `_update_drawer_prefix()`** must use `model.iter_children()` + `model.iter_next()` correctly. Test with nested directories.
+
+3. **Thread safety**: All git operations in `threading.Thread(daemon=True)`. UI updates **only** via `GLib.idle_add()`.
+
+4. **Memory management**: When clearing drawers (`navigate_back()`, `_show_tree()`), call `revealer.unparent()` or `drawer_area.remove(revealer)` before clearing dicts.
+
+5. **Debounce** is per-file (`_last_toggle_per_file` dict), not global.
+
+6. **History list `_loaded` flag** prevents duplicate loads on tab re-click.
 
 ---
 
-**Declaration:** This spec follows all 10 Steel-Framed Spec Writer rules. All code samples verified against actual source. No fabricated APIs. Ready for implementation.
+## 10. Verification Checklist (Rule 10)
+
+Before declaring complete:
+
+- [ ] `xvfb-run -a pytest tests/ -x -q` → 0 failures
+- [ ] `grep -rn "FileDiff" ui/views/diff_card.py` → only in type annotations
+- [ ] `grep -rn "_drawer_area" ui/views/file_tree.py` → 0 matches (removed)
+- [ ] `grep -rn "_drawer_area" ui/views/` → 0 matches
+- [ ] `grep -rn "_loaded_drawers" ui/views/file_tree.py` → used correctly
+- [ ] `xvfb-run -a pytest tests/test_file_tree.py -x -q` (if exists, else create)
+- [ ] Manual test: open project, double-click file → drawer opens inline
+- [ ] Manual test: History tab loads commits, click row → diff loads
+- [ ] Manual test: Revert works, diff reloads
+- [ ] Manual test: Escape closes, Ctrl+C copies, Enter activates history row
+
+---
+
+**Spec file location:** `docs/specs/SPEC-INLINE-FILE-TREE-DIFF-DRAWER.md`
