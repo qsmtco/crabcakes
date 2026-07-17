@@ -213,7 +213,7 @@ This mirrors the current `_on_row_expanded` / `_on_row_collapsed` logic but oper
 ### 3.1 `ui/views/file_tree.py` — **Major Rewrite** (~1000 lines → ~1200 lines)
 
 **Remove:**
-- `Gtk.TreeView`, `Gtk.TreeStore`, `Gtk.TreeSelection`, `Gtk.CellRendererText`
+- `Gtk.TreeView`, `Gtk.TreeStore`, `Gtk.CellRendererText` (no `Gtk.TreeSelection` to remove — BUG #9)
 - All `TreeIter` manipulation (`_find_file_iter`, `_store.append`, `model.iter_children`, etc.)
 - `_drawer_area` box (drawers become inline rows)
 - `_drawers` dict mapping `file_path → (revealer, name, is_open, box)` — replaced by drawer rows in the list store
