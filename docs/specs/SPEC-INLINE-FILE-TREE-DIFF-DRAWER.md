@@ -47,20 +47,28 @@ Transform the diff drawer from a **fixed bottom panel** into an **inline tree ro
 
 ### 2.1 `ui/views/file_tree.py` — Core Changes
 
-#### 2.1.1 TreeStore Column Addition
+#### 2.1.1 Drawer Area Architecture (Unchanged)
 
-**Current:** `Gtk.TreeStore.new([str, str, bool])` → (display_name, full_path, is_dir)
+`Gtk.TreeView` in GTK 4 uses cell renderers — arbitrary widgets (`Gtk.Revealer`) cannot be embedded in rows. Drawers are attached to a `_drawer_area` box placed below the tree view inside the same `Gtk.ScrolledWindow` (`file_tree.py:120-122`). This means drawers ALREADY scroll in sync with tree rows — no inline-row approach is needed or possible.
 
-**New:** `Gtk.TreeStore.new([str, str, bool, bool, object])`  
-Columns: `display_name`, `full_path`, `is_dir`, `is_drawer_row`, `drawer_revealer_ref`
+**Current schema** (unchanged): `Gtk.TreeStore.new([str, str, bool])` → (display_name, full_path, is_dir)  
+No columns are added. All drawer state lives in the `self._drawers: dict[str, tuple[Gtk.Revealer, str, bool, Gtk.Box]]` map, keyed by file path.
 
-| Index | Name | Type | Purpose |
-|-------|------|------|---------|
-| 0 | display_name | str | Visible text (with prefix ▶/▼/📁/␣␣) |
-| 1 | full_path | str | Absolute file path (empty for drawer rows) |
-| 2 | is_dir | bool | True for directories |
-| 3 | is_drawer_row | bool | **NEW** — True for drawer detail rows |
-| 4 | drawer_revealer | object | Reference to `Gtk.Revealer` (None for normal rows) |
+**Layout:**
+```
+Gtk.ScrolledWindow
+└── Gtk.Box (vertical)              ← _tree_and_drawers
+    ├── Gtk.TreeView                ← self._tree
+    │   └── rows (cell renderers)
+    │       ├── dir/
+    │       ├── file_a.py           ← double-click opens drawer
+    │       └── file_b.py
+    └── Gtk.Box (vertical)          ← _drawer_area
+        ├── Gtk.Revealer            ← drawer for file_a.py
+        │   └── drawer_box          ← tabs + stack + action bar
+        └── Gtk.Revealer            ← drawer for file_b.py
+            └── drawer_box
+```
 
 #### 2.1.2 `_show_tree()` — Clear Drawer State on Project Load
 
