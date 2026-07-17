@@ -371,14 +371,8 @@ class FileTree(Gtk.Box):
         self._project_name = None
         self._project_path = None
         self._project_history.clear()
-        # BUG #4: Increment request ID to invalidate any in-flight async loads
-        self._current_request_id += 1
-        # Clear list store
-        while self._store.get_n_items() > 0:
-            self._store.remove(0)
-        self._drawer_paths.clear()
-        self._loaded_drawers.clear()
-        self._last_toggle_per_file.clear()
+        # Clear all FileTree state
+        self._clear_all_state()
         # Clear search when returning to picker
         if self._project_list_handler:
             self._project_list_handler.clear_search()
