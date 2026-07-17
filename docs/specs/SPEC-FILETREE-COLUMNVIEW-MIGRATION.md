@@ -224,7 +224,7 @@ This mirrors the current `_on_row_expanded` / `_on_row_collapsed` logic but oper
 **Add:**
 - `Gio.ListStore` of `FileTreeRow` objects
 - `Gtk.ColumnView` with single column using `FileTreeFactory`
-- `FileTreeRow` dataclass
+- `FileTreeRow` GObject.Object subclass (NOT dataclass — Gio.ListStore requires GObject items)
 - `FileTreeRowWidget` — the per-row `Gtk.Box` containing expander, icon, label, and optional drawer child
 - `FileTreeFactory` — `Gtk.SignalListItemFactory` subclass
 - Expand/collapse logic operating on list indices
