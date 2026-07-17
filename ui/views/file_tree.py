@@ -185,6 +185,7 @@ class FileTreeFactory(Gtk.SignalListItemFactory):
     def _on_bind(self, factory: 'FileTreeFactory', list_item: Gtk.ListItem) -> None:
         row = cast(FileTreeRow, list_item.get_item())
         widget: FileTreeRowWidget = list_item.get_child()
+        position = list_item.get_position()
 
         widget.bind_row(row)
         widget.set_depth(row.props.depth)
@@ -194,6 +195,18 @@ class FileTreeFactory(Gtk.SignalListItemFactory):
 
         if row.props.is_drawer and row.props.drawer_widget:
             widget.attach_drawer(row.props.drawer_widget)
+
+        # Phase 2: Wire expander button for directories
+        if row.props.is_dir and not row.props.is_drawer:
+            # Disconnect previous handler if re-binding
+            if widget._expander_handler_id is not None:
+                widget._expander_btn.disconnect(widget._expander_handler_id)
+            widget._expander_handler_id = widget._expander_btn.connect(
+                "clicked", lambda btn, pos=position: self._on_expander_clicked(row, pos)
+            )
+            widget._expander_btn.set_visible(True)
+        else:
+            widget._expander_btn.set_visible(False)
 
     def _on_unbind(self, factory: 'FileTreeFactory', list_item: Gtk.ListItem) -> None:
         widget: FileTreeRowWidget = list_item.get_child()
