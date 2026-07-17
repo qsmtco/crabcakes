@@ -370,13 +370,17 @@ Show revert button, store sha in drawer_box._history_selected_sha
 Click "Revert" → confirmation dialog → YES
     │
     ▼
-ProjectHandler.revert_file_to_sha(project_name, file_path, target_sha)
+_on_revert_confirmed() → _start_revert_watchdog() + call _on_revert(file_path, sha, _on_revert_complete)
     │
-    ▼
-ReviewHandler.revert_file_to_sha() → git checkout <sha> -- <file>
+    ├─► on_revert callback → ProjectHandler.revert_file_to_sha(... on_complete=...)
+    │       │
+    │       ▼
+    │   ReviewHandler.revert_file_to_sha() → git checkout <sha> -- <file> (background)
+    │       │
+    │       ▼
+    │   GLib.idle_add(on_complete) ──→ _cancel_revert_watchdog() + _load_current_diff()
     │
-    ▼
-_on_revert_confirmed() → _load_current_diff(file_path)  # reload current diff
+    └─► (watchdog fires if on_complete not called within 30s → reload anyway)
 ```
 
 ---
