@@ -213,10 +213,12 @@ class FileTree(Gtk.Box):
         self._project_history = []  # stack of paths for back navigation
         # ProjectHandler reference — set externally for checkpoint SHA resolution
         self._project_handler = None
-        # Drawer state: file_path -> (revealer, display_name, is_open, drawer_box)
-        self._drawers: dict[str, tuple[Gtk.Revealer, str, bool, Gtk.Box]] = {}
-        # Track which drawers have had their diff content loaded (lazy load once)
+
+        # Phase 1: Drawer state tracking (replaces old self._drawers dict)
+        self._drawer_paths: dict[str, int] = {}  # file_path -> store index
         self._loaded_drawers: set[str] = set()
+        self._last_toggle_per_file: dict[str, float] = {}
+        self._current_request_id = 0  # For async guard (BUG #7)
 
         # ── Header ────────────────────────────────────────────────────────
         self._header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -257,36 +259,34 @@ class FileTree(Gtk.Box):
         self._header.append(self._title_lbl)
         self._header.append(self._search_entry)
 
-        # ── Tree view ──────────────────────────────────────────────────────
+        # ── Phase 1: ColumnView + ListStore ───────────────────────────────
+        self._store = Gio.ListStore.new(FileTreeRow.__gtype__)
+        self._selection = Gtk.SingleSelection.new(self._store)
+        self._column_view = Gtk.ColumnView.new(self._selection)
+        self._column_view.set_show_row_separators(False)
+        self._column_view.set_show_column_separators(False)
+        self._column_view.add_css_class("file-tree-column-view")
+
+        factory = FileTreeFactory(self)
+        column = Gtk.ColumnViewColumn.new("Name", factory)
+        column.set_expand(True)
+        self._column_view.append_column(column)
+
+        # Key controller for keyboard nav (Esc, Ctrl+C, Enter)
+        key_controller = Gtk.EventControllerKey()
+        key_controller.connect("key-pressed", self._on_key_pressed)
+        self._column_view.add_controller(key_controller)
+
+        # Row activation (double-click)
+        self._column_view.connect("activate", self._on_row_activated)
+
+        # ScrolledWindow
         self._scroll = Gtk.ScrolledWindow()
         self._scroll.set_vexpand(True)
         self._scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self._scroll.set_child(self._column_view)
 
-        # TreeStore columns: (display_name, full_path, is_dir)
-        self._store = Gtk.TreeStore.new([str, str, bool])
-        self._tree = Gtk.TreeView(model=self._store)
-        self._tree.set_show_expanders(True)
-        self._tree.set_activate_on_single_click(False)
-        self._tree.set_headers_visible(False)
-        self._tree.connect("row-activated", self._on_row_activated)
-        self._tree.connect("row-expanded", self._on_row_expanded)
-
-        renderer = Gtk.CellRendererText()
-        renderer.set_padding(4, 2)
-        column = Gtk.TreeViewColumn("Files", renderer, text=0)
-        column.set_expand(True)
-        self._tree.append_column(column)
-
-        # ── Drawer area (below tree view, inside scroll) ──────────────────
-        self._drawer_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-
-        # Wrap tree + drawer_area in a vertical box so drawers scroll with tree
-        self._tree_and_drawers = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self._tree_and_drawers.append(self._tree)
-        self._tree_and_drawers.append(self._drawer_area)
-
-        self._scroll.set_child(self._tree_and_drawers)
-        # Content widget — switches between TreeView (tree mode) and card box (picker mode)
+        # Content widget — switches between ColumnView (tree mode) and card box (picker mode)
         self._content = self._scroll
         self.append(self._header)
         self.append(self._content)
