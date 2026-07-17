@@ -1311,20 +1311,50 @@ class FileTree(Gtk.Box):
         self._load_drawer_diff(file_path, drawer_box, project_path, checkpoint_sha)
 
     def _on_history_key_pressed(self, keyval: int, history_list: Gtk.ListBox) -> bool:
-        """(Phase 8+) Stub — handle Enter key in history list."""
+        """Handle Enter key in history list to activate selected row."""
+        if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+            selected = history_list.get_selected_row()
+            if selected is not None and isinstance(selected, Gtk.ListBoxRow) and selected.get_activatable():
+                history_list.emit("row-activated", selected)
+                return True
         return False
 
     def _on_drawer_key_pressed(self, keyval: int, keycode: int, state: Gdk.ModifierType,
                                file_path: str, drawer_box: Gtk.Box) -> bool:
-        """(Phase 8+) Stub — handle keyboard shortcuts in the drawer."""
+        """Handle keyboard shortcuts in the drawer: Escape closes, Ctrl+C copies."""
+        # Escape: close the drawer
+        if keyval == Gdk.KEY_Escape:
+            if file_path not in self._drawer_paths:
+                return False
+            drawer_row: FileTreeRow = self._drawer_paths[file_path]
+            revealer = drawer_row.props.drawer_widget
+            if revealer is None or not revealer.get_reveal_child():
+                return False
+            self._toggle_drawer(file_path)
+            self._column_view.grab_focus()
+            return True
+
+        # Ctrl+C: copy diff text to clipboard
+        if (keyval == Gdk.KEY_c or keyval == Gdk.KEY_C) and (state & Gdk.ModifierType.CONTROL_MASK):
+            self._copy_drawer_diff_to_clipboard(drawer_box)
+            return True
+
         return False
 
     def _on_copy_diff_to_clipboard(self, file_path: str, drawer_box: Gtk.Box) -> None:
-        """(Phase 8+) Stub — copy diff text to clipboard from button click."""
-        pass
+        """Button click handler — delegates to _copy_drawer_diff_to_clipboard."""
+        self._copy_drawer_diff_to_clipboard(drawer_box)
+
+    def _copy_drawer_diff_to_clipboard(self, drawer_box: Gtk.Box) -> None:
+        """Copy the diff text from a drawer to the system clipboard."""
+        diff_text = getattr(drawer_box, '_diff_text', None)
+        if not diff_text:
+            return
+        clipboard = Gdk.Display.get_default().get_clipboard()
+        clipboard.set(diff_text)
 
     def _update_drawer_prefix(self, model, it, file_path: str, is_open: bool) -> bool:
-        """(Phase 4+) Stub — update tree row display name prefix (▶/▼)."""
+        """No-op in ColumnView. The expander button label is set by the factory."""
         return False
 
     # ── Phase 2: Directory Expand/Collapse ──────────────────────────────
