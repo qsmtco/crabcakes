@@ -591,16 +591,15 @@ class FileTree(Gtk.Box):
         GLib.idle_add(lambda: name_entry.grab_focus() and False)
 
     def _show_tree(self, name, path):
-        """Show the directory tree for a project using ColumnView + ListStore."""
+        """Show the directory tree for a project. Populates ListStore with root entries."""
         # Swap card box back to scroll/ColumnView
         if self._content != self._scroll:
             self.remove(self._content)
             self._content = self._scroll
             self.append(self._content)
-        # Clear existing store
-        n = self._store.get_n_items()
-        if n > 0:
-            self._store.splice(0, n, [])
+        # Clear store with while-loop to ensure full removal
+        while self._store.get_n_items() > 0:
+            self._store.remove(0)
         self._drawer_paths.clear()
         self._loaded_drawers.clear()
         self._last_toggle_per_file.clear()
@@ -612,19 +611,19 @@ class FileTree(Gtk.Box):
         self._title_lbl.set_hexpand(True)
         self._search_entry.set_visible(False)
 
+        # Populate root entries
         try:
             entries = scan_directory(path)
         except (PermissionError, OSError) as e:
             entries = [(f"[error: {e}]", "", False)]
         for entry_name, full_path, is_dir in entries:
-            prefix = "📁 " if is_dir else "  "
             row = FileTreeRow(
-                display_name=prefix + entry_name,
+                display_name=entry_name,
                 full_path=full_path,
                 is_dir=is_dir,
                 depth=0,
-                expanded=False,
                 has_children=is_dir,
+                expanded=False,
             )
             self._store.append(row)
 
