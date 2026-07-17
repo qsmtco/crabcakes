@@ -281,7 +281,7 @@ Existing `revert_file_to_sha`, `get_project_path`, `scan_directory` APIs unchang
 
 | Phase | Description | Files | Verification |
 |-------|-------------|-------|--------------|
-| **1. Data model & row widget** | `FileTreeRow` dataclass, `FileTreeRowWidget` (Gtk.Box with expander/icon/label + drawer placeholder), basic CSS | `file_tree.py` | Unit test: row widget renders correctly for each type |
+| **1. Row widget** | `FileTreeRowWidget` (Gtk.Box with expander/icon/label + drawer placeholder), basic CSS | `file_tree.py` | Unit test: row widget renders correctly for each type |
 | **2. ColumnView + Factory** | Replace TreeView/TreeStore with ColumnView + Gio.ListStore + FileTreeFactory (setup/bind/unbind) | `file_tree.py` | Manual: project opens, file list renders, selection works |
 | **3. Directory expand/collapse** | Implement lazy-load children insertion/removal by index/depth | `file_tree.py` | Manual: expand dir → children appear; collapse → children removed |
 | **4. File double-click → drawer row** | On row-activated (file), insert drawer row below with Revealer; animate reveal | `file_tree.py` | Manual: double-click file → drawer opens inline with animation |
