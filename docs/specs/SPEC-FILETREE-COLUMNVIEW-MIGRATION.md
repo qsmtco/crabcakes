@@ -394,6 +394,19 @@ self._column_view.append_column(column)
 
 **Async:** `scan_directory` in background thread, `GLib.idle_add` to insert.
 
+**BUG #7: Thread invariant guard.** When the user collapses a directory while
+its children are still being loaded (e.g., slow filesystem), the idle_add
+callback must check whether the directory is still expanded. Use a
+`_current_request_id` counter pattern (same as DiffViewer at diff_viewer.py):
+assign a request ID before spawning the thread, capture it in the closure,
+and ignore the idle_add result if it doesn't match the current ID. This
+prevents stale callback from inserting children into a collapsed directory.
+
+**BUG #8: Async UX — show loading state.** While `scan_directory` runs in the
+background, show a spinner or "Loading..." label row in the collapsed
+directory's position. Replace it with real children once loaded. Same
+pattern for diff/history loading (reuse the `Gtk.Spinner` from Phase C).
+
 **Test:** Expand root → children appear. Collapse → children removed. Nested expand/collapse works.
 
 ---
