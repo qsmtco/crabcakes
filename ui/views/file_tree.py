@@ -766,7 +766,7 @@ class FileTree(Gtk.Box):
             # Store mutations (sibling expand/collapse) can shift positions.
             _loading_row = loading_row
             GLib.idle_add(lambda: self._on_directory_loaded(
-                entries, _loading_row, parent_depth, request_id
+                entries, _loading_row, row_index, parent_depth, request_id
             ))
 
         threading.Thread(target=_do, daemon=True).start()
