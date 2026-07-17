@@ -1359,11 +1359,6 @@ button.settings-remove-btn:hover {
     background: transparent;
 }
 
-.file-tree-column-view > row {
-    padding: 0;
-    margin: 0;
-}
-
 .file-tree-row {
     padding: 2px 8px;
     min-height: 24px;
