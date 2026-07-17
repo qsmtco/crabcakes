@@ -785,16 +785,30 @@ class FileTree(Gtk.Box):
         self._last_toggle_per_file[file_path] = now
 
         if file_path in self._drawer_paths:
-            # Drawer exists — close it
+            # Drawer entry exists — validate it's still live before using it.
+            # BUG #1: Parent collapse removes drawer rows, leaving stale _drawer_paths entries.
             drawer_index = self._drawer_paths[file_path]
+            drawer_valid = False
             if drawer_index < self._store.get_n_items():
+                candidate = cast(FileTreeRow, self._store.get_item(drawer_index))
+                if candidate.props.is_drawer:
+                    drawer_valid = True
+
+            if not drawer_valid:
+                # Stale entry from ancestor collapse — clean up and re-open
+                del self._drawer_paths[file_path]
+                # Fall through to open path below
+            else:
+                # Drawer exists — close it
                 drawer_row: FileTreeRow = self._store.get_item(drawer_index)
                 revealer = drawer_row.props.drawer_widget
                 if revealer is not None:
                     revealer.set_reveal_child(False)
                     # Row removal happens in _on_revealer_child_revealed
-        else:
-            # Drawer doesn't exist — create and insert
+                return  # Close path done
+
+        if file_path not in self._drawer_paths:
+            # Drawer doesn't exist (or was cleaned up above) — create and insert
             file_index = self._find_file_index(file_path)
             if file_index is None:
                 return
