@@ -307,10 +307,11 @@ class FileTreeFactory(Gtk.SignalListItemFactory):
 ```
 
 **FileTree.__init__:**
-- `self._store = Gio.ListStore.new(FileTreeRow)` — **but** GObject ListStore requires GObject types. Use `Gio.ListStore` with `item_type=GObject.TYPE_PYOBJECT` or wrap in `GObject.Object` subclass. Simpler: `self._store = []` (Python list) + `Gtk.ColumnView` with `Gtk.NoSelection` + custom `Gtk.SingleSelection` wrapper? **Better:** Use `Gio.ListStore.new(GObject.TYPE_PYOBJECT)` — PyGObject supports Python objects in `G_TYPE_PYOBJECT` columns.
-
 ```python
-self._store = Gio.ListStore.new(GObject.TYPE_PYOBJECT)
+from gi.repository import GObject
+
+# FileTreeRow is a GObject subclass (§2.1) — required by Gio.ListStore
+self._store = Gio.ListStore.new(FileTreeRow.__gtype__)
 self._selection = Gtk.SingleSelection.new(self._store)
 self._column_view = Gtk.ColumnView.new(self._selection)
 factory = FileTreeFactory(self)
