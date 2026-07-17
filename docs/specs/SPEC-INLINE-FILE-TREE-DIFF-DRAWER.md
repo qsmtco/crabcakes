@@ -15,11 +15,13 @@
 
 ### Problem Statement
 
-Currently, when a user double-clicks a file in the FileTree, its diff drawer opens in a fixed `_drawer_area` at the bottom of the entire tree view — far from the clicked file row. This forces the user to scroll back and forth between the file row and its diff.
+The inline file tree diff drawer has been implemented across Phases C–F and includes: tabbed Diff/History interface, commit history loading, historical diff viewing, file revert, keyboard shortcuts (Escape, Ctrl+C, Enter), clipboard copy, and loading spinners.
 
-### Solution
+This spec documents the final architecture and serves as the reference for any future maintenance or extension.
 
-Transform the diff drawer from a **fixed bottom panel** into an **inline tree row** that expands directly below the clicked file, pushing subsequent rows down. This mirrors the standard tree expander pattern used by file managers and IDEs.
+### Solution (Implemented)
+
+The diff drawer lives in a `Gtk.Revealer` appended to `_drawer_area` below the tree view, inside the same `Gtk.ScrolledWindow`. This ensures drawers scroll naturally with the tree. The `Gtk.TreeView` cell-renderer architecture is preserved (no widget-in-row embedding, which GTK 4 does not support).
 
 ### Scope
 
