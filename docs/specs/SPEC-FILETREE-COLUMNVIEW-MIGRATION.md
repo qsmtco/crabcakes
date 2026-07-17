@@ -40,17 +40,73 @@ Migrate `FileTree` from `Gtk.TreeView`/`Gtk.TreeStore` to `Gtk.ColumnView`/`Gio.
 ### 2.1 Data Model
 
 ```python
-# Each row in the Gio.ListStore is a FileTreeRow dataclass
-@dataclass
-class FileTreeRow:
-    display_name: str          # "▶  main.py" or "  main.py" (prefix + name)
-    full_path: str             # absolute path (empty for drawer rows)
-    is_dir: bool               # True for directories
-    is_drawer: bool            # True for drawer detail rows
-    depth: int                 # indentation level (0 = root)
-    drawer_widget: Gtk.Widget | None  # the drawer revealer (for drawer rows)
-    expanded: bool             # for directories
-    has_children: bool         # for directories (lazy load placeholder)
+# Each row in the Gio.ListStore is a GObject.Object subclass.
+# Gio.ListStore requires GObject.Object items — plain dataclasses
+# or GObject.TYPE_PYOBJECT wrappers are NOT supported.
+class FileTreeRow(GObject.Object):
+    """A single row in the file tree list store.
+
+    Properties are defined as GObject Properties for ListStore compatibility.
+    """
+
+    def __init__(self, display_name: str = "", full_path: str = "",
+                 is_dir: bool = False, is_drawer: bool = False,
+                 depth: int = 0, expanded: bool = False,
+                 has_children: bool = False):
+        super().__init__()
+        self._display_name = display_name
+        self._full_path = full_path
+        self._is_dir = is_dir
+        self._is_drawer = is_drawer
+        self._depth = depth
+        self._drawer_widget = None  # Gtk.Widget | None — set separately
+        self._expanded = expanded
+        self._has_children = has_children
+
+    # Properties for Gtk.ListItem bind/unbind access
+    @property
+    def display_name(self) -> str:
+        return self._display_name
+
+    @display_name.setter
+    def display_name(self, value: str) -> None:
+        self._display_name = value
+
+    @property
+    def full_path(self) -> str:
+        return self._full_path
+
+    @property
+    def is_dir(self) -> bool:
+        return self._is_dir
+
+    @property
+    def is_drawer(self) -> bool:
+        return self._is_drawer
+
+    @property
+    def depth(self) -> int:
+        return self._depth
+
+    @property
+    def drawer_widget) -> Gtk.Widget | None:
+        return self._drawer_widget
+
+    @drawer_widget.setter
+    def drawer_widget(self, widget: Gtk.Widget | None) -> None:
+        self._drawer_widget = widget
+
+    @property
+    def expanded(self) -> bool:
+        return self._expanded
+
+    @expanded.setter
+    def expanded(self, value: bool) -> None:
+        self._expanded = value
+
+    @property
+    def has_children(self) -> bool:
+        return self._has_children
 ```
 
 ### 2.2 Row Types
