@@ -7,7 +7,13 @@ import sys
 import pytest
 
 # Ensure headless rendering works for GTK tests
-os.environ.setdefault('GDK_BACKEND', 'broadway')
+# Use broadway backend for headless tests, unless another backend is already set
+# (e.g., xvfb-run provides X11)
+if 'WAYLAND_DISPLAY' in os.environ:
+    # Under Wayland+weston, set the backend for headless rendering
+    os.environ.setdefault('GDK_BACKEND', 'x11')
+elif not os.environ.get('DISPLAY') and not os.environ.get('GDK_BACKEND'):
+    os.environ.setdefault('GDK_BACKEND', 'broadway')
 
 # Ensure crabcakes package is on path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
