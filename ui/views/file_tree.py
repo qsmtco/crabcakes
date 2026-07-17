@@ -954,6 +954,13 @@ class FileTree(Gtk.Box):
         if file_path not in self._drawer_paths:
             return
 
+        # BUG #3: Verify that the current drawer's widget is still this drawer_box
+        drawer_row = cast(FileTreeRow, self._drawer_paths.get(file_path))
+        if drawer_row is not None:
+            current_revealer = drawer_row.props.drawer_widget
+            if current_revealer is not None and current_revealer.get_child() is not drawer_box:
+                return  # Stale drawer_box — belongs to a different revealer/reopened drawer
+
         # Populate the diff_box inside the tabbed stack
         diff_box = getattr(drawer_box, '_diff_box', drawer_box)
 
