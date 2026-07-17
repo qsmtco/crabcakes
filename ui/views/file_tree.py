@@ -94,11 +94,7 @@ class FileTreeRowWidget(Gtk.Box):
         self._expander_btn.set_valign(Gtk.Align.CENTER)
         self.append(self._expander_btn)
 
-        # Icon
-        self._icon = Gtk.Image()
-        self._icon.add_css_class("file-tree-row-icon")
-        self._icon.set_pixel_size(16)
-        self.append(self._icon)
+        # Icon — removed (icon-free minimal design)
 
         # Label (markup for prefix + name)
         self._label = Gtk.Label()
