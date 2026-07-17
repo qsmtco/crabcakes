@@ -701,6 +701,12 @@ class FileTree(Gtk.Box):
 
     def _on_expander_clicked(self, row: FileTreeRow, position: int) -> None:
         """Handle expander button click for a directory row."""
+        if position < 0 or position >= self._store.get_n_items():
+            return
+        # Verify the row at this position is still the one we expect
+        current = self._store.get_item(position)
+        if current is not row:
+            return
         if row.props.expanded:
             self._collapse_directory(position)
         else:
