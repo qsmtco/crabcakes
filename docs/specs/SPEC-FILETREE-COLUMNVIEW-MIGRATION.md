@@ -298,34 +298,19 @@ Existing `revert_file_to_sha`, `get_project_path`, `scan_directory` APIs unchang
 
 ## 5. Detailed Phase Specs
 
-### Phase 1: Data Model & Row Widget
+### Phase 1: Row Widget
 
 **File:** `ui/views/file_tree.py`
 
-```python
-from dataclasses import dataclass
-from typing import Optional
-import gi
-gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk
-
-@dataclass
-class FileTreeRow:
-    display_name: str
-    full_path: str
-    is_dir: bool
-    is_drawer: bool
-    depth: int
-    drawer_widget: Optional[Gtk.Widget] = None
-    expanded: bool = False
-    has_children: bool = False
-```
+The data model `FileTreeRow` is a `GObject.Object` subclass defined in §2.1 (NOT `@dataclass` — `Gio.ListStore` requires GObject items). The final implementation MUST use the definition from §2.1.
 
 **Row Widget:** `FileTreeRowWidget(Gtk.Box)` with:
 - `expander_btn` (Gtk.Button, ▶/▼ for dirs, spacer for files)
 - `icon` (Gtk.Image, folder/file/drawer)
 - `label` (Gtk.Label, markup for prefix + name)
 - `drawer_container` (Gtk.Box, initially empty, receives drawer_widget for drawer rows)
+
+**Drawer cleanup:** `FileTreeRowWidget.detach_drawer()` must remove the drawer widget from `drawer_container` and store it on `row.drawer_widget` for the factory's unbind cycle. Without this, `Gtk.Revealer` animation races with widget pool reuse in `Gtk.SignalListItemFactory`.
 
 **CSS classes:** `.file-tree-row`, `.file-tree-row-expander`, `.file-tree-row-icon`, `.file-tree-row-label`, `.file-tree-drawer-row`
 
