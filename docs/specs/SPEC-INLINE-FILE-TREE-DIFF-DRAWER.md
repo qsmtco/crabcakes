@@ -122,105 +122,78 @@ The `_on_drawer_diff_loaded` method handles all UI states explicitly:
 
 #### 2.1.6 History Tab — `_load_history()` / `_on_history_loaded()`
 
-```python
-def _load_history(self, file_path: str, history_list: Gtk.ListBox) -> None:
-    if getattr(history_list, '_loaded', False):
-        return
-    history_list._loaded = True
-
-    def _do():
-        project_path = self._project_path or ""
-        result = file_log(self._project_path or "", file_path, count=20)
-        entries = []
-        if result.success and result.stdout.strip():
-            for line in result.stdout.strip().splitlines():
-                parts = line.split("\x1f")
-                if len(parts) == 3:
-                    entries.append({"sha": parts[0], "date": parts[1], "message": parts[2]})
-        GLib.idle_add(lambda: self._on_history_loaded(entries, history_list, file_path))
-
-    threading.Thread(target=_do, daemon=True).start()
-```
+Current implementation at `file_tree.py:603–668`. On first click of the History tab, `_load_history` runs `file_log()` on a background thread, parses `\x1f`-delimited output into `(sha, date, message)` entries, then dispatches to `_on_history_loaded` on the main thread. Placeholder rows use `Gtk.ListBoxRow` with `set_activatable(False)`. Commit rows store `row.sha` for activation. See `file_tree.py:603–668` for full implementation.
 
 #### 2.1.7 History Row Activation → `_load_historical_diff()`
 
 ```python
-def _on_history_row_activated(self, listbox, row):
-    if not hasattr(row, 'sha'):
-        return
-    self._load_historical_diff(file_path, row.sha, stack)
-
-def _load_historical_diff(self, file_path: str, sha: str, stack: Gtk.Stack):
+# file_tree.py:673–683 — called from row-activated signal
+def _load_historical_diff(self, file_path: str, sha: str, stack: Gtk.Stack) -> None:
     def _do():
         project_path = self._project_path or ""
-        result = diff_file_against(self._project_path or "", sha, file_path)
-        GLib.idle_add(lambda: self._on_historical_diff_loaded(result, sha, file_path, stack))
+        result = diff_file_against(project_path, sha, file_path)
+        GLib.idle_add(lambda: self._on_historical_diff_loaded(
+            result, sha, file_path, stack))
     threading.Thread(target=_do, daemon=True).start()
 ```
 
+`_on_historical_diff_loaded` (`file_tree.py:683–787`) switches the stack to the "diff" page, clears `diff_box`, renders the diff via `render_diff_hunks()` (handling errors, empty, binary cases), stores `drawer_box._history_selected_sha`, and shows the revert button.
+
 #### 2.1.8 Revert Handling — `_on_drawer_revert_clicked()` / `_on_drawer_revert_confirmed()`
 
-```python
-def _on_drawer_revert_clicked(self, file_path: str, drawer_box: Gtk.Box):
-    target_sha = getattr(drawer_box, '_history_selected_sha', None)
-    if not target_sha or not self._project_handler or not self._project_name:
-        return
-    # ... show confirmation dialog ...
-    # On confirm: call self._project_handler.revert_file_to_sha(...)
-    # then self._load_current_diff(file_path)
-```
+Current implementations at `file_tree.py:752–830`. Shows a `Gtk.MessageDialog` confirmation. On YES, calls `self._project_handler.revert_file_to_sha(self._project_name, file_path, target_sha)`, then switches to Diff tab, resets history tab's `_loaded` flag, and calls `_load_current_diff()` to reload the working-tree diff. See `file_tree.py:752–830` for full implementation.
 
-#### 2.1.7 `_load_current_diff()` — Reload Current Diff After Revert
+#### 2.1.9 `_load_current_diff()` — Reload Current Diff After Revert
 
 ```python
+# file_tree.py:834–881 — called after revert to show updated working-tree diff
 def _load_current_diff(self, file_path: str) -> None:
     entry = self._drawers.get(file_path)
-    if not entry:
+    if entry is None:
         return
     _, _, is_open, drawer_box = entry
     if not is_open:
         return
-    # ... same as _load_drawer_diff but uses current working tree vs checkpoint
+    project_path = self._project_path or ""
+    # Clear diff_box
+    diff_box = getattr(drawer_box, '_diff_box', None)
+    if diff_box is not None:
+        while diff_box.get_first_child() is not None:
+            diff_box.remove(diff_box.get_first_child())
+    # Resolve checkpoint SHA from review state
+    checkpoint_sha = None
+    if self._project_handler and self._project_name:
+        try:
+            from models.review_state import ReviewState
+            review_state = self._project_handler.get_review_state(self._project_name)
+            if review_state and review_state.is_active():
+                checkpoint_sha = review_state.checkpoint_sha
+        except Exception:
+            pass
+    self._load_drawer_diff(file_path, drawer_box, project_path, checkpoint_sha)
 ```
 
-#### 2.1.8 Keyboard Navigation — `_on_drawer_key_pressed()`
+#### 2.1.10 Keyboard Navigation — `_on_drawer_key_pressed()` / `_on_history_key_pressed()`
+
+Current implementations at `file_tree.py:868–933`:
+
+**Unified drawer key handler** (`_on_drawer_key_pressed`, line 913): Handles `Escape` (closes drawer, re-focuses tree) and `Ctrl+C` (copies diff text to clipboard via `_copy_drawer_diff_to_clipboard`). Returns `True` for handled keys, `False` otherwise.
+
+**History list key handler** (`_on_history_key_pressed`, line 878): Handles `Enter`/`KP_Enter` on a selected history row — activates it by emitting `row-activated` signal. Guarded by `row.get_activatable()` to skip placeholder rows.
+
+#### 2.1.11 Copy to Clipboard — `_copy_drawer_diff_to_clipboard()`
 
 ```python
-def _on_drawer_key_pressed(self, keyval, keycode, state, file_path, drawer_box):
-    if keyval == Gdk.KEY_Escape:
-        self._toggle_drawer(file_path)
-        self._tree.grab_focus()
-        return True
-    if (keyval in (Gdk.KEY_c, Gdk.KEY_C)) and (state & Gdk.ModifierType.CONTROL_MASK):
-        self._copy_drawer_diff_to_clipboard(drawer_box)
-        return True
-    return False
-```
-
-#### 2.1.9 Copy to Clipboard
-
-```python
-def _copy_drawer_diff_to_clipboard(self, drawer_box):
-    diff_text = getattr(drawer_box, '_diff_text', '')
+# file_tree.py:885–891
+def _copy_drawer_diff_to_clipboard(self, drawer_box: Gtk.Box) -> None:
+    diff_text = getattr(drawer_box, '_diff_text', None)
     if not diff_text:
         return
     clipboard = Gdk.Display.get_default().get_clipboard()
     clipboard.set(diff_text)
 ```
 
-#### 2.1.9 Escape Key Handler — `_on_drawer_key_pressed()`
-
-```python
-def _on_drawer_key_pressed(self, keyval, keycode, state, file_path, drawer_box):
-    if keyval == Gdk.KEY_Escape:
-        self._toggle_drawer(file_path)
-        self._tree.grab_focus()
-        return True
-    if (keyval in (Gdk.KEY_c, Gdk.KEY_C)) and (state & Gdk.ModifierType.CONTROL_MASK):
-        self._copy_drawer_diff_to_clipboard(drawer_box)
-        return True
-    return False
-```
+Called from both the Ctrl+C key shortcut and the "Copy diff" button click (`_on_copy_diff_to_clipboard`, line 896).
 
 ---
 
