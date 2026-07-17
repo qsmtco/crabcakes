@@ -919,9 +919,7 @@ class FileTree(Gtk.Box):
                     result = diff_working_tree(project_path, file_path)
                     subtitle = "since HEAD"
             except Exception as e:
-                result = type('FakeResult', (), {
-                    'success': False, 'stdout': '', 'error': str(e)
-                })()
+                result = GitResult(success=False, stdout="", error=str(e))
                 subtitle = ""
             GLib.idle_add(lambda: self._on_drawer_diff_loaded(
                 result, subtitle, drawer_box, file_path
