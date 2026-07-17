@@ -453,28 +453,30 @@ _on_revert_confirmed() → _load_current_diff(file_path)  # reload current diff
 
 | Section | Update |
 |---------|--------|
-| §3.8 `ui/views/file_tree.py` | Document inline drawer architecture, TreeStore column layout |
-| §3.9 `ui/handlers/project_handler.py` | Add `revert_file_to_sha()` to public API |
-| §5 CSS | Document new `.file-tree-drawer*`, `.diff-history-row*` classes |
+| §3.8 `ui/views/file_tree.py` | Document drawer architecture: `_drawer_area` with `Gtk.Revealer` children, `self._drawers` dict, lazy loading via `_loaded_drawers` |
+| §3.9 `ui/handlers/project_handler.py` | `revert_file_to_sha()` delegates to `ReviewHandler` — signature takes `on_complete` callback |
+| §5 CSS | Document `.file-tree-drawer*`, `.diff-history-row*`, `diff-viewer-revert-btn`, `diff-viewer-copy-btn` classes |
 | §8.6 Handler Pattern | Note `ProjectHandler.revert_file_to_sha()` delegates to `ReviewHandler` |
 
 ---
 
 ## 9. Implementation Notes for Coder
 
-### Critical Implementation Details
+### Critical Architecture Notes
 
-1. **TreeStore column order matters** — new columns at index 3 (`is_drawer_row`), 4 (`drawer_revealer`). Update ALL `append()` calls.
+1. **Drawer state is stored in `self._drawers` dict**, not in TreeStore columns. The 3-column TreeStore (`display_name, full_path, is_dir`) is unchanged.
 
-2. **Row iteration in `_update_drawer_prefix()`** must use `model.iter_children()` + `model.iter_next()` correctly. Test with nested directories.
+2. **Row iteration in `_update_drawer_prefix()`** uses `model.iter_children()` + `model.iter_next()` to find a file path in the tree and update its prefix character. See `file_tree.py:956–978`.
 
 3. **Thread safety**: All git operations in `threading.Thread(daemon=True)`. UI updates **only** via `GLib.idle_add()`.
 
-4. **Memory management**: When clearing drawers (`navigate_back()`, `_show_tree()`), call `revealer.unparent()` or `drawer_area.remove(revealer)` before clearing dicts.
+4. **Memory management**: When clearing drawers (`navigate_back()`, `_show_tree()`), call `drawer_area.remove(revealer)` before clearing dicts. Currently correct at `file_tree.py:384–387`.
 
 5. **Debounce** is per-file (`_last_toggle_per_file` dict), not global.
 
-6. **History list `_loaded` flag** prevents duplicate loads on tab re-click.
+6. **History list `_loaded` flag** prevents duplicate loads on tab re-click. Reset on revert or project reload.
+
+7. **Revert callback chain**: `window.py:on_revert` → `ProjectHandler.revert_file_to_sha(... on_complete=...)` → `ReviewHandler.revert_file_to_sha(...)` → git checkout on background thread → `GLib.idle_add(on_complete)` → `_cancel_revert_watchdog()` + `_load_current_diff()`.
 
 ---
 
@@ -484,9 +486,8 @@ Before declaring complete:
 
 - [ ] `xvfb-run -a pytest tests/ -x -q` → 0 failures
 - [ ] `grep -rn "FileDiff" ui/views/diff_card.py` → only in type annotations
-- [ ] `grep -rn "_drawer_area" ui/views/file_tree.py` → 0 matches (removed)
-- [ ] `grep -rn "_drawer_area" ui/views/` → 0 matches
-- [ ] `grep -rn "_loaded_drawers" ui/views/file_tree.py` → used correctly
+- [ ] `grep -rn "_drawer_area" ui/views/file_tree.py` → present and correct (drawers attached to area inside scrolled window)
+- [ ] `grep -rn "_loaded_drawers" ui/views/file_tree.py` → cleared on navigate_back() and _show_tree()
 - [ ] `xvfb-run -a pytest tests/test_file_tree.py -x -q` (if exists, else create)
 - [ ] Manual test: open project, double-click file → drawer opens inline
 - [ ] Manual test: History tab loads commits, click row → diff loads
