@@ -977,6 +977,15 @@ class FileTree(Gtk.Box):
             diff_box.append(no_changes_lbl)
             return
 
+        # BUG #1: Check for binary extension before attempting to parse diff
+        if self._is_binary_path(file_path):
+            bin_lbl = Gtk.Label(label="Binary file — not shown")
+            bin_lbl.add_css_class("diff-viewer-subtitle")
+            bin_lbl.set_margin_top(12)
+            bin_lbl.set_margin_bottom(12)
+            diff_box.append(bin_lbl)
+            return
+
         parsed = parse_diff(result.stdout)
         if not parsed.files:
             no_changes_lbl = Gtk.Label(label="No changes to this file.")
