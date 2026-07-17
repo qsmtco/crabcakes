@@ -197,7 +197,9 @@ class TestFileTreeFactory:
             depth=2,
             expanded=False,
         )
-        list_item.set_item(row)
+        # Set the item directly on the list_item for testing
+        list_item.item = row
+        list_item.notify("item")
         factory._on_bind(factory, list_item)
         widget = list_item.get_child()
         assert widget.get_margin_start() == 40  # 2 * 20
