@@ -422,14 +422,8 @@ class FileTree(Gtk.Box):
 
     def _show_project_picker(self):
         """Show project cards (replaces ColumnView tree rows)."""
-        # BUG #4: Increment request ID to invalidate any in-flight async loads
-        self._current_request_id += 1
-        # Clear store before replacing content
-        while self._store.get_n_items() > 0:
-            self._store.remove(0)
-        self._drawer_paths.clear()
-        self._loaded_drawers.clear()
-        self._last_toggle_per_file.clear()
+        # Clear all FileTree state
+        self._clear_all_state()
         self._back_btn.set_visible(False)
         self._folder_icon.set_visible(False)
         self._title_lbl.set_markup(
