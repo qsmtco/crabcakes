@@ -885,29 +885,103 @@ class FileTree(Gtk.Box):
     def _trigger_diff_load(self, file_path: str, drawer_box: Gtk.Box) -> None:
         """Trigger lazy load of diff content for a file's drawer.
 
-        Phase 5 will implement the actual loading. For now, remove spinner and show placeholder.
+        Resolves checkpoint SHA from active review if ProjectHandler is available.
         """
-        diff_box = getattr(drawer_box, '_diff_box', None)
-        if diff_box is not None:
-            while diff_box.get_first_child() is not None:
-                diff_box.remove(diff_box.get_first_child())
-            placeholder = Gtk.Label(label="Diff loading not yet implemented (Phase 5)")
-            placeholder.add_css_class("diff-viewer-subtitle")
-            placeholder.set_margin_top(12)
-            placeholder.set_margin_bottom(12)
-            diff_box.append(placeholder)
+        if not isinstance(drawer_box, Gtk.Box):
+            return
+        project_path = self._project_path or ""
+        checkpoint_sha = None
+        if self._project_handler and self._project_name:
+            try:
+                from models.review_state import ReviewState
+                review_state = self._project_handler.get_review_state(self._project_name)
+                if review_state and review_state.is_active():
+                    checkpoint_sha = review_state.checkpoint_sha
+            except Exception:
+                pass  # Non-fatal — fall back to HEAD
+        self._load_drawer_diff(file_path, drawer_box, project_path, checkpoint_sha)
 
-    # ── Remaining Drawer / Diff / History Stubs (Phase 5+) ────────────
+    # ── Phase 4: Drawer Content — Diff Tab ────────────────────────────
 
     def _load_drawer_diff(self, file_path: str, drawer_box: Gtk.Box, project_path: str,
                           checkpoint_sha: str | None = None) -> None:
-        """(Phase 5+) Stub — load current diff for a file on background thread."""
-        pass
+        """Load current diff for a file into the drawer box on background thread."""
+        def _do():
+            try:
+                if checkpoint_sha:
+                    result = diff_file_against_working_tree(
+                        project_path, checkpoint_sha, file_path
+                    )
+                    subtitle = f"since checkpoint {checkpoint_sha[:7]}"
+                else:
+                    result = diff_working_tree(project_path, file_path)
+                    subtitle = "since HEAD"
+            except Exception as e:
+                result = type('FakeResult', (), {
+                    'success': False, 'stdout': '', 'error': str(e)
+                })()
+                subtitle = ""
+            GLib.idle_add(lambda: self._on_drawer_diff_loaded(
+                result, subtitle, drawer_box, file_path
+            ))
+        threading.Thread(target=_do, daemon=True).start()
 
     def _on_drawer_diff_loaded(self, result, subtitle: str,
-                               file_path: str) -> None:
-        """(Phase 5+) Stub — handle diff load result for drawer."""
-        pass
+                               drawer_box: Gtk.Box, file_path: str) -> None:
+        """Handle diff load result for drawer — update the Diff page on main thread."""
+        # Check if drawer still exists (not cleaned up)
+        if file_path not in self._drawer_paths:
+            return
+
+        # Populate the diff_box inside the tabbed stack
+        diff_box = getattr(drawer_box, '_diff_box', drawer_box)
+
+        # Clear loading placeholder / previous content
+        while diff_box.get_first_child() is not None:
+            diff_box.remove(diff_box.get_first_child())
+
+        if not result.success:
+            error_lbl = Gtk.Label(label=f"Error: {result.error}")
+            error_lbl.add_css_class("diff-viewer-subtitle")
+            error_lbl.set_margin_top(12)
+            error_lbl.set_margin_bottom(12)
+            diff_box.append(error_lbl)
+            return
+
+        if not result.stdout.strip():
+            no_changes_lbl = Gtk.Label(label="No changes to this file.")
+            no_changes_lbl.add_css_class("diff-viewer-subtitle")
+            no_changes_lbl.set_margin_top(12)
+            no_changes_lbl.set_margin_bottom(12)
+            diff_box.append(no_changes_lbl)
+            return
+
+        parsed = parse_diff(result.stdout)
+        if not parsed.files:
+            no_changes_lbl = Gtk.Label(label="No changes to this file.")
+            no_changes_lbl.add_css_class("diff-viewer-subtitle")
+            no_changes_lbl.set_margin_top(12)
+            no_changes_lbl.set_margin_bottom(12)
+            diff_box.append(no_changes_lbl)
+            return
+
+        file_diff = parsed.files[0]
+
+        if file_diff.is_binary:
+            bin_lbl = Gtk.Label(label="Binary file — not shown")
+            bin_lbl.add_css_class("diff-viewer-subtitle")
+            bin_lbl.set_margin_top(12)
+            bin_lbl.set_margin_bottom(12)
+            diff_box.append(bin_lbl)
+            return
+
+        lang = get_lang_from_path(file_diff.display_path)
+        diff_box.append(render_diff_hunks(file_diff.hunks, lang))
+
+        # Store diff text for clipboard
+        drawer_box._diff_text = result.stdout
+
+    # ── Phase 5+ Stubs (History, Revert, Keyboard) ────────────────────
 
     def _load_history(self, file_path: str, history_list: Gtk.ListBox) -> None:
         """(Phase 6+) Stub — load commit history for a file on background thread."""
@@ -937,8 +1011,38 @@ class FileTree(Gtk.Box):
         pass
 
     def _load_current_diff(self, file_path: str) -> None:
-        """(Phase 7+) Stub — reload the current working-tree diff after revert."""
-        pass
+        """Reload the current working-tree diff for a file (e.g. after revert)."""
+        if file_path not in self._drawer_paths:
+            return
+        drawer_row = cast(FileTreeRow, self._drawer_paths.get(file_path))
+        if drawer_row is None:
+            return
+        revealer = drawer_row.props.drawer_widget
+        if revealer is None:
+            return
+        drawer_box = revealer.get_child()
+        if drawer_box is None or not isinstance(drawer_box, Gtk.Box):
+            return
+
+        # Clear existing diff content
+        diff_box = getattr(drawer_box, '_diff_box', None)
+        if diff_box is not None:
+            while diff_box.get_first_child() is not None:
+                diff_box.remove(diff_box.get_first_child())
+
+        # Resolve checkpoint SHA
+        project_path = self._project_path or ""
+        checkpoint_sha = None
+        if self._project_handler and self._project_name:
+            try:
+                from models.review_state import ReviewState
+                review_state = self._project_handler.get_review_state(self._project_name)
+                if review_state and review_state.is_active():
+                    checkpoint_sha = review_state.checkpoint_sha
+            except Exception:
+                pass
+
+        self._load_drawer_diff(file_path, drawer_box, project_path, checkpoint_sha)
 
     def _on_history_key_pressed(self, keyval: int, history_list: Gtk.ListBox) -> bool:
         """(Phase 8+) Stub — handle Enter key in history list."""
