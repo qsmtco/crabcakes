@@ -1512,13 +1512,47 @@ class FileTree(Gtk.Box):
 
     # ── Keyboard Navigation ───────────────────────────────────────────────
 
-    def _on_key_pressed(self, controller: Gtk.EventControllerKey, keyval: int,
-                        keycode: int, state: Gdk.ModifierType) -> bool:
-        """Handle keyboard shortcuts on the ColumnView.
+    def _on_key_pressed(self, controller, keyval: int, keycode: int, state: Gdk.ModifierType) -> bool:
+        """Handle keyboard shortcuts at the ColumnView level.
 
-        Phase 2+: Escape closes drawer, Ctrl+C copies diff.
+        Esc closes the active drawer. Ctrl+C copies the current diff.
         """
+        selected_pos = self._selection.get_selected()
+        if selected_pos == Gtk.INVALID_LIST_POSITION:
+            return False
+        if selected_pos < 0 or selected_pos >= self._store.get_n_items():
+            return False
+        row: FileTreeRow = self._store.get_item(selected_pos)
+
+        # Escape: close the active drawer
+        if keyval == Gdk.KEY_Escape:
+            if row.props.is_drawer and row.props.drawer_widget is not None:
+                revealer = row.props.drawer_widget
+                if revealer.get_reveal_child():
+                    file_path = self._find_file_path_for_drawer(selected_pos)
+                    if file_path:
+                        self._toggle_drawer(file_path)
+                        return True
+            return False
+
+        # Ctrl+C: copy the current diff
+        if (keyval == Gdk.KEY_c or keyval == Gdk.KEY_C) and (state & Gdk.ModifierType.CONTROL_MASK):
+            if row.props.is_drawer and row.props.drawer_widget is not None:
+                drawer_box = row.props.drawer_widget.get_child()
+                if drawer_box is not None:
+                    self._copy_drawer_diff_to_clipboard(drawer_box)
+                    return True
+            return False
+
         return False
+
+    def _find_file_path_for_drawer(self, drawer_pos: int) -> Optional[str]:
+        """Find the file_path for a drawer row by walking backwards to find the file row."""
+        for i in range(drawer_pos - 1, -1, -1):
+            row: FileTreeRow = self._store.get_item(i)
+            if not row.props.is_dir and not row.props.is_drawer:
+                return row.props.full_path
+        return None
 
     # ── Search ────────────────────────────────────────────────────────────
 
