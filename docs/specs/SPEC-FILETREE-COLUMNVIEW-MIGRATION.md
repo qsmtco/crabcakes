@@ -112,6 +112,39 @@ class FileTreeRow(GObject.Object):
     @property
     def has_children(self) -> bool:
         return self._has_children
+
+    # BUG #4: Drawer state fields
+    @property
+    def is_open(self) -> bool:
+        return self._is_open
+
+    @is_open.setter
+    def is_open(self, value: bool) -> None:
+        self._is_open = value
+
+    @property
+    def diff_text(self) -> str:
+        return self._diff_text
+
+    @diff_text.setter
+    def diff_text(self, value: str) -> None:
+        self._diff_text = value
+
+    @property
+    def history_selected_sha(self) -> str | None:
+        return self._history_selected_sha
+
+    @history_selected_sha.setter
+    def history_selected_sha(self, value: str | None) -> None:
+        self._history_selected_sha = value
+
+    @property
+    def history_loaded(self) -> bool:
+        return self._history_loaded
+
+    @history_loaded.setter
+    def history_loaded(self, value: bool) -> None:
+        self._history_loaded = value
 ```
 
 ### 2.2 Row Types
