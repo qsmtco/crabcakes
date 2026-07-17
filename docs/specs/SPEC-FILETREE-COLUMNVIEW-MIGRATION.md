@@ -351,7 +351,8 @@ class FileTreeFactory(Gtk.SignalListItemFactory):
         list_item.set_child(widget)
 
     def _on_bind(self, factory, list_item):
-        row: FileTreeRow = list_item.get_item()
+        # BUG #13: list_item.get_item() returns a GObject.Object — cast to FileTreeRow
+        row = cast(FileTreeRow, list_item.get_item())
         widget: FileTreeRowWidget = list_item.get_child()
         # configure widget from row
         widget.set_depth(row.depth)
@@ -360,9 +361,6 @@ class FileTreeFactory(Gtk.SignalListItemFactory):
         widget.set_icon(row.is_dir, row.is_drawer)
         if row.is_drawer and row.drawer_widget:
             widget.attach_drawer(row.drawer_widget)
-        # connect signals: expander clicked, row activated
-        widget.connect_expander(self._tree._on_expander_clicked)
-        widget.connect_activated(self._tree._on_row_activated)
 
     def _on_unbind(self, factory, list_item):
         widget: FileTreeRowWidget = list_item.get_child()
