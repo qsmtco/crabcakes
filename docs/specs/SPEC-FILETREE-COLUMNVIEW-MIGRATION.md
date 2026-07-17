@@ -159,19 +159,41 @@ class FileTreeRow(GObject.Object):
 
 ```python
 class FileTreeFactory(Gtk.SignalListItemFactory):
-    def setup(self, factory, list_item):
-        # Create row widget: Gtk.Box with expander/icon/label + placeholder for drawer
-        pass
+    def __init__(self, tree: 'FileTree'):
+        super().__init__()
+        self._tree = tree
+        self.connect('setup', self._on_setup)
+        self.connect('bind', self._on_bind)
+        self.connect('unbind', self._on_unbind)
 
-    def bind(self, factory, list_item):
-        # Get FileTreeRow from list_item.get_item()
-        # Configure row widget: set label, icon, expander state
-        # If is_drawer: append drawer_widget as child of row's content box
-        pass
+    def _on_setup(self, factory, list_item):
+        widget = FileTreeRowWidget()
+        list_item.set_child(widget)
 
-    def unbind(self, factory, list_item):
-        # Clean up: remove drawer widget if present, disconnect signals
-        pass
+    def _on_bind(self, factory, list_item):
+        row: FileTreeRow = list_item.get_item()
+        widget: FileTreeRowWidget = list_item.get_child()
+        widget.set_depth(row.depth)
+        widget.set_expanded(row.expanded)
+        widget.set_label(row.display_name)
+        widget.set_icon(row.is_dir, row.is_drawer)
+        if row.is_drawer and row.drawer_widget:
+            widget.attach_drawer(row.drawer_widget)
+
+    def _on_unbind(self, factory, list_item):
+        """BUG #2/#6: Clean up drawer widget to prevent orphan widget trees.
+
+        When a drawer row is removed from the store (e.g., collapse or project
+        switch), its revealer and all children must be properly detached.
+        Otherwise the widget tree is orphaned with GTK parent references.
+        """
+        widget: FileTreeRowWidget = list_item.get_child()
+        # BUG #2: Detach drawer if present — must happen BEFORE the row is
+        # removed from the ListStore so the revealer animation can complete.
+        widget.detach_drawer()
+        # BUG #5: Preserve CSS classes — the widget itself stays alive in
+        # the factory's pool. Only the drawer child is removed.
+        widget.disconnect_signals()
 ```
 
 ### 2.4 Tree Structure (Flat List with Depth)
