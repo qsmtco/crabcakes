@@ -281,12 +281,6 @@ This method delegates to `ReviewHandler.revert_file_to_sha()` (which performs `g
     font-size: 0.9em;
 }
 
-.file-tree-drawer-tab-bar {
-    padding: 4px 8px;
-    border-bottom: 1px solid alpha(@theme_fg_color, 0.08);
-    background: alpha(@theme_bg_color, 0.05);
-}
-
 .file-tree-drawer-action-bar {
     padding: 6px 12px;
     border-top: 1px solid alpha(@theme_fg_color, 0.08);
