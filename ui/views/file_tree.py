@@ -193,7 +193,6 @@ class FileTreeFactory(Gtk.SignalListItemFactory):
         widget.set_depth(row.props.depth)
         widget.set_expanded(row.props.expanded)
         widget.set_label(row.props.display_name)
-        widget.set_icon(row.props.is_dir, row.props.is_drawer)
 
         if row.props.is_drawer and row.props.drawer_widget:
             widget.attach_drawer(row.props.drawer_widget)
