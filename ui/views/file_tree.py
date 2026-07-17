@@ -212,6 +212,14 @@ class FileTreeFactory(Gtk.SignalListItemFactory):
         widget: FileTreeRowWidget = list_item.get_child()
         widget.cleanup()
 
+    def _on_expander_clicked(self, row: FileTreeRow, position: int) -> None:
+        """Handle expander button click for a directory row.
+
+        Delegates to FileTree methods. position was captured at bind time;
+        if stale, the expand/collapse methods validate by re-fetching the row.
+        """
+        self._tree._on_expander_clicked(row, position)
+
 
 # ── FileTree — Main widget class ─────────────────────────────────────────
 
