@@ -419,19 +419,17 @@ _on_revert_confirmed() → _load_current_diff(file_path)  # reload current diff
 
 | # | Criterion | Test Method |
 |---|-----------|-------------|
-| 1 | Double-click file → drawer opens inline below row | Manual: open project, double-click file, verify drawer appears below row |
-| 2 | Drawer shows Diff tab with syntax-highlighted diff | Visual: syntax colors present |
-| 3 | History tab shows commit list (SHA, date, message) | Click History tab → list populated |
-| 4 | Click history row → loads that commit's diff | Click row → diff updates |
-| 5 | Revert button appears on historical diff, reverts file | Click Revert → confirm → file restored, diff reloads |
-| 4 | Escape closes drawer | Press Esc → drawer closes, focus returns to tree |
-| 5 | Ctrl+C copies diff to clipboard | Ctrl+C → paste in editor shows diff text |
-| 6 | Enter on history row activates it | Press Enter on row → loads diff |
-| 6 | Escape closes drawer | Press Esc → drawer closes |
-| 7 | Multiple drawers can be open simultaneously | Open file A, then file B → both open |
-| 8 | Drawer scrolls with tree | Scroll tree → drawer moves with its file row |
-| 9 | Project switch clears all drawers | Switch projects → no drawers remain open |
-| 10 | All existing tests pass | `xvfb-run -a pytest tests/ -x -q` → 0 failures |
+| 1 | Double-click file → drawer opens with Diff tab showing current diff | Manual: open project, double-click file, verify drawer appears with syntax-highlighted diff |
+| 2 | History tab shows commit list (SHA, date, message) | Click History tab → list populated with commit entries |
+| 3 | Click history row → loads that commit's diff in Diff tab | Click row → stack switches to Diff page, shows historical diff |
+| 4 | Revert button appears on historical diff, reverts file on confirm | Click Revert → confirmation dialog → YES → file restored, diff reloads to show working tree |
+| 5 | Escape closes drawer | Press Esc → drawer closes, focus returns to tree |
+| 6 | Ctrl+C copies diff to clipboard | Ctrl+C → paste in text editor shows diff text |
+| 7 | Enter on selected history row activates it | Select history row with arrow keys → press Enter → loads diff |
+| 8 | Multiple drawers can be open simultaneously | Open file A drawer, then file B drawer → both visible |
+| 9 | Drawer scrolls with tree | Scroll tree → drawer moves with its file row |
+| 10 | Project switch clears all drawers | Switch projects → no drawers remain open |
+| 11 | All existing tests pass | `xvfb-run -a pytest tests/ -x -q` → 0 failures |
 
 ---
 
