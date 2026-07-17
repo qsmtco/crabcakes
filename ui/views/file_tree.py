@@ -1056,20 +1056,23 @@ class FileTree(Gtk.Box):
 
     def _on_row_activated(self, column_view: Gtk.ColumnView, position: int) -> None:
         """
-        Handle row activation (double-click) in ColumnView.
+        Handle row activation (double-click or Enter) on the ColumnView.
 
-        In picker mode (no project loaded): double-click on a project row is a no-op
-        since picker mode uses card widgets, not ColumnView rows.
-
-        In tree mode: double-click on a directory triggers expand/collapse (Phase 3),
-        on a file toggles the inline diff drawer (Phase 4).
+        Directories toggle expand/collapse, files toggle inline drawer.
         """
-        if self._project_path is None:
-            # Picker mode — ColumnView is hidden, activated rows don't exist
+        if position < 0 or position >= self._store.get_n_items():
             return
-
-        # Phase 3+: directory expand/collapse and file drawer toggle
-        pass
+        row: FileTreeRow = self._store.get_item(position)
+        if row.props.is_dir:
+            # Directory — expand/collapse
+            if row.props.expanded:
+                self._collapse_directory(position)
+            else:
+                self._expand_directory(position)
+        elif not row.props.is_drawer:
+            # File — toggle drawer
+            self._toggle_drawer(row.props.full_path)
+        # Drawer rows are not activatable
 
     # ── Keyboard Navigation ───────────────────────────────────────────────
 
