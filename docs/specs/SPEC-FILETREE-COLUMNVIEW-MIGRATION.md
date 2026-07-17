@@ -52,7 +52,7 @@ class FileTreeRow(GObject.Object):
     def __init__(self, display_name: str = "", full_path: str = "",
                  is_dir: bool = False, is_drawer: bool = False,
                  depth: int = 0, expanded: bool = False,
-                 has_children: bool = False):
+                 has_children: bool = False, is_open: bool = False):
         super().__init__()
         self._display_name = display_name
         self._full_path = full_path
@@ -62,6 +62,11 @@ class FileTreeRow(GObject.Object):
         self._drawer_widget = None  # Gtk.Widget | None — set separately
         self._expanded = expanded
         self._has_children = has_children
+        # BUG #4: Full drawer state — mirrors self._drawers dict values
+        self._is_open = is_open          # is the drawer revealer open?
+        self._diff_text = ""              # raw diff text for clipboard
+        self._history_selected_sha = None  # latest historical diff SHA
+        self._history_loaded = False       # has history tab been loaded?
 
     # Properties for Gtk.ListItem bind/unbind access
     @property
