@@ -317,17 +317,18 @@ class FileTree(Gtk.Box):
         self._project_name = None
         self._project_path = None
         self._project_history.clear()
-        # Clear open drawers
-        for revealer, _, _, _ in self._drawers.values():
-            self._drawer_area.remove(revealer)
-        self._drawers.clear()
+        # Clear list store
+        n = self._store.get_n_items()
+        if n > 0:
+            self._store.splice(0, n, [])
+        self._drawer_paths.clear()
         self._loaded_drawers.clear()
+        self._last_toggle_per_file.clear()
         # Clear search when returning to picker
         if self._project_list_handler:
             self._project_list_handler.clear_search()
         # Block signal to prevent _on_search_changed from firing while FileTree
         # is still inside the nested notebook (would build cards in wrong parent).
-        # The explicit _show_project_picker() call below runs after reparenting is complete.
         self._search_entry.handler_block(self._search_changed_handler_id)
         self._search_entry.set_text("")
         self._search_entry.handler_unblock(self._search_changed_handler_id)
