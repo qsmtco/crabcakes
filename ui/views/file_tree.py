@@ -654,7 +654,7 @@ class FileTree(Gtk.Box):
         Returns the drawer_box Gtk.Box. The revealer is created in _add_drawer_for_file.
         """
         drawer_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        drawer_box.set_margin_start(20)
+        drawer_box.set_margin_start(10)
         drawer_box.set_margin_end(8)
         drawer_box.set_margin_top(4)
         drawer_box.set_margin_bottom(4)
