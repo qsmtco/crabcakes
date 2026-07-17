@@ -12,16 +12,181 @@
 
 import gi
 gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk, GLib, Gdk
+gi.require_version('Gio', '2.0')
+from gi.repository import Gtk, GLib, Gdk, Gio, GObject
 
 import threading
 import time
+from typing import Optional, cast
 
 from utils.escaping import escape_for_pango
 from utils.projects import scan_directory
 from utils.git_ops import diff_file_against_working_tree, diff_working_tree, file_log, diff_file_against
 from utils.diff_parser import parse_diff
 from ui.views.diff_card import render_diff_hunks, get_lang_from_path
+
+
+# ── Phase 1: FileTreeRow — GObject data model for Gio.ListStore ─────────
+
+class FileTreeRow(GObject.Object):
+    """A single row in the file tree list store.
+
+    Properties are GObject properties so ColumnView factory can bind/unbind them.
+    """
+
+    __gtype_name__ = 'FileTreeRow'
+
+    display_name = GObject.Property(type=str, default="")
+    full_path = GObject.Property(type=str, default="")
+    is_dir = GObject.Property(type=bool, default=False)
+    is_drawer = GObject.Property(type=bool, default=False)
+    depth = GObject.Property(type=int, default=0)
+    expanded = GObject.Property(type=bool, default=False)
+    has_children = GObject.Property(type=bool, default=False)
+
+    # Drawer state (mirrors old self._drawers[path] dict)
+    drawer_widget = GObject.Property(type=GObject.TYPE_PYOBJECT, default=None)
+    is_open = GObject.Property(type=bool, default=False)
+    diff_text = GObject.Property(type=str, default="")
+    history_selected_sha = GObject.Property(type=GObject.TYPE_PYOBJECT, default=None)
+    history_loaded = GObject.Property(type=bool, default=False)
+
+    def __init__(self, display_name: str = "", full_path: str = "",
+                 is_dir: bool = False, is_drawer: bool = False,
+                 depth: int = 0, expanded: bool = False,
+                 has_children: bool = False):
+        super().__init__()
+        self.props.display_name = display_name
+        self.props.full_path = full_path
+        self.props.is_dir = is_dir
+        self.props.is_drawer = is_drawer
+        self.props.depth = depth
+        self.props.expanded = expanded
+        self.props.has_children = has_children
+
+
+# ── Phase 1: FileTreeRowWidget — Per-row Gtk.Box ─────────────────────────
+
+class FileTreeRowWidget(Gtk.Box):
+    """Widget for a single row in the ColumnView.
+
+    Contains: expander button, icon, label, drawer_container (for drawer rows).
+    """
+
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self.add_css_class("file-tree-row")
+
+        # Expander button (▶/▼ for dirs, spacer for files/drawers)
+        self._expander_btn = Gtk.Button()
+        self._expander_btn.add_css_class("file-tree-row-expander")
+        self._expander_btn.set_size_request(16, 16)
+        self._expander_btn.set_halign(Gtk.Align.CENTER)
+        self._expander_btn.set_valign(Gtk.Align.CENTER)
+        self.append(self._expander_btn)
+
+        # Icon
+        self._icon = Gtk.Image()
+        self._icon.add_css_class("file-tree-row-icon")
+        self._icon.set_pixel_size(16)
+        self.append(self._icon)
+
+        # Label (markup for prefix + name)
+        self._label = Gtk.Label()
+        self._label.add_css_class("file-tree-row-label")
+        self._label.set_halign(Gtk.Align.START)
+        self._label.set_ellipsize(3)  # PANGO_ELLIPSIZE_END
+        self._label.set_hexpand(True)
+        self._label.set_use_markup(True)
+        self.append(self._label)
+
+        # Drawer container — only populated for drawer rows (is_drawer=True)
+        self._drawer_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._drawer_container.set_visible(False)
+        self.append(self._drawer_container)
+
+        # Track bound row for cleanup
+        self._bound_row: Optional[FileTreeRow] = None
+
+    def set_depth(self, depth: int) -> None:
+        """Set indentation via CSS margin-left on the whole row."""
+        self.set_margin_start(depth * 20)
+
+    def set_expanded(self, expanded: bool) -> None:
+        """Update expander button label (▶ / ▼)."""
+        if expanded:
+            self._expander_btn.set_label("▼")
+        else:
+            self._expander_btn.set_label("▶")
+
+    def set_label(self, display_name: str) -> None:
+        """Set label markup. Display name already includes prefix."""
+        self._label.set_markup(escape_for_pango(display_name))
+
+    def set_icon(self, is_dir: bool, is_drawer: bool) -> None:
+        """Set icon based on row type."""
+        if is_drawer:
+            self._icon.set_from_icon_name("text-x-generic-symbolic")
+        elif is_dir:
+            self._icon.set_from_icon_name("folder-symbolic")
+        else:
+            self._icon.set_from_icon_name("text-x-generic-symbolic")
+
+    def attach_drawer(self, revealer: Gtk.Revealer) -> None:
+        """Attach a drawer revealer to this row's container."""
+        while self._drawer_container.get_first_child():
+            self._drawer_container.remove(self._drawer_container.get_first_child())
+        self._drawer_container.append(revealer)
+        self._drawer_container.set_visible(True)
+
+    def detach_drawer(self) -> None:
+        """Detach drawer revealer — called from factory unbind."""
+        while self._drawer_container.get_first_child():
+            self._drawer_container.remove(self._drawer_container.get_first_child())
+        self._drawer_container.set_visible(False)
+
+    def cleanup(self) -> None:
+        """Full cleanup — disconnect signals, detach drawer."""
+        self.detach_drawer()
+        self._bound_row = None
+
+    def bind_row(self, row: FileTreeRow) -> None:
+        """Store reference to bound row for signal connections."""
+        self._bound_row = row
+
+
+# ── Phase 1: FileTreeFactory — SignalListItemFactory ─────────────────────
+
+class FileTreeFactory(Gtk.SignalListItemFactory):
+    """Factory for ColumnView rows. Creates FileTreeRowWidget and binds FileTreeRow properties."""
+
+    def __init__(self, tree: 'FileTree'):
+        super().__init__()
+        self._tree = tree
+        self.connect('setup', self._on_setup)
+        self.connect('bind', self._on_bind)
+        self.connect('unbind', self._on_unbind)
+
+    def _on_setup(self, factory: 'FileTreeFactory', list_item: Gtk.ListItem) -> None:
+        widget = FileTreeRowWidget()
+        list_item.set_child(widget)
+
+    def _on_bind(self, factory: 'FileTreeFactory', list_item: Gtk.ListItem) -> None:
+        row = cast(FileTreeRow, list_item.get_item())
+        widget: FileTreeRowWidget = list_item.get_child()
+
+        widget.bind_row(row)
+        widget.set_depth(row.props.depth)
+        widget.set_expanded(row.props.expanded)
+        widget.set_label(row.props.display_name)
+        widget.set_icon(row.props.is_dir, row.props.is_drawer)
+
+        if row.props.is_drawer and row.props.drawer_widget:
+            widget.attach_drawer(row.props.drawer_widget)
+
+    def _on_unbind(self, factory: 'FileTreeFactory', list_item: Gtk.ListItem) -> None:
+        widget: FileTreeRowWidget = list_item.get_child()
+        widget.cleanup()
 
 
 class FileTree(Gtk.Box):
