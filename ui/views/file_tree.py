@@ -699,6 +699,19 @@ class FileTree(Gtk.Box):
 
     # ── Phase 2: Directory Expand/Collapse ──────────────────────────────
 
+    def _find_row_index(self, row: FileTreeRow) -> Optional[int]:
+        """Find the current index of a FileTreeRow in the store.
+
+        Returns None if the row is no longer in the store (e.g. deleted
+        by collapse or project switch). Linear scan — safe for typical tree
+        sizes. (BUG #2)
+        """
+        n = self._store.get_n_items()
+        for i in range(n):
+            if self._store.get_item(i) is row:
+                return i
+        return None
+
     def _on_expander_clicked(self, row: FileTreeRow, position: int) -> None:
         """Handle expander button click for a directory row."""
         if position < 0 or position >= self._store.get_n_items():
