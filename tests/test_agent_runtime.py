@@ -275,6 +275,219 @@ class TestToolLoop:
         assert complete == ["The result is 42."], f"Got: {complete}"
         rt.stop()
 
+    def test_empty_text_content_with_choices_placeholder_saved_and_no_crash(self, caplog):
+        """Regression: nemotron-3-ultra returns finish_reason='stop' with empty content after tool execution.
+
+        Before the runtime.py:2272 guard fix, choices-present-but-empty-content was
+        treated as a valid text response and persisted as
+            {role: assistant, content: ''}
+        which strict providers (Cohere, strict OpenAI tool-loop, Anthropic strict
+        mode) reject with HTTP 400 "must have non-empty content or tool calls".
+        The fix fires whenever text_content is empty regardless of choices.
+        """
+        import logging
+        rt = AgentRuntime(_make_cfg())
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        errors = []
+        rt._on_error = lambda sk2, msg: errors.append(msg)
+
+        # Response has choices=[{...}] (the nemotron case) but content=''
+        empty_content_response = {
+            "choices": [{"message": {"content": "", "tool_calls": []}}],
+            "usage": {"prompt_tokens": 50, "completion_tokens": 0},
+        }
+        # Use a MagicMock so we can assert call_count == 1 (BUG #4 audit finding:
+        # proves the loop actually exits, not just that the placeholder was inserted.
+        # A regression that removes the `return` would silently let the loop iterate
+        # until max_iterations_enforced trips).
+        llm_mock = unittest.mock.MagicMock(return_value=empty_content_response)
+        with unittest.mock.patch.object(rt, "_call_llm", llm_mock):
+            with caplog.at_level(logging.WARNING, logger="agent.runtime"):
+                rt._run_loop(sk, "do something")
+
+        # 0. The LLM was called exactly once — proves the loop exited on the empty
+        # response instead of iterating until max_iterations_enforced.
+        assert llm_mock.call_count == 1, (
+            f"Expected _call_llm to be called exactly once (loop exits after empty "
+            f"response); got {llm_mock.call_count} calls"
+        )
+
+        # 1. The on_error callback fires
+        assert any("no content" in e.lower() or "configuration error" in e.lower() for e in errors), (
+            f"Expected _on_error to fire with 'no content' message; got: {errors}"
+        )
+
+        # 2. The conversation got a non-empty placeholder assistant message, NOT ''
+        conv = rt.get_conversation(sk)
+        asst_msgs = [m for m in conv.messages if m.role.value == "assistant"]
+        assert asst_msgs, f"Expected at least one assistant message; got: {conv.messages}"
+        last = asst_msgs[-1]
+        assert last.content != "", (
+            f"Expected non-empty placeholder; got empty content. messages: "
+            f"{[(m.role.value, m.content) for m in conv.messages]}"
+        )
+        assert "no content" in last.content.lower(), (
+            f"Expected placeholder text mentioning 'no content'; got: {last.content!r}"
+        )
+
+        # 3. The warning was emitted with diagnostic context
+        warning_records = [
+            r for r in caplog.records
+            if r.levelno == logging.WARNING and r.name == "agent.runtime"
+        ]
+        assert any("LLM returned no content" in r.getMessage() for r in warning_records), (
+            f"Expected WARNING 'LLM returned no content' on agent.runtime; "
+            f"got: {[(r.name, r.getMessage()) for r in caplog.records]}"
+        )
+        rt.stop()
+
+    def test_empty_text_content_no_choices_placeholder_saved_and_no_crash(self):
+        """Regression: response with NO choices key still triggers the guard.
+
+        This is the case the original guard at agent/runtime.py:2272 already covered
+        (`not text_content and not response.get('choices')`). After the fix the
+        guard is `not text_content` only, so this case must continue to fire.
+        """
+        rt = AgentRuntime(_make_cfg())
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        errors = []
+        rt._on_error = lambda sk2, msg: errors.append(msg)
+
+        # Response has no choices key at all
+        bad_response = {"choices": [], "usage": {"prompt_tokens": 50, "completion_tokens": 0}}
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: bad_response):
+            rt._run_loop(sk, "do something")
+
+        assert errors, f"Expected _on_error to fire for no-choices response; got: {errors}"
+        conv = rt.get_conversation(sk)
+        asst_msgs = [m for m in conv.messages if m.role.value == "assistant"]
+        assert asst_msgs and asst_msgs[-1].content, (
+            f"Expected placeholder assistant message; messages: "
+            f"{[(m.role.value, m.content) for m in conv.messages]}"
+        )
+        rt.stop()
+
+    def test_text_response_with_only_whitespace_does_not_falsely_trigger_guard(self):
+        """Whitespace-only 'content' (e.g. '\\n\\n') is valid; guard must not fire.
+
+        The guard is `if not text_content or (isinstance(text_content, str) and
+        text_content.strip() == "")`. This test asserts that a string of only
+        whitespace-trimmable characters DOES trigger the placeholder path — this
+        is the BUG #1 audit fix. So this test has been flipped to verify the
+        guard correctly REJECTS whitespace-only content (which strict providers
+        like Cohere / Anthropic also 400 on).
+        """
+        rt = AgentRuntime(_make_cfg())
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        errors = []
+        rt._on_error = lambda sk2, msg: errors.append(msg)
+        complete = []
+        rt._on_response_complete = lambda sk2, t: complete.append(t)
+
+        # Same whitespace string — but now we EXPECT the placeholder path to fire
+        # because strict providers reject whitespace-only assistant content.
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: _resp(" \n\n ")):
+            rt._run_loop(sk, "pad this")
+
+        # _on_error fires because whitespace-only content is treated as empty
+        assert any("no content" in e.lower() for e in errors), (
+            f"Expected _on_error to fire for whitespace-only content; got: {errors}"
+        )
+        # And _on_response_complete does NOT fire (no useful text to deliver)
+        assert complete == [], (
+            f"Expected _on_response_complete to NOT fire for whitespace-only; got: {complete}"
+        )
+        # The placeholder is persisted
+        conv = rt.get_conversation(sk)
+        asst_msgs = [m for m in conv.messages if m.role.value == "assistant"]
+        assert asst_msgs and "no content" in asst_msgs[-1].content.lower(), (
+            f"Expected placeholder assistant message; messages: "
+            f"{[(m.role.value, m.content) for m in conv.messages]}"
+        )
+        rt.stop()
+
+    def test_empty_text_content_on_error_handler_throws_loop_still_exits(self, caplog):
+        """BUG #2 regression: user-registered _on_error callback throws.
+
+        Before the fix, if _on_error raised, the exception propagated out of
+        _run_loop mid-way. add_assistant_message had already executed, but
+        _auto_save and `return` had not. The caller's loop could then call
+        _call_llm again, get another empty response, and add a duplicate
+        placeholder. If max_iterations_enforced didn't catch it, the
+        conversation could fill with N duplicate placeholders.
+
+        After the fix, _on_error is wrapped in try/except so:
+        1. _auto_save still runs (placeholder persists to disk)
+        2. `return` still executes (loop exits)
+        3. The exception is logged at ERROR level, not swallowed silently
+        """
+        import logging
+        rt = AgentRuntime(_make_cfg())
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        # _on_error raises — e.g. UI dispatcher broken
+        def _broken_error_handler(sk2, msg):
+            raise RuntimeError("UI dispatcher broken")
+
+        rt._on_error = _broken_error_handler
+
+        empty_content_response = {
+            "choices": [{"message": {"content": "", "tool_calls": []}}],
+            "usage": {"prompt_tokens": 50, "completion_tokens": 0},
+        }
+        llm_mock = unittest.mock.MagicMock(return_value=empty_content_response)
+        with unittest.mock.patch.object(rt, "_call_llm", llm_mock):
+            # The loop must complete cleanly without re-raising the handler exception
+            with caplog.at_level(logging.ERROR, logger="agent.runtime"):
+                rt._run_loop(sk, "do something")
+
+        # Loop exited — LLM called exactly once, not N times until max_iterations
+        assert llm_mock.call_count == 1, (
+            f"Expected loop to exit after one LLM call (handler throw must not "
+            f"cause re-iteration); got {llm_mock.call_count} calls"
+        )
+
+        # The handler exception was logged at ERROR level, not swallowed silently.
+        # The dispatch infrastructure (runtime.py:1693, self._dispatch) wraps the
+        # callback invocation in its own try/except and logs "Callback ... raised"
+        # at ERROR level. Our BUG #2 fix wraps the dispatch call in a SECOND
+        # try/except as defense in depth — in case the dispatcher itself throws.
+        # Either layer catching is sufficient; we just need to confirm SOMETHING
+        # logged the failure at ERROR level (not silently swallowed).
+        error_records = [
+            r for r in caplog.records
+            if r.levelno == logging.ERROR and r.name == "agent.runtime"
+        ]
+        assert any(
+            "raised" in r.getMessage().lower() or "_on_error handler raised" in r.getMessage()
+            for r in error_records
+        ), (
+            f"Expected ERROR log capturing handler exception; got: "
+            f"{[(r.name, r.getMessage()) for r in caplog.records]}"
+        )
+
+        # Exactly one placeholder was added — NOT N duplicates from re-iteration
+        conv = rt.get_conversation(sk)
+        asst_msgs = [m for m in conv.messages if m.role.value == "assistant"]
+        placeholders = [m for m in asst_msgs if "no content" in m.content.lower()]
+        assert len(placeholders) == 1, (
+            f"Expected exactly one placeholder; got {len(placeholders)} (re-iteration "
+            f"bug would add one per LLM call). messages: "
+            f"{[(m.role.value, m.content) for m in conv.messages]}"
+        )
+        rt.stop()
+
     def test_tool_call_appends_result(self):
         rt = AgentRuntime(_make_cfg())
         rt.start()
@@ -377,6 +590,134 @@ class TestToolLoop:
         # Should stop after max_tool_iterations (2)
         assert call_count[0] <= 2, f"Expected <= 2 calls, got {call_count[0]}"
         rt.stop()
+
+    def test_tool_call_response_with_empty_content_substitutes_placeholder(self, caplog):
+        """BUG #3 sweep: tool-call response with empty/whitespace content.
+
+        OpenAI spec allows `content=null` with `tool_calls=[]` present, but
+        strict providers (Cohere, Anthropic strict mode) require non-empty
+        content even when tool_calls are present. Before the fix, an LLM
+        returning tool_calls alongside empty content persisted:
+            {role: assistant, content: '', tool_calls: [...]}
+        which strict providers reject with HTTP 400.
+
+        After the fix, `_is_empty_content(text_content)` catches this case
+        and substitutes "[calling tools]" before persisting, so the next
+        LLM call sees a non-empty assistant message.
+        """
+        import logging
+        rt = AgentRuntime(_make_cfg())
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        # Tool-call response with empty content (some providers do this on streaming completion)
+        tc_response = {
+            "choices": [{
+                "message": {
+                    "content": "",  # empty
+                    "tool_calls": [{"id": "c1", "function": {"name": "list_files", "arguments": '{"path":"."}'}}],
+                }
+            }],
+            "usage": {"prompt_tokens": 50, "completion_tokens": 5},
+        }
+        results = []
+        rt._on_tool_call_result = lambda sk2, n, r: results.append((n, r))
+
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: tc_response):
+            with caplog.at_level(logging.WARNING, logger="agent.runtime"):
+                rt._run_loop(sk, "list files")
+
+        # Find the persisted assistant message
+        conv = rt.get_conversation(sk)
+        asst_msgs = [m for m in conv.messages if m.role.value == "assistant"]
+        assert asst_msgs, f"Expected assistant message; got: {conv.messages}"
+
+        # The content is the substituted placeholder, NOT empty
+        last_asst = asst_msgs[-1]
+        assert last_asst.content, (
+            f"Expected non-empty content (placeholder substituted); got empty. "
+            f"messages: {[(m.role.value, m.content) for m in conv.messages]}"
+        )
+        assert last_asst.content == "[calling tools]", (
+            f"Expected '[calling tools]' placeholder; got: {last_asst.content!r}"
+        )
+
+        # And the tool_calls are intact (semantics preserved)
+        assert last_asst.tool_calls, (
+            f"Expected tool_calls preserved on the substituted message; got: "
+            f"{last_asst.tool_calls}"
+        )
+
+        # The WARNING was emitted so provider issues are detectable
+        warning_records = [
+            r for r in caplog.records
+            if r.levelno == logging.WARNING and r.name == "agent.runtime"
+        ]
+        assert any(
+            "tool-call response has empty content" in r.getMessage()
+            for r in warning_records
+        ), (
+            f"Expected WARNING about empty content in tool-call response; got: "
+            f"{[(r.name, r.getMessage()) for r in warning_records]}"
+        )
+        rt.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  _compute_model_max — provider max_tokens resolution (BUG #1 Phase CB-1)
+# ═══════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════
+#  _is_empty_content — empty-content predicate (BUG #3 sweep helper)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestIsEmptyContent:
+    """Unit tests for the _is_empty_content helper used by both the text-only
+    guard (BUG #1) and the tool-call-with-empty-content guard (BUG #3 sweep).
+    """
+
+    def test_none_returns_true(self):
+        from agent.runtime import _is_empty_content
+        assert _is_empty_content(None) is True
+
+    def test_empty_string_returns_true(self):
+        from agent.runtime import _is_empty_content
+        assert _is_empty_content("") is True
+
+    def test_whitespace_string_returns_true(self):
+        from agent.runtime import _is_empty_content
+        assert _is_empty_content(" ") is True
+        assert _is_empty_content("\n") is True
+        assert _is_empty_content("\t\t") is True
+        assert _is_empty_content(" \n\t ") is True
+        assert _is_empty_content("\u200b") is True  # zero-width space
+
+    def test_non_empty_string_returns_false(self):
+        from agent.runtime import _is_empty_content
+        assert _is_empty_content("hi") is False
+        assert _is_empty_content(" hi ") is False  # surrounding whitespace OK
+        assert _is_empty_content("\nhello\n") is False
+
+    def test_empty_list_returns_true(self):
+        from agent.runtime import _is_empty_content
+        assert _is_empty_content([]) is True
+
+    def test_non_empty_list_returns_false(self):
+        from agent.runtime import _is_empty_content
+        assert _is_empty_content([{"text": "x"}]) is False
+
+    def test_empty_dict_returns_true(self):
+        from agent.runtime import _is_empty_content
+        assert _is_empty_content({}) is True
+
+    def test_zero_returns_true(self):
+        from agent.runtime import _is_empty_content
+        assert _is_empty_content(0) is True
+
+    def test_nonzero_number_returns_false(self):
+        from agent.runtime import _is_empty_content
+        assert _is_empty_content(42) is False
 
 
 # ═══════════════════════════════════════════════════════════════════

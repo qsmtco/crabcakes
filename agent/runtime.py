@@ -1242,6 +1242,38 @@ def _extract_text_content(response: dict, provider: str) -> str:
     return ""
 
 
+def _is_empty_content(text) -> bool:
+    """True if text_content is empty or whitespace-only.
+
+    Used at write-side call sites to decide whether to substitute a placeholder
+    before persisting. Matches the BUG #1 guard semantics so all empty-content
+    paths produce consistent behavior.
+
+    Covers:
+    - None / missing
+    - empty string ""
+    - strings of only ASCII whitespace ("\\n", " \\t ", etc.)
+    - strings of only Unicode whitespace (U+00A0 NBSP, U+2028 line sep, etc.)
+    - strings of only "format" characters that some providers also reject
+      (U+200B zero-width space, U+FEFF BOM, U+200C/200D ZWNJ/ZWJ)
+    - empty list / dict (treated as falsy)
+
+    Does NOT cover valid OpenAI responses with `content=None` and tool_calls
+    present — that's the tool-call path which has its own guard at site 2391.
+    """
+    if not text:
+        return True
+    if isinstance(text, str):
+        if text.strip() == "":
+            return True
+        # Zero-width / format chars: str.strip() doesn't remove these but some
+        # strict providers treat them as effectively empty. Strip and re-check.
+        _ZWS = "\u200b\u200c\u200d\ufeff"
+        if text.translate(str.maketrans("", "", _ZWS)).strip() == "":
+            return True
+    return False
+
+
 def _extract_usage(response: dict, provider: str = "openai") -> tuple[int, int]:
     """Extract (prompt_tokens, completion_tokens) from API response."""
     usage = response.get("usage")
@@ -2269,9 +2301,15 @@ class AgentRuntime:
                     # Text-only response — but check for empty/missing content
                     # which may indicate a provider error that wasn't raised (e.g. body-level
                     # error that slipped through, or malformed response with no choices)
-                    if not text_content and not response.get("choices"):
-                        logger.warning("[tool-loop] sk=%s LLM returned no choices and no content — treating as error",
-                                       session_key)
+                    # Whitespace-only counts as empty: some strict providers (Cohere,
+                    # Anthropic strict mode) treat blank assistant content as a 400
+                    # the same as a missing/empty payload. _is_empty_content covers
+                    # falsy values (None, ""), empty lists, and strings that strip to
+                    # nothing (e.g. " \n\u200b"). Same predicate used at the
+                    # tool-call path below for consistency.
+                    if _is_empty_content(text_content):
+                        logger.warning("[tool-loop] sk=%s LLM returned no content (with tool_calls=%d, choices=%d) — treating as error",
+                                       session_key, len(tool_calls_raw), len(response.get("choices") or []))
                         # Defense in depth: instead of persisting a corrupt empty
                         # assistant message that downstream providers (Cohere,
                         # strict OpenAI tool-loop, Anthropic strict mode) reject
@@ -2280,13 +2318,29 @@ class AgentRuntime:
                         # below still fires so the user sees the error; this just
                         # prevents the corrupt entry from being saved and re-sent
                         # on subsequent calls.
+                        # Trigger covers: missing choices, empty choices,
+                        # choices-present-but-empty-content (e.g. nemotron-3-ultra
+                        # returning finish_reason="stop" with empty content after
+                        # a tool execution completes), and whitespace-only content
+                        # (single newline, zero-width space, etc.) that strict
+                        # providers also reject.
                         conv.add_assistant_message(
-                            "[LLM returned no choices and no content — provider error or malformed response]",
+                            "[LLM returned no content — provider error or malformed response]",
                             [],
                         )
-                        self._dispatch(self._on_error, session_key,
-                                        "Agent returned no content. This may indicate a configuration error "
-                                        "or an issue with the LLM provider.")
+                        # BUG #2 fix: _on_error is a user-registered callback and may
+                        # throw (e.g. UI broken, dispatcher bug). If it raises, we still
+                        # need to: (a) persist the placeholder via _auto_save, and
+                        # (b) return so the caller's loop exits instead of iterating
+                        # with another empty response (which would add duplicate
+                        # placeholders until max_iterations_enforced trips).
+                        try:
+                            self._dispatch(self._on_error, session_key,
+                                           "Agent returned no content. This may indicate a configuration error "
+                                           "or an issue with the LLM provider.")
+                        except Exception as _e:
+                            logger.error("[tool-loop] sk=%s _on_error handler raised %s: %s — continuing with save+return",
+                                         session_key, type(_e).__name__, _e)
                         self._auto_save(session_key, conv)
                         return
 
@@ -2365,6 +2419,24 @@ class AgentRuntime:
                     ToolCall(call_id=call_id, tool_name=tool_name, arguments=args)
                     for call_id, tool_name, args in tool_calls_raw
                 ]
+
+                # BUG #3 sweep: tool-call response with empty/whitespace text_content.
+                # OpenAI spec allows content=null with tool_calls, but strict providers
+                # (Cohere, Anthropic strict mode) require non-empty content even when
+                # tool_calls are present. If a model returns tool_calls with empty
+                # content (e.g. provider bug, malformed streaming response), substitute
+                # a meaningful placeholder so the next LLM call doesn't 400.
+                # The read-side filter at models/conversation.py:262 already handles
+                # the no-content-no-tool_calls case; this fills the gap for the
+                # tool_calls-present-but-content-empty case.
+                if _is_empty_content(text_content):
+                    logger.warning(
+                        "[tool-loop] sk=%s tool-call response has empty content "
+                        "(tool_calls=%d) — substituting placeholder for strict-provider safety",
+                        session_key, len(tool_call_objects),
+                    )
+                    text_content = "[calling tools]"
+
                 conv.add_assistant_message(text_content, tool_call_objects)
 
                 # Import once per loop iteration (avoid repeated import overhead)
