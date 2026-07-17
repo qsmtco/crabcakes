@@ -1027,22 +1027,178 @@ class FileTree(Gtk.Box):
     # ── Phase 5+ Stubs (History, Revert, Keyboard) ────────────────────
 
     def _load_history(self, file_path: str, history_list: Gtk.ListBox) -> None:
-        """(Phase 6+) Stub — load commit history for a file on background thread."""
-        pass
+        """Load commit history for a file into the history list (background thread).
+
+        Only loads once per drawer — subsequent clicks are no-ops unless
+        the drawer is closed and re-opened (which creates a new drawer row).
+        """
+        if file_path not in self._drawer_paths:
+            return  # Drawer was closed
+        drawer_row: FileTreeRow = self._drawer_paths[file_path]
+        if drawer_row.props.history_loaded:
+            return  # Already loaded for this drawer
+
+        drawer_row.props.history_loaded = True
+
+        def _do():
+            try:
+                project_path = self._project_path or ""
+                result = file_log(project_path, file_path, count=20)
+            except Exception as e:
+                result = GitResult(success=False, stdout="", error=str(e))
+            entries: list[dict] = []
+            if result.success and result.stdout.strip():
+                for line in result.stdout.strip().splitlines():
+                    parts = line.split("\x1f")
+                    if len(parts) == 3:
+                        entries.append({
+                            "sha": parts[0],
+                            "date": parts[1],
+                            "message": parts[2],
+                        })
+            GLib.idle_add(lambda: self._on_history_loaded(entries, history_list, file_path))
+
+        threading.Thread(target=_do, daemon=True).start()
 
     def _on_history_loaded(self, entries: list[dict], history_list: Gtk.ListBox,
                            file_path: str) -> None:
-        """(Phase 6+) Stub — populate the history ListBox with commit entries."""
-        pass
+        """Populate the history ListBox with commit entries (main thread)."""
+        if file_path not in self._drawer_paths:
+            return  # Drawer was closed
+
+        # Clear previous rows
+        while history_list.get_first_child() is not None:
+            history_list.remove(history_list.get_first_child())
+
+        if not entries:
+            placeholder_row = Gtk.ListBoxRow()
+            placeholder_row.set_activatable(False)
+            placeholder_row.set_selectable(False)
+            placeholder = Gtk.Label(label="No commit history for this file.")
+            placeholder.set_halign(Gtk.Align.CENTER)
+            placeholder.set_valign(Gtk.Align.CENTER)
+            placeholder.add_css_class("diff-viewer-subtitle")
+            placeholder_row.set_child(placeholder)
+            history_list.append(placeholder_row)
+            return
+
+        for entry in entries:
+            row = Gtk.ListBoxRow()
+            row.sha = entry["sha"]
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            row_box.add_css_class("diff-history-row")
+
+            sha_lbl = Gtk.Label(label=entry["sha"][:7])
+            sha_lbl.add_css_class("diff-history-row-sha")
+
+            date_lbl = Gtk.Label(label=entry["date"][:10])
+            date_lbl.add_css_class("diff-history-row-date")
+
+            msg_lbl = Gtk.Label(label=entry["message"])
+            msg_lbl.add_css_class("diff-history-row-msg")
+            msg_lbl.set_ellipsize(3)
+            msg_lbl.set_hexpand(True)
+
+            row_box.append(sha_lbl)
+            row_box.append(date_lbl)
+            row_box.append(msg_lbl)
+            row.set_child(row_box)
+            history_list.append(row)
 
     def _load_historical_diff(self, file_path: str, sha: str, stack: Gtk.Stack) -> None:
-        """(Phase 6+) Stub — load diff for a historical commit on background thread."""
-        pass
+        """Load diff for a historical commit on a background thread."""
+        if file_path not in self._drawer_paths:
+            return
+        drawer_row: FileTreeRow = self._drawer_paths[file_path]
+        revealer = drawer_row.props.drawer_widget
+        if revealer is None:
+            return
+        drawer_box = revealer.get_child()
+        if drawer_box is None:
+            return
+
+        def _do():
+            try:
+                project_path = self._project_path or ""
+                result = diff_file_against(project_path, sha, file_path)
+            except Exception as e:
+                result = GitResult(success=False, stdout="", error=str(e))
+            GLib.idle_add(lambda: self._on_historical_diff_loaded(
+                result, sha, file_path, stack, drawer_box))
+
+        threading.Thread(target=_do, daemon=True).start()
 
     def _on_historical_diff_loaded(self, result, sha: str, file_path: str,
-                                   stack: Gtk.Stack) -> None:
-        """(Phase 6+) Stub — render historical diff and show revert button."""
-        pass
+                                   stack: Gtk.Stack, drawer_box: Gtk.Box) -> None:
+        """Render diff from a historical commit in the diff_box and show revert button."""
+        if file_path not in self._drawer_paths:
+            return
+        drawer_row: FileTreeRow = self._drawer_paths[file_path]
+        revealer = drawer_row.props.drawer_widget
+        if revealer is None:
+            return
+        current_drawer_box = revealer.get_child()
+        if current_drawer_box is not drawer_box:
+            return  # Stale drawer_box
+
+        # Switch to diff view
+        stack.set_visible_child_name("diff")
+
+        diff_box = getattr(drawer_box, '_diff_box', None)
+        if diff_box is None:
+            return
+
+        while diff_box.get_first_child() is not None:
+            diff_box.remove(diff_box.get_first_child())
+
+        if not result.success:
+            error_lbl = Gtk.Label(label=f"Error: {result.error}")
+            error_lbl.add_css_class("diff-viewer-subtitle")
+            error_lbl.set_margin_top(12)
+            error_lbl.set_margin_bottom(12)
+            diff_box.append(error_lbl)
+            return
+
+        if not result.stdout.strip():
+            no_changes_lbl = Gtk.Label(label="No changes since this commit.")
+            no_changes_lbl.add_css_class("diff-viewer-subtitle")
+            no_changes_lbl.set_margin_top(12)
+            no_changes_lbl.set_margin_bottom(12)
+            diff_box.append(no_changes_lbl)
+            return
+
+        parsed = parse_diff(result.stdout)
+        if not parsed.files:
+            no_changes_lbl = Gtk.Label(label="No changes since this commit.")
+            no_changes_lbl.add_css_class("diff-viewer-subtitle")
+            no_changes_lbl.set_margin_top(12)
+            no_changes_lbl.set_margin_bottom(12)
+            diff_box.append(no_changes_lbl)
+            return
+
+        file_diff = parsed.files[0]
+
+        if file_diff.is_binary:
+            bin_lbl = Gtk.Label(label="Binary file — not shown")
+            bin_lbl.add_css_class("diff-viewer-subtitle")
+            bin_lbl.set_margin_top(12)
+            bin_lbl.set_margin_bottom(12)
+            diff_box.append(bin_lbl)
+            return
+
+        lang = get_lang_from_path(file_diff.display_path)
+        diff_box.append(render_diff_hunks(file_diff.hunks, lang))
+
+        # Store selected sha on drawer for revert
+        drawer_row.props.history_selected_sha = sha
+
+        # Store diff text for clipboard
+        drawer_box._diff_text = result.stdout
+
+        # Show revert button
+        revert_btn = getattr(drawer_box, '_revert_btn', None)
+        if revert_btn is not None:
+            revert_btn.set_visible(True)
 
     def _on_drawer_revert_clicked(self, file_path: str, drawer_box: Gtk.Box) -> None:
         """(Phase 7+) Stub — show confirmation dialog before reverting a file."""
