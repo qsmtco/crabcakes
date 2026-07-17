@@ -356,7 +356,7 @@ _on_drawer_diff_loaded():
 History tab clicked → _load_history() → file_log() → _on_history_loaded()
     │
     ▼
-User clicks history row → _on_history_row_activated() → _load_historical_diff()
+User activates history row → "row-activated" signal → _load_historical_diff()
     │
     ▼
 diff_file_against() → parse_diff() → render_diff_hunks() → diff_box.append()
