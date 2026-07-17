@@ -805,6 +805,10 @@ class FileTree(Gtk.Box):
                 if revealer is not None:
                     revealer.set_reveal_child(False)
                     # Row removal happens in _on_revealer_child_revealed
+                else:
+                    # BUG #2: Revealer is None — orphan state. Remove row directly.
+                    self._store.remove(drawer_index)
+                    del self._drawer_paths[file_path]
                 return  # Close path done
 
         if file_path not in self._drawer_paths:
