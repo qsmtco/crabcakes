@@ -135,13 +135,15 @@ class FileTreeRowWidget(Gtk.Box):
         self._label.set_markup(escape_for_pango(display_name))
 
     def set_icon(self, is_dir: bool, is_drawer: bool) -> None:
-        """Set icon based on row type."""
+        """Set icon based on row type. Drawer rows hide the icon."""
         if is_drawer:
-            self._icon.set_from_icon_name("text-x-generic-symbolic")
-        elif is_dir:
-            self._icon.set_from_icon_name("folder-symbolic")
+            self._icon.set_visible(False)
         else:
-            self._icon.set_from_icon_name("text-x-generic-symbolic")
+            self._icon.set_visible(True)
+            if is_dir:
+                self._icon.set_from_icon_name("folder-symbolic")
+            else:
+                self._icon.set_from_icon_name("text-x-generic-symbolic")
 
     def attach_drawer(self, revealer: Gtk.Revealer) -> None:
         """Attach a drawer revealer to this row's container."""
