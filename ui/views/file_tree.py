@@ -250,7 +250,7 @@ class FileTree(Gtk.Box):
         self._project_handler = None
 
         # Phase 1: Drawer state tracking (replaces old self._drawers dict)
-        self._drawer_paths: dict[str, int] = {}  # file_path -> store index
+        self._drawer_paths: dict[str, FileTreeRow] = {}  # file_path -> drawer row object
         self._loaded_drawers: set[str] = set()
         self._last_toggle_per_file: dict[str, float] = {}
         self._current_request_id = 0  # For async guard (BUG #7)
