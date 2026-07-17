@@ -852,28 +852,35 @@ class FileTree(Gtk.Box):
 
     def _on_revealer_child_revealed(self, revealer: Gtk.Revealer, pspec, file_path: str) -> None:
         """When revealer animation completes and reveal_child is False, remove the drawer row."""
+        # BUG #2-R: Guard against None revealer
+        if revealer is None:
+            return
+
         if revealer.get_reveal_child():
             return
 
-        if file_path not in self._drawer_paths:
+        # BUG #1-R: Walk the store to find the row whose drawer_widget is this revealer.
+        # Using object identity instead of a potentially-stale index.
+        n = self._store.get_n_items()
+        drawer_index = None
+        for i in range(n):
+            row = cast(FileTreeRow, self._store.get_item(i))
+            if row.props.drawer_widget is revealer:
+                drawer_index = i
+                break
+
+        if drawer_index is None:
+            # Revealer not found in store — clean up any stale _drawer_paths entry
+            if file_path in self._drawer_paths:
+                del self._drawer_paths[file_path]
             return
-        drawer_index = self._drawer_paths[file_path]
-        if drawer_index >= self._store.get_n_items():
-            # BUG #4: Stale index — clean up and bail
-            del self._drawer_paths[file_path]
-            return
-        drawer_row = cast(FileTreeRow, self._store.get_item(drawer_index))
-        # BUG #3: Verify row is still a drawer row before removing
-        if not drawer_row.props.is_drawer:
-            # BUG #4: Also verify the revealer matches what we expect
-            del self._drawer_paths[file_path]
-            return
-        # BUG #4: Verify the revealer matches the one stored on the row
-        if drawer_row.props.drawer_widget is not revealer:
-            del self._drawer_paths[file_path]
-            return
+
+        # Remove the drawer row
         self._store.remove(drawer_index)
-        del self._drawer_paths[file_path]
+
+        # Clean up _drawer_paths
+        if file_path in self._drawer_paths:
+            del self._drawer_paths[file_path]
 
     def _trigger_diff_load(self, file_path: str, drawer_box: Gtk.Box) -> None:
         """Trigger lazy load of diff content for a file's drawer.
