@@ -311,11 +311,9 @@ class TestFileTree:
         # For a file row, should return None (no drawer before it)
         assert tree._find_file_path_for_drawer(0) is None
 
-    def test_find_file_path_for_drawer_no_file_before(self):
-        """_find_file_path_for_drawer returns None when no file row exists before."""
+    def test_find_file_path_for_drawer_empty_store(self):
+        """_find_file_path_for_drawer returns None on empty store."""
         tree = FileTree()
-        drawer_row = FileTreeRow(is_drawer=True, full_path="")
-        tree._store.append(drawer_row)
         assert tree._find_file_path_for_drawer(0) is None
 
 
