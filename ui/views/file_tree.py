@@ -632,18 +632,244 @@ class FileTree(Gtk.Box):
             )
             self._store.append(row)
 
-    # ── Drawer / Diff / History Stubs (Phase 4+) ─────────────────────────
-    # These are preserved as empty stubs per spec §3.1 "Preserve (adapt)".
-    # They maintain the public API contract for downstream callers.
-    # Phase 4+ will fill in the implementations.
+    # ── Phase 3: Drawer Row Insertion ──────────────────────────────────
 
-    def _add_drawer_for_file(self, file_path: str, display_name: str) -> None:
-        """(Phase 4+) Stub — create drawer revealer for a file row."""
-        pass
+    def _add_drawer_for_file(self, file_path: str, display_name: str) -> Gtk.Revealer:
+        """Create a drawer revealer for a file row.
+
+        The drawer is inserted as a separate row in the ListStore (is_drawer=True)
+        immediately below the file row. On toggle, the revealer slides open.
+
+        Returns the Gtk.Revealer so _toggle_drawer can insert it into the store.
+        """
+        drawer_box = self._build_drawer_content(file_path, display_name)
+
+        revealer = Gtk.Revealer()
+        revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        revealer.set_reveal_child(False)
+        revealer.set_transition_duration(150)
+        revealer.add_css_class("file-tree-drawer")
+        revealer.set_child(drawer_box)
+
+        revealer.connect("notify::child-revealed", self._on_revealer_child_revealed, file_path)
+
+        return revealer
+
+    def _build_drawer_content(self, file_path: str, display_name: str) -> Gtk.Box:
+        """Build the drawer content widget (tabs, stack, action bar).
+
+        Returns the drawer_box Gtk.Box. The revealer is created in _add_drawer_for_file.
+        """
+        drawer_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        drawer_box.set_margin_start(20)
+        drawer_box.set_margin_end(8)
+        drawer_box.set_margin_top(4)
+        drawer_box.set_margin_bottom(4)
+
+        # Tab bar
+        tab_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        tab_bar.add_css_class("file-tree-drawer-tab-bar")
+        tab_bar.set_margin_bottom(4)
+
+        diff_tab = Gtk.ToggleButton(label="Diff")
+        diff_tab.set_active(True)
+        history_tab = Gtk.ToggleButton(label="History")
+        history_tab.set_group(diff_tab)
+
+        tab_bar.append(diff_tab)
+        tab_bar.append(history_tab)
+        drawer_box.append(tab_bar)
+
+        # Stack
+        stack = Gtk.Stack()
+        stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        stack.set_vexpand(True)
+
+        # Diff page
+        diff_scroll = Gtk.ScrolledWindow()
+        diff_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        diff_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        diff_scroll.set_child(diff_box)
+        stack.add_named(diff_scroll, "diff")
+
+        loading_spinner = Gtk.Spinner()
+        loading_spinner.set_margin_top(8)
+        loading_spinner.set_margin_bottom(8)
+        loading_spinner.set_halign(Gtk.Align.CENTER)
+        loading_spinner.set_size_request(24, 24)
+        loading_spinner.start()
+        diff_box.append(loading_spinner)
+
+        # History page
+        history_scroll = Gtk.ScrolledWindow()
+        history_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        history_list = Gtk.ListBox()
+        history_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        history_scroll.set_child(history_list)
+        stack.add_named(history_scroll, "history")
+
+        drawer_box.append(stack)
+
+        # Action bar
+        action_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        action_bar.add_css_class("diff-viewer-action-bar")
+        action_bar.set_margin_top(8)
+        action_bar.set_margin_bottom(8)
+        action_bar.set_margin_start(20)
+        action_bar.set_margin_end(8)
+
+        revert_btn = Gtk.Button(label="Revert file to this version")
+        revert_btn.add_css_class("diff-viewer-revert-btn")
+        revert_btn.set_visible(False)
+
+        copy_btn = Gtk.Button(label="Copy diff")
+        copy_btn.add_css_class("diff-viewer-copy-btn")
+
+        spacer = Gtk.Label()
+        spacer.set_hexpand(True)
+
+        action_bar.append(revert_btn)
+        action_bar.append(spacer)
+        action_bar.append(copy_btn)
+        drawer_box.append(action_bar)
+
+        # Wire tab switching
+        diff_tab.connect("toggled", lambda btn:
+            stack.set_visible_child_name("diff") if btn.get_active() else None)
+        history_tab.connect("toggled", lambda btn:
+            (stack.set_visible_child_name("history"),
+             self._load_history(file_path, history_list)) if btn.get_active() else None)
+
+        # Wire revert button
+        revert_btn.connect("clicked", lambda btn:
+            self._on_drawer_revert_clicked(file_path, drawer_box))
+
+        # Wire copy button
+        copy_btn.connect("clicked", lambda btn:
+            self._on_copy_diff_to_clipboard(file_path, drawer_box))
+
+        # Wire history row activation
+        history_list.connect("row-activated", lambda lb, row:
+            self._load_historical_diff(file_path, getattr(row, 'sha', 'HEAD'), stack)
+            if isinstance(row, Gtk.ListBoxRow) and row.get_activatable()
+            else None)
+
+        # Keyboard navigation in history list
+        history_list.connect("keynav-failed", lambda lb, direction: True)
+        history_list_controller = Gtk.EventControllerKey()
+        history_list_controller.connect("key-pressed", lambda ctrl, keyval, keycode, state:
+            self._on_history_key_pressed(keyval, history_list))
+        history_list.add_controller(history_list_controller)
+
+        # Store references on drawer_box for later access
+        drawer_box._diff_tab = diff_tab
+        drawer_box._history_tab = history_tab
+        drawer_box._stack = stack
+        drawer_box._diff_box = diff_box
+        drawer_box._history_list = history_list
+        drawer_box._revert_btn = revert_btn
+        drawer_box._copy_btn = copy_btn
+        drawer_box._history_selected_sha = None
+        drawer_box._diff_text = ""
+
+        # Unified key controller: Escape closes drawer, Ctrl+C copies diff
+        key_controller = Gtk.EventControllerKey()
+        key_controller.connect("key-pressed", lambda ctrl, keyval, keycode, state:
+            self._on_drawer_key_pressed(keyval, keycode, state, file_path, drawer_box))
+        drawer_box.add_controller(key_controller)
+
+        return drawer_box
 
     def _toggle_drawer(self, file_path: str) -> None:
-        """(Phase 4+) Stub — toggle a file's drawer revealer open/closed."""
-        pass
+        """Toggle a file's drawer open/closed.
+
+        On first open, creates the drawer revealer and inserts it as a row below the file.
+        On close, animates the revealer closed and removes the row.
+        """
+        # Debounce
+        now = time.monotonic()
+        if now - self._last_toggle_per_file.get(file_path, 0) < 0.3:
+            return
+        self._last_toggle_per_file[file_path] = now
+
+        if file_path in self._drawer_paths:
+            # Drawer exists — close it
+            drawer_index = self._drawer_paths[file_path]
+            if drawer_index < self._store.get_n_items():
+                drawer_row: FileTreeRow = self._store.get_item(drawer_index)
+                revealer = drawer_row.props.drawer_widget
+                if revealer is not None:
+                    revealer.set_reveal_child(False)
+                    # Row removal happens in _on_revealer_child_revealed
+        else:
+            # Drawer doesn't exist — create and insert
+            file_index = self._find_file_index(file_path)
+            if file_index is None:
+                return
+
+            file_row = cast(FileTreeRow, self._store.get_item(file_index))
+            revealer = self._add_drawer_for_file(file_path, file_row.props.display_name)
+
+            # Create drawer row
+            drawer_row = FileTreeRow(
+                display_name="",
+                full_path="",
+                is_dir=False,
+                is_drawer=True,
+                depth=file_row.props.depth,
+                drawer_widget=revealer,
+                is_open=True,
+            )
+            self._store.insert(file_index + 1, drawer_row)
+            self._drawer_paths[file_path] = file_index + 1
+
+            # Animate open
+            revealer.set_reveal_child(True)
+
+            # Trigger lazy load of diff content
+            if file_path not in self._loaded_drawers:
+                self._loaded_drawers.add(file_path)
+                self._trigger_diff_load(file_path, revealer.get_child())
+
+    def _find_file_index(self, file_path: str) -> Optional[int]:
+        """Find the index of a file row in the store by full_path. O(n) walk."""
+        n = self._store.get_n_items()
+        for i in range(n):
+            row = cast(FileTreeRow, self._store.get_item(i))
+            if not row.props.is_dir and not row.props.is_drawer and row.props.full_path == file_path:
+                return i
+        return None
+
+    def _on_revealer_child_revealed(self, revealer: Gtk.Revealer, pspec, file_path: str) -> None:
+        """When revealer animation completes and reveal_child is False, remove the drawer row."""
+        if revealer.get_reveal_child():
+            return
+
+        if file_path not in self._drawer_paths:
+            return
+        drawer_index = self._drawer_paths[file_path]
+        if drawer_index < self._store.get_n_items():
+            drawer_row = cast(FileTreeRow, self._store.get_item(drawer_index))
+            if drawer_row.props.is_drawer:
+                self._store.remove(drawer_index)
+        del self._drawer_paths[file_path]
+
+    def _trigger_diff_load(self, file_path: str, drawer_box: Gtk.Box) -> None:
+        """Trigger lazy load of diff content for a file's drawer.
+
+        Phase 5 will implement the actual loading. For now, remove spinner and show placeholder.
+        """
+        diff_box = getattr(drawer_box, '_diff_box', None)
+        if diff_box is not None:
+            while diff_box.get_first_child() is not None:
+                diff_box.remove(diff_box.get_first_child())
+            placeholder = Gtk.Label(label="Diff loading not yet implemented (Phase 5)")
+            placeholder.add_css_class("diff-viewer-subtitle")
+            placeholder.set_margin_top(12)
+            placeholder.set_margin_bottom(12)
+            diff_box.append(placeholder)
+
+    # ── Remaining Drawer / Diff / History Stubs (Phase 5+) ────────────
 
     def _load_drawer_diff(self, file_path: str, drawer_box: Gtk.Box, project_path: str,
                           checkpoint_sha: str | None = None) -> None:
