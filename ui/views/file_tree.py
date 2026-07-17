@@ -1,9 +1,8 @@
 # ui/views/file_tree.py
-# File tree widget — GTK4 TreeView with lazy-loading directory expansion.
+# File tree widget — GTK4 ColumnView with Gio.ListStore + FileTreeRow GObject model.
 #
-# Single-click expands/collapses directories, loads children on first expand.
-# Double-click a file to toggle its inline diff drawer.
-# Fires on_file_selected(path) callback when a file without a drawer is activated.
+# Phase 1: Row widget, data model, factory, ColumnView setup.
+# Expand/collapse, drawer toggle, and diff loading are in Phases 2-7.
 #
 # Public API:
 #   tree = FileTree(on_file_selected=None)
@@ -189,6 +188,8 @@ class FileTreeFactory(Gtk.SignalListItemFactory):
         widget.cleanup()
 
 
+# ── FileTree — Main widget class ─────────────────────────────────────────
+
 class FileTree(Gtk.Box):
     """
     File tree browser widget.
@@ -354,11 +355,34 @@ class FileTree(Gtk.Box):
         # Refresh the picker if it's currently showing
         self._show_project_picker()
 
+    def set_project_handler(self, handler) -> None:
+        """Set ProjectHandler reference for checkpoint SHA resolution in diff loading."""
+        self._project_handler = handler
+
+    def toggle_drawer_for_file(self, file_path: str) -> None:
+        """Public method to toggle a file's diff drawer open/closed from outside.
+
+        Called by MainContent when the user requests a file diff from a tab.
+        Phase 2+: will insert/remove drawer rows in the ListStore.
+        """
+        # Placeholder — drawer toggle implemented in Phase 4
+        pass
+
+    def is_drawer_open(self, file_path: str) -> bool:
+        """Return True if the drawer for the given file path is currently open."""
+        idx = self._drawer_paths.get(file_path)
+        if idx is None:
+            return False
+        if idx < self._store.get_n_items():
+            row = cast(FileTreeRow, self._store.get_item(idx))
+            return row.props.is_open
+        return False
+
     # ── Private ───────────────────────────────────────────────────────────
 
     def _show_project_picker(self):
         """Show project cards (replaces ColumnView tree rows)."""
-        # Clear drawer state before replacing content
+        # Clear store before replacing content
         n = self._store.get_n_items()
         if n > 0:
             self._store.splice(0, n, [])
@@ -404,7 +428,7 @@ class FileTree(Gtk.Box):
                     card = self._make_project_card(name, path, color)
                     card_box.append(card)
 
-        # Replace TreeView content with card box
+        # Replace ColumnView content with card box
         self.remove(self._content)
         self._content = card_box
         self.append(self._content)
@@ -415,7 +439,6 @@ class FileTree(Gtk.Box):
         Colored folder icon with first letter of project name.
         """
         from utils.icons import render_folder_icon
-        # CSS loaded globally at startup from main.py via apply_styles()
 
         card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         card.set_halign(Gtk.Align.FILL)
@@ -433,7 +456,6 @@ class FileTree(Gtk.Box):
         if texture is not None:
             icon_pic.set_paintable(texture)
         else:
-            # Fallback: colored box with letter
             fallback = Gtk.Label(label=letter)
             fallback.set_halign(Gtk.Align.CENTER)
             fallback.set_valign(Gtk.Align.CENTER)
@@ -473,14 +495,12 @@ class FileTree(Gtk.Box):
         card.set_margin_bottom(4)
         card.add_css_class("new-project-card")
 
-        # Plus icon
         plus_lbl = Gtk.Label(label="+")
         plus_lbl.set_halign(Gtk.Align.CENTER)
         plus_lbl.set_valign(Gtk.Align.CENTER)
         plus_lbl.set_size_request(44, 44)
         plus_lbl.add_css_class("new-project-plus")
 
-        # Text
         text_lbl = Gtk.Label(label="New Project")
         text_lbl.set_halign(Gtk.Align.START)
         text_lbl.set_valign(Gtk.Align.CENTER)
@@ -489,7 +509,6 @@ class FileTree(Gtk.Box):
         card.append(plus_lbl)
         card.append(text_lbl)
 
-        # Click → show popover
         ev = Gtk.GestureClick()
         ev.connect("pressed", lambda *a: self._show_create_popover(card))
         card.add_controller(ev)
@@ -529,7 +548,6 @@ class FileTree(Gtk.Box):
 
         create_btn.connect("clicked", on_create)
 
-        # Enter key submits
         name_entry.connect("activate", lambda _e: on_create(create_btn))
 
         vbox.append(name_entry)
@@ -537,7 +555,6 @@ class FileTree(Gtk.Box):
         popover.set_child(vbox)
         popover.popup()
 
-        # Focus the entry after popover appears
         GLib.idle_add(lambda: name_entry.grab_focus() and False)
 
     def _show_tree(self, name, path):
@@ -567,7 +584,7 @@ class FileTree(Gtk.Box):
         except (PermissionError, OSError) as e:
             entries = [(f"[error: {e}]", "", False)]
         for entry_name, full_path, is_dir in entries:
-            prefix = "📁 " if is_dir else "▶ "
+            prefix = "📁 " if is_dir else "  "
             row = FileTreeRow(
                 display_name=prefix + entry_name,
                 full_path=full_path,
@@ -577,524 +594,40 @@ class FileTree(Gtk.Box):
                 has_children=is_dir,
             )
             self._store.append(row)
-            # Track file rows for drawer lookup
-            if not is_dir:
-                self._drawer_paths[full_path] = self._store.get_n_items() - 1
 
-    def _add_drawer_for_file(self, file_path: str, display_name: str) -> None:
-        """(Phase 4+) Create drawer revealer for a file row with Diff/History tabs.
+    # ── Row Activation (ColumnView ::activate signal) ─────────────────────
 
-        This is a stub for Phase 1. Full drawer widget construction will be
-        reimplemented in Phase 4 when drawer rows are inserted inline.
+    def _on_row_activated(self, column_view: Gtk.ColumnView, position: int) -> None:
         """
+        Handle row activation (double-click) in ColumnView.
+
+        In picker mode (no project loaded): double-click on a project row is a no-op
+        since picker mode uses card widgets, not ColumnView rows.
+
+        In tree mode: double-click on a directory triggers expand/collapse (Phase 3),
+        on a file toggles the inline diff drawer (Phase 4).
+        """
+        if self._project_path is None:
+            # Picker mode — ColumnView is hidden, activated rows don't exist
+            return
+
+        # Phase 3+: directory expand/collapse and file drawer toggle
         pass
 
-    def set_project_handler(self, handler) -> None:
-        """Set ProjectHandler reference for checkpoint SHA resolution in diff loading."""
-        self._project_handler = handler
+    # ── Keyboard Navigation ───────────────────────────────────────────────
 
-    def toggle_drawer_for_file(self, file_path: str) -> None:
-        """Public method to toggle a file's diff drawer open/closed from outside.
+    def _on_key_pressed(self, controller: Gtk.EventControllerKey, keyval: int,
+                        keycode: int, state: Gdk.ModifierType) -> bool:
+        """Handle keyboard shortcuts on the ColumnView.
 
-        Called by MainContent when the user requests a file diff from a tab.
-        (Phase 4+ full implementation.)"""
-        pass
-
-    def is_drawer_open(self, file_path: str) -> bool:
-        """Return True if the drawer for the given file path is currently open."""
-        entry = self._drawers.get(file_path)
-        if entry is None:
-            return False
-        return entry[2]  # is_open flag
-
-    def _load_drawer_diff(self, file_path: str, drawer_box: Gtk.Box, project_path: str,
-                          checkpoint_sha: str | None = None) -> None:
-        """Load current diff for a file into the drawer box on background thread."""
-        def _do():
-            if checkpoint_sha:
-                result = diff_file_against_working_tree(project_path, checkpoint_sha, file_path)
-                subtitle = f"since checkpoint {checkpoint_sha[:7]}"
-            else:
-                result = diff_working_tree(project_path, file_path)
-                subtitle = "since HEAD"
-            GLib.idle_add(lambda: self._on_drawer_diff_loaded(
-                result, subtitle, drawer_box, file_path
-            ))
-        threading.Thread(target=_do, daemon=True).start()
-
-    def _on_drawer_diff_loaded(self, result, subtitle: str,
-                               drawer_box: Gtk.Box, file_path: str) -> None:
-        """Handle diff load result for drawer — update the Diff page on main thread."""
-        # Check if drawer still exists (not cleaned up)
-        if file_path not in self._drawers:
-            return
-
-        # Populate the diff_box inside the tabbed stack, not drawer_box directly
-        diff_box = getattr(drawer_box, '_diff_box', drawer_box)
-
-        # Clear loading placeholder / previous content
-        while diff_box.get_first_child() is not None:
-            diff_box.remove(diff_box.get_first_child())
-
-        if not result.success:
-            error_lbl = Gtk.Label(label=f"Error: {result.error}")
-            error_lbl.add_css_class("diff-viewer-subtitle")
-            error_lbl.set_margin_top(12)
-            error_lbl.set_margin_bottom(12)
-            diff_box.append(error_lbl)
-            return
-
-        if not result.stdout.strip():
-            no_changes_lbl = Gtk.Label(label="No changes to this file.")
-            no_changes_lbl.add_css_class("diff-viewer-subtitle")
-            no_changes_lbl.set_margin_top(12)
-            no_changes_lbl.set_margin_bottom(12)
-            diff_box.append(no_changes_lbl)
-            return
-
-        parsed = parse_diff(result.stdout)
-        if not parsed.files:
-            no_changes_lbl = Gtk.Label(label="No changes to this file.")
-            no_changes_lbl.add_css_class("diff-viewer-subtitle")
-            no_changes_lbl.set_margin_top(12)
-            no_changes_lbl.set_margin_bottom(12)
-            diff_box.append(no_changes_lbl)
-            return
-
-        file_diff = parsed.files[0]
-
-        # Binary file handling
-        if file_diff.is_binary:
-            bin_lbl = Gtk.Label(label="Binary file — not shown")
-            bin_lbl.add_css_class("diff-viewer-subtitle")
-            bin_lbl.set_margin_top(12)
-            bin_lbl.set_margin_bottom(12)
-            diff_box.append(bin_lbl)
-            return
-
-        lang = get_lang_from_path(file_diff.display_path)
-        diff_box.append(render_diff_hunks(file_diff.hunks, lang))
-
-        # Store diff text for clipboard
-        drawer_box._diff_text = result.stdout
-
-    # ── History Tab ─────────────────────────────────────────────────────────
-
-    def _load_history(self, file_path: str, history_list: Gtk.ListBox) -> None:
-        """Load commit history for a file into the history list (background thread).
-
-        Only loads once per list — subsequent clicks are no-ops unless
-        _loaded flag is reset (e.g. on project reload).
+        Phase 2+: Escape closes drawer, Ctrl+C copies diff.
         """
-        if getattr(history_list, '_loaded', False):
-            return
-        history_list._loaded = True
-
-        def _do():
-            project_path = self._project_path or ""
-            result = file_log(project_path, file_path, count=20)
-            entries: list[dict] = []
-            if result.success and result.stdout.strip():
-                for line in result.stdout.strip().splitlines():
-                    parts = line.split("\x1f")
-                    if len(parts) == 3:
-                        entries.append({
-                            "sha": parts[0],
-                            "date": parts[1],
-                            "message": parts[2],
-                        })
-            GLib.idle_add(lambda: self._on_history_loaded(entries, history_list, file_path))
-
-        threading.Thread(target=_do, daemon=True).start()
-
-    def _on_history_loaded(self, entries: list[dict], history_list: Gtk.ListBox,
-                           file_path: str) -> None:
-        """Populate the history ListBox with commit entries (main thread)."""
-        if file_path not in self._drawers:
-            return
-
-        # Clear previous rows
-        while history_list.get_first_child() is not None:
-            history_list.remove(history_list.get_first_child())
-
-        if not entries:
-            placeholder_row = Gtk.ListBoxRow()
-            placeholder_row.set_activatable(False)
-            placeholder_row.set_selectable(False)
-            placeholder = Gtk.Label(label="No commit history for this file.")
-            placeholder.set_halign(Gtk.Align.CENTER)
-            placeholder.set_valign(Gtk.Align.CENTER)
-            placeholder.add_css_class("diff-viewer-subtitle")
-            placeholder_row.set_child(placeholder)
-            history_list.append(placeholder_row)
-            return
-
-        for entry in entries:
-            row = Gtk.ListBoxRow()
-            row.sha = entry["sha"]
-            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            row_box.add_css_class("diff-history-row")
-
-            sha_lbl = Gtk.Label(label=entry["sha"][:7])
-            sha_lbl.add_css_class("diff-history-row-sha")
-
-            date_lbl = Gtk.Label(label=entry["date"][:10])
-            date_lbl.add_css_class("diff-history-row-date")
-
-            msg_lbl = Gtk.Label(label=entry["message"])
-            msg_lbl.add_css_class("diff-history-row-msg")
-            msg_lbl.set_ellipsize(3)  # PANGO_ELLIPSIZE_END
-            msg_lbl.set_hexpand(True)
-
-            row_box.append(sha_lbl)
-            row_box.append(date_lbl)
-            row_box.append(msg_lbl)
-            row.set_child(row_box)
-            history_list.append(row)
-
-    # ── Historical Diff Loading ────────────────────────────────────────────
-
-    def _load_historical_diff(self, file_path: str, sha: str, stack: Gtk.Stack) -> None:
-        """Load diff for a historical commit on a background thread."""
-        def _do():
-            project_path = self._project_path or ""
-            result = diff_file_against(project_path, sha, file_path)
-            GLib.idle_add(lambda: self._on_historical_diff_loaded(
-                result, sha, file_path, stack))
-
-        threading.Thread(target=_do, daemon=True).start()
-
-    def _on_historical_diff_loaded(self, result, sha: str, file_path: str,
-                                   stack: Gtk.Stack) -> None:
-        """Render diff from a historical commit in the diff_box and show revert button."""
-        if file_path not in self._drawers:
-            return
-
-        # Switch to diff view
-        stack.set_visible_child_name("diff")
-
-        drawer_entry = self._drawers.get(file_path)
-        if not drawer_entry or len(drawer_entry) < 4:
-            return
-        drawer_box = drawer_entry[3]
-        diff_box = getattr(drawer_box, '_diff_box', None)
-        if diff_box is None:
-            return
-
-        # Clear previous diff content (keep stack/tabs/action bar)
-        while diff_box.get_first_child() is not None:
-            diff_box.remove(diff_box.get_first_child())
-
-        if not result.success:
-            error_lbl = Gtk.Label(label=f"Error: {result.error}")
-            error_lbl.add_css_class("diff-viewer-subtitle")
-            error_lbl.set_margin_top(12)
-            error_lbl.set_margin_bottom(12)
-            diff_box.append(error_lbl)
-            return
-
-        if not result.stdout.strip():
-            no_changes_lbl = Gtk.Label(label="No changes since this commit.")
-            no_changes_lbl.add_css_class("diff-viewer-subtitle")
-            no_changes_lbl.set_margin_top(12)
-            no_changes_lbl.set_margin_bottom(12)
-            diff_box.append(no_changes_lbl)
-            return
-
-        parsed = parse_diff(result.stdout)
-        if not parsed.files:
-            no_changes_lbl = Gtk.Label(label="No changes since this commit.")
-            no_changes_lbl.add_css_class("diff-viewer-subtitle")
-            no_changes_lbl.set_margin_top(12)
-            no_changes_lbl.set_margin_bottom(12)
-            diff_box.append(no_changes_lbl)
-            return
-
-        file_diff = parsed.files[0]
-
-        if file_diff.is_binary:
-            bin_lbl = Gtk.Label(label="Binary file — not shown")
-            bin_lbl.add_css_class("diff-viewer-subtitle")
-            bin_lbl.set_margin_top(12)
-            bin_lbl.set_margin_bottom(12)
-            diff_box.append(bin_lbl)
-            return
-
-        lang = get_lang_from_path(file_diff.display_path)
-        diff_box.append(render_diff_hunks(file_diff.hunks, lang))
-
-        # Store selected sha on drawer for revert
-        drawer_box._history_selected_sha = sha
-
-        # Store diff text for clipboard
-        drawer_box._diff_text = result.stdout
-
-        # Show revert button
-        revert_btn = getattr(drawer_box, '_revert_btn', None)
-        if revert_btn is not None:
-            revert_btn.set_visible(True)
-
-    # ── Revert Handling ─────────────────────────────────────────────────────
-
-    def _on_drawer_revert_clicked(self, file_path: str, drawer_box: Gtk.Box) -> None:
-        """Show confirmation dialog before reverting a file to a historical commit."""
-        target_sha = getattr(drawer_box, '_history_selected_sha', None)
-        if not target_sha or not self._project_handler or not self._project_name:
-            return
-
-        root = self.get_root()
-        dialog = Gtk.MessageDialog(
-            transient_for=root if isinstance(root, Gtk.Window) else None,
-            modal=True,
-            message_type=Gtk.MessageType.QUESTION,
-            buttons=Gtk.ButtonsType.YES_NO,
-            text=f"Revert {file_path}?",
-            secondary_text=f"This will restore the file to its state from commit "
-                           f"{target_sha[:7]}. Any uncommitted changes will be lost."
-        )
-        dialog.connect("response", lambda d, r:
-            self._on_drawer_revert_confirmed(d, r, file_path, target_sha, drawer_box))
-        dialog.present()
-
-    def _on_drawer_revert_confirmed(self, dialog, response_id: int, file_path: str,
-                                    target_sha: str, drawer_box: Gtk.Box) -> None:
-        """Handle revert confirmation — call ProjectHandler and reload diff."""
-        dialog.destroy()
-        if response_id != Gtk.ResponseType.YES:
-            return
-
-        if self._project_name:
-            self._project_handler.revert_file_to_sha(self._project_name, file_path, target_sha)
-
-        # Switch back to Diff tab
-        diff_tab = getattr(drawer_box, '_diff_tab', None)
-        if diff_tab is not None:
-            diff_tab.set_active(True)
-
-        # Reset history tab so it can be re-fetched after revert
-        history_list = getattr(drawer_box, '_history_list', None)
-        if history_list is not None:
-            history_list._loaded = False
-
-        # Reload current diff content
-        self._load_current_diff(file_path)
-
-    def _load_current_diff(self, file_path: str) -> None:
-        """Reload the current working-tree diff for a file (e.g. after revert)."""
-        entry = self._drawers.get(file_path)
-        if entry is None:
-            return
-        _, _, is_open, drawer_box = entry
-        if not is_open:
-            return
-        project_path = self._project_path or ""
-
-        # Clear the diff_box
-        diff_box = getattr(drawer_box, '_diff_box', None)
-        if diff_box is not None:
-            while diff_box.get_first_child() is not None:
-                diff_box.remove(diff_box.get_first_child())
-
-        # Resolve checkpoint SHA
-        checkpoint_sha = None
-        if self._project_handler and self._project_name:
-            try:
-                from models.review_state import ReviewState
-                review_state = self._project_handler.get_review_state(self._project_name)
-                if review_state and review_state.is_active():
-                    checkpoint_sha = review_state.checkpoint_sha
-            except Exception:
-                pass
-
-        self._load_drawer_diff(file_path, drawer_box, project_path, checkpoint_sha)
-
-    # ── Clipboard Copy ─────────────────────────────────────────────────────
-
-    def _copy_drawer_diff_to_clipboard(self, drawer_box: Gtk.Box) -> None:
-        """Copy the diff text from a drawer to the system clipboard.
-
-        Called from both the key shortcut (Ctrl+C) and the copy button click.
-        """
-        diff_text = getattr(drawer_box, '_diff_text', None)
-        if not diff_text:
-            return
-        clipboard = Gdk.Display.get_default().get_clipboard()
-        clipboard.set(diff_text)
-
-    def _on_copy_diff_to_clipboard(self, file_path: str, drawer_box: Gtk.Box) -> None:
-        """Button click handler — delegates to _copy_drawer_diff_to_clipboard."""
-        self._copy_drawer_diff_to_clipboard(drawer_box)
-
-    # ── Keyboard Navigation ────────────────────────────────────────────────
-
-    def _on_history_key_pressed(self, keyval: int, history_list: Gtk.ListBox) -> bool:
-        """Handle Enter key in history list to activate selected row."""
-        if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
-            selected = history_list.get_selected_row()
-            if selected is not None and isinstance(selected, Gtk.ListBoxRow) and selected.get_activatable():
-                history_list.emit("row-activated", selected)
-                return True
         return False
 
-    # ── Unified Drawer Key Handler ─────────────────────────────────────────
-
-    def _on_drawer_key_pressed(self, keyval: int, keycode: int, state: Gdk.ModifierType,
-                               file_path: str, drawer_box: Gtk.Box) -> bool:
-        """Handle keyboard shortcuts in the drawer: Escape closes, Ctrl+C copies."""
-        # Escape: close the drawer
-        if keyval == Gdk.KEY_Escape:
-            entry = self._drawers.get(file_path)
-            if entry is None:
-                return False
-            revealer = entry[0]
-            if not revealer.get_reveal_child():
-                return False
-            self._toggle_drawer(file_path)
-            self._tree.grab_focus()
-            return True
-
-        # Ctrl+C: copy diff text to clipboard
-        if (keyval == Gdk.KEY_c or keyval == Gdk.KEY_C) and (state & Gdk.ModifierType.CONTROL_MASK):
-            self._copy_drawer_diff_to_clipboard(drawer_box)
-            return True
-
-        return False
-
-    def _toggle_drawer(self, file_path: str) -> None:
-        """Toggle a file's drawer revealer open/closed.
-
-        On first open, triggers lazy loading of diff content from git.
-        """
-        # Debounce: prevent double-click race during revealer animation
-        # Per-file debounce — avoids blocking toggles on different files
-        now = time.monotonic()
-        last_times = getattr(self, '_last_toggle_per_file', {})
-        if now - last_times.get(file_path, 0) < 0.3:
-            return
-        last_times[file_path] = now
-        self._last_toggle_per_file = last_times
-
-        entry = self._drawers.get(file_path)
-        if entry is None:
-            return
-        revealer, display_name, is_open, drawer_box = entry
-        new_state = not is_open
-        revealer.set_reveal_child(new_state)
-
-        # Trigger lazy load when opening for the first time
-        if new_state and file_path not in self._loaded_drawers:
-            self._loaded_drawers.add(file_path)
-            project_path = self._project_path or ""
-            # Resolve checkpoint SHA from active review if ProjectHandler is available
-            checkpoint_sha = None
-            if self._project_handler and self._project_name:
-                try:
-                    from models.review_state import ReviewState
-                    review_state = self._project_handler.get_review_state(self._project_name)
-                    if review_state and review_state.is_active():
-                        checkpoint_sha = review_state.checkpoint_sha
-                except Exception:
-                    pass  # Non-fatal — fall back to HEAD
-            self._load_drawer_diff(file_path, drawer_box, project_path, checkpoint_sha)
-
-        self._drawers[file_path] = (revealer, display_name, new_state, drawer_box)
-
-        # Update the tree row display name to show ▶ or ▼
-        model = self._store
-        root_iter = model.get_iter_first()
-        self._update_drawer_prefix(model, root_iter, file_path, new_state)
-
-    def _update_drawer_prefix(self, model, it, file_path: str, is_open: bool) -> bool:
-        """Recursively search for a file path in the tree and update its prefix."""
-        while it is not None:
-            # Check if this is a file row (is_dir=False) matching our path
-            if not model.get_value(it, 2) and model.get_value(it, 1) == file_path:
-                current = model.get_value(it, 0)
-                for prefix in ("  ", "▶ ", "▼ "):
-                    if current.startswith(prefix):
-                        current = current[len(prefix):]
-                        break
-                name_part = current
-                new_prefix = "▼ " if is_open else "▶ "
-                model.set_value(it, 0, new_prefix + name_part)
-                return True
-            # Recurse into children
-            child = model.iter_children(it)
-            if child is not None:
-                if self._update_drawer_prefix(model, child, file_path, is_open):
-                    return True
-            it = model.iter_next(it)
-        return False
-
-    def _on_row_activated(self, tree, path, column):
-        """
-        In picker mode (no project loaded): double-click on a project row loads it.
-        In tree mode: double-click on a directory expands/collapses it; on a file
-        toggles the inline diff drawer.
-
-        Note: set_activate_on_single_click(False) means row-activated fires on
-        double-click only — no timing hack needed for picker mode.
-        """
-        model = tree.get_model()
-        it = model.get_iter(path)
-        if it is None:
-            return
-
-        current = model.get_value(it, 0)
-        for prefix in ("📁 ", "  ", "▶ ", "▼ "):
-            if current.startswith(prefix):
-                current = current[len(prefix):]
-                break
-        display_name = current
-        full_path = model.get_value(it, 1)
-        is_dir = model.get_value(it, 2)
-        parent_it = model.iter_parent(it)
-        is_top_level = parent_it is None
-
-        if is_dir:
-            if is_top_level and self._project_path is None:
-                # Picker mode — double-click loads the project directly
-                self.load_project(display_name, full_path)
-            elif tree.row_expanded(path):
-                tree.collapse_row(path)
-            else:
-                tree.expand_row(path, open_all=False)
-        else:
-            # File row - toggle drawer
-            if full_path in self._drawers:
-                self._toggle_drawer(full_path)
-
-    def _on_row_expanded(self, tree, it, path):
-        """Lazy load children on first expand."""
-        model = tree.get_model()
-        child_it = model.iter_children(it)
-        if child_it is None:
-            return
-
-        first_name = model.get_value(child_it, 0)
-        if first_name != "…":
-            return  # already loaded
-
-        # Remove placeholder
-        model.remove(child_it)
-
-        # Load real children
-        parent_path = model.get_value(it, 1)
-        try:
-            entries = scan_directory(parent_path)
-        except (PermissionError, OSError) as e:
-            entries = [(f"[error: {e}]", "", False)]
-        for entry_name, full_path, is_dir in entries:
-            prefix = "📁 " if is_dir else "  "
-            child = model.append(it, [prefix + entry_name, full_path, is_dir])
-            if is_dir:
-                model.append(child, ["…", "", True])
-            else:
-                # Create drawer revealer for file children
-                self._add_drawer_for_file(full_path, entry_name)
+    # ── Search ────────────────────────────────────────────────────────────
 
     def _on_search_changed(self, entry):
-        """Filter project cards on search-changed. Mirrors LeftPanel._on_prompt_search_changed."""
+        """Filter project cards on search-changed."""
         query = entry.get_text()
         if self._project_list_handler:
             self._project_list_handler.search(query)
