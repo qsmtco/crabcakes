@@ -97,7 +97,7 @@ class TestFileTreeRowWidget:
         assert "file-tree-row" in widget.get_css_classes()
 
     def test_widget_has_children(self):
-        """Widget has expander, icon, label, drawer_container."""
+        """Widget has expander (Gtk.Button), icon (Gtk.Image), label (Gtk.Label), drawer_container (Gtk.Box)."""
         widget = FileTreeRowWidget()
         children = []
         child = widget.get_first_child()
@@ -105,6 +105,11 @@ class TestFileTreeRowWidget:
             children.append(child)
             child = child.get_next_sibling()
         assert len(children) >= 4
+        # Check types of first 4 children
+        assert isinstance(children[0], Gtk.Button)  # expander
+        assert isinstance(children[1], Gtk.Image)   # icon
+        assert isinstance(children[2], Gtk.Label)   # label
+        assert isinstance(children[3], Gtk.Box)     # drawer_container
 
     def test_set_depth(self):
         """set_depth sets margin-start on the widget."""
