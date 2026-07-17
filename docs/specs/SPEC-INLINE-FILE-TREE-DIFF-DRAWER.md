@@ -74,17 +74,17 @@ Gtk.ScrolledWindow
 
 #### 2.1.2 `_show_tree()` — Clear Drawer State on Project Load
 
+The current implementation at `file_tree.py:374–408` clears drawers when loading a new project:
+
 ```python
-def _show_tree(self, name, path):
-    # ... existing code ...
-    self._store.clear()
-    # Clear ALL drawer state on project load
-    for revealer, _, _, _ in self._drawers.values():
-        self._drawer_area.remove(revealer)  # Will be removed with TreeStore clear
-    self._drawers.clear()
-    self._loaded_drawers.clear()
-    # ... rest unchanged
+# Clear drawer state
+for revealer, _, _, _ in self._drawers.values():
+    self._drawer_area.remove(revealer)
+self._drawers.clear()
+self._loaded_drawers.clear()
 ```
+
+This is correct and unchanged. See `file_tree.py:384–387`.
 
 #### 2.1.3 `_add_drawer_for_file()` — Create Drawer in `_drawer_area`
 
