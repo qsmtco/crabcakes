@@ -148,13 +148,31 @@ class TestFileTreeRowWidget:
         assert icon.get_icon_name() == "text-x-generic-symbolic"
 
     def test_attach_detach_drawer(self):
-        """attach_drawer and detach_drawer work without error."""
+        """attach_drawer and detach_drawer work correctly."""
         widget = FileTreeRowWidget()
+        # Find the drawer container (last child)
+        children = []
+        child = widget.get_first_child()
+        while child is not None:
+            children.append(child)
+            child = child.get_next_sibling()
+        drawer_container = children[-1]
+
+        # Initially container has no children and is invisible
+        assert drawer_container.get_first_child() is None
+        assert drawer_container.get_visible() is False
+
+        # Attach a drawer
         revealer = Gtk.Revealer()
         revealer.set_child(Gtk.Label(label="drawer content"))
         widget.attach_drawer(revealer)
+        assert drawer_container.get_first_child() is revealer
+        assert drawer_container.get_visible() is True
+
+        # Detach the drawer
         widget.detach_drawer()
-        assert widget is not None
+        assert drawer_container.get_first_child() is None
+        assert drawer_container.get_visible() is False
 
     def test_cleanup(self):
         """cleanup() detaches drawer and clears bound_row."""
