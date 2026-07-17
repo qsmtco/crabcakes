@@ -858,10 +858,21 @@ class FileTree(Gtk.Box):
         if file_path not in self._drawer_paths:
             return
         drawer_index = self._drawer_paths[file_path]
-        if drawer_index < self._store.get_n_items():
-            drawer_row = cast(FileTreeRow, self._store.get_item(drawer_index))
-            if drawer_row.props.is_drawer:
-                self._store.remove(drawer_index)
+        if drawer_index >= self._store.get_n_items():
+            # BUG #4: Stale index — clean up and bail
+            del self._drawer_paths[file_path]
+            return
+        drawer_row = cast(FileTreeRow, self._store.get_item(drawer_index))
+        # BUG #3: Verify row is still a drawer row before removing
+        if not drawer_row.props.is_drawer:
+            # BUG #4: Also verify the revealer matches what we expect
+            del self._drawer_paths[file_path]
+            return
+        # BUG #4: Verify the revealer matches the one stored on the row
+        if drawer_row.props.drawer_widget is not revealer:
+            del self._drawer_paths[file_path]
+            return
+        self._store.remove(drawer_index)
         del self._drawer_paths[file_path]
 
     def _trigger_diff_load(self, file_path: str, drawer_box: Gtk.Box) -> None:
