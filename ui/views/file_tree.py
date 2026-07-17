@@ -658,16 +658,16 @@ class FileTree(Gtk.Box):
         pass
 
     def _on_history_key_pressed(self, keyval: int, history_list: Gtk.ListBox) -> bool:
-        """(Phase 6+) Stub — handle Enter key in history list."""
+        """(Phase 8+) Stub — handle Enter key in history list."""
         return False
 
     def _on_drawer_key_pressed(self, keyval: int, keycode: int, state: Gdk.ModifierType,
                                file_path: str, drawer_box: Gtk.Box) -> bool:
-        """(Phase 4+) Stub — handle keyboard shortcuts in the drawer."""
+        """(Phase 8+) Stub — handle keyboard shortcuts in the drawer."""
         return False
 
     def _on_copy_diff_to_clipboard(self, file_path: str, drawer_box: Gtk.Box) -> None:
-        """(Phase 5+) Stub — copy diff text to clipboard from button click."""
+        """(Phase 8+) Stub — copy diff text to clipboard from button click."""
         pass
 
     def _update_drawer_prefix(self, model, it, file_path: str, is_open: bool) -> bool:
