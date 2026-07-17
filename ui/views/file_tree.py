@@ -619,8 +619,8 @@ class FileTree(Gtk.Box):
         # Populate root entries
         try:
             entries = scan_directory(path)
-        except (PermissionError, OSError) as e:
-            entries = [(f"[error: {e}]", "", False)]
+        except Exception as e:
+            entries = [(f"[error: {type(e).__name__}: {e}]", "", False)]
         for entry_name, full_path, is_dir in entries:
             row = FileTreeRow(
                 display_name=entry_name,
