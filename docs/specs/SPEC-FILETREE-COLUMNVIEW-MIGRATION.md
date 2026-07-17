@@ -235,7 +235,7 @@ This mirrors the current `_on_row_expanded` / `_on_row_collapsed` logic but oper
 - `_load_drawer_diff`, `_on_drawer_diff_loaded`, `_load_history`, `_on_history_loaded`, `_load_historical_diff`, `_on_historical_diff_loaded` — same logic, just targeting drawer row's widget
 - `_on_drawer_revert_clicked`, `_on_drawer_revert_confirmed`, `_load_current_diff` — same
 - Keyboard handlers (Esc, Ctrl+C, Enter) — adapted to ColumnView focus/selection
-- `_show_tree`, `navigate_back`, `navigate_into` — adapted to list store
+- `_show_tree`, `navigate_back` — adapted to list store (no `navigate_into` method exists; BUG #10 fixed)
 - CSS classes (same names, works on new widgets)
 
 ### 3.2 `ui/handlers/project_handler.py` — **No Changes**
