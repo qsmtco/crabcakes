@@ -383,13 +383,12 @@ _on_revert_confirmed() → _load_current_diff(file_path)  # reload current diff
 
 ## 4. File Change Summary
 
+This spec is a **documentation-only update** — the inline diff drawer was fully implemented in Phases C–F. No file changes are required. The purpose of this spec is to document the architecture for future maintenance.
+
 | File | Change Type | Est. Lines | Risk |
 |------|-------------|------------|------|
-| `ui/views/file_tree.py` | Major rewrite | +300/-150 | High |
-| `ui/handlers/project_handler.py` | Add `revert_file_to_sha()` | +25 | Medium |
-| `ui/views/file_tree.py` | Add inline drawer logic | +200 | High |
-| `ui/styles.py` | Add CSS classes | +60 | Low |
-| `ui/window.py` | Wire `set_project_handler` | 1 line | Low |
+| `docs/specs/SPEC-INLINE-FILE-TREE-DIFF-DRAWER.md` | Update to match implementation | +0/-0 | None |
+| `docs/ARCHITECTURE.md` | Update documentation sections | +20/-10 | Low |
 
 ---
 
