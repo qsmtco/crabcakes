@@ -699,6 +699,108 @@ class FileTree(Gtk.Box):
         """(Phase 4+) Stub — update tree row display name prefix (▶/▼)."""
         return False
 
+    # ── Phase 2: Directory Expand/Collapse ──────────────────────────────
+
+    def _on_expander_clicked(self, row: FileTreeRow, position: int) -> None:
+        """Handle expander button click for a directory row."""
+        if row.props.expanded:
+            self._collapse_directory(position)
+        else:
+            self._expand_directory(position)
+
+    def _expand_directory(self, row_index: int) -> None:
+        """Expand a directory row: load children on background thread, insert into store."""
+        if row_index < 0 or row_index >= self._store.get_n_items():
+            return
+        row: FileTreeRow = self._store.get_item(row_index)
+        if not row.props.is_dir or row.props.expanded:
+            return
+
+        # BUG #7: Increment request ID, capture in closure
+        self._current_request_id += 1
+        request_id = self._current_request_id
+
+        # Mark as expanded immediately for UI feedback
+        row.props.expanded = True
+        parent_path = row.props.full_path
+        parent_depth = row.props.depth
+
+        # BUG #8: Insert loading spinner row
+        loading_row = FileTreeRow(
+            display_name="Loading...",
+            full_path="",
+            is_dir=False,
+            depth=parent_depth + 1,
+        )
+        self._store.insert(row_index + 1, loading_row)
+
+        def _do():
+            try:
+                entries = scan_directory(parent_path)
+            except (PermissionError, OSError) as e:
+                entries = [(f"[error: {e}]", "", False)]
+            GLib.idle_add(lambda: self._on_directory_loaded(
+                entries, row_index, parent_depth, request_id
+            ))
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _on_directory_loaded(self, entries, row_index: int, parent_depth: int, request_id: int) -> None:
+        """Handle directory scan result on main thread. Guard against stale requests."""
+        # BUG #7: Ignore stale callbacks
+        if request_id != self._current_request_id:
+            return
+
+        if row_index < 0 or row_index >= self._store.get_n_items():
+            return
+        parent_row: FileTreeRow = self._store.get_item(row_index)
+        if not parent_row.props.is_dir or not parent_row.props.expanded:
+            return
+
+        # Remove loading spinner row (first child at row_index + 1)
+        if row_index + 1 < self._store.get_n_items():
+            loading_row = self._store.get_item(row_index + 1)
+            if loading_row.props.display_name == "Loading...":
+                self._store.remove(row_index + 1)
+
+        # Insert real children
+        insert_pos = row_index + 1
+        for entry_name, full_path, is_dir in entries:
+            child = FileTreeRow(
+                display_name=entry_name,
+                full_path=full_path,
+                is_dir=is_dir,
+                depth=parent_depth + 1,
+                has_children=is_dir,
+                expanded=False,
+            )
+            self._store.insert(insert_pos, child)
+            insert_pos += 1
+
+    def _collapse_directory(self, row_index: int) -> None:
+        """Collapse a directory row: remove all descendants with greater depth."""
+        if row_index < 0 or row_index >= self._store.get_n_items():
+            return
+        row: FileTreeRow = self._store.get_item(row_index)
+        if not row.props.is_dir or not row.props.expanded:
+            return
+
+        parent_depth = row.props.depth
+        row.props.expanded = False
+
+        # BUG #7: Increment request ID to invalidate any in-flight async loads
+        self._current_request_id += 1
+
+        # Remove all descendants with depth > parent_depth
+        i = row_index + 1
+        while i < self._store.get_n_items():
+            descendant = self._store.get_item(i)
+            if descendant.props.depth > parent_depth:
+                self._store.remove(i)
+                # Don't increment i — next item shifted down
+            else:
+                break
+
     # ── Row Activation (ColumnView ::activate signal) ─────────────────────
 
     def _on_row_activated(self, column_view: Gtk.ColumnView, position: int) -> None:
