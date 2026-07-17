@@ -603,6 +603,77 @@ class FileTree(Gtk.Box):
             )
             self._store.append(row)
 
+    # ── Drawer / Diff / History Stubs (Phase 4+) ─────────────────────────
+    # These are preserved as empty stubs per spec §3.1 "Preserve (adapt)".
+    # They maintain the public API contract for downstream callers.
+    # Phase 4+ will fill in the implementations.
+
+    def _add_drawer_for_file(self, file_path: str, display_name: str) -> None:
+        """(Phase 4+) Stub — create drawer revealer for a file row."""
+        pass
+
+    def _toggle_drawer(self, file_path: str) -> None:
+        """(Phase 4+) Stub — toggle a file's drawer revealer open/closed."""
+        pass
+
+    def _load_drawer_diff(self, file_path: str, drawer_box: Gtk.Box, project_path: str,
+                          checkpoint_sha: str | None = None) -> None:
+        """(Phase 5+) Stub — load current diff for a file on background thread."""
+        pass
+
+    def _on_drawer_diff_loaded(self, result, subtitle: str,
+                               file_path: str) -> None:
+        """(Phase 5+) Stub — handle diff load result for drawer."""
+        pass
+
+    def _load_history(self, file_path: str, history_list: Gtk.ListBox) -> None:
+        """(Phase 6+) Stub — load commit history for a file on background thread."""
+        pass
+
+    def _on_history_loaded(self, entries: list[dict], history_list: Gtk.ListBox,
+                           file_path: str) -> None:
+        """(Phase 6+) Stub — populate the history ListBox with commit entries."""
+        pass
+
+    def _load_historical_diff(self, file_path: str, sha: str, stack: Gtk.Stack) -> None:
+        """(Phase 6+) Stub — load diff for a historical commit on background thread."""
+        pass
+
+    def _on_historical_diff_loaded(self, result, sha: str, file_path: str,
+                                   stack: Gtk.Stack) -> None:
+        """(Phase 6+) Stub — render historical diff and show revert button."""
+        pass
+
+    def _on_drawer_revert_clicked(self, file_path: str, drawer_box: Gtk.Box) -> None:
+        """(Phase 7+) Stub — show confirmation dialog before reverting a file."""
+        pass
+
+    def _on_drawer_revert_confirmed(self, dialog, response_id: int, file_path: str,
+                                    target_sha: str, drawer_box: Gtk.Box) -> None:
+        """(Phase 7+) Stub — handle revert confirmation, call ProjectHandler."""
+        pass
+
+    def _load_current_diff(self, file_path: str) -> None:
+        """(Phase 7+) Stub — reload the current working-tree diff after revert."""
+        pass
+
+    def _on_history_key_pressed(self, keyval: int, history_list: Gtk.ListBox) -> bool:
+        """(Phase 6+) Stub — handle Enter key in history list."""
+        return False
+
+    def _on_drawer_key_pressed(self, keyval: int, keycode: int, state: Gdk.ModifierType,
+                               file_path: str, drawer_box: Gtk.Box) -> bool:
+        """(Phase 4+) Stub — handle keyboard shortcuts in the drawer."""
+        return False
+
+    def _on_copy_diff_to_clipboard(self, file_path: str, drawer_box: Gtk.Box) -> None:
+        """(Phase 5+) Stub — copy diff text to clipboard from button click."""
+        pass
+
+    def _update_drawer_prefix(self, model, it, file_path: str, is_open: bool) -> bool:
+        """(Phase 4+) Stub — update tree row display name prefix (▶/▼)."""
+        return False
+
     # ── Row Activation (ColumnView ::activate signal) ─────────────────────
 
     def _on_row_activated(self, column_view: Gtk.ColumnView, position: int) -> None:
