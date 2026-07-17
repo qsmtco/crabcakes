@@ -763,7 +763,19 @@ class FileTree(Gtk.Box):
         threading.Thread(target=_do, daemon=True).start()
 
     def _on_directory_loaded(self, entries, row_index: int, parent_depth: int, request_id: int) -> None:
-        """Handle directory scan result on main thread. Guard against stale requests."""
+        """Handle directory scan result on main thread. Guard against stale requests.
+
+        Unconditionally removes the loading spinner row before any early return
+        to prevent orphan "Loading..." rows (BUG #1).
+        """
+        # Unconditionally remove loading spinner row (first child at row_index + 1)
+        loading_removed = False
+        if row_index + 1 < self._store.get_n_items():
+            candidate = self._store.get_item(row_index + 1)
+            if candidate.props.display_name == "Loading...":
+                self._store.remove(row_index + 1)
+                loading_removed = True
+
         # BUG #7: Ignore stale callbacks
         if request_id != self._current_request_id:
             return
@@ -772,6 +784,7 @@ class FileTree(Gtk.Box):
             return
         parent_row: FileTreeRow = self._store.get_item(row_index)
         if not parent_row.props.is_dir or not parent_row.props.expanded:
+            # Parent was collapsed; loading row already removed above
             return
 
         # Remove loading spinner row (first child at row_index + 1)
