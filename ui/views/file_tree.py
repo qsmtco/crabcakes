@@ -1226,7 +1226,9 @@ class FileTree(Gtk.Box):
     def _on_drawer_revert_confirmed(self, dialog, response_id: int, file_path: str,
                                     target_sha: str, drawer_box: Gtk.Box) -> None:
         """Handle revert confirmation — call ProjectHandler and reload diff."""
-        dialog.destroy()
+        # BUG #2: Guard against None dialog
+        if dialog is not None:
+            dialog.destroy()
         if response_id != Gtk.ResponseType.YES:
             return
 
@@ -1241,13 +1243,32 @@ class FileTree(Gtk.Box):
         if current_drawer_box is not drawer_box:
             return  # Stale drawer_box
 
+        # BUG #1: Wrap revert in try/except — show error in diff_box on failure
         if self._project_name:
-            self._project_handler.revert_file_to_sha(self._project_name, file_path, target_sha)
+            try:
+                self._project_handler.revert_file_to_sha(self._project_name, file_path, target_sha)
+            except Exception as e:
+                diff_box = getattr(drawer_box, '_diff_box', None)
+                if diff_box is not None:
+                    while diff_box.get_first_child() is not None:
+                        diff_box.remove(diff_box.get_first_child())
+                    error_lbl = Gtk.Label(label=f"Revert failed: {e}")
+                    error_lbl.add_css_class("diff-viewer-subtitle")
+                    error_lbl.set_margin_top(12)
+                    error_lbl.set_margin_bottom(12)
+                    diff_box.append(error_lbl)
+                return
 
         # Switch back to Diff tab
         diff_tab = getattr(drawer_box, '_diff_tab', None)
         if diff_tab is not None:
             diff_tab.set_active(True)
+
+        # BUG #4: Reset state to prevent accidental double-revert
+        drawer_row.props.history_selected_sha = None
+        revert_btn = getattr(drawer_box, '_revert_btn', None)
+        if revert_btn is not None:
+            revert_btn.set_visible(False)
 
         # Reset history tab so it can be re-fetched after revert
         drawer_row.props.history_loaded = False
