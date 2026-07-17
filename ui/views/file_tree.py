@@ -211,13 +211,15 @@ class FileTreeFactory(Gtk.SignalListItemFactory):
         widget: FileTreeRowWidget = list_item.get_child()
         widget.cleanup()
 
-    def _on_expander_clicked(self, row: FileTreeRow, position: int) -> None:
+    def _on_expander_clicked(self, row: FileTreeRow) -> None:
         """Handle expander button click for a directory row.
 
-        Delegates to FileTree methods. position was captured at bind time;
-        if stale, the expand/collapse methods validate by re-fetching the row.
+        Re-queries the row's current position at click time to handle
+        stale indices from prior store mutations (BUG #2).
         """
-        self._tree._on_expander_clicked(row, position)
+        position = self._tree._find_row_index(row)
+        if position is not None:
+            self._tree._on_expander_clicked(row, position)
 
 
 # ── FileTree — Main widget class ─────────────────────────────────────────
