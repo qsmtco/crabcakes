@@ -438,12 +438,17 @@ Key mapping:
 - New: `drawer_row.drawer_widget` is the revealer; `drawer_box` is built inside it
 
 `_on_drawer_diff_loaded(result, subtitle, file_path)`:
-- Find drawer row in store: `next((r for r in self._store if r.is_drawer and r.drawer_widget.get_child()._file_path == file_path), None)`
-- Update its `drawer_box._diff_box` etc.
+- Look up drawer row index via `self._drawer_paths.get(file_path)`
+- If found, access `self._store.get_item(idx)` to get the `FileTreeRow`
+- Update `row.diff_text = result.stdout` (store on the row, not on `drawer_box._diff_text`)
+- Update `row.drawer_widget`'s diff_box content (bypass O(n) iteration)
 
 Same for history, historical diff, revert.
 
-**Keyboard:** ColumnView key controller on the view. Escape → find selected row, if it's a file with open drawer → close drawer. Ctrl+C → copy diff from selected drawer row. Enter on history row → activate.
+**Critical:** All lookups must use `_drawer_paths` dict — O(1), not O(n). Update
+`_drawer_paths` on every insert/remove. Invalidate on store splice.
+
+**Keyboard:** ColumnView key controller on the view. Escape → look up selected row via `_selection.get_selected()`, check if it's a file with open drawer → close. Ctrl+C → copy `row.diff_text` from selected drawer row.
 
 ---
 
