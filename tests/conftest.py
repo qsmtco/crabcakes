@@ -6,6 +6,9 @@ import os
 import sys
 import pytest
 
+# Ensure headless rendering works for GTK tests
+os.environ.setdefault('GDK_BACKEND', 'broadway')
+
 # Ensure crabcakes package is on path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
