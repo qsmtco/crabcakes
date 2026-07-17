@@ -884,6 +884,9 @@ class FileTree(Gtk.Box):
         if file_path in self._drawer_paths:
             del self._drawer_paths[file_path]
 
+        # BUG #2: Allow lazy reload on next open
+        self._loaded_drawers.discard(file_path)
+
     def _trigger_diff_load(self, file_path: str, drawer_box: Gtk.Box) -> None:
         """Trigger lazy load of diff content for a file's drawer.
 
