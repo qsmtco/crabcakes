@@ -396,25 +396,21 @@ This spec is a **documentation-only update** — the inline diff drawer was full
 
 ---
 
-## 5. Implementation Order
+## 5. Implementation Order (Reference — Already Implemented)
 
-| Step | Description | Verification |
-|------|-------------|--------------|
-| 1 | Add TreeStore column 3/4 (`is_drawer_row`, `drawer_revealer`) | `grep -n "TreeStore.new" ui/views/file_tree.py` |
-| 2 | Modify `_show_tree()` to clear drawers on project load | `grep -n "_show_tree" ui/views/file_tree.py` |
-| 3 | Rewrite `_add_drawer_for_file()` to insert child row in TreeStore | `grep -n "_add_drawer_for_file" ui/views/file_tree.py` |
-| 4 | Implement `_toggle_drawer()` with lazy load | `grep -n "_toggle_drawer" ui/views/file_tree.py` |
-| 5 | Implement `_update_drawer_prefix()` | `grep -n "_update_drawer_prefix"` |
-| 6 | Implement `_load_drawer_diff()` / `_on_drawer_diff_loaded()` | `grep -n "_load_drawer_diff" ui/views/file_tree.py` |
-| 7 | Implement history tab (`_load_history`, `_on_history_loaded`) | `grep -n "_load_history" ui/views/file_tree.py` |
-| 8 | Implement historical diff (`_load_historical_diff`, `_on_historical_diff_loaded`) | `grep -n "_load_historical_diff"` |
-| 8 | Implement revert flow (`_on_drawer_revert_clicked`, `_on_drawer_revert_confirmed`, `_load_current_diff`) | `grep -n "_on_drawer_revert" ui/views/file_tree.py` |
-| 9 | Add keyboard handlers (`_on_drawer_key_pressed`, `_on_history_key_pressed`) | `grep -n "_on_drawer_key_pressed\|_on_history_key_pressed"` |
-| 9 | Implement clipboard copy (`_copy_drawer_diff_to_clipboard`) | `grep -n "_copy_drawer_diff_to_clipboard"` |
-| 10 | Add `revert_file_to_sha()` to `ProjectHandler` | `grep -n "class ProjectHandler" ui/handlers/project_handler.py` |
-| 11 | Wire `set_project_handler()` in `window.py` | `grep -n "set_project_handler" ui/window.py` |
-| 11 | Add CSS classes to `ui/styles.py` | `grep -n "file-tree-drawer" ui/styles.py` |
-| 12 | Run full test suite | `xvfb-run -a pytest tests/ -x -q` |
+The inline diff drawer was built in Phases C–F. The table below maps each feature to its implementation location for maintenance reference.
+
+| Component | File | Lines | Description |
+|-----------|------|-------|-------------|
+| Tabbed drawer (Diff/History tabs, stack, action bar) | `ui/views/file_tree.py` | 410–527 | `_add_drawer_for_file()` — creates `Gtk.Revealer` with `Gtk.Stack`, tab bar, action bar |
+| Diff loading | `ui/views/file_tree.py` | 580–634 | `_load_drawer_diff()` + `_on_drawer_diff_loaded()` — background thread, error/empty/binary handling |
+| History tab | `ui/views/file_tree.py` | 603–668 | `_load_history()` + `_on_history_loaded()` — `file_log()` background thread, ListBox population |
+| Historical diff | `ui/views/file_tree.py` | 673–787 | `_load_historical_diff()` + `_on_historical_diff_loaded()` — shows revert button |
+| Revert flow | `ui/views/file_tree.py` | 752–881 | `_on_drawer_revert_clicked()` → confirm → `_on_drawer_revert_confirmed()` → `_load_current_diff()` |
+| Keyboard + clipboard | `ui/views/file_tree.py` | 868–933 | `_on_drawer_key_pressed()` (Esc/Ctrl+C), `_on_history_key_pressed()` (Enter), `_copy_drawer_diff_to_clipboard()` |
+| Revert delegation | `ui/handlers/project_handler.py` | 865–874 | `revert_file_to_sha()` → `ReviewHandler.revert_file_to_sha(... on_complete=...)` |
+| CSS classes | `ui/styles.py` | — | `.file-tree-drawer`, `.file-tree-drawer-tab-bar`, `.diff-history-row*`, `.diff-viewer-revert-btn`, `.diff-viewer-copy-btn` |
+| Wiring | `ui/window.py` | 423–424 | `set_project_handler()` + `set_file_tree()` |
 
 ---
 
