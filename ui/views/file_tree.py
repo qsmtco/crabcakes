@@ -787,12 +787,6 @@ class FileTree(Gtk.Box):
             # Parent was collapsed; loading row already removed above
             return
 
-        # Remove loading spinner row (first child at row_index + 1)
-        if row_index + 1 < self._store.get_n_items():
-            loading_row = self._store.get_item(row_index + 1)
-            if loading_row.props.display_name == "Loading...":
-                self._store.remove(row_index + 1)
-
         # Insert real children
         insert_pos = row_index + 1
         for entry_name, full_path, is_dir in entries:
