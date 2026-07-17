@@ -84,91 +84,17 @@ def _show_tree(self, name, path):
     # ... rest unchanged
 ```
 
-#### 2.1.3 `_add_drawer_for_file()` — Insert as Child Row in TreeStore
+#### 2.1.3 `_add_drawer_for_file()` — Create Drawer in `_drawer_area`
 
-**Replace** current implementation (which appends to `_drawer_area` box) with:
+**Current implementation** (produced by Phases C-F): Creates a `Gtk.Revealer` with tabbed interface (Diff/History tabs via `Gtk.Stack`), action bar with revert + copy buttons, and keyboard handler. The revealer is appended to `self._drawer_area` and the drawer file path is stored in `self._drawers` dict.
 
-```python
-def _add_drawer_for_file(self, file_path: str, display_name: str) -> None:
-    """Create a drawer row as a CHILD of the file's TreeStore row."""
-    # Find the file's TreeIter in the store
-    file_iter = self._find_file_iter(file_path)
-    if file_iter is None:
-        return  # File not currently in tree (e.g., filtered out)
+This method is **unchanged** by this spec. See the implementation at `file_tree.py:410–560`.
 
-    # Create revealer + content box (same UI as before)
-    revealer = Gtk.Revealer()
-    revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
-    revealer.set_reveal_child(False)
-    revealer.set_transition_duration(150)
-    revealer.add_css_class("file-tree-drawer")
-
-    # ... build drawer_box with tabs, stack, history, action bar ...
-    # (identical UI construction as current _add_drawer_for_file)
-
-    # Store reference on drawer_box for later access
-    drawer_box._diff_tab = diff_tab
-    drawer_box._history_tab = history_tab
-    drawer_box._stack = stack
-    drawer_box._diff_box = diff_box
-    drawer_box._history_list = history_list
-    drawer_box._revert_btn = revert_btn
-    drawer_box._copy_btn = copy_btn
-    drawer_box._history_selected_sha = None
-    drawer_box._diff_text = ""
-
-    # KEY CHANGE: Insert as CHILD row in TreeStore, not in _drawer_area
-    drawer_iter = self._store.append(file_iter, [
-        "",              # display_name (empty — no label)
-        "",              # full_path (empty for drawer rows)
-        False,           # is_dir = False
-        True,            # is_drawer_row = True
-        revealer         # drawer_revealer_ref
-    ])
-
-    # Store mapping for toggle/load operations
-    self._drawers[file_path] = (revealer, display_name, False, drawer_box)
-    self._loaded_drawers.discard(file_path)  # reset lazy-load flag
-
-    # Initially hidden
-    self._store.set_value(drawer_iter, 0, "")  # empty display name
-```
-
-#### 2.1.3 `_toggle_drawer()` — Toggle Revealer + Update Prefix
-
-```python
-def _toggle_drawer(self, file_path: str) -> None:
-    # Debounce (per-file)
-    now = time.monotonic()
-    last_times = getattr(self, '_last_toggle_per_file', {})
-    if now - self._last_toggle_per_file.get(file_path, 0) < 0.3:
-        return
-    self._last_toggle_per_file[file_path] = now
-
-    entry = self._drawers.get(file_path)
-    if entry is None:
-        return
-    revealer, display_name, is_open, drawer_box = entry
-    new_state = not is_open
-
-    # Toggle revealer
-    revealer.set_reveal_child(new_state)
-
-    # Update file row prefix (▶/▼)
-    file_iter = self._find_file_iter(file_path)
-    if file_iter:
-        self._update_drawer_prefix(file_iter, new_state)
-
-    # Update state
-    self._drawers[file_path] = (revealer, display_name, new_state, drawer_box)
-
-    # Lazy load on first open
-    if new_state and file_path not in self._loaded_drawers:
-        self._loaded_drawers.add(file_path)
-        project_path = self._project_path or ""
-        checkpoint_sha = self._resolve_checkpoint_sha()
-        self._load_drawer_diff(file_path, project_path, checkpoint_sha)
-```
+Key invariants:
+- `Gtk.Revealer` is child of `_drawer_area` box, NOT a TreeStore row
+- `Gtk.TreeStore` remains 3-column: `(display_name, full_path, is_dir)`
+- `self._drawers[file_path] = (revealer, display_name, is_open, drawer_box)` is the canonical state map
+- `drawer_box` stores references to child widgets as attributes: `_diff_tab`, `_diff_box`, `_history_list`, `_stack`, `_revert_btn`, `_copy_btn`, `_history_selected_sha`, `_diff_text`
 
 #### 2.1.4 `_update_drawer_prefix()` — Update Row Prefix (▶/▼)
 
