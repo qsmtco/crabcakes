@@ -135,22 +135,8 @@ class TestFileTreeRowWidget:
         while child is not None:
             children.append(child)
             child = child.get_next_sibling()
-        label = children[2]
+        label = children[1]
         assert label.get_text() == "test.txt"
-
-    def test_set_icon_dir(self):
-        """set_icon sets folder icon for directories."""
-        widget = FileTreeRowWidget()
-        widget.set_icon(is_dir=True, is_drawer=False)
-        icon = widget.get_first_child().get_next_sibling()
-        assert icon.get_icon_name() == "folder-symbolic"
-
-    def test_set_icon_file(self):
-        """set_icon sets file icon for files."""
-        widget = FileTreeRowWidget()
-        widget.set_icon(is_dir=False, is_drawer=False)
-        icon = widget.get_first_child().get_next_sibling()
-        assert icon.get_icon_name() == "text-x-generic-symbolic"
 
     def test_attach_detach_drawer(self):
         """attach_drawer and detach_drawer work correctly."""
