@@ -1351,7 +1351,7 @@ button.settings-remove-btn:hover {
     padding: 0;
     margin-left: 24px;
     border-left: 2px solid alpha(@theme_selected_bg_color, 0.3);
-    background-color: alpha(@theme_bg_color, 0.3);
+    background: alpha(@theme_bg_color, 0.3);
 }
 
 /* ── FileTree ColumnView (Phase 9) ──────────────────────────────────────── */
