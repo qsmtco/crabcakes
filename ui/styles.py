@@ -1354,28 +1354,60 @@ button.settings-remove-btn:hover {
     background-color: alpha(@theme_bg_color, 0.3);
 }
 
-/* ColumnView row styling */
+/* ── FileTree ColumnView (Phase 9) ──────────────────────────────────────── */
+.file-tree-column-view {
+    background: transparent;
+}
+
+.file-tree-column-view > row {
+    padding: 0;
+    margin: 0;
+}
+
 .file-tree-row {
     padding: 2px 8px;
     min-height: 24px;
+    border-radius: 4px;
 }
+
+.file-tree-row:hover {
+    background: alpha(@theme_selected_bg_color, 0.1);
+}
+
 .file-tree-row:selected {
-    background: alpha(@theme_selected_bg_color, 0.3);
+    background: alpha(@theme_selected_bg_color, 0.25);
 }
+
 .file-tree-row-expander {
     margin-right: 4px;
     min-width: 16px;
-}
-.file-tree-row-icon {
-    margin-right: 6px;
-}
-.file-tree-row-label {
-    /* existing label styles apply */
+    min-height: 16px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: @theme_fg_color;
+    font-size: 10px;
 }
 
-/* Inline drawer row */
+.file-tree-row-expander:hover {
+    background: alpha(@theme_selected_bg_color, 0.1);
+}
+
+.file-tree-row-icon {
+    margin-right: 6px;
+    min-width: 16px;
+    min-height: 16px;
+}
+
+.file-tree-row-label {
+    font-size: 13px;
+    color: @theme_fg_color;
+}
+
 .file-tree-drawer-row {
-    /* drawer row has no label, just the revealer child */
+    padding: 0;
+    margin: 0;
+    background: alpha(@theme_bg_color, 0.3);
 }
 """
 
