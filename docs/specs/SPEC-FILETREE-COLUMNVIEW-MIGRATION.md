@@ -89,7 +89,7 @@ class FileTreeRow(GObject.Object):
         return self._depth
 
     @property
-    def drawer_widget) -> Gtk.Widget | None:
+    def drawer_widget(self) -> Gtk.Widget | None:
         return self._drawer_widget
 
     @drawer_widget.setter
