@@ -1037,6 +1037,21 @@ class AgentRuntimeHandler:
         # Store so _do_tool_call_result can update the card
         self._tool_card_ids[session_key] = card_id
 
+        # Store tool args for patch path enrichment in _do_tool_call_result
+        self._pending_tool_args[session_key] = args
+
+        # NEW: activity-drawer tool_start bubble
+        if self._on_activity_bubble is not None:
+            from models.activity import ActivityBubble, ToolStatus
+            self._on_activity_bubble(ActivityBubble(
+                type="tool_start",
+                session_key=session_key,
+                tool_name=name,
+                icon="🔧",
+                status=ToolStatus.RUNNING,
+                agent_name=agent_name,
+            ))
+
     def _on_tool_call_result(
         self, session_key: str, name: str, result: Any
     ) -> None:
