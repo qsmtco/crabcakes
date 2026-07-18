@@ -364,14 +364,23 @@ class TestFileTreeRightClick:
         return mock_widget
 
     def _make_tree(self):
-        """Create a lightweight FileTree-like object without invoking the GTK-heavy __init__.
+        """Create a lightweight FileTree-like object for testing handler methods.
 
-        Sets only the attributes needed by the right-click handler methods.
+        Cannot instantiate FileTree() directly (GTK widgets segfault in test sandbox),
+        so we create a simple object and bind the handler methods to it.
+        We still use a real Gtk.Label for the status label since the handler
+        methods read/write it.
         """
-        tree = object.__new__(FileTree)
+        tree = type("FakeFileTree", (), {
+            "_on_copy_tree_path": FileTree._on_copy_tree_path,
+            "_on_copy_tree_file": FileTree._on_copy_tree_file,
+            "_on_tree_row_right_click": FileTree._on_tree_row_right_click,
+            "_on_tree_menu_row_activated": FileTree._on_tree_menu_row_activated,
+            "_copy_text_to_clipboard": FileTree._copy_text_to_clipboard,
+            "_show_tree_copy_status": FileTree._show_tree_copy_status,
+        })()
         tree._tree_copy_status_label = Gtk.Label()
         tree._tree_copy_status_timeout_id = None
-        tree._header = None  # status label uses this as parent, but we test with mock
         return tree
 
     def test_on_copy_tree_path_calls_clipboard_with_full_path(self):
