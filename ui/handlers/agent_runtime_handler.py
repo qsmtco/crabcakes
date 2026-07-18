@@ -969,6 +969,8 @@ class AgentRuntimeHandler:
                 # Fire lifecycle: agent started → ActivityHandler progress bar
                 if self._on_agent_start_cb:
                     self._on_agent_start_cb(session_key)
+                # BUG #2: Clear ended flag on new turn — this session is active again.
+                self._ended_sessions.discard(session_key)
                 # NEW: drawer-lifecycle start → drawer separator
                 if self._on_drawer_lifecycle is not None:
                     agent_def_dl = self._agents.get(session_key)
