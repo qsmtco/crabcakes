@@ -2453,7 +2453,7 @@ class AgentRuntime:
                         if approved is False or approved is None:  # None = timeout = denial
                             tc.mark_failed("exec_command requires PM approval — request denied or timed out")
                             conv.add_tool_result(call_id, tc.result or "denied")
-                            self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied")
+                            self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied", False)
                             self._audit_log.record(tool_name, args, approved=False,
                                                     user=getattr(self._config, "user_id", ""),
                                                     result="denied")  # A-4
