@@ -670,6 +670,7 @@ class FileTree(Gtk.Box):
         stack = Gtk.Stack()
         stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
         stack.set_vexpand(True)
+        stack.set_hexpand(True)
 
         # Diff page
         diff_scroll = Gtk.ScrolledWindow()
