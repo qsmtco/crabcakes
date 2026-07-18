@@ -6,6 +6,8 @@ drawer state machine, _clear_all_state, _find_row_index,
 right-click context menu.
 """
 import os
+from unittest.mock import MagicMock, patch
+
 import pytest
 import gi
 gi.require_version('Gtk', '4.0')
