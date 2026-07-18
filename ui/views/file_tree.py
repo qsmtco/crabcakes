@@ -704,6 +704,7 @@ class FileTree(Gtk.Box):
         action_bar.set_margin_bottom(8)
         action_bar.set_margin_start(20)
         action_bar.set_margin_end(8)
+        action_bar.set_hexpand(True)
 
         revert_btn = Gtk.Button(label="Revert file to this version")
         revert_btn.add_css_class("diff-viewer-revert-btn")
