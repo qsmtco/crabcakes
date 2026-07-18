@@ -1386,7 +1386,7 @@ button.settings-remove-btn:hover {
     padding: 0;
     border: none;
     background: transparent;
-    color: @theme_fg_color;
+    color: #4ade80;
     font-size: 10px;
 }
 
