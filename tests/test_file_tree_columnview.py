@@ -509,9 +509,13 @@ class TestFileTreeRightClick:
         ))
 
         with patch("gi.repository.Gtk.Popover") as mock_popover_class:
-            tree._on_tree_row_right_click(None, 1, 0, 0, widget)
+            with patch("gi.repository.Gtk.Box"):
+                with patch("gi.repository.Gtk.ListBox"):
+                    with patch("gi.repository.Gtk.Label"):
+                        with patch("gi.repository.Gtk.ListBoxRow"):
+                            tree._on_tree_row_right_click(None, 1, 0, 0, widget)
 
-            mock_popover_class.assert_not_called()
+                            mock_popover_class.assert_not_called()
 
     def test_right_click_handler_ignores_multipress(self):
         """Call _on_tree_row_right_click with n_press=2, verify no popover is created."""
@@ -522,9 +526,13 @@ class TestFileTreeRightClick:
         ))
 
         with patch("gi.repository.Gtk.Popover") as mock_popover_class:
-            tree._on_tree_row_right_click(None, 2, 0, 0, widget)
+            with patch("gi.repository.Gtk.Box"):
+                with patch("gi.repository.Gtk.ListBox"):
+                    with patch("gi.repository.Gtk.Label"):
+                        with patch("gi.repository.Gtk.ListBoxRow"):
+                            tree._on_tree_row_right_click(None, 2, 0, 0, widget)
 
-            mock_popover_class.assert_not_called()
+                            mock_popover_class.assert_not_called()
 
     def test_right_click_skips_when_bound_row_none(self):
         """_bound_row is None -> handler returns early, no popover."""
@@ -532,9 +540,13 @@ class TestFileTreeRightClick:
         widget = self._make_mock_widget(with_bound_row=None)
 
         with patch("gi.repository.Gtk.Popover") as mock_popover_class:
-            tree._on_tree_row_right_click(None, 1, 0, 0, widget)
+            with patch("gi.repository.Gtk.Box"):
+                with patch("gi.repository.Gtk.ListBox"):
+                    with patch("gi.repository.Gtk.Label"):
+                        with patch("gi.repository.Gtk.ListBoxRow"):
+                            tree._on_tree_row_right_click(None, 1, 0, 0, widget)
 
-            mock_popover_class.assert_not_called()
+                            mock_popover_class.assert_not_called()
 
     def test_right_click_skips_empty_path(self):
         """full_path is empty -> handler returns early, no popover."""
@@ -544,9 +556,13 @@ class TestFileTreeRightClick:
         ))
 
         with patch("gi.repository.Gtk.Popover") as mock_popover_class:
-            tree._on_tree_row_right_click(None, 1, 0, 0, widget)
+            with patch("gi.repository.Gtk.Box"):
+                with patch("gi.repository.Gtk.ListBox"):
+                    with patch("gi.repository.Gtk.Label"):
+                        with patch("gi.repository.Gtk.ListBoxRow"):
+                            tree._on_tree_row_right_click(None, 1, 0, 0, widget)
 
-            mock_popover_class.assert_not_called()
+                            mock_popover_class.assert_not_called()
 
     def test_action_dispatch_uses_action_not_label(self):
         """
