@@ -95,6 +95,9 @@ class AgentRuntimeHandler:
         # NEW: pending tool args for patch path enrichment.
         # session_key → dict of args from _do_tool_call_start.
         self._pending_tool_args: dict[str, dict] = {}
+        # BUG #2: Track sessions that have ended (cancel/error/complete) to prevent
+        # orphan tool_start bubbles from stale idle_add dispatches.
+        self._ended_sessions: set[str] = set()
         # V2 exec auto-accept callback (Phase 6): returns current exec mode
         # ("off" | "show" | "silent") or None. Set by window.py wiring via
         # set_check_exec_auto_accept_callback(). When the callback returns
@@ -991,6 +994,13 @@ class AgentRuntimeHandler:
 
         Phase D: Create an agent_action feed card with running state.
         """
+        # BUG #2: Suppress tool_start for sessions that have already ended
+        # (cancel/error/complete). Prevents orphan tool_start bubbles from
+        # stale idle_add dispatches that arrive after the session ended.
+        if session_key in self._ended_sessions:
+            logger.debug("_do_tool_call_start: suppressed for ended session %s", session_key)
+            return
+
         if self._fh is None or self._active_project is None:
             logger.debug("_do_tool_call_start: no feed handler or no active project")
             return
