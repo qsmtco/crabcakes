@@ -2,8 +2,10 @@
 """Tests for FileTree ColumnView migration.
 
 Covers: FileTreeRow GObject, FileTreeRowWidget, FileTreeFactory,
-drawer state machine, _clear_all_state, _find_row_index.
+drawer state machine, _clear_all_state, _find_row_index,
+right-click context menu.
 """
+import os
 import pytest
 import gi
 gi.require_version('Gtk', '4.0')
