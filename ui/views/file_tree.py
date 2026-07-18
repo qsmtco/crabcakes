@@ -178,6 +178,14 @@ class FileTreeFactory(Gtk.SignalListItemFactory):
         widget.set_expanded(row.props.expanded)
         widget.set_label(row.props.display_name)
 
+        # Drawer rows: hide label (no text needed), let drawer_container fill space
+        if row.props.is_drawer:
+            widget._label.set_visible(False)
+            widget._drawer_container.set_hexpand(True)
+        else:
+            widget._label.set_visible(True)
+            widget._drawer_container.set_hexpand(False)
+
         if row.props.is_drawer and row.props.drawer_widget:
             widget.attach_drawer(row.props.drawer_widget)
 
