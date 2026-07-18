@@ -485,26 +485,20 @@ class TestFileTreeRightClick:
             full_path="/some/file.txt", is_dir=False, is_drawer=False
         ))
 
-        # Patch ListBox to capture row-children and their _action attributes
-        listbox_added_rows = []
+        # Patch ALL GTK constructors that _on_tree_row_right_click calls
+        with patch("gi.repository.Gtk.Popover") as mock_popover_class:
+            with patch("gi.repository.Gtk.Box") as mock_box_class:
+                with patch("gi.repository.Gtk.ListBox") as mock_listbox_class:
+                    with patch("gi.repository.Gtk.Label") as mock_label_class:
+                        with patch("gi.repository.Gtk.ListBoxRow") as mock_listboxrow_class:
+                            mock_popover = MagicMock()
+                            mock_popover_class.return_value = mock_popover
 
-        def mock_listbox_row_add(self, child):
-            listbox_added_rows.append(child)
+                            tree._on_tree_row_right_click(None, 1, 0, 0, widget)
 
-        with patch("gi.repository.Gtk.ListBox") as mock_listbox_class:
-            mock_listbox = MagicMock()
-            mock_listbox.append.side_effect = mock_listbox_row_add
-            mock_listbox_class.return_value = mock_listbox
-
-            with patch("gi.repository.Gtk.Popover") as mock_popover_class:
-                mock_popover = MagicMock()
-                mock_popover_class.return_value = mock_popover
-
-                tree._on_tree_row_right_click(None, 1, 0, 0, widget)
-
-        # May not capture via mock_listbox.append if production code creates
-        # ListBox differently. Instead check popover.set_child was called.
-        # This test is complementary to the dispatched tests below.
+                            mock_popover_class.assert_called_once()
+                            mock_popover.set_parent.assert_called_once()
+                            mock_popover.popup.assert_called_once()
 
     def test_menu_skips_drawer_row(self):
         """is_drawer=True -> handler returns early, no popover."""
