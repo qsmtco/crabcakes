@@ -116,6 +116,7 @@ crabcakes/
 │   │   ├── media_handler.py   # MediaHandler — STT + improve
 │   │   ├── project_handler.py  # ProjectHandler — active project + agent-to-project routing
 │   │   ├── activity_handler.py  # ActivityHandler — 6-state activity machine (Phase 6)
+│   │   ├── activity_wiring_handler.py  # ActivityDrawer event wiring — gateway + local, online + offline (SPEC-activity-drawer)
 │   │   ├── command_handler.py   # CommandHandler — slash-prefix command parser (Phase 7)
 │   │   ├── review_handler.py    # ReviewHandler — review session lifecycle (Phase 7)
 │   │   ├── task_handler.py      # TaskHandler — task commands: task/done/start/blocked/cancel/tasks/assign/priority (Phase 7)
