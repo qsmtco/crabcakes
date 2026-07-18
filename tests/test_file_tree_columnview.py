@@ -646,7 +646,11 @@ class TestFileTreeRightClick:
 
         with patch.object(Gtk.Popover, 'connect', capture_connect):
             with patch.object(Gtk.Popover, 'popup', MagicMock()):
-                tree._on_tree_row_right_click(None, 1, 0, 0, widget)
+                with patch("gi.repository.Gtk.Box"):
+                    with patch("gi.repository.Gtk.ListBox"):
+                        with patch("gi.repository.Gtk.Label"):
+                            with patch("gi.repository.Gtk.ListBoxRow"):
+                                tree._on_tree_row_right_click(None, 1, 0, 0, widget)
 
         assert len(closed_connections) >= 1, (
             "A 'closed' signal handler must be connected to the popover. "
