@@ -91,20 +91,6 @@ class ConnectionSyncHandler:
         self._on_forward_clicked = on_forward_clicked
         self._project_path_provider = project_path_provider
         self._main_window = main_window
-        # ActivityDrawer (SPEC-activity-drawer Phase 1) — set via setter after construction
-        self._activity_drawer = None
-
-    def set_activity_drawer(self, drawer) -> None:
-        """Set the ActivityDrawer for activity bubble routing (SPEC-activity-drawer).
-
-        Called by window.py._build() after both connection_sync_handler and the
-        drawer are constructed. The actual set_on_activity_bubble wiring happens
-        in sync() (called after gateway connect) so that the drawer's append_event
-        is the target from the first gateway event onward.
-        """
-        self._activity_drawer = drawer
-
-    def sync(self, gw: "GatewayClient") -> None:
         """
         Inject the live GatewayClient and AgentManager into all dependent handlers.
         Called once after gateway connect succeeds.
