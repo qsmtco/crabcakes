@@ -731,6 +731,7 @@ class FileTree(Gtk.Box):
 
         revert_btn = Gtk.Button(label="Revert file to this version")
         revert_btn.add_css_class("diff-viewer-revert-btn")
+        revert_btn.add_css_class("file-tree-drawer-tab-btn")
         revert_btn.set_visible(False)
 
         copy_btn = Gtk.Button(label="Copy diff")
