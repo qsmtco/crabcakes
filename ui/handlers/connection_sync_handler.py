@@ -91,6 +91,8 @@ class ConnectionSyncHandler:
         self._on_forward_clicked = on_forward_clicked
         self._project_path_provider = project_path_provider
         self._main_window = main_window
+
+    def sync(self, gw: "GatewayClient") -> None:
         """
         Inject the live GatewayClient and AgentManager into all dependent handlers.
         Called once after gateway connect succeeds.
