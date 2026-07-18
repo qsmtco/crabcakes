@@ -395,43 +395,34 @@ class TestActivityHandlerWiring:
             deps["chat_handler"]._clear_render_guard
         )
 
-    def test_sync_calls_activity_handler_set_on_activity_bubble(
+    def test_sync_no_longer_wires_drawer_callbacks(
         self, handler, deps, gw
     ):
-        # SPEC-activity-drawer Phase 1: set_on_activity_bubble is only called
-        # when an ActivityDrawer has been provided via set_activity_drawer().
-        # Without a drawer, no wiring happens (drawer is None by default).
+        # Drawer wiring has moved from sync() to ActivityWiringHandler.wire().
+        # sync() should NOT call set_on_activity_bubble, set_on_agent_lifecycle,
+        # or set_on_command_output. It should still call set_agent_manager.
         handler.sync(gw)
-        # No drawer was set in this test, so set_on_activity_bubble should not have been called.
         deps["activity_handler"].set_on_activity_bubble.assert_not_called()
+        deps["activity_handler"].set_on_agent_lifecycle.assert_not_called()
+        # AgentRuntimeHandler.set_on_command_output should also not be called
+        if deps.get("chat_handler", MagicMock())._agent_runtime_handler is not None:
+            deps["chat_handler"]._agent_runtime_handler.set_on_command_output.assert_not_called()
+        # But set_agent_manager IS still called
+        deps["activity_handler"].set_agent_manager.assert_called_once()
 
-    def test_sync_with_drawer_routes_set_on_activity_bubble_to_drawer(
+    def test_sync_drawer_wiring_removed_completely(
         self, handler, deps, gw
     ):
-        # SPEC-activity-drawer Phase 1: when an ActivityDrawer is set,
-        # set_on_activity_bubble is wired via an adapter that converts
-        # ActivityBubble → dict (via to_drawer_row()) then calls
-        # drawer.append_event. ChatHandler no longer renders activity.
+        # Former SPEC-activity-drawer wiring inside sync() has been extracted
+        # to ActivityWiringHandler. sync() no longer has any drawer-related code.
         from models.activity import ActivityBubble
 
-        mock_drawer = MagicMock()
-        handler.set_activity_drawer(mock_drawer)
+        # No drawer is needed — sync() doesn't reference it
         handler.sync(gw)
 
-        # set_on_activity_bubble should have been called once with a callable
-        deps["activity_handler"].set_on_activity_bubble.assert_called_once()
-        adapter = deps["activity_handler"].set_on_activity_bubble.call_args[0][0]
-        assert callable(adapter)
-
-        # Invoking the adapter with an ActivityBubble should route to
-        # drawer.append_event with the dict from to_drawer_row()
-        bubble = ActivityBubble(
-            type="tool_end",
-            session_key="test-session",
-            tool_name="read_file",
-        )
-        adapter(bubble)
-        mock_drawer.append_event.assert_called_once_with(bubble.to_drawer_row())
+        # Verify drawer-related callbacks are NOT set from sync()
+        deps["activity_handler"].set_on_activity_bubble.assert_not_called()
+        deps["activity_handler"].set_on_agent_lifecycle.assert_not_called()
 
 
 class TestOrder:
