@@ -4024,3 +4024,76 @@ class TestLocalAgentDrawerEmissions:
         handler._do_tool_call_result("special:coder", "read_file", "content", success=True)
         assert len(bubbles) >= 2, f"BUG #4: Expected tool_end bubble too, got {len(bubbles)}"
         assert bubbles[1].type == "tool_end"
+
+    # ── BUG #13: feed-card block must not shadow success param ──────────
+
+    def test_denied_exec_with_card_still_emits_tool_error(self):
+        """Regression for BUG #13: success param shadowed by feed-card block.
+
+        The existing test_denied_exec_command_emits_tool_error_bubble bypasses the
+        feed-card block (no _tool_card_ids entry). This test primes the card so the
+        shadowing block runs, proving the rename fix holds.
+        """
+        handler, _, _ = self._make_handler_with_agent()
+        # Prime _tool_card_ids as if _do_tool_call_start had run first
+        from models.feed_card import FeedCardData
+        from datetime import datetime, timezone
+        card = FeedCardData(
+            card_type="agent_action",
+            source="agent",
+            title="Coder is running: rm -rf /",
+            body="⏳ Running...",
+            author="Coder",
+            timestamp=datetime.now(timezone.utc),
+            project_name="test",
+        )
+        handler._tool_card_ids["special:coder"] = "card-123"
+        handler._fh.get_card.return_value = card
+
+        # Runtime dispatches success=False for a denied exec_command
+        handler._do_tool_call_result(
+            "special:coder", "exec_command",
+            "exec_command requires PM approval — request denied or timed out",
+            success=False,
+        )
+
+        types = [b.type for b in self._bubbles]
+        assert "tool_error" in types, (
+            f"BUG #13: tool_error not emitted when feed-card block ran first; got {types}"
+        )
+        tool_error = [b for b in self._bubbles if b.type == "tool_error"][0]
+        assert tool_error.icon == "❌"
+
+    def test_write_file_failure_string_result_emits_tool_error(self):
+        """Regression for BUG #13 compounding case: failed write_file with a string
+        result AND a feed card must emit tool_error (not be silently suppressed).
+
+        Before the fix, the shadowing forced success=True in the card block and
+        BUG #12's skip_tool_end read that value → is_error=False → NO bubble at all.
+        """
+        handler, _, _ = self._make_handler_with_agent()
+        from models.feed_card import FeedCardData
+        from datetime import datetime, timezone
+        card = FeedCardData(
+            card_type="agent_action",
+            source="agent",
+            title="Coder is writing /etc/passwd",
+            body="⏳ Running...",
+            author="Coder",
+            timestamp=datetime.now(timezone.utc),
+            project_name="test",
+        )
+        handler._tool_card_ids["special:coder"] = "card-123"
+        handler._fh.get_card.return_value = card
+        handler._pending_tool_args["special:coder"] = {"path": "/etc/passwd"}
+
+        handler._do_tool_call_result(
+            "special:coder", "write_file", "blocked: sensitive path", success=False,
+        )
+
+        types = [b.type for b in self._bubbles]
+        assert "tool_error" in types, (
+            f"BUG #13: failed write_file emitted no terminal bubble; got {types}"
+        )
+        # No patch on failure
+        assert "patch" not in types, f"Expected no patch on failure; got {types}"
