@@ -4004,8 +4004,8 @@ class TestLocalAgentDrawerEmissions:
         handler._active_project = None
         handler._agents = {
             "special:coder": SpecialAgentDef(
-                display_name="Coder", role="coder", tools=["read_file"],
-                conv_id_prefix="special:coder",
+                display_name="Coder", role="coder", emoji="🛠️", tools=["read_file"],
+                can_write=True, conv_id_prefix="special:coder",
             )
         }
 
