@@ -2323,6 +2323,11 @@ class ConnectionSyncHandler:
 
 **Extracted from:** `window._sync_gateway_to_chat_handler` (former location: ui/window.py). The original method was 73 lines and violated the §3.6 boundary between window.py (composition root) and handlers (business logic).
 
+    # NOTE: ActivityDrawer wiring (set_on_activity_bubble, set_on_agent_lifecycle,
+    # set_on_command_output) has moved to ui/handlers/activity_wiring_handler.py
+    # (constructed at startup, not deferred to connect) so the drawer works offline.
+    # sync() now only injects AgentManager via set_agent_manager().
+
 ### 3.21z `ui/handlers/forward_handler.py` — Forward Handler (Phase 3b extraction)
 
 **Responsibility:** Agent-to-agent message forwarding flow. Builds a `Gtk.Popover` listing every other agent the user could forward to; on selection, routes the text to the target (special agent or gateway agent), creates/selects the target's chat tab, and renders a "forwarded from <source>" bubble into it.
