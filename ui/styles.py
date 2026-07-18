@@ -1376,7 +1376,7 @@ button.settings-remove-btn:hover {
 }
 
 .file-tree-row:selected {
-    background: alpha(@theme_selected_bg_color, 0.25);
+    background: alpha(@theme_selected_bg_color, 0.08);
 }
 
 .file-tree-row-expander {
