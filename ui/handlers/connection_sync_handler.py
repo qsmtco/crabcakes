@@ -171,52 +171,10 @@ class ConnectionSyncHandler:
         self._activity_handler.set_on_assistant_buffer(self._chat_handler._buffer_assistant_text)
         # Wire agent start → clear render guard so subsequent responses render
         self._activity_handler.set_on_agent_start(self._chat_handler._clear_render_guard)
-        # Wire activity bubbles: ActivityHandler → ActivityDrawer (SPEC-activity-drawer Phase 1)
-        # The drawer's append_event(row_dict) is the new target; ChatHandler no longer renders activity.
-        # We wrap with a small adapter that converts the ActivityBubble dataclass
-        # into the dict shape the drawer expects (via ActivityBubble.to_drawer_row()).
-        if self._activity_drawer is not None:
-            drawer = self._activity_drawer
-
-            def _bubble_to_row(bubble):
-                return drawer.append_event(bubble.to_drawer_row())
-
-            self._activity_handler.set_on_activity_bubble(_bubble_to_row)
-            # Lifecycle separators (start/end) — drawer tracks per-agent counter
-            # chain breaks via these. Adapter splits the single callback into
-            # on_agent_start / on_agent_end on the drawer.
-            def _on_lifecycle(sk, agent_name, phase):
-                if phase == "start":
-                    drawer.on_agent_start(sk, agent_name)
-                elif phase == "end":
-                    drawer.on_agent_end(sk, agent_name)
-            self._activity_handler.set_on_agent_lifecycle(_on_lifecycle)
-            # Wire local exec_command output → drawer (SPEC-activity-drawer Phase 2).
-            # AgentRuntimeHandler fires (session_key, command, output) when a local
-            # exec_command completes. Adapter builds an ActivityBubble and routes to
-            # the drawer's append_event() via to_drawer_row() — same path as gateway
-            # bubbles. Runtime may be None if special agents aren't loaded.
-            if self._chat_handler._agent_runtime_handler is not None:
-                agent_runtime = self._chat_handler._agent_runtime_handler
-
-                def _on_command_output(sk, command, output, exit_code, duration_ms):
-                    from models.activity import ActivityBubble
-                    # Resolve agent name via AgentRuntimeHandler (mirrors the fallback
-                    # chain in ActivityHandler._resolve_agent_name). Local exec bubbles
-                    # don't have a gateway payload to read data.agentName from, so we
-                    # resolve locally via session_key. The agent_runtime outer guard
-                    # (above the closure) guarantees this is non-None.
-                    agent_name = agent_runtime.get_agent_name_for_session(sk) or ""
-                    bubble = ActivityBubble(
-                        type="command_output",
-                        session_key=sk,
-                        tool_name=command,
-                        command=command,
-                        output=output,
-                        exit_code=exit_code,
-                        duration_ms=duration_ms,
-                        icon="💻",
-                        agent_name=agent_name,
-                    )
-                    drawer.append_event(bubble.to_drawer_row())
-                agent_runtime.set_on_command_output(_on_command_output)
+        # NOTE: ActivityBubble → drawer wiring has moved to ActivityWiringHandler.wire()
+        # (called unconditionally at startup in window.py._build()). The three adapter
+        # closures that formerly lived here (_bubble_to_row, _on_lifecycle, _on_command_output)
+        # are now in ui/handlers/activity_wiring_handler.py.
+        # This separation means the drawer works OFFLINE — no gateway needed.
+        # The gateway path still goes through ActivityHandler.set_on_activity_bubble/.
+        # set_on_agent_lifecycle are now set from ActivityWiringHandler.wire() at startup.
