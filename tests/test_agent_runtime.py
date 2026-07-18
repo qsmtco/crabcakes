@@ -3791,7 +3791,9 @@ class TestLocalAgentDrawerEmissions:
             "special:coder": SpecialAgentDef(
                 display_name="Coder",
                 role="coder",
+                emoji="🛠️",
                 tools=["exec_command", "read_file", "write_file"],
+                can_write=True,
                 conv_id_prefix="special:coder",
             )
         }
@@ -3816,18 +3818,7 @@ class TestLocalAgentDrawerEmissions:
 
     def _make_handler_with_agent(self):
         """Create a handler with a registered Coder agent and capture callbacks."""
-        handler, crh, mc = self._make_handler()
-        handler._agents = {
-            "special:coder": SpecialAgentDef(
-                display_name="Coder",
-                role="coder",
-                emoji="🛠️",
-                tools=["exec_command", "read_file", "write_file"],
-                can_write=True,
-                conv_id_prefix="special:coder",
-            )
-        }
-        return handler, crh, mc
+        return self._make_handler()
 
     # ── tool_start ──────────────────────────────────────────────────────
 
