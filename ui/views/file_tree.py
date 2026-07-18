@@ -719,6 +719,7 @@ class FileTree(Gtk.Box):
 
         copy_btn = Gtk.Button(label="Copy diff")
         copy_btn.add_css_class("diff-viewer-copy-btn")
+        copy_btn.add_css_class("file-tree-drawer-tab-btn")
 
         spacer = Gtk.Label()
         spacer.set_hexpand(True)
