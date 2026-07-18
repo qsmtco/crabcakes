@@ -717,6 +717,8 @@ class FileTree(Gtk.Box):
         diff_scroll.set_propagate_natural_height(True)
         diff_scroll.set_min_content_height(72)
         diff_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        diff_box.set_margin_top(2)
+        diff_box.set_margin_bottom(2)
         diff_scroll.set_child(diff_box)
         stack.add_named(diff_scroll, "diff")
 
