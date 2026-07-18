@@ -705,11 +705,16 @@ class MainWindow(Gtk.ApplicationWindow):
         # actual re-parenting of main_content into the vertical Paned happens
         # in the drawer block at the end of _build().
         self._activity_drawer = ActivityDrawer()
-        # The actual bubble + lifecycle wiring happens in sync() (after gateway
-        # connect) so the drawer's append_event / on_agent_start /
-        # on_agent_end are the targets from the first gateway event onward.
-        # ChatHandler no longer renders activity.
-        self._connection_sync_handler.set_activity_drawer(self._activity_drawer)
+        # ActivityWiringHandler owns ALL activity→drawer routing (online + offline).
+        # Wire() is called unconditionally at startup so the drawer works from the
+        # first local-agent tool call — no gateway required.
+        from ui.handlers.activity_wiring_handler import ActivityWiringHandler
+        self._activity_wiring_handler = ActivityWiringHandler(
+            activity_handler=self._activity_handler,
+            agent_runtime_handler=self._agent_runtime_handler,
+            activity_drawer=self._activity_drawer,
+        )
+        self._activity_wiring_handler.wire()
 
         # Wire project lifecycle → ReviewHandler
         self._project_handler.set_on_project_opened(
