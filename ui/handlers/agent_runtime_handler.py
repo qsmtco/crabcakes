@@ -1410,6 +1410,11 @@ class AgentRuntimeHandler:
         # Fire lifecycle: agent finished → ActivityHandler progress bar
         if self._on_agent_end_cb:
             self._on_agent_end_cb(session_key)
+        # NEW: drawer-lifecycle end → drawer separator
+        if self._on_drawer_lifecycle is not None:
+            agent_def_dl = self._agents.get(session_key)
+            agent_name_dl = agent_def_dl.display_name if agent_def_dl else "Agent"
+            self._on_drawer_lifecycle(session_key, agent_name_dl, "end")
 
     def _on_token_usage(self, session_key: str, total_tokens: int, cost: float) -> None:
         """AgentRuntime token usage callback. Store and log."""
