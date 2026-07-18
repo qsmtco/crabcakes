@@ -1003,58 +1003,61 @@ class AgentRuntimeHandler:
             logger.debug("_do_tool_call_start: suppressed for ended session %s", session_key)
             return
 
-        if self._fh is None or self._active_project is None:
-            logger.debug("_do_tool_call_start: no feed handler or no active project")
-            return
-
+        # Resolve agent name BEFORE the project guard — bubble emissions need it.
         agent_def = self._agents.get(session_key)
         agent_name = agent_def.display_name if agent_def else "Agent"
-        project_name, _ = self._active_project
 
-        # Build human-readable title from tool name and args
-        if name == "read_file":
-            title = f"{agent_name} is reading {args.get('path', '?')}"
-        elif name == "write_file":
-            title = f"{agent_name} is writing {args.get('path', '?')}"
-        elif name == "exec_command":
-            cmd = args.get("command", "?")
-            title = f"{agent_name} is running: {cmd[:60]}"
-            # SPEC-activity-drawer: capture the command for the command_output
-            # drawer row that fires when the result comes back. Stored per-session
-            # so _do_tool_call_result can resolve it.
-            self._pending_exec_commands[session_key] = cmd
-        elif name == "list_files":
-            title = f"{agent_name} is listing {args.get('path', '.')}"
-        elif name == "search_files":
-            title = f"{agent_name} is searching for \"{args.get('pattern', '?')}\""
-        elif name == "web_search":
-            title = f"{agent_name} is searching the web"
-        elif name == "web_fetch":
-            title = f"{agent_name} is fetching {args.get('url', '?')[:50]}"
-        else:
-            title = f"{agent_name} is calling {name}"
+        # BUG #4: Only the feed-card logic needs _active_project; bubble emissions
+        # and _pending_tool_args are moved outside this guard so they fire even
+        # when no project is open (the drawer works offline).
+        if self._fh is not None and self._active_project is not None:
+            project_name, _ = self._active_project
 
-        from models.feed_card import FeedCardData
-        card = FeedCardData(
-            card_type="agent_action",
-            source="agent",
-            title=title,
-            body="⏳ Running...",  # replaced when result arrives
-            author=agent_name,
-            timestamp=datetime.now(timezone.utc),
-            project_name=project_name,
-            metadata={
-                "tool_name": name,
-                "tool_args": args,
-                "session_key": session_key,
-                "status": "running",
-            },
-        )
-        card_id = self._fh.add_card(card)
-        # Store so _do_tool_call_result can update the card
-        self._tool_card_ids[session_key] = card_id
+            # Build human-readable title from tool name and args
+            if name == "read_file":
+                title = f"{agent_name} is reading {args.get('path', '?')}"
+            elif name == "write_file":
+                title = f"{agent_name} is writing {args.get('path', '?')}"
+            elif name == "exec_command":
+                cmd = args.get("command", "?")
+                title = f"{agent_name} is running: {cmd[:60]}"
+                # SPEC-activity-drawer: capture the command for the command_output
+                # drawer row that fires when the result comes back. Stored per-session
+                # so _do_tool_call_result can resolve it.
+                self._pending_exec_commands[session_key] = cmd
+            elif name == "list_files":
+                title = f"{agent_name} is listing {args.get('path', '.')}"
+            elif name == "search_files":
+                title = f"{agent_name} is searching for \"{args.get('pattern', '?')}\""
+            elif name == "web_search":
+                title = f"{agent_name} is searching the web"
+            elif name == "web_fetch":
+                title = f"{agent_name} is fetching {args.get('url', '?')[:50]}"
+            else:
+                title = f"{agent_name} is calling {name}"
 
-        # Store tool args for patch path enrichment in _do_tool_call_result
+            from models.feed_card import FeedCardData
+            card = FeedCardData(
+                card_type="agent_action",
+                source="agent",
+                title=title,
+                body="⏳ Running...",  # replaced when result arrives
+                author=agent_name,
+                timestamp=datetime.now(timezone.utc),
+                project_name=project_name,
+                metadata={
+                    "tool_name": name,
+                    "tool_args": args,
+                    "session_key": session_key,
+                    "status": "running",
+                },
+            )
+            card_id = self._fh.add_card(card)
+            # Store so _do_tool_call_result can update the card
+            self._tool_card_ids[session_key] = card_id
+
+        # BUG #4: Store args and emit tool_start bubble unconditionally
+        # (outside the feed-card guard). These do NOT need _active_project.
         self._pending_tool_args[session_key] = args
 
         # NEW: activity-drawer tool_start bubble
