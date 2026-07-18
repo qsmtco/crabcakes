@@ -1075,7 +1075,7 @@ class ActivityDrawer(Gtk.Box):
 - Lives in `ui/views/` — no imports from `gateway/`, `agent/`, `ui/handlers/`
 - Receives data as flat dicts (see `models/activity.py:ActivityBubble.to_drawer_row()`)
 - Pure view — no business logic, no state beyond the widget tree
-- Connected to ActivityHandler via `set_on_activity_bubble` (adapter in `connection_sync_handler.sync()` converts `ActivityBubble` to dict via `to_drawer_row()`)
+- Connected to ActivityHandler via `set_on_activity_bubble` (adapter in `activity_wiring_handler.py` converts `ActivityBubble` to dict via `to_drawer_row()`)
 
 
 ### 3.15 `ui/handlers/gateway_handler.py` — Gateway Handler (Phase 2)
@@ -2617,7 +2617,7 @@ ActivityHandler fires `_activity_bubble_callback` for each gateway event that wa
 - `stream=approval phase=requested` → 🔒 Approval needed: {command}
 - `stream=patch phase=end` → ✏️ {name}: +{added} ~{modified} -{deleted} files
 
-Architecture: ActivityHandler only creates ActivityBubble dataclass instances and fires the callback. As of SPEC-activity-drawer Phase 1, the callback target is `ActivityDrawer.append_event(bubble.to_drawer_row())` — the adapter that converts the dataclass to the drawer's dict shape lives in `connection_sync_handler.sync()`. ChatHandler no longer renders activity bubbles.
+Architecture: ActivityHandler only creates ActivityBubble dataclass instances and fires the callback. As of SPEC-activity-drawer Phase 1, the callback target is `ActivityDrawer.append_event(bubble.to_drawer_row())` — the adapter that converts the dataclass to the drawer's dict shape lives in `activity_wiring_handler.py` (a dedicated handler constructed at startup, not deferred to gateway connect, so the drawer works offline). ChatHandler no longer renders activity bubbles.
 
 Activity bubbles (Phase 2 of SPEC-smarter-chat-ux):
 - `on_gateway_event()` parses `stream` values `tool`, `plan`, `approval`, `patch`
