@@ -1367,6 +1367,7 @@ button.settings-remove-btn:hover {
 
 .file-tree-row {
     padding: 2px 8px;
+    margin-bottom: 2px;
     min-height: 24px;
     border-radius: 4px;
 }
