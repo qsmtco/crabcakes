@@ -1176,20 +1176,20 @@ class AgentRuntimeHandler:
         args_write = self._pending_tool_args.pop(session_key, {})
 
         # Phase 1.5 review staging — if write_file succeeds and review is active,
-        # copy the written file to a shadow staging directory so the PM can Accept/Reject
-        if name != "write_file" or not isinstance(result, str) or not result.startswith("OK"):
-            # Clean up pending tool args even without write_file success
-            if name == "write_file":
-                self._pending_tool_args.pop(session_key, None)
+        # copy the written file to a shadow staging directory so the PM can Accept/Reject.
+        # Also emit patch bubble for write_file success (BUG #12: only patch, no tool_end).
+        write_file_success = (name == "write_file"
+                              and isinstance(result, str)
+                              and result.startswith("OK"))
+        if not write_file_success:
             return
 
         # NEW: activity-drawer patch bubble for write_file success
+        # (suppressed tool_end already handled above via BUG #12)
         if self._on_activity_bubble is not None:
             from models.activity import ActivityBubble, ToolStatus
             agent_def_bubble = self._agents.get(session_key)
             agent_name_bubble = agent_def_bubble.display_name if agent_def_bubble else "Agent"
-            # Get file path from args stored at tool_call_start
-            args_write = self._pending_tool_args.pop(session_key, {})
             file_path = args_write.get("path", "") if isinstance(args_write, dict) else ""
             self._on_activity_bubble(ActivityBubble(
                 type="patch",
