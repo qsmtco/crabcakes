@@ -3763,3 +3763,258 @@ class TestStreamOpenaiEventsFinishReason:
         events = self._run_streamer(raw)
         types = [ev.type for ev in events]
         assert "done" not in types, f"unexpected done event, got types={types}"
+
+
+# ── Local-Agent Activity Drawer Emission Tests ────────────────────────────────
+
+class TestLocalAgentDrawerEmissions:
+    """Tests for local-agent activity bubble and drawer-lifecycle emissions.
+
+    Covers all 6 emission points in AgentRuntimeHandler:
+    - tool_start from _do_tool_call_start
+    - tool_end from _do_tool_call_result (non-write_file)
+    - tool_error from _do_tool_call_result (failed tool)
+    - patch from _do_tool_call_result (write_file success)
+    - drawer-lifecycle start from _do_text_delta agent-start site
+    - drawer-lifecycle end from _do_response_complete AND _do_error
+
+    BUG #1 regression tests: verify is_error detection via the success param.
+    BUG #12 regression: write_file success emits only patch, not tool_end.
+    """
+
+    def _make_handler(self):
+        """Create a handler with mocked deps and a captured bubble list."""
+        handler, crh, mc = _make_handler()
+        handler._fh = MagicMock()
+        handler._active_project = ("test", "/tmp/test")
+        handler._agents = {
+            "special:coder": SpecialAgentDef(
+                display_name="Coder",
+                role="coder",
+                tools=["exec_command", "read_file", "write_file"],
+                conv_id_prefix="special:coder",
+            )
+        }
+
+        # Capture activity bubbles
+        self._bubbles = []
+        def capture_bubble(bubble):
+            self._bubbles.append(bubble)
+        handler.set_on_activity_bubble(capture_bubble)
+
+        # Capture drawer lifecycle events
+        self._lifecycle_events = []
+        def capture_lifecycle(sk, name, phase):
+            self._lifecycle_events.append((sk, name, phase))
+        handler.set_on_drawer_lifecycle(capture_lifecycle)
+
+        # _pending_tool_args must be cleared
+        handler._pending_tool_args = {}
+        handler._ended_sessions = set()
+
+        return handler, crh, mc
+
+    # ── tool_start ──────────────────────────────────────────────────────
+
+    def test_do_tool_call_start_emits_tool_start_bubble(self):
+        """_do_tool_call_start emits ActivityBubble with type='tool_start'."""
+        handler, _, _ = self._make_handler()
+
+        handler._do_tool_call_start("special:coder", "read_file", {"path": "test.txt"})
+
+        assert len(self._bubbles) == 1, "Expected exactly one bubble"
+        assert self._bubbles[0].type == "tool_start"
+        assert self._bubbles[0].session_key == "special:coder"
+        assert self._bubbles[0].tool_name == "read_file"
+
+    def test_do_tool_call_start_stores_tool_args(self):
+        """_do_tool_call_start stores args in _pending_tool_args for patch path."""
+        handler, _, _ = self._make_handler()
+
+        handler._do_tool_call_start("special:coder", "write_file", {"path": "src/main.py"})
+
+        assert handler._pending_tool_args["special:coder"] == {"path": "src/main.py"}
+
+    # ── tool_end (non-write_file) ───────────────────────────────────────
+
+    def test_do_tool_call_result_emits_tool_end_bubble(self):
+        """_do_tool_call_result emits ActivityBubble with type='tool_end' on success (non-write_file)."""
+        handler, _, _ = self._make_handler()
+        handler._pending_tool_args["special:coder"] = {"path": "test.txt"}
+
+        handler._do_tool_call_result("special:coder", "read_file", "file content", success=True)
+
+        # Should get tool_end, no patch
+        types = [b.type for b in self._bubbles]
+        assert "tool_end" in types, f"Expected tool_end, got {types}"
+        assert "patch" not in types, f"Expected no patch for read_file, got {types}"
+
+    # ── tool_error ──────────────────────────────────────────────────────
+
+    def test_do_tool_call_result_emits_tool_error_on_failure(self):
+        """_do_tool_call_result emits ActivityBubble with type='tool_error' when success=False."""
+        handler, _, _ = self._make_handler()
+        handler._pending_tool_args["special:coder"] = {"path": "test.txt"}
+
+        handler._do_tool_call_result("special:coder", "read_file", "permission denied", success=False)
+
+        types = [b.type for b in self._bubbles]
+        assert "tool_error" in types, f"Expected tool_error, got {types}"
+        # Verify icon/status via the bubble
+        tool_error = [b for b in self._bubbles if b.type == "tool_error"][0]
+        assert tool_error.icon == "❌"
+
+    # ── BUG #1: denied exec → tool_error ────────────────────────────────
+
+    def test_denied_exec_command_emits_tool_error_bubble(self):
+        """Simulate exec denial path: success=False → tool_error with ❌."""
+        handler, _, _ = self._make_handler()
+        handler._pending_tool_args["special:coder"] = {"command": "rm -rf /"}
+
+        # Runtime dispatches with success=False for denied exec
+        handler._do_tool_call_result("special:coder", "exec_command", "denied", success=False)
+
+        types = [b.type for b in self._bubbles]
+        assert "tool_error" in types, f"Expected tool_error, got {types}"
+        tool_error = [b for b in self._bubbles if b.type == "tool_error"][0]
+        assert tool_error.icon == "❌"
+        assert tool_error.status.value == "error"
+
+    def test_sensitive_path_block_emits_tool_error_bubble(self):
+        """Simulate sensitive-path write_file block: success=False → tool_error."""
+        handler, _, _ = self._make_handler()
+        handler._pending_tool_args["special:coder"] = {"path": "/etc/passwd"}
+
+        handler._do_tool_call_result("special:coder", "write_file", "blocked", success=False)
+
+        types = [b.type for b in self._bubbles]
+        assert "tool_error" in types, f"Expected tool_error, got {types}"
+
+    # ── BUG #12: write_file success → patch, NOT tool_end ───────────────
+
+    def test_write_file_success_emits_patch_not_tool_end(self):
+        """Successful write_file emits ONLY patch, NO tool_end (BUG #12)."""
+        handler, _, _ = self._make_handler()
+        handler._pending_tool_args["special:coder"] = {"path": "src/main.py"}
+
+        handler._do_tool_call_result("special:coder", "write_file", "OK — wrote 123 bytes to src/main.py", success=True)
+
+        types = [b.type for b in self._bubbles]
+        assert "patch" in types, f"Expected patch, got {types}"
+        assert "tool_end" not in types, f"BUG #12: Expected NO tool_end for write_file success, got {types}"
+
+    def test_write_file_failure_emits_tool_error(self):
+        """Failed write_file emits tool_error, not patch."""
+        handler, _, _ = self._make_handler()
+        handler._pending_tool_args["special:coder"] = {"path": "src/main.py"}
+
+        handler._do_tool_call_result("special:coder", "write_file", "permission denied", success=False)
+
+        types = [b.type for b in self._bubbles]
+        assert "tool_error" in types, f"Expected tool_error, got {types}"
+        assert "patch" not in types, f"Expected no patch on failure, got {types}"
+
+    # ── BUG #5: _pending_tool_args leak ─────────────────────────────────
+
+    def test_pending_tool_args_cleared_after_non_writefile_error(self):
+        """_pending_tool_args is popped unconditionally after bubble dispatch (BUG #5)."""
+        handler, _, _ = self._make_handler()
+
+        # Simulate 3 failed read_file calls
+        for i in range(3):
+            handler._pending_tool_args["special:coder"] = {"path": f"file{i}.txt"}
+            handler._do_tool_call_result("special:coder", "read_file", "error", success=False)
+
+        # After all calls, _pending_tool_args should be empty (popped each time)
+        assert "special:coder" not in handler._pending_tool_args
+
+    # ── BUG #2: orphan tool_start after cancel ──────────────────────────
+
+    def test_tool_start_suppressed_after_session_ended(self):
+        """_do_tool_call_start returns early when session is in _ended_sessions (BUG #2)."""
+        handler, _, _ = self._make_handler()
+        handler._ended_sessions.add("special:coder")
+
+        handler._do_tool_call_start("special:coder", "read_file", {"path": "test.txt"})
+
+        # No bubble should have been emitted
+        assert len(self._bubbles) == 0, "BUG #2: Expected no tool_start for ended session"
+
+    # ── drawer-lifecycle start ──────────────────────────────────────────
+
+    def test_agent_start_emits_drawer_lifecycle_start(self):
+        """_do_text_delta's agent-start site emits drawer-lifecycle 'start'."""
+        handler, crh, mc = self._make_handler()
+        crh.is_streaming.return_value = False
+        chat_box = MagicMock()
+        handler._resolve_chat_box = MagicMock(return_value=chat_box)
+        handler._crh = crh
+
+        # This triggers the agent-start site (is_streaming=False → start_streaming)
+        handler._do_text_delta("special:coder", "Hello")
+
+        assert len(self._lifecycle_events) >= 1
+        events = [(sk, name, phase) for sk, name, phase in self._lifecycle_events if phase == "start"]
+        assert len(events) >= 1, f"Expected at least one 'start' event, got {self._lifecycle_events}"
+        assert events[0] == ("special:coder", "Coder", "start")
+
+    # ── drawer-lifecycle end ────────────────────────────────────────────
+
+    def test_agent_end_emits_drawer_lifecycle_end(self):
+        """_do_response_complete emits drawer-lifecycle 'end'."""
+        handler, crh, mc = self._make_handler()
+        crh.is_streaming.return_value = False
+        chat_box = MagicMock()
+        handler._resolve_chat_box = MagicMock(return_value=chat_box)
+        handler._crh = crh
+
+        handler._do_response_complete("special:coder", "Done")
+
+        events = [e for e in self._lifecycle_events if e[2] == "end"]
+        assert len(events) >= 1
+        assert events[0] == ("special:coder", "Coder", "end")
+
+    def test_do_error_emits_drawer_lifecycle_end(self):
+        """_do_error emits drawer-lifecycle 'end'."""
+        handler, crh, mc = self._make_handler()
+        crh.is_streaming.return_value = False
+        chat_box = MagicMock()
+        handler._resolve_chat_box = MagicMock(return_value=chat_box)
+        handler._crh = crh
+
+        handler._do_error("special:coder", "Something went wrong")
+
+        events = [e for e in self._lifecycle_events if e[2] == "end"]
+        assert len(events) >= 1
+        assert events[0] == ("special:coder", "Coder", "end")
+
+    # ── BUG #4: tool bubbles emitted without active project ──────────────
+
+    def test_tool_bubbles_emitted_without_active_project(self):
+        """tool_start/tool_end bubbles fire even without _active_project (BUG #4)."""
+        handler, crh, mc = _make_handler()
+        handler._fh = MagicMock()
+        # No _active_project set
+        handler._active_project = None
+        handler._agents = {
+            "special:coder": SpecialAgentDef(
+                display_name="Coder", role="coder", tools=["read_file"],
+                conv_id_prefix="special:coder",
+            )
+        }
+
+        bubbles = []
+        handler.set_on_activity_bubble(lambda b: bubbles.append(b))
+        handler._pending_tool_args = {}
+        handler._ended_sessions = set()
+
+        # tool_start must fire even without _active_project
+        handler._do_tool_call_start("special:coder", "read_file", {"path": "test.txt"})
+        assert len(bubbles) == 1, f"BUG #4: Expected tool_start bubble, got {len(bubbles)}"
+        assert bubbles[0].type == "tool_start"
+
+        # Store pending args for tool_end dispatch
+        handler._pending_tool_args["special:coder"] = {"path": "test.txt"}
+        handler._do_tool_call_result("special:coder", "read_file", "content", success=True)
+        assert len(bubbles) >= 2, f"BUG #4: Expected tool_end bubble too, got {len(bubbles)}"
+        assert bubbles[1].type == "tool_end"
