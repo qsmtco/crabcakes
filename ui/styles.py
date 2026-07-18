@@ -1365,6 +1365,14 @@ button.settings-remove-btn:hover {
     background: transparent;
 }
 
+/* Override GTK4 default selection highlight for the file tree */
+.file-tree-column-view row:selected,
+.file-tree-column-view row:selected:focus,
+.file-tree-column-view listview row:selected {
+    background: transparent;
+    color: inherit;
+}
+
 .file-tree-row {
     padding: 2px 8px;
     min-height: 24px;
