@@ -966,6 +966,11 @@ class AgentRuntimeHandler:
                 # Fire lifecycle: agent started → ActivityHandler progress bar
                 if self._on_agent_start_cb:
                     self._on_agent_start_cb(session_key)
+                # NEW: drawer-lifecycle start → drawer separator
+                if self._on_drawer_lifecycle is not None:
+                    agent_def_dl = self._agents.get(session_key)
+                    agent_name_dl = agent_def_dl.display_name if agent_def_dl else "Agent"
+                    self._on_drawer_lifecycle(session_key, agent_name_dl, "start")
         self._crh.update_streaming(session_key, self._streaming_text[session_key])
 
     def _on_tool_call_start(
