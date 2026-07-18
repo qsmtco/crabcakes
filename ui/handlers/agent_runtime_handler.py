@@ -1061,6 +1061,11 @@ class AgentRuntimeHandler:
         # (outside the feed-card guard). These do NOT need _active_project.
         self._pending_tool_args[session_key] = args
 
+        # BUG #15: capture exec command unconditionally (outside the project guard)
+        # so the command_output drawer row has the command text even with no project open.
+        if name == "exec_command":
+            self._pending_exec_commands[session_key] = args.get("command", "")
+
         # NEW: activity-drawer tool_start bubble
         if self._on_activity_bubble is not None:
             from models.activity import ActivityBubble, ToolStatus
