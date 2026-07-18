@@ -184,6 +184,15 @@ class FileTreeFactory(Gtk.SignalListItemFactory):
         widget = FileTreeRowWidget()
         list_item.set_child(widget)
 
+        # Right-click gesture for context menu (Copy Path / Copy File)
+        # NOTE: Gesture is attached ONCE per widget instance. The row is read
+        # LIVE at click time from widget._bound_row to avoid stale-row bugs
+        # from ColumnView recycling.
+        right_ctrl = Gtk.GestureClick()
+        right_ctrl.set_button(Gdk.BUTTON_SECONDARY)
+        right_ctrl.connect("pressed", self._tree._on_tree_row_right_click, widget)
+        widget.add_controller(right_ctrl)
+
     def _on_bind(self, factory: 'FileTreeFactory', list_item: Gtk.ListItem) -> None:
         row = cast(FileTreeRow, list_item.get_item())
         widget: FileTreeRowWidget = list_item.get_child()
