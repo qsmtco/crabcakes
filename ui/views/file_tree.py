@@ -649,6 +649,7 @@ class FileTree(Gtk.Box):
         drawer_box.set_margin_end(8)
         drawer_box.set_margin_top(4)
         drawer_box.set_margin_bottom(4)
+        drawer_box.set_hexpand(True)
 
         # Tab bar
         tab_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
