@@ -672,11 +672,11 @@ class FileTree(Gtk.Box):
         drawer_box.set_margin_bottom(4)
         drawer_box.set_hexpand(True)
 
-        # Tab bar
-        tab_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        tab_bar.add_css_class("file-tree-drawer-tab-bar")
-        tab_bar.set_margin_bottom(4)
-        tab_bar.set_hexpand(True)
+        # Top bar: Tabs (left) + Action buttons (right)
+        top_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        top_bar.add_css_class("file-tree-drawer-tab-bar")
+        top_bar.set_margin_bottom(4)
+        top_bar.set_hexpand(True)
 
         diff_tab = Gtk.ToggleButton(label="Diff")
         diff_tab.set_active(True)
@@ -685,9 +685,25 @@ class FileTree(Gtk.Box):
         history_tab.set_group(diff_tab)
         history_tab.add_css_class("file-tree-drawer-tab-btn")
 
-        tab_bar.append(diff_tab)
-        tab_bar.append(history_tab)
-        drawer_box.append(tab_bar)
+        # Spacer to push action buttons to the right
+        top_spacer = Gtk.Label()
+        top_spacer.set_hexpand(True)
+
+        revert_btn = Gtk.Button(label="Revert file to this version")
+        revert_btn.add_css_class("diff-viewer-revert-btn")
+        revert_btn.add_css_class("file-tree-drawer-tab-btn")
+        revert_btn.set_visible(False)
+
+        copy_btn = Gtk.Button(label="Copy diff")
+        copy_btn.add_css_class("diff-viewer-copy-btn")
+        copy_btn.add_css_class("file-tree-drawer-tab-btn")
+
+        top_bar.append(diff_tab)
+        top_bar.append(history_tab)
+        top_bar.append(top_spacer)
+        top_bar.append(revert_btn)
+        top_bar.append(copy_btn)
+        drawer_box.append(top_bar)
 
         # Stack
         stack = Gtk.Stack()
@@ -719,32 +735,6 @@ class FileTree(Gtk.Box):
         stack.add_named(history_scroll, "history")
 
         drawer_box.append(stack)
-
-        # Action bar
-        action_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        action_bar.add_css_class("diff-viewer-action-bar")
-        action_bar.set_margin_top(8)
-        action_bar.set_margin_bottom(8)
-        action_bar.set_margin_start(20)
-        action_bar.set_margin_end(8)
-        action_bar.set_hexpand(True)
-
-        revert_btn = Gtk.Button(label="Revert file to this version")
-        revert_btn.add_css_class("diff-viewer-revert-btn")
-        revert_btn.add_css_class("file-tree-drawer-tab-btn")
-        revert_btn.set_visible(False)
-
-        copy_btn = Gtk.Button(label="Copy diff")
-        copy_btn.add_css_class("diff-viewer-copy-btn")
-        copy_btn.add_css_class("file-tree-drawer-tab-btn")
-
-        spacer = Gtk.Label()
-        spacer.set_hexpand(True)
-
-        action_bar.append(revert_btn)
-        action_bar.append(spacer)
-        action_bar.append(copy_btn)
-        drawer_box.append(action_bar)
 
         # Wire tab switching
         diff_tab.connect("toggled", lambda btn:
