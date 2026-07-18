@@ -350,8 +350,12 @@ class TestFileTreeRightClick:
     """Tests for the right-click context menu on file tree rows.
 
     Follows the pattern from tests/test_left_panel.py::TestPromptRowRightClick.
-    Uses patch/mock to avoid real GTK Popover creation (segfaults in CI sandbox).
-    Status label must be initialized since the FileTree ctor creates one.
+    Uses patch/mock to avoid real GTK widget creation (segfaults in CI sandbox).
+
+    NOTE: All tests avoid instantiating the real FileTree() because the
+    FileTree.__init__ creates GTK widgets that segfault in the test sandbox.
+    Instead, we create lightweight instances using object.__new__ and patch
+    necessary methods.
     """
 
     def _make_mock_widget(self, with_bound_row=None):
@@ -359,12 +363,20 @@ class TestFileTreeRightClick:
         mock_widget = type("MockWidget", (), {"_bound_row": with_bound_row})()
         return mock_widget
 
-    def test_on_copy_tree_path_calls_clipboard_with_full_path(self):
-        """Patch Gdk.Display.get_default, call _on_copy_tree_path, verify clipboard.set was called with path."""
-        tree = FileTree()
+    def _make_tree(self):
+        """Create a lightweight FileTree-like object without invoking the GTK-heavy __init__.
+
+        Sets only the attributes needed by the right-click handler methods.
+        """
+        tree = object.__new__(FileTree)
         tree._tree_copy_status_label = Gtk.Label()
         tree._tree_copy_status_timeout_id = None
+        tree._header = None  # status label uses this as parent, but we test with mock
+        return tree
 
+    def test_on_copy_tree_path_calls_clipboard_with_full_path(self):
+        """Patch Gdk.Display.get_default, call _on_copy_tree_path, verify clipboard.set was called with path."""
+        tree = self._make_tree()
         row = FileTreeRow(full_path="/abs/path/to/file.txt")
 
         with patch("gi.repository.Gdk.Display.get_default") as mock_display:
@@ -378,9 +390,7 @@ class TestFileTreeRightClick:
     def test_on_copy_tree_file_calls_clipboard_with_content(self):
         """Write a temp file, call _on_copy_tree_file, assert clipboard got file contents."""
         import tempfile
-        tree = FileTree()
-        tree._tree_copy_status_label = Gtk.Label()
-        tree._tree_copy_status_timeout_id = None
+        tree = self._make_tree()
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Hello, world!")
@@ -402,9 +412,7 @@ class TestFileTreeRightClick:
     def test_on_copy_tree_file_handles_binary_gracefully(self):
         """Write bytes that fail UTF-8 decode; assert no crash and a notice is copied."""
         import tempfile
-        tree = FileTree()
-        tree._tree_copy_status_label = Gtk.Label()
-        tree._tree_copy_status_timeout_id = None
+        tree = self._make_tree()
 
         with tempfile.NamedTemporaryFile(mode="wb", suffix=".bin", delete=False) as f:
             f.write(b"\xff\xfe\x00\x01\x02")
@@ -428,10 +436,7 @@ class TestFileTreeRightClick:
 
     def test_on_copy_tree_path_skips_empty_path(self):
         """full_path='' -> no clipboard call, no crash."""
-        tree = FileTree()
-        tree._tree_copy_status_label = Gtk.Label()
-        tree._tree_copy_status_timeout_id = None
-
+        tree = self._make_tree()
         row = FileTreeRow(full_path="")
 
         with patch("gi.repository.Gdk.Display.get_default") as mock_display:
@@ -443,10 +448,8 @@ class TestFileTreeRightClick:
             mock_clipboard.set.assert_not_called()
 
     def test_menu_shows_copy_path_for_directory(self):
-        """Right-click on a directory row -> menu has 'Copy Path' but NOT 'Copy File'."""
-        tree = FileTree()
-        tree._tree_copy_status_label = Gtk.Label()
-        tree._tree_copy_status_timeout_id = None
+        """Right-click on a directory row -> popover created (Copy Path only, no Copy File)."""
+        tree = self._make_tree()
 
         widget = self._make_mock_widget(with_bound_row=FileTreeRow(
             full_path="/some/dir", is_dir=True, is_drawer=False
@@ -456,7 +459,6 @@ class TestFileTreeRightClick:
             mock_popover = MagicMock()
             mock_popover_class.return_value = mock_popover
 
-            # Must not raise
             tree._on_tree_row_right_click(None, 1, 0, 0, widget)
 
             mock_popover_class.assert_called_once()
@@ -464,10 +466,8 @@ class TestFileTreeRightClick:
             mock_popover.popup.assert_called_once()
 
     def test_menu_shows_both_for_file(self):
-        """File row -> menu must show both 'Copy Path' and 'Copy File' entries."""
-        tree = FileTree()
-        tree._tree_copy_status_label = Gtk.Label()
-        tree._tree_copy_status_timeout_id = None
+        """File row -> menu builders add both 'Copy Path' and 'Copy File' entries."""
+        tree = self._make_tree()
 
         widget = self._make_mock_widget(with_bound_row=FileTreeRow(
             full_path="/some/file.txt", is_dir=False, is_drawer=False
@@ -495,9 +495,7 @@ class TestFileTreeRightClick:
 
     def test_menu_skips_drawer_row(self):
         """is_drawer=True -> handler returns early, no popover."""
-        tree = FileTree()
-        tree._tree_copy_status_label = Gtk.Label()
-        tree._tree_copy_status_timeout_id = None
+        tree = self._make_tree()
 
         widget = self._make_mock_widget(with_bound_row=FileTreeRow(
             full_path="/some/file.txt", is_dir=False, is_drawer=True
@@ -513,9 +511,7 @@ class TestFileTreeRightClick:
 
     def test_right_click_handler_ignores_multipress(self):
         """Call _on_tree_row_right_click with n_press=2, verify no popover is created."""
-        tree = FileTree()
-        tree._tree_copy_status_label = Gtk.Label()
-        tree._tree_copy_status_timeout_id = None
+        tree = self._make_tree()
 
         widget = self._make_mock_widget(with_bound_row=FileTreeRow(
             full_path="/some/file.txt", is_dir=False
@@ -530,9 +526,7 @@ class TestFileTreeRightClick:
 
     def test_right_click_skips_when_bound_row_none(self):
         """_bound_row is None -> handler returns early, no popover."""
-        tree = FileTree()
-        tree._tree_copy_status_label = Gtk.Label()
-        tree._tree_copy_status_timeout_id = None
+        tree = self._make_tree()
 
         widget = self._make_mock_widget(with_bound_row=None)
 
@@ -545,9 +539,7 @@ class TestFileTreeRightClick:
 
     def test_right_click_skips_empty_path(self):
         """full_path is empty -> handler returns early, no popover."""
-        tree = FileTree()
-        tree._tree_copy_status_label = Gtk.Label()
-        tree._tree_copy_status_timeout_id = None
+        tree = self._make_tree()
 
         widget = self._make_mock_widget(with_bound_row=FileTreeRow(
             full_path="", is_dir=False
@@ -565,9 +557,7 @@ class TestFileTreeRightClick:
         Dispatch reads _action (not label text) — i18n-robust.
         Mutate menu row labels to non-English, dispatch must still call correct handler.
         """
-        tree = FileTree()
-        tree._tree_copy_status_label = Gtk.Label()
-        tree._tree_copy_status_timeout_id = None
+        tree = self._make_tree()
 
         source_row = FileTreeRow(full_path="/tmp/x.txt", is_dir=False)
 
@@ -619,9 +609,7 @@ class TestFileTreeRightClick:
         Verifies that the handler connected in _on_tree_row_right_click calls
         popover.unparent() when 'closed' fires.
         """
-        tree = FileTree()
-        tree._tree_copy_status_label = Gtk.Label()
-        tree._tree_copy_status_timeout_id = None
+        tree = self._make_tree()
 
         widget = self._make_mock_widget(with_bound_row=FileTreeRow(
             full_path="/some/file.txt", is_dir=False
@@ -651,12 +639,3 @@ class TestFileTreeRightClick:
             "If this fails, the closed signal handler is not connected in "
             "_on_tree_row_right_click."
         )
-
-    def test_new_context_menu_test_framework_does_not_segfault(self):
-        """
-        Minimum-viable test to confirm the new test class methods can be collected
-        and run without segfaulting (the existing widget-creation tests segfault
-        in this sandbox for environmental GTK4 reasons).
-        """
-        # Just verify the class was defined and imported
-        assert TestFileTreeRightClick is not None
