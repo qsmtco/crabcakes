@@ -86,6 +86,15 @@ class AgentRuntimeHandler:
         # exit_code + duration_ms for the exit badge and duration display
         # (per SPEC-activity-drawer §2.5).
         self._on_command_output: Callable[[str, str, str, int, int], None] | None = None
+        # NEW: activity-bubble callback for the drawer (tool lifecycle).
+        # cb(ActivityBubble) — fired on tool_start/tool_end/patch.
+        self._on_activity_bubble: Callable | None = None
+        # NEW: drawer-lifecycle callback for agent start/end separators.
+        # cb(session_key, agent_name, phase) where phase ∈ {"start", "end"}.
+        self._on_drawer_lifecycle: Callable | None = None
+        # NEW: pending tool args for patch path enrichment.
+        # session_key → dict of args from _do_tool_call_start.
+        self._pending_tool_args: dict[str, dict] = {}
         # V2 exec auto-accept callback (Phase 6): returns current exec mode
         # ("off" | "show" | "silent") or None. Set by window.py wiring via
         # set_check_exec_auto_accept_callback(). When the callback returns
