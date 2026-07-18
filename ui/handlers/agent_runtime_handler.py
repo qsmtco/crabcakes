@@ -1000,7 +1000,12 @@ class AgentRuntimeHandler:
         # (cancel/error/complete). Prevents orphan tool_start bubbles from
         # stale idle_add dispatches that arrive after the session ended.
         if session_key in self._ended_sessions:
-            logger.debug("_do_tool_call_start: suppressed for ended session %s", session_key)
+            # Stale dispatch from a previous turn (cancelled/completed).
+            # The flag is cleared here so the NEXT tool_start of a new turn
+            # is not suppressed. This handles tool-only turns that never
+            # pass through _do_text_delta's discard path (BUG #14).
+            logger.debug("_do_tool_call_start: stale call suppressed, clearing ended flag for %s", session_key)
+            self._ended_sessions.discard(session_key)
             return
 
         # Resolve agent name BEFORE the project guard — bubble emissions need it.
@@ -1113,12 +1118,12 @@ class AgentRuntimeHandler:
                 if hasattr(result, 'output'):
                     output_text = result.output or ""
                     error_text = result.error or ""
-                    success = result.success
+                    card_success = result.success
                     duration = getattr(result, 'duration_ms', 0)
                 else:
                     output_text = str(result) if result else ""
                     error_text = ""
-                    success = True
+                    card_success = True
                     duration = 0
 
                 # Truncate display
@@ -1127,7 +1132,7 @@ class AgentRuntimeHandler:
                     display = f"❌ {error_text}\n{display}"
 
                 card.body = display
-                card.metadata["status"] = "complete" if success else "error"
+                card.metadata["status"] = "complete" if card_success else "error"
                 card.metadata["duration_ms"] = duration
 
                 # Flag for review if write_file/exec_command in active review session
