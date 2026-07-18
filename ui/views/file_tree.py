@@ -655,6 +655,7 @@ class FileTree(Gtk.Box):
         tab_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         tab_bar.add_css_class("file-tree-drawer-tab-bar")
         tab_bar.set_margin_bottom(4)
+        tab_bar.set_hexpand(True)
 
         diff_tab = Gtk.ToggleButton(label="Diff")
         diff_tab.set_active(True)
