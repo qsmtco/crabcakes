@@ -175,6 +175,21 @@ class AgentRuntimeHandler:
         """
         self._on_command_output = cb
 
+    def set_on_activity_bubble(self, cb) -> None:
+        """Set callback for local tool lifecycle → activity drawer.
+
+        cb(ActivityBubble) — fired on tool_start/tool_end/patch.
+        """
+        self._on_activity_bubble = cb
+
+    def set_on_drawer_lifecycle(self, cb) -> None:
+        """Set callback for agent turn → drawer separators.
+
+        cb(session_key, agent_name, "start"|"end") — fired when a local
+        agent starts or ends its turn.
+        """
+        self._on_drawer_lifecycle = cb
+
     def set_check_exec_auto_accept_callback(
         self, callback: Callable[[], str | None] | None
     ) -> None:
