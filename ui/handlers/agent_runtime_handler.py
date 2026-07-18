@@ -1146,22 +1146,34 @@ class AgentRuntimeHandler:
             tail = "\n".join(lines[-10:]) if lines else ""
             self._on_command_output(session_key, cmd, tail, exit_code, duration_ms)
 
-        # NEW: activity-drawer tool_end/tool_error bubble (all tools)
+        # NEW: activity-drawer tool_end/tool_error bubble (all tools EXCEPT write_file)
+        # BUG #12: write_file success gets only a patch bubble (matching gateway).
+        # write_file failure still emits tool_error.
         if self._on_activity_bubble is not None:
             from models.activity import ActivityBubble, ToolStatus
-            is_error = (hasattr(result, "error") and result.error) or (hasattr(result, "success") and not result.success)
+            # BUG #1: Use the success param from the runtime dispatch, not hasattr on string.
+            is_error = not success
             duration_ms_bubble = getattr(result, "duration_ms", 0) or 0
             agent_def_bubble = self._agents.get(session_key)
             agent_name_bubble = agent_def_bubble.display_name if agent_def_bubble else "Agent"
-            self._on_activity_bubble(ActivityBubble(
-                type="tool_error" if is_error else "tool_end",
-                session_key=session_key,
-                tool_name=name,
-                duration_ms=duration_ms_bubble,
-                icon="❌" if is_error else "✅",
-                status=ToolStatus.ERROR if is_error else ToolStatus.SUCCESS,
-                agent_name=agent_name_bubble,
-            ))
+            # BUG #12: skip tool_end for write_file (patch bubble covers it),
+            # but DO emit tool_error for failed write_file.
+            skip_tool_end = (name == "write_file" and not is_error)
+            if not skip_tool_end:
+                self._on_activity_bubble(ActivityBubble(
+                    type="tool_error" if is_error else "tool_end",
+                    session_key=session_key,
+                    tool_name=name,
+                    duration_ms=duration_ms_bubble,
+                    icon="❌" if is_error else "✅",
+                    status=ToolStatus.ERROR if is_error else ToolStatus.SUCCESS,
+                    agent_name=agent_name_bubble,
+                ))
+
+        # BUG #5: Pop _pending_tool_args unconditionally after the bubble dispatch.
+        # This runs for ALL tools, not just write_file — prevents leaks from
+        # failed read_file, search_files, etc.
+        args_write = self._pending_tool_args.pop(session_key, {})
 
         # Phase 1.5 review staging — if write_file succeeds and review is active,
         # copy the written file to a shadow staging directory so the PM can Accept/Reject
