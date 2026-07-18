@@ -3833,7 +3833,7 @@ class TestLocalAgentDrawerEmissions:
 
     def test_do_tool_call_start_emits_tool_start_bubble(self):
         """_do_tool_call_start emits ActivityBubble with type='tool_start'."""
-        handler, _, _ = self._make_handler()
+        handler, _, _ = self._make_handler_with_agent()
 
         handler._do_tool_call_start("special:coder", "read_file", {"path": "test.txt"})
 
@@ -3844,7 +3844,7 @@ class TestLocalAgentDrawerEmissions:
 
     def test_do_tool_call_start_stores_tool_args(self):
         """_do_tool_call_start stores args in _pending_tool_args for patch path."""
-        handler, _, _ = self._make_handler()
+        handler, _, _ = self._make_handler_with_agent()
 
         handler._do_tool_call_start("special:coder", "write_file", {"path": "src/main.py"})
 
@@ -3854,7 +3854,7 @@ class TestLocalAgentDrawerEmissions:
 
     def test_do_tool_call_result_emits_tool_end_bubble(self):
         """_do_tool_call_result emits ActivityBubble with type='tool_end' on success (non-write_file)."""
-        handler, _, _ = self._make_handler()
+        handler, _, _ = self._make_handler_with_agent()
         handler._pending_tool_args["special:coder"] = {"path": "test.txt"}
 
         handler._do_tool_call_result("special:coder", "read_file", "file content", success=True)
@@ -3868,7 +3868,7 @@ class TestLocalAgentDrawerEmissions:
 
     def test_do_tool_call_result_emits_tool_error_on_failure(self):
         """_do_tool_call_result emits ActivityBubble with type='tool_error' when success=False."""
-        handler, _, _ = self._make_handler()
+        handler, _, _ = self._make_handler_with_agent()
         handler._pending_tool_args["special:coder"] = {"path": "test.txt"}
 
         handler._do_tool_call_result("special:coder", "read_file", "permission denied", success=False)
@@ -3883,7 +3883,7 @@ class TestLocalAgentDrawerEmissions:
 
     def test_denied_exec_command_emits_tool_error_bubble(self):
         """Simulate exec denial path: success=False → tool_error with ❌."""
-        handler, _, _ = self._make_handler()
+        handler, _, _ = self._make_handler_with_agent()
         handler._pending_tool_args["special:coder"] = {"command": "rm -rf /"}
 
         # Runtime dispatches with success=False for denied exec
@@ -3897,7 +3897,7 @@ class TestLocalAgentDrawerEmissions:
 
     def test_sensitive_path_block_emits_tool_error_bubble(self):
         """Simulate sensitive-path write_file block: success=False → tool_error."""
-        handler, _, _ = self._make_handler()
+        handler, _, _ = self._make_handler_with_agent()
         handler._pending_tool_args["special:coder"] = {"path": "/etc/passwd"}
 
         handler._do_tool_call_result("special:coder", "write_file", "blocked", success=False)
@@ -3909,7 +3909,7 @@ class TestLocalAgentDrawerEmissions:
 
     def test_write_file_success_emits_patch_not_tool_end(self):
         """Successful write_file emits ONLY patch, NO tool_end (BUG #12)."""
-        handler, _, _ = self._make_handler()
+        handler, _, _ = self._make_handler_with_agent()
         handler._pending_tool_args["special:coder"] = {"path": "src/main.py"}
 
         handler._do_tool_call_result("special:coder", "write_file", "OK — wrote 123 bytes to src/main.py", success=True)
@@ -3920,7 +3920,7 @@ class TestLocalAgentDrawerEmissions:
 
     def test_write_file_failure_emits_tool_error(self):
         """Failed write_file emits tool_error, not patch."""
-        handler, _, _ = self._make_handler()
+        handler, _, _ = self._make_handler_with_agent()
         handler._pending_tool_args["special:coder"] = {"path": "src/main.py"}
 
         handler._do_tool_call_result("special:coder", "write_file", "permission denied", success=False)
@@ -3933,7 +3933,7 @@ class TestLocalAgentDrawerEmissions:
 
     def test_pending_tool_args_cleared_after_non_writefile_error(self):
         """_pending_tool_args is popped unconditionally after bubble dispatch (BUG #5)."""
-        handler, _, _ = self._make_handler()
+        handler, _, _ = self._make_handler_with_agent()
 
         # Simulate 3 failed read_file calls
         for i in range(3):
@@ -3947,7 +3947,7 @@ class TestLocalAgentDrawerEmissions:
 
     def test_tool_start_suppressed_after_session_ended(self):
         """_do_tool_call_start returns early when session is in _ended_sessions (BUG #2)."""
-        handler, _, _ = self._make_handler()
+        handler, _, _ = self._make_handler_with_agent()
         handler._ended_sessions.add("special:coder")
 
         handler._do_tool_call_start("special:coder", "read_file", {"path": "test.txt"})
@@ -3959,7 +3959,7 @@ class TestLocalAgentDrawerEmissions:
 
     def test_agent_start_emits_drawer_lifecycle_start(self):
         """_do_text_delta's agent-start site emits drawer-lifecycle 'start'."""
-        handler, crh, mc = self._make_handler()
+        handler, crh, mc = self._make_handler_with_agent()
         crh.is_streaming.return_value = False
         chat_box = MagicMock()
         handler._resolve_chat_box = MagicMock(return_value=chat_box)
@@ -3977,7 +3977,7 @@ class TestLocalAgentDrawerEmissions:
 
     def test_agent_end_emits_drawer_lifecycle_end(self):
         """_do_response_complete emits drawer-lifecycle 'end'."""
-        handler, crh, mc = self._make_handler()
+        handler, crh, mc = self._make_handler_with_agent()
         crh.is_streaming.return_value = False
         chat_box = MagicMock()
         handler._resolve_chat_box = MagicMock(return_value=chat_box)
@@ -3991,7 +3991,7 @@ class TestLocalAgentDrawerEmissions:
 
     def test_do_error_emits_drawer_lifecycle_end(self):
         """_do_error emits drawer-lifecycle 'end'."""
-        handler, crh, mc = self._make_handler()
+        handler, crh, mc = self._make_handler_with_agent()
         crh.is_streaming.return_value = False
         chat_box = MagicMock()
         handler._resolve_chat_box = MagicMock(return_value=chat_box)
