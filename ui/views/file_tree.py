@@ -664,8 +664,10 @@ class FileTree(Gtk.Box):
 
         diff_tab = Gtk.ToggleButton(label="Diff")
         diff_tab.set_active(True)
+        diff_tab.add_css_class("file-tree-drawer-tab-btn")
         history_tab = Gtk.ToggleButton(label="History")
         history_tab.set_group(diff_tab)
+        history_tab.add_css_class("file-tree-drawer-tab-btn")
 
         tab_bar.append(diff_tab)
         tab_bar.append(history_tab)
