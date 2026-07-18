@@ -2403,6 +2403,30 @@ class SettingsHandler:
 - `on_providers_changed(list[ProviderConfig])` — fired on add/remove/edit.
 - `on_status_changed(bool)` — fired when verified status changes.
 
+### 3.21zc `ui/handlers/activity_wiring_handler.py` — Activity Wiring Handler (SPEC-activity-drawer offline + local)
+
+**Responsibility:** Single owner of all ActivityDrawer event wiring — gateway AND local, online AND offline. Constructed in `window.py._build()` and `.wire()` called unconditionally at startup (no gateway required), so the drawer receives events from the first local-agent tool call onward.
+
+**Owns:** The adapter logic that converts `ActivityBubble` dataclass instances to drawer row dicts (via `bubble.to_drawer_row()`), and the routing of local `AgentRuntimeHandler` tool/lifecycle/exec events into the drawer.
+
+**Constructor dependencies:**
+- `activity_handler`: ActivityHandler — source of gateway bubbles + lifecycle separators
+- `agent_runtime_handler`: AgentRuntimeHandler — source of local exec_command output, tool lifecycle, agent start/end
+- `activity_drawer`: ActivityDrawer — the target
+
+**Public API:**
+```python
+class ActivityWiringHandler:
+    def __init__(self, *, activity_handler, agent_runtime_handler, activity_drawer) -> None
+    def wire(self) -> None   # idempotent — wires 5 callbacks (gateway bubble/lifecycle, local exec/tool/lifecycle)
+```
+
+**Dedup invariant:** Local bridges fire only for special-agent sessions (`special:*` keys via `AgentRuntimeHandler`); gateway bridges fire for gateway sessions. The namespaces are disjoint for built-in agents. No explicit dedup code is needed (documented invariant).
+
+**Extracted from:** `connection_sync_handler.sync()` (the former home of the gateway-bubble adapter closures). Moved out because `sync()` only runs on gateway connect, which broke the drawer offline.
+
+**Offline name resolution:** `_resolve_local_agent_name()` uses `AgentRuntimeHandler.get_agent_name_for_session()` (the local registry), not the gateway `AgentManager`, so agent names resolve correctly without a connection.
+
 ### 3.21zb `ui/views/settings_dialog.py` — Settings Dialog GTK View
 
 **Responsibility:** GTK4 dialog for managing LLM provider settings. Pure view —
