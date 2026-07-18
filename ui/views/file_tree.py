@@ -1617,3 +1617,152 @@ class FileTree(Gtk.Box):
     def _on_back_clicked(self, button):
         """Navigate back to the project picker."""
         self.navigate_back()
+
+    # ── Right-Click Context Menu (Copy Path / Copy File) ──────────────────
+
+    def _on_tree_row_right_click(self, ctrl, n_press, x, y, widget) -> None:
+        """
+        Right-click on a file tree row — show the context popover menu.
+
+        Args:
+            ctrl:    Gtk.GestureClick (sender).
+            n_press: int — number of presses (only respond to single click).
+            x, y:    float — local click coordinates (unused).
+            widget:  FileTreeRowWidget — the right-clicked widget.
+        """
+        if n_press != 1:
+            return
+
+        # Read the bound row LIVE at click time — never capture in closure.
+        # This avoids stale-row bugs from ColumnView recycling.
+        row = widget._bound_row
+        if row is None:
+            return  # unbind/rebind window
+
+        # Skip drawer rows (inline containers, not navigable files/dirs)
+        if row.props.is_drawer:
+            return
+
+        # Skip loading rows (empty path)
+        path = row.props.full_path
+        if not path:
+            return
+
+        popover = Gtk.Popover()
+        popover.set_parent(widget)
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        vbox.set_margin_top(6)
+        vbox.set_margin_bottom(6)
+        vbox.set_margin_start(6)
+        vbox.set_margin_end(6)
+
+        list_box = Gtk.ListBox()
+        list_box.set_selection_mode(Gtk.SelectionMode.NONE)
+
+        # Row 1: Copy Path (always shown — for files and directories)
+        copy_path_row = Gtk.ListBoxRow()
+        copy_path_row.set_activatable(True)
+        copy_path_row.set_selectable(False)
+        copy_path_row._action = "copy_path"
+        copy_path_label = Gtk.Label(label="Copy Path", xalign=0)
+        copy_path_label.set_margin_top(4)
+        copy_path_label.set_margin_bottom(4)
+        copy_path_label.set_margin_start(8)
+        copy_path_label.set_margin_end(8)
+        copy_path_row.set_child(copy_path_label)
+        list_box.append(copy_path_row)
+
+        # Row 2: Copy File (only shown for files, not directories)
+        if not row.props.is_dir:
+            copy_file_row = Gtk.ListBoxRow()
+            copy_file_row.set_activatable(True)
+            copy_file_row.set_selectable(False)
+            copy_file_row._action = "copy_file"
+            copy_file_label = Gtk.Label(label="Copy File", xalign=0)
+            copy_file_label.set_margin_top(4)
+            copy_file_label.set_margin_bottom(4)
+            copy_file_label.set_margin_start(8)
+            copy_file_label.set_margin_end(8)
+            copy_file_row.set_child(copy_file_label)
+            list_box.append(copy_file_row)
+
+        list_box.connect("row-activated", self._on_tree_menu_row_activated, popover, row)
+        vbox.append(list_box)
+        popover.set_child(vbox)
+        popover.connect("closed", lambda *_: popover.unparent())
+        popover.popup()
+
+    def _on_tree_menu_row_activated(self, _lb, menu_row, popover, source_row) -> None:
+        """
+        One of "Copy Path" / "Copy File" was clicked. Dispatch and dismiss the popover.
+
+        Dispatch uses the menu_row._action attribute (set at row build time), NOT
+        the label text — robust to i18n.
+        """
+        popover.popdown()
+        action = getattr(menu_row, "_action", None)
+        if action == "copy_path":
+            self._on_copy_tree_path(source_row)
+        elif action == "copy_file":
+            self._on_copy_tree_file(source_row)
+        # Unknown action → no-op (defensive).
+
+    def _on_copy_tree_path(self, row) -> None:
+        """Copy the absolute path of the right-clicked row to the clipboard."""
+        path = row.props.full_path if hasattr(row, 'props') else None
+        if not path:
+            return
+        self._copy_text_to_clipboard(path)
+        self._show_tree_copy_status("Copied path")
+
+    def _on_copy_tree_file(self, row) -> None:
+        """Copy the file content of the right-clicked row to the clipboard.
+
+        Handles binary files gracefully: on UnicodeDecodeError, copies a
+        notice message instead of crashing.
+        """
+        path = row.props.full_path if hasattr(row, 'props') else None
+        if not path:
+            return
+        try:
+            from pathlib import Path
+            content = Path(path).read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            content = "<binary file — not copied>"
+            # Stay consistent with the drawer's "Binary file — not shown" wording.
+        except Exception:
+            return  # I/O error — silently skip (no crash)
+        self._copy_text_to_clipboard(content)
+        self._show_tree_copy_status("Copied file")
+
+    def _copy_text_to_clipboard(self, text: str) -> None:
+        """Copy text to the system clipboard using GTK4 clipboard API."""
+        display = Gdk.Display.get_default()
+        if display is None:
+            return
+        clipboard = display.get_clipboard()
+        clipboard.set(text)
+
+    def _show_tree_copy_status(self, message: str) -> None:
+        """Show a transient confirmation in the file tree header for ~2.5s."""
+        if self._tree_copy_status_label is None:
+            return
+        self._tree_copy_status_label.set_text(message)
+        self._tree_copy_status_label.set_visible(True)
+        # Cancel any pending clear, then schedule a new one.
+        if self._tree_copy_status_timeout_id is not None:
+            try:
+                GLib.source_remove(self._tree_copy_status_timeout_id)
+            except Exception:
+                pass
+            self._tree_copy_status_timeout_id = None
+
+        def _clear():
+            if self._tree_copy_status_label is not None:
+                self._tree_copy_status_label.set_text("")
+                self._tree_copy_status_label.set_visible(False)
+            self._tree_copy_status_timeout_id = None
+            return GLib.SOURCE_REMOVE
+
+        self._tree_copy_status_timeout_id = GLib.timeout_add(2500, _clear)
