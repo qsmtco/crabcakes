@@ -181,9 +181,11 @@ class FileTreeFactory(Gtk.SignalListItemFactory):
         # Drawer rows: hide label (no text needed), let drawer_container fill space
         if row.props.is_drawer:
             widget._label.set_visible(False)
+            widget._label.set_hexpand(False)  # don't compete for space
             widget._drawer_container.set_hexpand(True)
         else:
             widget._label.set_visible(True)
+            widget._label.set_hexpand(True)
             widget._drawer_container.set_hexpand(False)
 
         if row.props.is_drawer and row.props.drawer_widget:
