@@ -1354,7 +1354,7 @@ button.settings-remove-btn:hover {
 }
 
 .file-tree-drawer-tab-btn {
-    padding: 0;
+    padding: 1px;
     margin: 0;
     min-width: 0;
     min-height: 0;
