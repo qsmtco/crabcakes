@@ -1353,6 +1353,13 @@ button.settings-remove-btn:hover {
     background: alpha(@theme_bg_color, 0.3);
 }
 
+.file-tree-drawer-tab-btn {
+    padding: 0;
+    margin: 0;
+    min-width: 0;
+    min-height: 0;
+}
+
 /* ── FileTree ColumnView (Phase 9) ──────────────────────────────────────── */
 .file-tree-column-view {
     background: transparent;
