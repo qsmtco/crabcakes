@@ -731,6 +731,8 @@ class FileTree(Gtk.Box):
         # History page
         history_scroll = Gtk.ScrolledWindow()
         history_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        history_scroll.set_propagate_natural_height(True)
+        history_scroll.set_min_content_height(72)
         history_list = Gtk.ListBox()
         history_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         history_scroll.set_child(history_list)
