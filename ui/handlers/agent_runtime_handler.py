@@ -1133,6 +1133,23 @@ class AgentRuntimeHandler:
             tail = "\n".join(lines[-10:]) if lines else ""
             self._on_command_output(session_key, cmd, tail, exit_code, duration_ms)
 
+        # NEW: activity-drawer tool_end/tool_error bubble (all tools)
+        if self._on_activity_bubble is not None:
+            from models.activity import ActivityBubble, ToolStatus
+            is_error = (hasattr(result, "error") and result.error) or (hasattr(result, "success") and not result.success)
+            duration_ms_bubble = getattr(result, "duration_ms", 0) or 0
+            agent_def_bubble = self._agents.get(session_key)
+            agent_name_bubble = agent_def_bubble.display_name if agent_def_bubble else "Agent"
+            self._on_activity_bubble(ActivityBubble(
+                type="tool_error" if is_error else "tool_end",
+                session_key=session_key,
+                tool_name=name,
+                duration_ms=duration_ms_bubble,
+                icon="❌" if is_error else "✅",
+                status=ToolStatus.ERROR if is_error else ToolStatus.SUCCESS,
+                agent_name=agent_name_bubble,
+            ))
+
         # Phase 1.5 review staging — if write_file succeeds and review is active,
         # copy the written file to a shadow staging directory so the PM can Accept/Reject
         if name != "write_file" or not isinstance(result, str) or not result.startswith("OK"):
