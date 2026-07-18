@@ -317,6 +317,16 @@ class FileTree(Gtk.Box):
         self._header.append(self._title_lbl)
         self._header.append(self._search_entry)
 
+        # Status label for copy confirmation (transient, ~2.5s)
+        self._tree_copy_status_label = Gtk.Label()
+        self._tree_copy_status_label.add_css_class("dim-label")
+        self._tree_copy_status_label.set_halign(Gtk.Align.END)
+        self._tree_copy_status_label.set_valign(Gtk.Align.CENTER)
+        self._tree_copy_status_label.set_margin_end(8)
+        self._tree_copy_status_label.set_visible(False)  # start hidden
+        self._tree_copy_status_timeout_id = None
+        self._header.append(self._tree_copy_status_label)
+
         # ── Phase 1: ColumnView + ListStore ───────────────────────────────
         self._store = Gio.ListStore.new(FileTreeRow.__gtype__)
         self._selection = Gtk.SingleSelection.new(self._store)
