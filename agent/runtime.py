@@ -2473,7 +2473,7 @@ class AgentRuntime:
                                     "PM approval denied or timed out."
                                 )
                                 conv.add_tool_result(call_id, tc.result or "denied")
-                                self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied")
+                                self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied", False)
                                 self._audit_log.record(tool_name, args, approved=False,
                                                         user=getattr(self._config, "user_id", ""),
                                                         result="denied")  # A-4
@@ -2554,7 +2554,7 @@ class AgentRuntime:
                     tool_result_text = tc.result or ""
 
                     conv.add_tool_result(call_id, tool_result_text)
-                    self._dispatch(self._on_tool_call_result, session_key, tool_name, tool_result_text)
+                    self._dispatch(self._on_tool_call_result, session_key, tool_name, tool_result_text, result.success)
 
                     # A-4: Record in audit log
                     _audit_user = getattr(self._config, "user_id", "")

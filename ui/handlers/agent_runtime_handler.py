@@ -1058,7 +1058,7 @@ class AgentRuntimeHandler:
             ))
 
     def _on_tool_call_result(
-        self, session_key: str, name: str, result: Any
+        self, session_key: str, name: str, result: Any, success: bool = True
     ) -> None:
         """
         AgentRuntime tool call result callback.
@@ -1066,13 +1066,21 @@ class AgentRuntimeHandler:
         Phase D: Update the agent_action feed card with the result.
         Phase 1.5 review staging: If write_file succeeds and review mode is active,
         stage the file to the shadow staging directory.
+
+        Args:
+            session_key: The agent's session key.
+            name: Tool name (e.g. "read_file").
+            result: Tool result text (string from ToolCall.mark_completed/mark_failed).
+            success: Whether the tool succeeded. Default True for backward compat
+                     with any other callers that don't pass it. The runtime now
+                     dispatches this from the three dispatch sites in _run_loop.
         """
         if self._GLib is not None:
-            self._GLib.idle_add(self._do_tool_call_result, session_key, name, result)
+            self._GLib.idle_add(self._do_tool_call_result, session_key, name, result, success)
         else:
-            self._do_tool_call_result(session_key, name, result)
+            self._do_tool_call_result(session_key, name, result, success)
 
-    def _do_tool_call_result(self, session_key: str, name: str, result: Any) -> None:
+    def _do_tool_call_result(self, session_key: str, name: str, result: Any, success: bool = True) -> None:
         """Main-thread portion of _on_tool_call_result.
 
         Phase D: Update the feed card with the tool result, then flag for review.
