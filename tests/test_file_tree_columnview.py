@@ -463,15 +463,18 @@ class TestFileTreeRightClick:
         ))
 
         with patch("gi.repository.Gtk.Popover") as mock_popover_class:
-            mock_popover = MagicMock()
-            mock_popover_class.return_value = mock_popover
+            with patch("gi.repository.Gtk.Box") as mock_box_class:
+                with patch("gi.repository.Gtk.ListBox") as mock_listbox_class:
+                    with patch("gi.repository.Gtk.Label") as mock_label_class:
+                        mock_popover = MagicMock()
+                        mock_popover_class.return_value = mock_popover
 
-            tree._on_tree_row_right_click(None, 1, 0, 0, widget)
+                        tree._on_tree_row_right_click(None, 1, 0, 0, widget)
 
-            # Must create a popover, parent it to the widget, and show it
-            mock_popover_class.assert_called_once()
-            mock_popover.set_parent.assert_called_once()
-            mock_popover.popup.assert_called_once()
+                        # Must create a popover, parent it to the widget, and show it
+                        mock_popover_class.assert_called_once()
+                        mock_popover.set_parent.assert_called_once()
+                        mock_popover.popup.assert_called_once()
 
     def test_menu_shows_both_for_file(self):
         """File row -> menu builders add both 'Copy Path' and 'Copy File' entries
