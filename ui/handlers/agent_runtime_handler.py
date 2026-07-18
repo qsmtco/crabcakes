@@ -1026,10 +1026,6 @@ class AgentRuntimeHandler:
             elif name == "exec_command":
                 cmd = args.get("command", "?")
                 title = f"{agent_name} is running: {cmd[:60]}"
-                # SPEC-activity-drawer: capture the command for the command_output
-                # drawer row that fires when the result comes back. Stored per-session
-                # so _do_tool_call_result can resolve it.
-                self._pending_exec_commands[session_key] = cmd
             elif name == "list_files":
                 title = f"{agent_name} is listing {args.get('path', '.')}"
             elif name == "search_files":
