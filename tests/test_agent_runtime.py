@@ -4147,3 +4147,40 @@ class TestLocalAgentDrawerEmissions:
             f"BUG #17: card status should be 'error' for denied tool, got "
             f"{card.metadata.get('status')!r}"
         )
+
+    # ── BUG #21: tool-only turn tool_starts not suppressed ──────────────
+
+    def test_tool_only_turn_tool_starts_not_suppressed(self):
+        """Regression for BUG #21: a tool-only turn (no streaming text) must
+        still fire tool_start bubbles.
+
+        The runtime now dispatches _on_text_delta(sk, '') at the top of _run_loop
+        before any tool calls, so _do_text_delta clears _ended_sessions for the
+        new turn. This test simulates that sequence at the handler level.
+        """
+        handler, crh, mc = self._make_handler_with_agent()
+        # Mirror the mock setup from test_agent_start_emits_drawer_lifecycle_start
+        crh.is_streaming.return_value = False
+        chat_box = MagicMock()
+        handler._resolve_chat_box = MagicMock(return_value=chat_box)
+        handler._crh = crh
+
+        # Simulate previous turn ended
+        handler._ended_sessions.add("special:coder")
+
+        # Simulate the runtime's turn-start signal (empty delta) — this is the fix.
+        handler._do_text_delta("special:coder", "")
+
+        # Now a tool_start arrives (tool-only turn, no real text)
+        handler._do_tool_call_start("special:coder", "read_file", {"path": "test.txt"})
+
+        # The tool_start must NOT be suppressed — the flag was cleared.
+        types = [b.type for b in self._bubbles]
+        assert "tool_start" in types, (
+            f"BUG #21: tool_start suppressed for tool-only turn; got {types}"
+        )
+        # The lifecycle-start separator must also have fired.
+        start_events = [e for e in self._lifecycle_events if e[2] == "start"]
+        assert len(start_events) == 1, (
+            f"BUG #21: expected 1 lifecycle-start event, got {len(start_events)}: {self._lifecycle_events}"
+        )
