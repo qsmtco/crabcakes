@@ -4097,3 +4097,53 @@ class TestLocalAgentDrawerEmissions:
         )
         # No patch on failure
         assert "patch" not in types, f"Expected no patch on failure; got {types}"
+
+    # ── BUG #18: ≥2 stale tool_starts must both be suppressed ───────────
+
+    def test_two_consecutive_stale_tool_starts_both_suppressed(self):
+        """Regression for BUG #18: ≥2 stale tool_start dispatches must all be
+        suppressed. The Round 2 fix cleared the ended flag on the first stale
+        call, letting the second proceed and emit an orphan bubble.
+        """
+        handler, _, _ = self._make_handler_with_agent()
+        handler._ended_sessions.add("special:coder")
+
+        # Two stale calls, back-to-back (as if queued in GLib.idle_add)
+        handler._do_tool_call_start("special:coder", "read_file", {"path": "a.txt"})
+        handler._do_tool_call_start("special:coder", "read_file", {"path": "b.txt"})
+
+        # Both must be suppressed — no bubbles, flag still set
+        assert len(self._bubbles) == 0, (
+            f"BUG #18: expected 0 bubbles for 2 stale calls, got {len(self._bubbles)}"
+        )
+        assert "special:coder" in handler._ended_sessions, (
+            "BUG #18: ended flag should NOT be cleared by a stale call"
+        )
+
+    # ── BUG #17: card/bubble agreement on denied tools ──────────────────
+
+    def test_denied_exec_card_shows_error_status(self):
+        """Regression for BUG #17: card.metadata['status'] must be 'error' for a
+        denied tool, not 'complete'. The card and bubble must agree.
+        """
+        handler, _, _ = self._make_handler_with_agent()
+        from models.feed_card import FeedCardData
+        from datetime import datetime, timezone
+        card = FeedCardData(
+            card_type="agent_action", source="agent",
+            title="Coder is running: rm -rf /", body="⏳ Running...",
+            author="Coder", timestamp=datetime.now(timezone.utc), project_name="test",
+        )
+        handler._tool_card_ids["special:coder"] = "card-123"
+        handler._fh.get_card.return_value = card
+
+        handler._do_tool_call_result(
+            "special:coder", "exec_command",
+            "exec_command requires PM approval — request denied or timed out",
+            success=False,
+        )
+
+        assert card.metadata["status"] == "error", (
+            f"BUG #17: card status should be 'error' for denied tool, got "
+            f"{card.metadata.get('status')!r}"
+        )
