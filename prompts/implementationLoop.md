@@ -197,7 +197,7 @@ The loop is implemented by composing four existing prompts. Each prompt owns one
 |---|---|---|---|
 | [`steelFramedSpecWriter.md`](./steelFramedSpecWriter.md) | Supervisor or captain | Before the loop starts | Write the spec that specializes ARCHITECTURE.md for one feature. The spec assumes ARCHITECTURE.md is in force; it must not contradict it. |
 | [`steelFramedCodeWriter.md`](./steelFramedCodeWriter.md) | Builder | Every code-writing delegation | How to write code: read-before-touch, hard-part-first, verify-every-claim, wire-it-or-delete-it, no-fabricated-APIs, defensive copies, etc. |
-| [`adversarialDebugger.md`](./adversarialDebugger.md) | Supervisor | **On every code-bearing turn (mandatory, see §3.1a)** | How to audit: challenge every assumption, trace failure backwards, find hidden assumptions, test weakest links, break the external contract, simulate the weirdest user, verify scope coverage, audit docs, verify tests match. |
+| [`adversarialDebugger.md`](./adversarialDebugger.md) | Auditor | **On every code-bearing turn (mandatory, see §3.1a)** | How to audit: challenge every assumption, trace failure backwards, find hidden assumptions, test weakest links, break the external contract, simulate the weirdest user, verify scope coverage, audit docs, verify tests match. The auditor loads this prompt fresh on every code-bearing turn, delegated by the supervisor. |
 | [`implementationSupervisor.md`](./implementationSupervisor.md) | Supervisor | Continuously, as standing orders | Supervisor tactics: how to phase, how to delegate, how to verify, how to handle the `/ask` channel, how to write a post-mortem trigger. |
 
 **This prompt (`implementationLoop.md`) is the fifth piece.** It does not duplicate any of the above. It defines:
