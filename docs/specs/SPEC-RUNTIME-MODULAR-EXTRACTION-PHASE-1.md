@@ -42,7 +42,7 @@ All line numbers verified against `agent/runtime.py` at the current HEAD (2026-0
 
 Extract the three inline policy concerns from `_run_loop`'s tool-execution block (lines 2455–2583) into a composable middleware chain:
 
-1. **Approval gating** (lines 2461–2490) — `exec_command` + sensitive `write_file`/`edit_file` → PM approval
+1. **Approval gating** (lines 2460–2490) — `exec_command` + sensitive `write_file`/`edit_file` → PM approval
 2. **Enforcement check** (lines 2525–2551) — post-write syntax/test/lint verification
 3. **Stuck detection** (lines 2553–2562) — loop detection on tool history
 
