@@ -35,38 +35,49 @@ Multi-agent implementation work is hard to supervise. The supervisor and the bui
                  │  1. Read spec + ARCHITECTURE.md            │
                  │  2. Phase the work (1-3 files per phase)   │
                  │  3. Write phase-instructions file to disk  │
-                 │  4. Delegate via /ask @{{BUILDER_AGENT}}   │
+                 │  4. Delegate build via /ask @{{BUILDER_AGENT}}
                  │  5. Receive code from builder              │
-                 │  6. Run adversarialDebugger against code   │
-                 │  7. Bugs found?                            │
-                 │     ├─ Yes → send bug report to builder    │
+                 │  6. Delegate audit via /ask @{{AUDITOR_AGENT}} │
+                 │     (hand off the code-bearing turn to the │
+                 │      auditor for the 11-section probe)     │
+                 │  7. Auditor returns bug report?            │
+                 │     ├─ Yes → route bug report to builder   │
                  │     │         (loop to step 5)              │
                  │     └─ No  → independent verification      │
+                 │              (supervisor runs tests,       │
+                 │               reads diffs, greps — own eyes)│
                  │  8. All phases done?                       │
                  │     ├─ No  → next phase (loop to step 3)   │
                  │     └─ Yes → post-mortem (mandatory        │
                  │              §6 format) + commit + report  │
-                 └──────┬─────────────────────────────┬───────┘
-                        │                             ▲
-                        │ /ask                        │
-                        ▼                             │
-                 ┌────────────────────────────────────┴───────┐
-                 │   {{BUILDER_AGENT}} — code writer           │
-                 │                                             │
-                 │                                             │
-                 │  - Reads phase-instructions file            │
-                 │  - Writes code per steelFramedCodeWriter    │
-                 │  - Reports back with COMPLETENESS +         │
-                 │    verification evidence                    │
-                 │  - Fixes bugs reported by supervisor        │
-                 └─────────────────────────────────────────────┘
+                 └──┬───────────────┬───────────────┬─────────┘
+                    │ /ask (build)  │ /ask (audit)  ▲
+                    ▼               ▼               │ audit report
+                 ┌───────────────────────┐ ┌────────┴──────────────┐
+                 │  {{BUILDER_AGENT}}    │ │  {{AUDITOR_AGENT}}    │
+                 │  — code writer        │ │  — adversarial auditor│
+                 │                       │ │                       │
+                 │ - Reads phase-        │ │ - Loads               │
+                 │   instructions file   │ │   adversarialDebugger │
+                 │ - Writes code per     │ │   .md fresh each turn │
+                 │   steelFramedCodeWriter│ │ - Works through all   │
+                 │ - Reports back with   │ │   11 sections against │
+                 │   COMPLETENESS +      │ │   the code in scope   │
+                 │   verification        │ │ - Reports bugs in BUG │
+                 │   evidence            │ │   #[N] format to the  │
+                 │ - Fixes bugs routed   │ │   supervisor          │
+                 │   back by supervisor  │ │ - Does NOT fix code,  │
+                 │                       │ │   does NOT commit,    │
+                 │                       │ │   does NOT decide     │
+                 │                       │ │   phase completion    │
+                 └───────────────────────┘ └───────────────────────┘
 
    External prompts referenced (NOT duplicated in this file):
    ┌──────────────────────────────────────────────────────────┐
    │  steelFramedCodeWriter.md  → builder invokes when       │
    │                              writing code               │
-   │  adversarialDebugger.md    → supervisor MUST load on    │
-   │                              every code-bearing turn    │
+   │  adversarialDebugger.md    → auditor MUST load on every │
+   │                              code-bearing turn          │
    │                              (see §3.1a — mandatory,    │
    │                              not optional)              │
    │  implementationSupervisor.md → supervisor's standing    │
