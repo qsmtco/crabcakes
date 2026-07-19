@@ -1021,7 +1021,7 @@ The `StreamingCallKwargs` TypedDict (runtime.py line 42) and `TestStreamingSigna
 | `agent/llm/extractors.py` | **NEW** — response extractors |
 | `agent/llm/convert.py` | **NEW** — Anthropic message/tool converters |
 | `agent/llm/cost.py` | **NEW** — cost table + model_id + cost_for_model |
-| `agent/runtime.py` | Delete ~970 lines of module-level functions (lines 162–1168 cost + LLM callers + SSE + streaming + extractors + converters). Add re-exports. Update `_call_llm` (line 2655), `_call_llm_streaming` (line 2788), `_call_for_summary` (line 3187), and extractor call sites at lines 2252–2256. |
+| `agent/runtime.py` | Delete ~970 lines of module-level functions (lines 162–1168 cost + LLM callers + SSE + streaming + extractors + converters). Add re-exports. Update `_call_llm` (line 2655), `_call_llm_streaming` (line 2788), `_call_for_summary` (line 3229), and extractor call sites at lines 2252–2256. |
 
 ### B.8 Lines freed from runtime.py
 
