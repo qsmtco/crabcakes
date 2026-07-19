@@ -160,10 +160,10 @@ After every phase, before moving to the next:
 
 ## Tools You Need
 
-- **[`implementationLoop`](../../prompts/implementationLoop.md)** (`prompts/implementationLoop.md`) — the overarching loop architecture: role boundaries, the four-prompt composition, the spec/ARCHITECTURE.md authority hierarchy, and the **mandatory post-mortem format** that every post-mortem from now on must follow. Read this first to understand the shape of the loop; this prompt (implementationSupervisor) covers the day-to-day tactics.
+- **[`implementationLoop`](../../prompts/implementationLoop.md)** (`prompts/implementationLoop.md`) — the overarching loop architecture: role boundaries (supervisor + builder + auditor trio), the four-prompt composition, the spec/ARCHITECTURE.md authority hierarchy, and the **mandatory post-mortem format** that every post-mortem from now on must follow. Read this first to understand the shape of the loop; this prompt (implementationSupervisor) covers the day-to-day tactics.
 - **[`steelFramedSpecWriter`](../../prompts/steelFramedSpecWriter.md)** (`prompts/steelFramedSpecWriter.md`) — ensures the builder writes verified code
-- **[`steelFramedCodeWriter`](../../prompts/steelFramedCodeWriter.md)** (`prompts/steelFramedCodeWriter.md`) — instructs the builder how to write verified code (referenced in every delegation)
-- **[`adversarialDebugger`](../../prompts/adversarialDebugger.md)** (`prompts/adversarialDebugger.md`) — ensures you audit thoroughly
+- **[`steelFramedCodeWriter`](../../prompts/steelFramedCodeWriter.md)** (`prompts/steelFramedCodeWriter.md`) — instructs the builder how to write verified code (referenced in every build delegation)
+- **[`adversarialDebugger`](../../prompts/adversarialDebugger.md)** (`prompts/adversarialDebugger.md`) — the **auditor's** playbook, not yours. You reference it when delegating audits; you do not load it yourself.
 - **git diff** — verify what actually changed
 - **pytest** — verify tests actually pass
 - **grep** — verify old patterns are gone
