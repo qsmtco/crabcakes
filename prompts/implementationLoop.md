@@ -195,6 +195,21 @@ A delivery that lacks any of the four is incomplete. The supervisor sends the de
 
 A bug report that lacks the BUG format or skips sections is incomplete. The supervisor sends the audit back for completion. The auditor never routes bugs to the builder directly — all bug routing goes through the supervisor.
 
+### 3.5 Context Management via `/clear` (Supervisor-Owned)
+
+The supervisor can reset the builder's and auditor's conversation context with the `/clear` slash command. This keeps delegations clean and prevents context bleed across phases. Full mechanics and cadence live in [`implementationSupervisor.md`](./implementationSupervisor.md) §9.9; the loop-level rule is:
+
+- **Default:** clear both agents between phases, once the phase comes back clean; clear the auditor before each fresh audit handoff.
+- **Exception:** do NOT clear mid bug-fix loop — the builder needs the bug context to land the fix.
+- **Mandatory pairing:** `/clear` is never issued alone. It is issued in the same chat output as the `/ask`, with `/clear` first:
+
+```
+/clear @{{BUILDER_AGENT}}
+/ask @{{BUILDER_AGENT}} "next phase..."
+```
+
+The supervisor owns context management for the builder and auditor only. Other project members are not cleared without explicit captain direction.
+
 ---
 
 ## 4. The Four-Prompt Composition
