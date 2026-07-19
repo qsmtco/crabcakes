@@ -98,6 +98,10 @@ class AgentRuntimeHandler:
         # BUG #2: Track sessions that have ended (cancel/error/complete) to prevent
         # orphan tool_start bubbles from stale idle_add dispatches.
         self._ended_sessions: set[str] = set()
+        # BUG #14: track sessions that have started a tool-only turn (no text delta)
+        # so _ended_sessions can be cleared on the first tool_start of a new turn
+        # while preserving stale-call suppression for previous-turn dispatches.
+        self._started_turn_sessions: set[str] = set()
         # V2 exec auto-accept callback (Phase 6): returns current exec mode
         # ("off" | "show" | "silent") or None. Set by window.py wiring via
         # set_check_exec_auto_accept_callback(). When the callback returns
@@ -1013,6 +1017,12 @@ class AgentRuntimeHandler:
         if session_key in self._ended_sessions:
             logger.debug("_do_tool_call_start: suppressed for ended session %s", session_key)
             return
+
+        # BUG #14: tool-only turns never reach _do_text_delta's discard. Detect the first
+        # tool_start of a new turn by tracking which sessions have started their current turn.
+        if session_key not in self._started_turn_sessions:
+            self._started_turn_sessions.add(session_key)
+            self._ended_sessions.discard(session_key)
 
         # Resolve agent name BEFORE the project guard — bubble emissions need it.
         agent_def = self._agents.get(session_key)
