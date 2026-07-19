@@ -876,10 +876,14 @@ return provider.call(
 #### B.4.2 `_call_llm_streaming` method changes (runtime.py line 2788)
 
 ```python
-# Before (runtime.py lines 2807–2809):
+# Before (runtime.py lines 2815–2820):
 streamer = _PROVIDER_STREAMERS.get(caller_key)
 if streamer is None:
-    raise ValueError(...)
+    raise ValueError(
+        f"No streaming caller for caller_key={caller_key!r} "
+        f"(model={model!r}). Check provider's 'caller' field in Settings → Providers."
+    )
+
 for ev in _stream_with_ssl_retry(streamer, ...):
     ...
 
