@@ -4222,11 +4222,20 @@ class TestLocalAgentDrawerEmissions:
         """BUG #14: _started_turn_sessions must be discarded in both _do_response_complete
         and _do_error so the set doesn't leak across turns.
         """
-        handler, _, _ = self._make_handler_with_agent()
+        handler, crh, mc = self._make_handler_with_agent()
+        # Stub _do_text_delta path: crh.is_streaming must be False
+        crh.is_streaming.return_value = False
+        chat_box = MagicMock()
+        handler._resolve_chat_box = MagicMock(return_value=chat_box)
+        handler._crh = crh
+
+        # Also stub get_streaming_text so _do_response_complete doesn't crash
+        crh.get_streaming_text.return_value = ""
+
         # Manually simulate a started turn
         handler._started_turn_sessions.add("special:coder")
 
-        # End via complete
+        # End via complete (non-streaming path)
         handler._do_response_complete("special:coder", "final response")
         assert "special:coder" not in handler._started_turn_sessions, (
             "_started_turn_sessions not cleaned up by _do_response_complete"
@@ -4240,7 +4249,7 @@ class TestLocalAgentDrawerEmissions:
             "_started_turn_sessions not cleaned up by _do_error"
         )
 
-        # Also verify _do_text_delta discards it
+        # Also verify _do_text_delta discards it — reuse the same mock setup
         handler._started_turn_sessions.add("special:coder")
         handler._do_text_delta("special:coder", "hello")
         assert "special:coder" not in handler._started_turn_sessions, (
