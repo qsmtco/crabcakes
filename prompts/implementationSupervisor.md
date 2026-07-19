@@ -151,7 +151,7 @@ After every phase, before moving to the next:
 |---|---|---|
 | **Trusting the report** | Builder says "done" but missed files | Verify independently every phase |
 | **Wall-of-text delegation** | Builder skims, does first item, declares done | One phase, specific files, demand evidence |
-| **Skipping the audit** | Bugs compound across phases | Always verify before next phase |
+| **Skipping the audit handoff** | Bugs compound across phases | Always delegate to the auditor before next phase; then do your own independent verification |
 | **Dropping the [`steelFramedCodeWriter`](../../prompts/steelFramedCodeWriter.md)** | Builder gets sloppy in later phases | Include it in EVERY delegation (`prompts/steelFramedCodeWriter.md`) |
 | **Fixing everything yourself** | Builder never learns, you become the bottleneck | Only fix trivial stuff; delegate substantive fixes |
 | **No post-mortem** | Lessons are lost, same mistakes repeat | Always write one |
