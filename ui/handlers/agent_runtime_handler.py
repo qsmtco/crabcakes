@@ -1488,6 +1488,8 @@ class AgentRuntimeHandler:
             self._on_drawer_lifecycle(session_key, agent_name_dl, "end")
         # BUG #2: Mark this session as ended — prevents stale tool_start bubbles.
         self._ended_sessions.add(session_key)
+        # BUG #14: clear started-turn tracking so next turn's tool_start can proceed.
+        self._started_turn_sessions.discard(session_key)
 
     def _on_token_usage(self, session_key: str, total_tokens: int, cost: float) -> None:
         """AgentRuntime token usage callback. Store and log."""
@@ -1754,3 +1756,5 @@ class AgentRuntimeHandler:
             self._on_drawer_lifecycle(session_key, agent_name_dl, "end")
         # BUG #2: Mark this session as ended (error path) — prevents stale tool_start bubbles.
         self._ended_sessions.add(session_key)
+        # BUG #14: clear started-turn tracking so next turn's tool_start can proceed.
+        self._started_turn_sessions.discard(session_key)
