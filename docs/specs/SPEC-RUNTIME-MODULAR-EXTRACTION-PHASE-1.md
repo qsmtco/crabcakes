@@ -1033,7 +1033,7 @@ The `StreamingCallKwargs` TypedDict (runtime.py line 42) and `TestStreamingSigna
 
 ### B.8 Lines freed from runtime.py
 
-~970 lines (all module-level LLM functions: cost tables at 162–190, callers at 195–422, SSE helpers at 476–1163, streaming at 863–1168, extractors at 1170–1310, converters at 286–362, _RESPONSE_FORMAT at 460).
+~970 lines from the non-overlapping range 162–1310 (cost tables at 162–190, callers at 195–422, `_RESPONSE_FORMAT` at 460, SSE helpers at 476–1163, streaming within 863–1163, converters at 286–362, extractors at 1170–1310), minus keepers `_is_empty_content` (line 1245) and `_format_chunks_for_llm` (line 1297).
 
 After Track A + Track B: `runtime.py` shrinks from 3,297 → ~2,280 lines (a 31% reduction, back below the 2,500-line threshold).
 
