@@ -921,10 +921,10 @@ cost = cost_for_model(conv.model, prompt_tok, comp_tok)
 
 #### B.4.4 Cost function call-site changes
 
-The `_call_for_summary` method (runtime.py line 3229) also uses `_cost_for_model` and `_extract_text_content` — these must be updated from the re-exports:
+The `_call_for_summary` method (runtime.py line 3229) also uses `_extract_text_content` — this must be updated from the re-exports:
 
 ```python
-# Before (runtime.py line ~3285):
+# Before (runtime.py line 3295):
 from agent.runtime import _extract_text_content
 text = _extract_text_content(response_dict, provider_name)
 
