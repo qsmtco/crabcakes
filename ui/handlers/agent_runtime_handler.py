@@ -1020,12 +1020,6 @@ class AgentRuntimeHandler:
             logger.debug("_do_tool_call_start: suppressed for ended session %s", session_key)
             return
 
-        # BUG #14: tool-only turns never reach _do_text_delta's discard. Detect the first
-        # tool_start of a new turn by tracking which sessions have started their current turn.
-        if session_key not in self._started_turn_sessions:
-            self._started_turn_sessions.add(session_key)
-            self._ended_sessions.discard(session_key)
-
         # Resolve agent name BEFORE the project guard — bubble emissions need it.
         agent_def = self._agents.get(session_key)
         agent_name = agent_def.display_name if agent_def else "Agent"
