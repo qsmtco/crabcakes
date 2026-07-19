@@ -155,7 +155,7 @@ The auditor's bug report is advice to the supervisor. The supervisor decides whe
 - Writing code per [`steelFramedCodeWriter.md`](./steelFramedCodeWriter.md) — applies every rule
 - Verifying every claim with evidence (test output, `wc -l`, `grep` output, `inspect.signature` results)
 - Reporting back with the COMPLETENESS checklist, files-changed list, and all verification command outputs
-- Fixing bugs routed back by the supervisor (the bugs originate from the auditor's adversarial probe; the builder never talks to the auditor directly — all routing goes through the supervisor)
+- Fixing bugs routed back by the supervisor (the bugs originate from the auditor's adversarial probe; the builder never talks to the auditor directly — all routing goes through the supervisor). Does not silently expand scope — flags related issues.
 
 **Does NOT own:**
 - Phasing the work
