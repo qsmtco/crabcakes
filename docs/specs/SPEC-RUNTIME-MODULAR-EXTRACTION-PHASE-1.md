@@ -343,7 +343,7 @@ def _dispatch_enforcement_status(self, session_key: str, tool_name: str, status:
 
 #### A.2.4 Call-site change in `_run_loop`
 
-The entire tool-execution block (lines 2455–2583) is replaced with:
+The entire tool-execution block (lines 2455–2581) is replaced with:
 
 ```python
 # Determine bypass_approval BEFORE entering the chain.
@@ -841,10 +841,10 @@ __all__ = [
 
 #### B.4.1 `_call_llm` method changes (runtime.py line 2655)
 
-The `_call_llm` method currently resolves the caller via `_PROVIDER_CALLERS[caller_key]` at line 2719:
+The `_call_llm` method currently resolves the caller via `_PROVIDER_CALLERS[caller_key]` at line 2762:
 
 ```python
-# Before (runtime.py lines 2719–2726):
+# Before (runtime.py lines 2762–2765):
 caller = _PROVIDER_CALLERS.get(caller_key)
 if caller is None:
     raise ValueError(...)
