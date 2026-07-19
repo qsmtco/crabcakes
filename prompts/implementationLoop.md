@@ -111,13 +111,15 @@ Multi-agent implementation work is hard to supervise. The supervisor and the bui
 
 **Standing orders:** See [`implementationSupervisor.md`](./implementationSupervisor.md) for the complete tactical playbook (channel trust, `/ask` mechanics, COMPLETENESS enforcement, verification checklist, anti-patterns).
 
-### 3.1a Mandatory Adversarial Audit on Every Turn
+### 3.1a Mandatory Adversarial Audit on Every Turn (Delegated to the Auditor)
 
-**The supervisor MUST load and apply [`adversarialDebugger.md`](./adversarialDebugger.md) on every code-bearing turn.** This is not optional and not skippable. The supervisor who audits "by pattern" without loading the prompt will miss non-obvious bugs (validated by the 2026-06-16 Auxilium Tier 2 audit, which found 2 MEDIUM bugs that pattern-based audits had missed across 5 phases).
+**The supervisor MUST delegate the adversarial audit to the auditor agent on every code-bearing turn.** This is not optional and not skippable. The supervisor who skips the audit handoff, or who audits "by pattern" without routing the code to the auditor, will miss non-obvious bugs (validated by the 2026-06-16 Auxilium Tier 2 audit, which found 2 MEDIUM bugs that pattern-based audits had missed across 5 phases).
+
+**The supervisor does not run the 11 sections itself.** The supervisor's job is to (a) identify the code-bearing turn, (b) hand the code in scope to the auditor via `/ask @{{AUDITOR_AGENT}}`, and (c) route the auditor's bug report back to the builder. The auditor owns the actual probing.
 
 **When "every turn" applies:**
 
-| Turn type | Adversarial audit required? | Why |
+| Turn type | Audit handoff to auditor required? | Why |
 |---|---|---|
 | Pre-flight (verifying spec claims before writing phase instructions) | **Yes** | Catches spec-vs-code drift before code is written |
 | Between-phase audit (after builder delivers, before next delegation) | **Yes** | This is the primary audit point |
@@ -126,11 +128,24 @@ Multi-agent implementation work is hard to supervise. The supervisor and the bui
 | Post-mortem turn | No | Post-mortems summarize the audit, they don't replace it |
 | Pure-delegation turn (no code in scope) | No | Nothing to audit |
 
-**How to apply:** Load `prompts/adversarialDebugger.md` fresh at the start of each audit turn. Work through its 11 sections against the code in scope. For each section, identify at least one adversarial probe. Run the probe. Report findings using the prompt's BUG format (BUG #[N] / Severity / Assumption violated / Attack vector / Reproduction / Root cause / Fix).
+**How the handoff works:** When a code-bearing turn arrives, the supervisor `/ask`s the auditor with: the phase scope, the files/lines in scope, and an instruction to load `prompts/adversarialDebugger.md` fresh and work through all 11 sections against the code in scope. The auditor reports findings back to the supervisor in the prompt's BUG format (BUG #[N] / Severity / Assumption violated / Attack vector / Reproduction / Root cause / Fix). The supervisor routes any bugs to the builder.
 
-**When bugs are found:** Either (a) send a bug-fix delegation to the builder before continuing the loop, or (b) escalate to the captain if the bug is out of scope. Do NOT silently incorporate fixes into a later phase — that violates the scope-creep rule and breaks the audit trail.
+**When bugs are found:** Either (a) route a bug-fix delegation to the builder before continuing the loop, or (b) escalate to the captain if the bug is out of scope. Do NOT silently incorporate fixes into a later phase — that violates the scope-creep rule and breaks the audit trail.
 
-**Tracking:** Count the number of adversarial audits performed per loop in the post-mortem §4 (Bugs Found During Audit). State explicitly which bugs were caught by adversarial audit vs. by pattern-based verification. This data feeds the standing-orders process for future loops.
+**Tracking:** Count the number of adversarial audits performed per loop in the post-mortem §4 (Bugs Found During Audit). State explicitly which bugs were caught by the auditor's adversarial audit vs. by the supervisor's independent verification (tests/diffs/greps). This data feeds the standing-orders process for future loops.
+
+### 3.1b The Auditor's Contract
+
+The auditor is a specialist: it owns the adversarial probe, nothing else. The auditor:
+
+- **Does** load `prompts/adversarialDebugger.md` fresh at the start of each audit turn and work through all 11 sections.
+- **Does** report bugs in the BUG #[N] format to the supervisor.
+- **Does NOT** fix code (that's the builder's job).
+- **Does NOT** commit or push (that's the supervisor's job).
+- **Does NOT** decide when a phase is complete (that's the supervisor's job).
+- **Does NOT** escalate to the captain directly — it reports to the supervisor, who decides escalation.
+
+The auditor's bug report is advice to the supervisor. The supervisor decides whether to route a fix, escalate, or (rarely) accept with documented justification. If the supervisor overrides an auditor finding, the override and the rationale are logged in the post-mortem §4.
 
 ### 3.2 {{BUILDER_AGENT}} (Code Writer)
 
