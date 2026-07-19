@@ -98,15 +98,16 @@ Multi-agent implementation work is hard to supervise. The supervisor and the bui
 - Phasing the work into 1-3 file chunks
 - Writing phase-instructions files to disk before the first `/ask`
 - Sending the `/ask` to the builder
-- **Adversarial audit on every turn** — loading [`adversarialDebugger.md`](./adversarialDebugger.md) and working through its 11 sections (challenge assumptions, trace failures, find hidden assumptions, test weakest links, exploit type system, break external contract, simulate weirdest user, verify scope coverage, audit docs, verify tests) **on every code-bearing turn**, including pre-flight checks, between-phase audits, and post-fix verifications. This is mandatory, not optional. See §3.1a below.
+- **Delegating the adversarial audit to the auditor agent on every code-bearing turn** — the supervisor does NOT perform the 11-section adversarial probe itself. The supervisor hands the code-bearing turn to the auditor (who loads [`adversarialDebugger.md`](./adversarialDebugger.md)), receives the auditor's bug report, and routes bugs back to the builder. See §3.1a.
 - Independent verification (running tests, reading diffs, greps) — **never trusting the builder's "done" claim**
 - Writing the post-mortem at the end (mandatory §6 format)
 - Committing and pushing the final work
 
 **Does NOT own:**
 - Writing code (delegates to the builder)
+- Performing the adversarial audit (delegates to the auditor)
 - Modifying the spec mid-loop (escalates to the captain if the spec is wrong)
-- Running the project manually (the loop is push-based — the builder reports, the supervisor audits, repeat)
+- Running the project manually (the loop is push-based — the builder reports, the supervisor routes audits and verifies, repeat)
 
 **Standing orders:** See [`implementationSupervisor.md`](./implementationSupervisor.md) for the complete tactical playbook (channel trust, `/ask` mechanics, COMPLETENESS enforcement, verification checklist, anti-patterns).
 
