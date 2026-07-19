@@ -17,7 +17,7 @@ All line numbers verified against `agent/runtime.py` at the current HEAD (2026-0
 
 | File | Lines | What I learned |
 |---|---|---|
-| `agent/runtime.py` | 3,297 | Monolith containing: AuditLog/AuditEntry classes (lines 80–156), cost tables and helpers (lines 162–190), 16 module-level LLM functions (lines 195–1168), _PROVIDER_CALLERS (line 423), _RESPONSE_FORMAT (line 460), SSE streaming helpers (lines 476–1164), _PROVIDER_STREAMERS (line 1155), tool call extractors (lines 1170–1310), AgentRuntime class (line 1605) with _run_loop (lines 2101–2600), _dispatch_approval (line 2601), _call_llm (line 2655), _call_llm_streaming (line 2788), _check_stuck (line 2909), _check_and_stop_on_limit (line 2962) |
+| `agent/runtime.py` | 3,297 | Monolith containing: AuditLog/AuditEntry classes (lines 80–156), cost tables and helpers (lines 162–190), 16 module-level LLM functions (lines 195–1168), _PROVIDER_CALLERS (line 423), _RESPONSE_FORMAT (line 460), SSE streaming helpers (lines 476–1163), _PROVIDER_STREAMERS (line 1155), tool call extractors (lines 1170–1310), AgentRuntime class (line 1605) with _run_loop (lines 2101–2600), _dispatch_approval (line 2601), _call_llm (line 2655), _call_llm_streaming (line 2788), _check_stuck (line 2909), _check_and_stop_on_limit (line 2962) |
 | `agent/tools.py` | 1,263 | Tool implementations + `ToolResult` dataclass (line 41), `execute_tool` function (line 1155), `is_sensitive_path` (line ~141) |
 | `agent/enforcement.py` | 942 | `check()` function at line 849 — single entry point called from `_run_loop` at lines 2530–2535. Returns `EnforcementResult` with `.appended_message` and `.checks` |
 | `agent/context_strategy.py` | 874 | **The template.** Protocol → Default impl → wire via constructor → telemetry dataclass → no UI imports. This spec follows the same pattern. |
@@ -333,7 +333,7 @@ self._tool_chain = ToolMiddlewareChain([
 ])
 ```
 
-Where `_dispatch_enforcement_status` is a new thin method (pattern: current dispatch at line 2541–2549):
+Where `_dispatch_enforcement_status` is a new thin method (pattern: current dispatch at lines 2540–2549):
 
 ```python
 def _dispatch_enforcement_status(self, session_key: str, tool_name: str, status: dict) -> None:
@@ -461,7 +461,7 @@ The audit log recording currently happens in `_run_loop` at lines 2571–2578. *
 
 ### A.4 Lines freed from runtime.py
 
-~45 lines (the enforcement block at 2525–2551 + the stuck detection block at 2553–2562). The approval block stays inline (temporal ordering constraint).
+~37 lines (enforcement block at 2525–2551 = 27 lines, stuck detection block at 2553–2562 = 10 lines). The approval block stays inline (temporal ordering constraint).
 
 ### A.5 Tests
 
@@ -737,7 +737,7 @@ Moves these functions verbatim:
 | `_extract_tool_calls` → `extract_tool_calls` | line 1170 |
 | `_extract_text_content` → `extract_text_content` | line 1224 |
 | `_extract_usage` → `extract_usage` | line 1277 |
-| `_is_empty_content` | line 1245 (stays in runtime.py — used by text-content placeholder logic at lines 2386, 2423, not a pure extractor) |
+| `_is_empty_content` | line 1245 (stays in runtime.py — used by text-content placeholder logic at lines 2320 and 2442, not a pure extractor) |
 
 The `_RESPONSE_FORMAT` dict (runtime.py line 460) is replaced by each provider's `.response_format` property. The extractors take an optional `response_format: str` parameter instead of looking up `_RESPONSE_FORMAT`:
 
