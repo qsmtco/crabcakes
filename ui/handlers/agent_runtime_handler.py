@@ -1414,7 +1414,16 @@ class AgentRuntimeHandler:
 
         # Phase B: end_streaming() finalizes the bubble (uses current sb.plain_text).
         # Pass resolved_name so local special agents get their header.
-        self._crh.end_streaming(session_key, agent_name=resolved_name)
+        # BUG #22: if the streaming text is empty (tool-only turn where the BUG #21
+        # empty-delta started a bubble but no content arrived), suppress the final
+        # bubble render — the streaming widget is cleaned up, but no empty header
+        # bubble is created. end_streaming's render=False does the cleanup only.
+        streaming_text = self._crh.get_streaming_text(session_key) or ""
+        self._crh.end_streaming(
+            session_key,
+            agent_name=resolved_name,
+            render=bool(streaming_text.strip()),
+        )
 
         # Non-streaming fallback: render from text argument with crabcard extraction
         # Defensive: if response completed with empty text and no streaming bubble,
