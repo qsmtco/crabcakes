@@ -475,6 +475,7 @@ The supervisor starts the implementation loop when **all** of the following are 
 - [ ] The supervisor can identify the entry points affected by the change
 - [ ] The captain (or upstream) has authorized the work (implicit for small changes, explicit for tier-level work)
 - [ ] The builder agent is reachable via `/ask` on an authorized channel (per `implementationSupervisor.md` §9.5)
+- [ ] The auditor agent is reachable via `/ask` on an authorized channel (per `implementationSupervisor.md` §9.5)
 
 If any of these is false, the supervisor escalates to the captain before proceeding.
 
