@@ -2404,7 +2404,27 @@ class SettingsHandler:
 - `on_providers_changed(list[ProviderConfig])` — fired on add/remove/edit.
 - `on_status_changed(bool)` — fired when verified status changes.
 
-### 3.21zc `ui/handlers/activity_wiring_handler.py` — Activity Wiring Handler (SPEC-activity-drawer offline + local)
+### 3.21zb `ui/views/settings_dialog.py` — Settings Dialog GTK View
+
+**Responsibility:** GTK4 dialog for managing LLM provider settings. Pure view —
+receives data from `SettingsHandler`, emits user actions back through handler
+methods. No direct file I/O or network calls.
+
+**Public API:**
+```python
+class SettingsDialog(Gtk.Dialog):
+    def __init__(self, handler: SettingsHandler): ...
+    def refresh_providers(self, providers: list[ProviderConfig]) -> None
+
+class _ProviderCard:
+    # Internal: one card per provider in the dialog's ListBox.
+    # Holds name/base_url/model/api_key entries, reveal toggle, test button.
+```
+
+**CSS classes:** `settings-provider-card`, `settings-test-button`,
+`settings-status-dot`.
+
+### 3.21zd `ui/handlers/activity_wiring_handler.py` — Activity Wiring Handler (SPEC-activity-drawer offline + local)
 
 **Responsibility:** Single owner of all ActivityDrawer event wiring — gateway AND local, online AND offline. Constructed in `window.py._build()` and `.wire()` called unconditionally at startup (no gateway required), so the drawer receives events from the first local-agent tool call onward.
 
@@ -2427,26 +2447,6 @@ class ActivityWiringHandler:
 **Extracted from:** `connection_sync_handler.sync()` (the former home of the gateway-bubble adapter closures). Moved out because `sync()` only runs on gateway connect, which broke the drawer offline.
 
 **Offline name resolution:** `_resolve_local_agent_name()` uses `AgentRuntimeHandler.get_agent_name_for_session()` (the local registry), not the gateway `AgentManager`, so agent names resolve correctly without a connection.
-
-### 3.21zb `ui/views/settings_dialog.py` — Settings Dialog GTK View
-
-**Responsibility:** GTK4 dialog for managing LLM provider settings. Pure view —
-receives data from `SettingsHandler`, emits user actions back through handler
-methods. No direct file I/O or network calls.
-
-**Public API:**
-```python
-class SettingsDialog(Gtk.Dialog):
-    def __init__(self, handler: SettingsHandler): ...
-    def refresh_providers(self, providers: list[ProviderConfig]) -> None
-
-class _ProviderCard:
-    # Internal: one card per provider in the dialog's ListBox.
-    # Holds name/base_url/model/api_key entries, reveal toggle, test button.
-```
-
-**CSS classes:** `settings-provider-card`, `settings-test-button`,
-`settings-status-dot`.
 
 ### 3.22 `ui/views/feedbar.py` — Response Status Bar (Phase 6)
 
