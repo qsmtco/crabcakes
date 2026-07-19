@@ -516,7 +516,7 @@ No re-exports needed — the middleware classes are new modules, and the old inl
 
 ### B.1 Objective
 
-Extract all 16 module-level LLM functions (lines 195–1168), the cost table (lines 162–164), `_model_id` (line 175), `_cost_for_model` (line 185), `_RESPONSE_FORMAT` (line 460), and all SSE/streaming/SSL helpers (lines 476–1164) into a new `agent/llm/` package.
+Extract all 16 module-level LLM functions (lines 195–1168), the cost table (lines 162–164), `_model_id` (line 175), `_cost_for_model` (line 185), `_RESPONSE_FORMAT` (line 460), and all SSE/streaming/SSL helpers (lines 476–1163) into a new `agent/llm/` package.
 
 ### B.2 New package: `agent/llm/`
 
