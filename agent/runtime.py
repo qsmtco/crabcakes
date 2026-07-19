@@ -2108,6 +2108,16 @@ class AgentRuntime:
                 self._dispatch(self._on_error, session_key, "No conversation found")
                 return
 
+        # BUG #21: Fire a turn-start signal BEFORE any LLM call or tool processing.
+        # This guarantees the handler clears _ended_sessions and emits the drawer
+        # lifecycle-start separator for EVERY turn — including tool-only turns
+        # (LLM streams zero text_delta events). Reuses _on_text_delta with an
+        # empty string: the handler's _do_text_delta clears the flag on the first
+        # delta of a turn (is_streaming is False), and the empty content is a
+        # harmless no-op for text accumulation.
+        if self._on_text_delta:
+            self._dispatch(self._on_text_delta, session_key, "")
+
         try:
             # Step 1: add user message
             conv.add_user_message(text)
