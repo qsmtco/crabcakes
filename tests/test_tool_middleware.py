@@ -323,7 +323,8 @@ class TestToolMiddlewareChain:
 
 
 class TestSadPath:
-    """3 sad-path tests: enforcement crash, stuck crash, empty chain."""
+    """6 sad-path tests: enforcement crash, stuck crash, empty chain,
+    plus 3 regression tests for Phase A1 audit fixes."""
 
     def test_enforcement_check_raises_does_not_crash_loop(self) -> None:
         """Exception in enforcement.check is caught; original result returned."""
@@ -370,3 +371,55 @@ class TestSadPath:
         assert result.success is True
         assert result.output == "direct call"
         executor.assert_called_once()
+
+    # ── Phase A1 audit fix regression tests ────────────────────────────────
+
+    def test_enforcement_on_status_callback_raises_does_not_crash_loop(self):
+        """BUG #1 regression: on_status callback exception must be caught."""
+        enf_check = MagicMock(return_value=EnforcementResult(
+            checks=[EnforcementCheck(tier="syntax", tool="write_file", file="x.py",
+                                      passed=True, detail="OK", output="", duration_ms=1)],
+            appended_message="Syntax: OK",
+        ))
+        def bad_callback(*a, **kw):
+            raise RuntimeError("UI disconnected")
+        mw = EnforcementMiddleware(enf_check, on_status=bad_callback)
+        executor = MagicMock(return_value=ToolResult(success=True, output="wrote 42 bytes"))
+        ctx = ToolContext(
+            session_key="special:coder", project_path="/p", iteration=0,
+            enforcement_config=_make_enf_config(),
+        )
+        # Must NOT raise — must return a result
+        result = mw("write_file", {"path": "x.py"}, ctx, executor)
+        assert result.success is True
+
+    def test_enforcement_malformed_return_does_not_crash_loop(self):
+        """BUG #2 regression: malformed enforcement_check_fn return must be caught."""
+        enf_check = MagicMock(return_value=None)  # malformed — no .appended_message
+        mw = EnforcementMiddleware(enf_check)
+        executor = MagicMock(return_value=ToolResult(success=True, output="wrote 42 bytes"))
+        ctx = ToolContext(
+            session_key="special:coder", project_path="/p", iteration=0,
+            enforcement_config=_make_enf_config(),
+        )
+        # Must NOT raise — must return the original result unchanged
+        result = mw("write_file", {"path": "x.py"}, ctx, executor)
+        assert result.success is True
+        assert result.output == "wrote 42 bytes"
+
+    def test_stuck_check_log_format_string_correct(self):
+        """BUG #3 regression: log message uses tool_name for 'for %s' slot, not session_key."""
+        stuck_check = MagicMock(side_effect=ValueError("boom"))
+        mw = StuckDetectionMiddleware(stuck_check, {})
+        executor = MagicMock(return_value=ToolResult(success=True, output="ok"))
+        ctx = ToolContext(session_key="special:coder", project_path="/p", iteration=0)
+        with patch("agent.tool_middleware.logger.exception") as mock_exc:
+            mw("read_file", {"path": "x.py"}, ctx, executor)
+            mock_exc.assert_called_once()
+            # First positional arg is the format string; second is the first %s value.
+            # It must be tool_name ("read_file"), NOT session_key ("special:coder").
+            call_args = mock_exc.call_args
+            first_arg = call_args[0][1]
+            assert first_arg == "read_file", (
+                f"Expected tool_name 'read_file', got {first_arg!r}"
+            )
