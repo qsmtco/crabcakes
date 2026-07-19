@@ -1003,6 +1003,10 @@ _PROVIDER_STREAMERS = {
 
 **Note:** The `_RESPONSE_FORMAT` dict (line 460) is NOT re-exported — it is replaced by `provider.response_format`. Any code that referenced `_RESPONSE_FORMAT` must be updated to use `get_provider(provider_name).response_format`. This is verified by `grep -rn "_RESPONSE_FORMAT" agent/runtime.py` returning zero matches after migration.
 
+**Note (__all__ compatibility):** The following symbols are already in `agent/runtime.py`'s `__all__` (lines 62–74): `SSEEvent`, `_PROVIDER_CALLERS`, `_PROVIDER_STREAMERS`, `_extract_tool_calls`, `_extract_text_content`, `_extract_usage`, `_cost_for_model`, `_is_retryable_ssl_error`, `_stream_with_ssl_retry`, `_friendly_error_message`. These only need to be re-imported as aliases from the new modules; the `__all__` entries do not need to change.
+
+**Note (bound-method awareness):** `_call_openai = OpenAIProvider("openai").call` produces a bound method, not a free function. No tests use `inspect.signature()` on these, so it's compatible, but the implementer should be aware.
+
 ### B.6 StreamingCallKwargs and TestStreamingSignature
 
 The `StreamingCallKwargs` TypedDict (runtime.py line 42) and `TestStreamingSignature` regression test (test_agent_runtime.py line 1841, previously 1413) must continue to pass unchanged.
