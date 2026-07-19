@@ -257,7 +257,7 @@ If the spec says "use Gtk.Dialog in the handler" and ARCHITECTURE.md says "no GT
 Within the constraints of ARCHITECTURE.md, the spec defines what the feature must do: the public API of new functions, the user-visible behavior, the acceptance criteria, the file structure for the feature. If the spec is silent on a question (e.g., "what should the timeout be?"), ARCHITECTURE.md or existing codebase conventions supply the answer — the supervisor picks the most consistent choice and flags it in the post-mortem as a "spec gap."
 
 **Rule 3: The code is the artifact, not the authority.**
-If the code does X but the spec says Y, the code is wrong. If the code does X but ARCHITECTURE.md forbids X, the code is wrong (and the spec would be wrong too if it asked for X). The supervisor's audit (via `adversarialDebugger.md`) is the mechanism for catching both kinds of mismatch.
+If the code does X but the spec says Y, the code is wrong. If the code does X but ARCHITECTURE.md forbids X, the code is wrong (and the spec would be wrong too if it asked for X). The auditor's adversarial probe (via `adversarialDebugger.md`, delegated by the supervisor) is the mechanism for catching both kinds of mismatch.
 
 **Rule 4: When the spec is wrong, fix the spec — not the code, not the architecture.**
 A spec bug discovered mid-loop is escalated to the captain. The supervisor pauses the affected phase, the captain (or spec author) updates the spec, and the loop resumes. The post-mortem logs the spec fix as a process event. The architecture is never bent to fit a bad spec; the spec is corrected to fit the architecture.
