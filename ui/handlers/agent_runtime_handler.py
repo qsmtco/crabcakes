@@ -575,7 +575,7 @@ class AgentRuntimeHandler:
     def get_agent_name_for_session(self, session_key: str) -> str:
         """Return the display name of the local special agent that owns this session, or ''.
 
-        Used by the local exec adapter (in connection_sync_handler.py) to populate
+        Used by the local exec adapter (in activity_wiring_handler.py) to populate
         ActivityBubble.agent_name so the activity drawer shows the right agent name
         in the [Agent] column. Mirrors the fallback chain in
         ActivityHandler._resolve_agent_name, but resolves locally via session_key
