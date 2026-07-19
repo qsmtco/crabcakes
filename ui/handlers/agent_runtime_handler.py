@@ -999,13 +999,19 @@ class AgentRuntimeHandler:
         # BUG #2: Suppress tool_start for sessions that have already ended
         # (cancel/error/complete). Prevents orphan tool_start bubbles from
         # stale idle_add dispatches that arrive after the session ended.
+        # BUG #2 / BUG #18: Suppress ALL tool_start dispatches that arrive while
+        # the session is in the ended state. We do NOT clear the flag here —
+        # clearing on the first stale call let a second stale call proceed
+        # (BUG #18). The flag is cleared only by _do_text_delta when a genuine
+        # new turn begins streaming.
+        # Known limitation (BUG #14): a tool-only turn (no streaming text) whose
+        # first tool_start arrives before any text delta will be suppressed.
+        # This is the correct tradeoff: we cannot distinguish "stale call from
+        # the previous turn" from "first call of a new tool-only turn" at the
+        # call site, and suppressing a legitimate first bubble is less harmful
+        # than emitting an orphan after the session ended.
         if session_key in self._ended_sessions:
-            # Stale dispatch from a previous turn (cancelled/completed).
-            # The flag is cleared here so the NEXT tool_start of a new turn
-            # is not suppressed. This handles tool-only turns that never
-            # pass through _do_text_delta's discard path (BUG #14).
-            logger.debug("_do_tool_call_start: stale call suppressed, clearing ended flag for %s", session_key)
-            self._ended_sessions.discard(session_key)
+            logger.debug("_do_tool_call_start: suppressed for ended session %s", session_key)
             return
 
         # Resolve agent name BEFORE the project guard — bubble emissions need it.
