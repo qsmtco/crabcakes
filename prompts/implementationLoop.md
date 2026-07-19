@@ -1,10 +1,10 @@
 # Implementation Loop
 
-> **Status:** Authoritative loop architecture. All implementation work in this project that goes through a supervisor + builder pair MUST follow this loop. Deviations must be explicitly justified in the post-mortem.
+> **Status:** Authoritative loop architecture. All implementation work in this project that goes through a supervisor + builder + auditor trio MUST follow this loop. Deviations must be explicitly justified in the post-mortem.
 >
 > **Scope:** This prompt defines the **loop architecture** — the diagram, role boundaries, the four-prompt composition, the spec/architecture authority hierarchy, entry/exit conditions, and the **mandatory post-mortem format**. It does **not** repeat the supervisor's day-to-day tactics (channel trust, `/ask` payload mechanics, COMPLETENESS checklist, verification grep patterns, post-mortem trigger conditions). Those live in [`implementationSupervisor.md`](./implementationSupervisor.md) and are referenced, not duplicated, here.
 >
-> **Genericity:** This prompt is written for the crabcakes project but is **agent-pair-agnostic**. The roles `{{SUPERVISOR_AGENT}}` and `{{BUILDER_AGENT}}` are placeholders. For the canonical crabcakes instance, the supervisor is who ever has the role SUPERVISOR and the builder is who ever has the role CODER. To port this loop to another project, copy this file and substitute the prompt paths, the architecture document, and the spec convention.
+> **Genericity:** This prompt is written for the crabcakes project but is **agent-trio-agnostic**. The roles `{{SUPERVISOR_AGENT}}`, `{{BUILDER_AGENT}}`, and `{{AUDITOR_AGENT}}` are placeholders. For the canonical crabcakes instance, the supervisor is who ever has the role SUPERVISOR, the builder is who ever has the role CODER, and the auditor is who ever has the role DEBUGGER. To port this loop to another project, copy this file and substitute the prompt paths, the architecture document, and the spec convention.
 
 ---
 
