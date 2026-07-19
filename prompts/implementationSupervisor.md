@@ -240,7 +240,7 @@ This pattern has zero truncation failures because the file path is the only thin
 
 ### 9.7 The `/ask` Acknowledgment Pattern
 
-After sending a delegation, do **not** poll, sleep, or re-send. Wait for the builder's response in the same chat. When the response arrives, audit it before sending the next delegation. The flow is push-based, not poll-based: the captain sees the builder's response, the supervisor audits, and the next delegation follows.
+After sending a delegation, do **not** poll, sleep, or re-send. Wait for the agent's response in the same chat. When the response arrives, route it through the loop (builder delivery → auditor probe → your independent verification → next delegation). The flow is push-based, not poll-based: the agent responds, you process it, and the next delegation follows.
 
 ### 9.8 What to Do When `/ask` Fails
 
