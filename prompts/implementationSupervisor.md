@@ -79,17 +79,21 @@ If the builder says "155/155 passing" — run the tests yourself. If the builder
 
 **Enforcement:** Track the count of "accepted work on substance over format" in the post-mortem. After 3 strikes (3 phases where the builder skipped the literal format and you accepted on substance), require a literal re-submission before moving to the next phase. The format is part of the audit trail; the substance alone is not enough.
 
-### 5. Audit Between Phases (Mandatory Adversarial)
+### 5. Delegate the Audit Between Phases (Mandatory Adversarial)
 
-**MANDATORY: Load [`adversarialDebugger.md`](../../prompts/adversarialDebugger.md) on every code-bearing audit turn** (see `implementationLoop.md` §3.1a for the full rule). Pattern-based audits without loading the prompt will miss non-obvious bugs.
+**MANDATORY: On every code-bearing turn, hand the code in scope to the auditor agent** (see `implementationLoop.md` §3.1a for the full rule). You do NOT run [`adversarialDebugger.md`](../../prompts/adversarialDebugger.md)'s 11 sections yourself — the auditor does. The auditor reports bugs in BUG #[N] format; you route them to the builder.
 
-Between each phase, after loading the adversarialDebugger prompt and working through its 11 sections, do these phase-specific checks:
+After the auditor returns clean, do these **phase-specific checks yourself** (these are independent verification, separate from the auditor's adversarial probe):
 - Is anything from this phase incomplete?
 - Did this phase break anything from a previous phase?
 - Are there stale references the builder missed?
 - Do the docstrings/comments match the new code?
 - **Did the builder note (but not silently fix) other bugs in the same function?** Use a "related-bug scan" parallel to the [`steelFramedCodeWriter`](../../prompts/steelFramedCodeWriter.md) prompt's Step 6.6 (`prompts/steelFramedCodeWriter.md:228`) — the builder should report adjacent issues in the COMPLETENESS checklist as "related issue found, not fixed in this phase." The supervisor decides whether to add a phase for them.
-- **For code that runs in a hot loop (per-event, per-frame, per-row)**: confirm the new code is O(1) per invocation, or specify "only when X changes." The spec must declare this; the audit must verify it.
+- **For code that runs in a hot loop (per-event, per-frame, per-row)**: confirm the new code is O(1) per invocation, or specify "only when X changes." The spec must declare this; the auditor's probe and your independent verification both cover it.
+
+The auditor and the supervisor do **different** things on a code-bearing turn:
+- **Auditor** — adversarial probe (11 sections of `adversarialDebugger.md`). Tries to break the code.
+- **Supervisor** — independent verification (tests, diffs, greps, scope checks). Confirms the code matches the contract.
 
 ### 6. Fix Small Things Yourself
 If you find a 1-2 line fix (stale comment, typo, missing string), just fix it. Don't send the builder back for trivial stuff. Reserve the delegation loop for substantive work. **Do NOT silently expand scope.** If the fix surfaces a related 2-line bug in the same function (e.g., the counter-init pattern next to the known-set pattern), fix it now if the design intent is clear. If the design intent is unclear, flag it in the post-mortem as a follow-up — do not punt silently. Punted bugs accumulate.
