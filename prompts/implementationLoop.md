@@ -530,7 +530,7 @@ When a new implementation loop starts, the supervisor reads the most recent post
 
 - **Tactics for the supervisor** (channel trust, `/ask` mechanics, COMPLETENESS enforcement, anti-patterns): [`implementationSupervisor.md`](./implementationSupervisor.md)
 - **How the builder writes code** (read-before-touch, hard-part-first, verify-every-claim, wire-it-or-delete-it): [`steelFramedCodeWriter.md`](./steelFramedCodeWriter.md)
-- **How the supervisor audits** (challenge assumptions, trace backwards, test weakest links, break the contract): [`adversarialDebugger.md`](./adversarialDebugger.md)
+- **How the auditor audits** (challenge assumptions, trace backwards, test weakest links, break the contract): [`adversarialDebugger.md`](./adversarialDebugger.md) — loaded by the auditor on every code-bearing turn, delegated by the supervisor
 - **How the spec is written** (acceptance criteria, phased deliverables, completion markers): [`steelFramedSpecWriter.md`](./steelFramedSpecWriter.md)
 
 ---
