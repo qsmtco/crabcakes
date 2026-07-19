@@ -591,16 +591,17 @@ class ChatRenderHandler:
                 if agent_mgr is not None:
                     resolved_name = agent_mgr.get_name(session_key)
 
-            # Build and append final bubble
-            final_bubble = build_role_bubble(
-                sb.role, full_text,
-                on_forward_click=self._on_forward_message,
-                session_key=session_key,
-                agent_name=resolved_name,
-            )
-            sb.container.append(final_bubble)
-            if self._main_content is not None:
-                self._main_content.scroll_chat_to_bottom()
+            if render:
+                # Build and append final bubble
+                final_bubble = build_role_bubble(
+                    sb.role, full_text,
+                    on_forward_click=self._on_forward_message,
+                    session_key=session_key,
+                    agent_name=resolved_name,
+                )
+                sb.container.append(final_bubble)
+                if self._main_content is not None:
+                    self._main_content.scroll_chat_to_bottom()
 
         self._dispatch(_finalize)
         # Reset message grouping key so next message starts fresh
