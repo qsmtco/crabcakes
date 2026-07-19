@@ -1130,7 +1130,10 @@ class AgentRuntimeHandler:
                 else:
                     output_text = str(result) if result else ""
                     error_text = ""
-                    card_success = True
+                    # BUG #17: use the runtime-dispatched param, not a hard-coded True.
+                    # A string result with success=False is a denied/failed tool — the
+                    # card must agree with the bubble's tool_error classification.
+                    card_success = success
                     duration = 0
 
                 # Truncate display
