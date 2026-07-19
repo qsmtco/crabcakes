@@ -134,20 +134,28 @@ Multi-agent implementation work is hard to supervise. The supervisor and the bui
 
 **Tracking:** Count the number of adversarial audits performed per loop in the post-mortem §4 (Bugs Found During Audit). State explicitly which bugs were caught by the auditor's adversarial audit vs. by the supervisor's independent verification (tests/diffs/greps). This data feeds the standing-orders process for future loops.
 
-### 3.1b The Auditor's Contract
+### 3.2 {{AUDITOR_AGENT}} (Adversarial Auditor)
 
-The auditor is a specialist: it owns the adversarial probe, nothing else. The auditor:
+The auditor is a specialist role: it owns the adversarial probe, nothing else. It is the third leg of the trio and is invoked on every code-bearing turn by delegation from the supervisor.
 
-- **Does** load `prompts/adversarialDebugger.md` fresh at the start of each audit turn and work through all 11 sections.
-- **Does** report bugs in the BUG #[N] format to the supervisor.
-- **Does NOT** fix code (that's the builder's job).
-- **Does NOT** commit or push (that's the supervisor's job).
-- **Does NOT** decide when a phase is complete (that's the supervisor's job).
-- **Does NOT** escalate to the captain directly — it reports to the supervisor, who decides escalation.
+**Owns:**
+- Loading `prompts/adversarialDebugger.md` fresh at the start of each audit turn
+- Working through all 11 sections (challenge assumptions, trace failures, find hidden assumptions, test weakest links, exploit type system, break external contract, simulate weirdest user, verify scope coverage, audit docs, verify tests match) against the code in scope
+- Reporting bugs in the BUG #[N] format (Severity / Assumption violated / Attack vector / Reproduction / Root cause / Fix) to the supervisor
+- Reporting "no bugs found" explicitly when a probe comes back clean (silence is not acceptance)
+
+**Does NOT own:**
+- Fixing code (that's the builder's job)
+- Committing or pushing (that's the supervisor's job)
+- Deciding when a phase is complete (that's the supervisor's job)
+- Talking to the builder directly (all routing goes through the supervisor)
+- Escalating to the captain directly (it reports to the supervisor, who decides escalation)
+
+**Standing orders:** See [`adversarialDebugger.md`](./adversarialDebugger.md) for the complete auditor playbook (the 11 sections, the BUG format, the "prove the code is fragile" stance).
 
 The auditor's bug report is advice to the supervisor. The supervisor decides whether to route a fix, escalate, or (rarely) accept with documented justification. If the supervisor overrides an auditor finding, the override and the rationale are logged in the post-mortem §4.
 
-### 3.2 {{BUILDER_AGENT}} (Code Writer)
+### 3.3 {{BUILDER_AGENT}} (Code Writer)
 
 **Owns:**
 - Reading the phase-instructions file in full before writing any code
@@ -165,7 +173,7 @@ The auditor's bug report is advice to the supervisor. The supervisor decides whe
 
 **Standing orders:** See [`steelFramedCodeWriter.md`](./steelFramedCodeWriter.md) for the complete builder playbook (read-before-touch, hard-part-first, verify-every-claim, wire-it-or-delete-it, no-fabricated-APIs, etc.).
 
-### 3.3 The Contracts Between Them
+### 3.4 The Contracts Between Them
 
 There are two delegation contracts in the trio: **supervisor → builder** (the build delegation) and **supervisor → auditor** (the audit delegation). The builder and the auditor never communicate directly.
 
