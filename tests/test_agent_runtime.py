@@ -4184,3 +4184,34 @@ class TestLocalAgentDrawerEmissions:
         assert len(start_events) == 1, (
             f"BUG #21: expected 1 lifecycle-start event, got {len(start_events)}: {self._lifecycle_events}"
         )
+
+    # ── BUG #22: tool-only turn must not render empty chat bubble ───────
+
+    def test_tool_only_turn_no_empty_chat_bubble(self):
+        """Regression for BUG #22: a tool-only turn (empty streaming text) must
+        not render an empty header bubble in the chat.
+
+        The BUG #21 fix dispatches an empty _on_text_delta to clear _ended_sessions,
+        which starts a streaming bubble. At turn end, end_streaming must suppress
+        the final bubble render when the streaming text is empty.
+        """
+        handler, crh, mc = self._make_handler_with_agent()
+        crh.is_streaming.return_value = False
+        chat_box = MagicMock()
+        handler._resolve_chat_box = MagicMock(return_value=chat_box)
+        handler._crh = crh
+        # Stub get_streaming_text to return empty string (tool-only turn, no content)
+        crh.get_streaming_text.return_value = ""
+
+        # Simulate the BUG #21 empty-delta turn-start (starts a streaming bubble)
+        handler._do_text_delta("special:coder", "")
+        # Simulate turn end with no text content (tool-only turn)
+        handler._do_response_complete("special:coder", "")
+
+        # end_streaming must have been called with render=False (empty text suppressed)
+        crh.end_streaming.assert_called_once()
+        call_kwargs = crh.end_streaming.call_args.kwargs
+        assert call_kwargs.get("render") is False, (
+            f"BUG #22: end_streaming should be called with render=False for empty text; "
+            f"got kwargs={call_kwargs}"
+        )
