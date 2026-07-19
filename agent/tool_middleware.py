@@ -190,8 +190,8 @@ class StuckDetectionMiddleware:
             )
         except Exception:
             logger.exception(
-                "Stuck check failed for %s (session=%s, tool=%s):",
-                ctx.session_key, ctx.session_key, tool_name,
+                "Stuck check failed for %s (session=%s):",
+                tool_name, ctx.session_key,
             )
             return result
 
