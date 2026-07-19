@@ -244,7 +244,43 @@ After sending a delegation, do **not** poll, sleep, or re-send. Wait for the age
 
 ### 9.8 What to Do When `/ask` Fails
 
-- **Builder does not respond within a reasonable window:** re-read your payload. If it is well-formed, the channel trust may be the issue (see §9.5). Do not send the same payload twice in quick succession — that risks duplication if the builder eventually responds.
-- **Builder responds with blockers:** address each blocker precisely. A blocker like "I cannot read the file at X" requires you to verify X exists and re-send with the corrected path. A blocker like "I do not have authorization" requires a channel-trust confirmation.
-- **Builder responds with refusal to do the work:** this is a sign the delegation asked for something outside scope or violated the builder's standing orders. Re-read the standing orders, then either narrow the delegation or escalate to the captain.
+These failure modes apply to both the builder and the auditor — substitute the role as appropriate.
+
+- **Agent does not respond within a reasonable window:** re-read your payload. If it is well-formed, the channel trust may be the issue (see §9.5). Do not send the same payload twice in quick succession — that risks duplication if the agent eventually responds.
+- **Agent responds with blockers:** address each blocker precisely. A blocker like "I cannot read the file at X" requires you to verify X exists and re-send with the corrected path. A blocker like "I do not have authorization" requires a channel-trust confirmation.
+- **Agent responds with refusal to do the work:** this is a sign the delegation asked for something outside scope or violated the agent's standing orders. Re-read the standing orders, then either narrow the delegation or escalate to the captain.
 - **`/ask` returns a system error or is rejected silently:** the payload is malformed. Verify the four required components in §9.3 and the escape rules in §9.4.
+- **Auditor is unreachable on an authorized channel for a full audit cycle:** this is a loop stop condition (see `implementationLoop.md` §7.3). You cannot substitute your own audit — escalate to the captain.
+
+### 9.9 Context Management via `/clear`
+
+You can manage the context windows of the builder and auditor with the `/clear` slash command, which resets an agent's conversation context to empty. This is a **supervisor-only capability** — used to keep delegations clean and prevent context bleed across phases.
+
+**When to clear (default policy):**
+- **Between phases, once the phase comes back clean** — clear both the builder and the auditor after a phase is signed off, before starting the next phase. This prevents the accumulating context of phase N from coloring phase N+1.
+- **Before each fresh audit handoff** — clear the auditor before handing it a new code-bearing turn, so its probe is not biased by the previous turn's findings.
+- **After a long bug-fix loop** — once the loop closes, clear before moving on.
+
+**When NOT to clear (at your discretion):**
+- **Mid bug-fix loop** — do NOT clear while the builder is iterating on a fix Debugger flagged. The builder needs the bug context (the report, the failed approaches, the auditor's reproduction) to land the fix. Clearing mid-loop forces re-explaining the bug and breaks the feedback cycle.
+- **When an agent's current context is explicitly relevant to the next delegation.** If you judge that retaining context between phases produces better results (e.g., phase N+1 builds directly on phase N's data structures and the builder's mental model is valuable), you may skip the clear. This is your call.
+
+**The `/clear` + `/ask` pairing rule (mandatory):**
+
+You must **never** issue `/clear` alone. It must be issued in the **same chat output** as the `/ask`, with `/clear` first:
+
+```
+/clear @Coder
+/ask @Coder "phase 2 instructions — please write per docs/specs/PHASE-2-INSTRUCTIONS.md"
+```
+
+```
+/clear @Debugger
+/ask @Debugger "please audit per adversarialDebugger.md — scope: ui/handlers/chat_handler.py:120-180"
+```
+
+**Why the pairing rule exists:** issuing `/clear` alone wastes a turn — the agent's context is wiped but it has no task, so it idles or asks what to do. Pairing `/clear` with `/ask` in the same output makes the reset atomic: context cleared, new task delivered, no wasted round-trip.
+
+**Which agents you can clear:** the builder (Coder) and the auditor (Debugger). Do not clear other project members (the captain, remote agents, the QTR/Qaster tech writers) without explicit direction.
+
+**Tracking:** note in the post-mortem §5 (Process: What Worked) or §6 (Process: What Didn't) whether the `/clear` cadence you chose helped or hurt. Over-clearing loses useful context; under-clearing lets stale assumptions bleed across phases. The right cadence is a judgment call worth recording.
