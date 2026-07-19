@@ -541,7 +541,7 @@ class ChatRenderHandler:
         container.append(bubble)
         return container
 
-    def end_streaming(self, session_key: str, agent_name: str = None):
+    def end_streaming(self, session_key: str, agent_name: str = None, render: bool = True):
         """
         End streaming for session_key: remove cursor and replace with final bubble.
 
