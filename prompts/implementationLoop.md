@@ -500,6 +500,7 @@ The supervisor aborts the loop and escalates to the captain when:
 
 - The spec is fundamentally broken (contradicts itself, references nonexistent systems, or conflicts with the captain's intent)
 - The builder fails the same phase three times after full delegation cycles
+- The auditor is unreachable on an authorized channel for a full audit cycle (the supervisor cannot substitute its own audit — see §3.1a)
 - The loop uncovers a pre-existing critical bug that blocks the work
 - The captain revokes authorization mid-loop
 
