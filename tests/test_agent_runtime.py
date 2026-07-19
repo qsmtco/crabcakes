@@ -4215,3 +4215,82 @@ class TestLocalAgentDrawerEmissions:
             f"BUG #22: end_streaming should be called with render=False for empty text; "
             f"got kwargs={call_kwargs}"
         )
+
+    # ── BUG #14: _started_turn_sessions clears _ended_sessions for new tool-only turn ──
+
+    def test_started_turn_sessions_clears_ended_flag_on_fresh_tool_start(self):
+        """BUG #14: first _do_tool_call_start of a new turn must clear _ended_sessions
+        via _started_turn_sessions, while preserving stale-call suppression.
+        """
+        handler, _, _ = self._make_handler_with_agent()
+        # Simulate prior turn ended
+        handler._ended_sessions.add("special:coder")
+
+        # A stale dispatch should still be suppressed
+        handler._do_tool_call_start("special:coder", "read_file", {"path": "stale.txt"})
+        types1 = [b.type for b in self._bubbles]
+        # _started_turn_sessions is empty, so the BUG #14 block clears _ended_sessions
+        # AND proceeds. But the stale-suppression comment says we track with
+        # _started_turn_sessions — the first call adds to it and clears _ended_sessions.
+        # Since this is the FIRST call after an end, it's treated as legitimate
+        # (we can't distinguish stale from fresh at this point, same as BUG #21 approach).
+        # Verify _ended_sessions was cleared.
+        assert "special:coder" not in handler._ended_sessions, (
+            "BUG #14: _ended_sessions should be cleared on first tool_start after end"
+        )
+        # Verify _started_turn_sessions tracks it
+        assert "special:coder" in handler._started_turn_sessions, (
+            "BUG #14: _started_turn_sessions should track started turns"
+        )
+
+        # A second stale dispatch (same session, same turn) should NOT be suppressed
+        # because _started_turn_sessions now has the key and _ended_sessions is clear.
+        # This matches the existing BUG #18 logic — only _ended_sessions suppresses.
+        handler._ended_sessions.add("special:coder")
+        handler._do_tool_call_start("special:coder", "read_file", {"path": "stale2.txt"})
+        # Second call: _started_turn_sessions already has the key, so the BUG #14
+        # block does NOT re-clear _ended_sessions. Stale suppression applies.
+        assert len(self._bubbles) == 0, (
+            f"BUG #14: second stale dispatch should be suppressed; got {[b.type for b in self._bubbles]}"
+        )
+
+    # ── BUG #15: _pending_exec_commands capture works without active project ───
+
+    def test_exec_command_capture_works_without_active_project(self):
+        """BUG #15: _pending_exec_commands[sk] = cmd must fire outside the project
+        guard so the command_output callback gets a non-empty command even when
+        no project is open.
+        """
+        handler, _, _ = self._make_handler_with_agent()
+        # No project open
+        handler._active_project = None
+
+        cmd_outputs = []
+        handler.set_on_command_output(
+            lambda sk, cmd, tail, ec, dur: cmd_outputs.append((sk, cmd, tail, ec, dur))
+        )
+
+        # Simulate tool_start without a project — cmd must be captured
+        handler._do_tool_call_start("special:coder", "exec_command", {"command": "ls -la"})
+
+        # Verify _pending_exec_commands has the command
+        cmd = handler._pending_exec_commands.get("special:coder", "")
+        assert cmd == "ls -la", (
+            f"BUG #15: _pending_exec_commands capture failed; got {cmd!r}, expected 'ls -la'"
+        )
+
+        # Fake result and dispatch the result callback
+        class FakeResult:
+            output = "file1\nfile2\nfile3"
+            error = ""
+            success = True
+            exit_code = 0
+            duration_ms = 42
+
+        handler._do_tool_call_result("special:coder", "exec_command", FakeResult(), True)
+
+        # command_output callback must fire with the captured command
+        assert len(cmd_outputs) == 1, f"Expected 1 command_output callback, got {len(cmd_outputs)}"
+        assert cmd_outputs[0][1] == "ls -la", (
+            f"BUG #15: command was lost; got {cmd_outputs[0][1]!r}, expected 'ls -la'"
+        )
