@@ -165,9 +165,11 @@ The auditor's bug report is advice to the supervisor. The supervisor decides whe
 
 **Standing orders:** See [`steelFramedCodeWriter.md`](./steelFramedCodeWriter.md) for the complete builder playbook (read-before-touch, hard-part-first, verify-every-claim, wire-it-or-delete-it, no-fabricated-APIs, etc.).
 
-### 3.3 The Contract Between Them
+### 3.3 The Contracts Between Them
 
-The supervisor's `/ask` payload is the **delegation contract**. The builder's response is the **delivery**. The contract has four required parts:
+There are two delegation contracts in the trio: **supervisor → builder** (the build delegation) and **supervisor → auditor** (the audit delegation). The builder and the auditor never communicate directly.
+
+**Supervisor → Builder (build delegation):** The supervisor's `/ask` payload is the **delegation contract**. The builder's response is the **delivery**. The contract has four required parts:
 
 1. **Phase scope** — exact files and line numbers (or exact identifiers, when line numbers may have drifted)
 2. **Rule reference** — `prompts/steelFramedCodeWriter.md` (the builder must invoke it)
@@ -175,6 +177,15 @@ The supervisor's `/ask` payload is the **delegation contract**. The builder's re
 4. **Deliverable expectations** — files-changed list, verification outputs, COMPLETENESS checklist, related issues (flagged, not silently fixed)
 
 A delivery that lacks any of the four is incomplete. The supervisor sends the delivery back. See `implementationSupervisor.md` §3 (Short, Sharp Delegations) for the full template.
+
+**Supervisor → Auditor (audit delegation):** The supervisor's `/ask` payload is the **audit handoff**. The auditor's response is the **bug report**. The contract has four required parts:
+
+1. **Code scope** — exact files and line ranges (or identifiers) the auditor must probe
+2. **Rule reference** — `prompts/adversarialDebugger.md` (the auditor must load it fresh)
+3. **Word marker** — a known phrase (e.g., "please audit", "audit when ready") so the channel knows the message is canonical
+4. **Deliverable expectations** — bugs reported in BUG #[N] format (Severity / Assumption violated / Attack vector / Reproduction / Root cause / Fix); explicit "no bugs found" if clean; one probe per section minimum
+
+A bug report that lacks the BUG format or skips sections is incomplete. The supervisor sends the audit back for completion. The auditor never routes bugs to the builder directly — all bug routing goes through the supervisor.
 
 ---
 
