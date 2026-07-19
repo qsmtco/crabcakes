@@ -405,7 +405,7 @@ result = self._tool_chain.run(
     executor=lambda: execute_tool(
         tool_name, args, conv.project_path, session_key,
         approval_callback=(lambda *a: True) if bypass_approval else None,
-        allowed_tools=conv.allowed_tools,  # current code passes this at line 2519
+        allowed_tools=conv.allowed_tools,  # current code passes this at line 2521
     ),
 )
 
