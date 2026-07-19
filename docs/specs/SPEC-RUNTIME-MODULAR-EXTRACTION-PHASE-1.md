@@ -5,31 +5,32 @@
 **Spec writer:** Steel-Framed Code Writer (no deviations)
 **Status:** Draft — awaiting captain approval
 **Estimated effort:** 8–11 days (two tracks, sequential within each track)
+**Last updated:** 2026-07-17 — refreshed line anchors and code samples against current source (commit pending, `wc -l` = 3,297 lines; spec originally written against `39432d2` at 2,495 lines)
 
 ---
 
 ## 0. Discovery
 
-All line numbers verified against `agent/runtime.py` at commit `39432d2` (2026-06-28, `wc -l` = 2,495 lines).
+All line numbers verified against `agent/runtime.py` at the current HEAD (2026-07-17, `wc -l` = 3,297 lines).
 
 ### Files read during discovery
 
 | File | Lines | What I learned |
 |---|---|---|
-| `agent/runtime.py` | 2,495 | Monolith containing 15 module-level LLM functions, 3 cost functions, AuditLog/AuditEntry classes, _run_loop (lines 1671–2082), _call_llm (2132–2240), _call_llm_streaming (2241–2351), _check_stuck (2353–2409), _check_and_stop_on_limit (2410–2427) |
-| `agent/tools.py` | 1,244 | Tool implementations + `ToolResult` dataclass (line 41), `execute_tool` function (line ~1161), `is_sensitive_path` (line 141) |
-| `agent/enforcement.py` | 942 | `check()` function at line 849 — single entry point called from `_run_loop` at line 2015. Returns `EnforcementResult` with `.appended_message` and `.checks` |
-| `agent/context_strategy.py` | 687 | **The template.** Protocol → Default impl → wire via constructor → telemetry dataclass → no UI imports. This spec follows the same pattern. |
-| `agent/config.py` | 285 | `AgentConfig` (line 74), `LLMProviderConfig` (line 29) with `caller` field, `EnforcementConfig` (line 46) |
-| `tests/test_agent_runtime.py` | ~2,100 | `TestStreamingSignature` (line 1413), `TestApproval` (line 782), `TestStuckDetection` (line 1619), `TestStreamingUsageCapture` (line 1487) |
+| `agent/runtime.py` | 3,297 | Monolith containing: AuditLog/AuditEntry classes (lines 80–156), cost tables and helpers (lines 162–190), 15 module-level LLM functions (lines 195–1168), _PROVIDER_CALLERS (line 423), _RESPONSE_FORMAT (line 460), SSE streaming helpers (lines 476–1164), _PROVIDER_STREAMERS (line 1155), tool call extractors (lines 1170–1310), AgentRuntime class (line 1605) with _run_loop (lines 2101–2599), _dispatch_approval (line 2601), _call_llm (line 2655), _call_llm_streaming (line 2788), _check_stuck (line 2909), _check_and_stop_on_limit (line 2962) |
+| `agent/tools.py` | 1,263 | Tool implementations + `ToolResult` dataclass (line 41), `execute_tool` function (line ~1161), `is_sensitive_path` (line ~141) |
+| `agent/enforcement.py` | 942 | `check()` function at line 849 — single entry point called from `_run_loop` at lines 2530–2535. Returns `EnforcementResult` with `.appended_message` and `.checks` |
+| `agent/context_strategy.py` | 874 | **The template.** Protocol → Default impl → wire via constructor → telemetry dataclass → no UI imports. This spec follows the same pattern. |
+| `agent/config.py` | 319 | `AgentConfig` (line 74), `LLMProviderConfig` (line 29) with `caller` field, `EnforcementConfig` (line 46) |
+| `tests/test_agent_runtime.py` | 4,217 | `TestStreamingSignature` (line 1841, was 1413), `TestApproval` (line 1125), `TestStuckDetection` (line 2047), `TestStreamingUsageCapture` (line 1915) |
 
 ### Architecture decisions
 
 1. **New modules live in `agent/` layer.** They import only from `models/`, `utils/`, and stdlib. No UI imports. (ARCHITECTURE.md §2 layering rule, confirmed in `context_strategy.py`.)
 
-2. **Composition over inheritance.** `AgentRuntime` *holds* a `ToolMiddlewareChain` instance and an `LLMProviderRegistry` instance. It does not subclass them. (Same pattern as `self._context_strategy` at runtime.py line 1297.)
+2. **Composition over inheritance.** `AgentRuntime` *holds* a `ToolMiddlewareChain` instance and an `LLMProviderRegistry` instance. It does not subclass them. (Same pattern as `self._context_strategy` at runtime.py line 1709.)
 
-3. **Backward compatibility via re-exports.** After extraction, `agent/runtime.py` re-exports the old names (`_call_openai`, `_PROVIDER_CALLERS`, etc.) via imports from the new modules. This keeps existing test patches working until all callers are migrated. Tests that `patch("agent.runtime._call_openai", ...)` continue to work.
+3. **Backward compatibility via re-exports.** After extraction, `agent/runtime.py` re-exports the old names (`_call_openai`, `_PROVIDER_CALLERS`, etc.) via imports from the new modules. This keeps existing test patches working. Tests that `patch("agent.runtime._call_openai", ...)` continue to work.
 
 4. **Two tracks, shipped sequentially.** Track A (Tool Middleware) ships first because it is lower risk and higher architectural leverage. Track B (LLM Provider) ships second because streaming is riskier and benefits from Track A's test isolation.
 
@@ -39,11 +40,11 @@ All line numbers verified against `agent/runtime.py` at commit `39432d2` (2026-0
 
 ### A.1 Objective
 
-Extract the three inline policy concerns from `_run_loop`'s tool-execution block (lines 1927–2060) into a composable middleware chain:
+Extract the three inline policy concerns from `_run_loop`'s tool-execution block (lines 2455–2583) into a composable middleware chain:
 
-1. **Approval gating** (lines 1936–1966) — `exec_command` + sensitive `write_file`/`edit_file` → PM approval
-2. **Enforcement check** (lines 2011–2034) — post-write syntax/test/lint verification
-3. **Stuck detection** (lines 2036–2047) — loop detection on tool history
+1. **Approval gating** (lines 2461–2490) — `exec_command` + sensitive `write_file`/`edit_file` → PM approval
+2. **Enforcement check** (lines 2525–2551) — post-write syntax/test/lint verification
+3. **Stuck detection** (lines 2553–2562) — loop detection on tool history
 
 ### A.2 New module: `agent/tool_middleware.py`
 
@@ -303,10 +304,10 @@ class ToolMiddlewareChain:
 
 #### A.2.3 Wiring in `AgentRuntime.__init__`
 
-Replace the inline approval + enforcement + stuck blocks in `_run_loop` with a chain constructed in `__init__`:
+Replace the inline approval + enforcement + stuck blocks in `_run_loop` with a chain constructed in `__init__` (currently lines 1635–1714 of runtime.py):
 
 ```python
-# In AgentRuntime.__init__, after self._audit_log = AuditLog():
+# In AgentRuntime.__init__, after self._audit_log = AuditLog() (line 1703):
 from agent.tool_middleware import (
     ApprovalMiddleware,
     EnforcementMiddleware,
@@ -332,7 +333,7 @@ self._tool_chain = ToolMiddlewareChain([
 ])
 ```
 
-Where `_dispatch_enforcement_status` is a new thin method:
+Where `_dispatch_enforcement_status` is a new thin method (pattern: current dispatch at line 2541–2549):
 
 ```python
 def _dispatch_enforcement_status(self, session_key: str, tool_name: str, status: dict) -> None:
@@ -342,7 +343,7 @@ def _dispatch_enforcement_status(self, session_key: str, tool_name: str, status:
 
 #### A.2.4 Call-site change in `_run_loop`
 
-The entire tool-execution block (lines 1936–2057) is replaced with:
+The entire tool-execution block (lines 2455–2583) is replaced with:
 
 ```python
 # Determine bypass_approval BEFORE entering the chain.
@@ -356,7 +357,7 @@ if tool_name == "exec_command":
     if approved is False or approved is None:
         tc.mark_failed("exec_command requires PM approval — request denied or timed out")
         conv.add_tool_result(call_id, tc.result or "denied")
-        self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied")
+        self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied", False)
         self._audit_log.record(tool_name, args, approved=False,
                                user=getattr(self._config, "user_id", ""),
                                result="denied")
@@ -372,7 +373,7 @@ elif tool_name in ("write_file", "edit_file"):
                 "PM approval denied or timed out."
             )
             conv.add_tool_result(call_id, tc.result or "denied")
-            self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied")
+            self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied", False)
             self._audit_log.record(tool_name, args, approved=False,
                                    user=getattr(self._config, "user_id", ""),
                                    result="denied")
@@ -404,6 +405,7 @@ result = self._tool_chain.run(
     executor=lambda: execute_tool(
         tool_name, args, conv.project_path, session_key,
         approval_callback=(lambda *a: True) if bypass_approval else None,
+        allowed_tools=conv.allowed_tools,  # current code passes this at line 2519
     ),
 )
 
@@ -411,7 +413,7 @@ result = self._tool_chain.run(
 tc.mark_completed(result.output if result.success else result.error or "")
 tool_result_text = tc.result or ""
 conv.add_tool_result(call_id, tool_result_text)
-self._dispatch(self._on_tool_call_result, session_key, tool_name, tool_result_text)
+self._dispatch(self._on_tool_call_result, session_key, tool_name, tool_result_text, result.success)
 
 # A-4: Record in audit log
 _audit_user = getattr(self._config, "user_id", "")
@@ -425,7 +427,7 @@ self._audit_log.record(
 )
 ```
 
-**Wait — this duplicates the approval logic outside the chain.** That defeats the purpose. The real design is:
+**IMPORTANT UPDATE (2026-07-17):** The current `_on_tool_call_result` signature now takes **4 parameters**: `(session_key, tool_name, result_text, success_bool)`. The spec's sample above reflects this (`False` for denied, `result.success` for completed). See runtime.py lines 2466, 2486, 2567 for the current dispatch calls.
 
 **Revised approach:** The approval logic stays OUTSIDE the chain (in `_run_loop`) because it must fire BEFORE `tool_call_start` dispatch, and the chain wraps the *execution* phase (which starts at `tool_call_start`). The chain handles enforcement and stuck detection (which fire AFTER execution). The approval check is a *pre-condition gate* that happens before the chain is entered.
 
@@ -448,7 +450,7 @@ So `ApprovalMiddleware` is **removed** from the chain. The approval logic stays 
 
 #### A.2.5 Audit log recording
 
-The audit log recording currently happens in `_run_loop` at lines 2049–2057. **It stays in `_run_loop`** — not moved into the chain. The `ToolContext.audit_log` field is provided for middleware that *needs to read* audit state, but the primary record call stays in the loop. This avoids double-recording.
+The audit log recording currently happens in `_run_loop` at lines 2571–2578. **It stays in `_run_loop`** — not moved into the chain. The `ToolContext.audit_log` field is provided for middleware that *needs to read* audit state, but the primary record call stays in the loop. This avoids double-recording.
 
 ### A.3 Files modified
 
@@ -459,7 +461,7 @@ The audit log recording currently happens in `_run_loop` at lines 2049–2057. *
 
 ### A.4 Lines freed from runtime.py
 
-~45 lines (the enforcement block at 2011–2034 + the stuck detection block at 2036–2047). The approval block stays inline (temporal ordering constraint).
+~45 lines (the enforcement block at 2525–2551 + the stuck detection block at 2553–2562). The approval block stays inline (temporal ordering constraint).
 
 ### A.5 Tests
 
@@ -500,7 +502,7 @@ Minimum test cases (30%+ sad path):
 | Risk | Mitigation |
 |---|---|
 | Enforcement ordering change (was inline, now wrapped) | The chain preserves ordering: enforcement fires after `execute_tool` returns, same as before. Verified by test #14. |
-| Stuck detection ordering change | Stuck detection fires after enforcement (it wraps outside enforcement in the chain). In the old code, stuck detection fired after enforcement too (line 2036 > line 2011). Same order. |
+| Stuck detection ordering change | Stuck detection fires after enforcement (it wraps outside enforcement in the chain). In the old code, stuck detection fired after enforcement too (line 2554 > line 2530). Same order. |
 | Audit log double-recording | Audit log recording stays in `_run_loop`, not in middleware. No double-record. |
 | `_dispatch_approval` temporal ordering | Approval stays inline in `_run_loop`, NOT in the chain. The chain starts after approval is resolved. |
 
@@ -514,7 +516,7 @@ No re-exports needed — the middleware classes are new modules, and the old inl
 
 ### B.1 Objective
 
-Extract all 15 module-level LLM functions (lines 192–898), the cost table (lines 159–170), `_model_id` (line 172), and `_cost_for_model` (line 182) into a new `agent/llm/` package.
+Extract all 15 module-level LLM functions (lines 195–1168), the cost table (lines 162–164), `_model_id` (line 175), `_cost_for_model` (line 185), `_RESPONSE_FORMAT` (line 460), and all SSE/streaming/SSL helpers (lines 476–1164) into a new `agent/llm/` package.
 
 ### B.2 New package: `agent/llm/`
 
@@ -639,11 +641,11 @@ class OpenAIProvider:
         return "openai"
 
     def call(self, base_url, api_key, model, messages, tools, timeout, x_title=""):
-        # Body is the existing _call_openai function, verbatim.
+        # Body is the existing _call_openai function (runtime.py line 195), verbatim.
         ...
 
     def stream(self, base_url, api_key, model, messages, tools, timeout, x_title=""):
-        # Body is the existing _stream_openai_events function, verbatim.
+        # Body is the existing _stream_openai_events function (runtime.py line 863), verbatim.
         # Yields SSEEvent instances.
         ...
 ```
@@ -670,11 +672,11 @@ class MiniMaxProvider:
         return "openai"  # response shape is OpenAI-compatible
 
     def call(self, base_url, api_key, model, messages, tools, timeout, x_title=""):
-        # Body is the existing _call_minimax function, verbatim.
+        # Body is the existing _call_minimax function (runtime.py line 238), verbatim.
         ...
 
     def stream(self, base_url, api_key, model, messages, tools, timeout, x_title=""):
-        # Body is the existing _stream_minimax_events function, verbatim.
+        # Body is the existing _stream_minimax_events function (runtime.py line 941), verbatim.
         ...
 ```
 
@@ -697,12 +699,12 @@ class AnthropicProvider:
         return "anthropic"
 
     def call(self, base_url, api_key, model, messages, tools, timeout, x_title=""):
-        # Body is the existing _call_anthropic function, verbatim.
+        # Body is the existing _call_anthropic function (runtime.py line 363), verbatim.
         # Includes system message extraction + _convert_messages_for_anthropic.
         ...
 
     def stream(self, base_url, api_key, model, messages, tools, timeout, x_title=""):
-        # Body is the existing _stream_anthropic_events function, verbatim.
+        # Body is the existing _stream_anthropic_events function (runtime.py line 1052), verbatim.
         ...
 ```
 
@@ -710,15 +712,19 @@ class AnthropicProvider:
 
 Moves these functions verbatim from `runtime.py`:
 
-| Function | Current location | New location |
+| Function | Current location (runtime.py) | New location |
 |---|---|---|
-| `SSEEvent` namedtuple | runtime.py line ~448 | `agent/llm/streaming.py` (also re-exported from `agent/llm/__init__.py`) |
-| `_sse_lines` → `sse_lines` | runtime.py line 452 | `agent/llm/streaming.py` |
-| `_parse_sse_line` → `parse_sse_line` | runtime.py line 459 | `agent/llm/streaming.py` |
-| `_parse_sse_delta` → `parse_sse_delta` | runtime.py line 478 | `agent/llm/streaming.py` |
-| `_urlopen_with_ssl_retry` → `urlopen_with_ssl_retry` | runtime.py line 521 | `agent/llm/streaming.py` |
-| `_RETRYABLE_SSL_ERRORS` | runtime.py line ~505 | `agent/llm/streaming.py` |
-| `_MAX_SSL_RETRIES`, `_SSL_RETRY_BASE_MS` | runtime.py line ~517 | `agent/llm/streaming.py` |
+| `SSEEvent` namedtuple | line 476 | `agent/llm/streaming.py` (also re-exported from `agent/llm/__init__.py`) |
+| `_sse_lines` → `sse_lines` | line 480 | `agent/llm/streaming.py` |
+| `_parse_sse_line` → `parse_sse_line` | line 487 | `agent/llm/streaming.py` |
+| `_parse_sse_delta` → `parse_sse_delta` | line 511 | `agent/llm/streaming.py` |
+| `_urlopen_with_ssl_retry` → `urlopen_with_ssl_retry` | line 703 | `agent/llm/streaming.py` |
+| `_RETRYABLE_SSL_ERRORS` | line 557 | `agent/llm/streaming.py` |
+| `_RETRYABLE_OSERROR_TYPES` | line 577 | `agent/llm/streaming.py` |
+| `_MAX_SSL_RETRIES`, `_SSL_RETRY_BASE_MS` | lines 582–583 | `agent/llm/streaming.py` |
+| `_is_retryable_ssl_error` | line 586 | `agent/llm/streaming.py` |
+| `_friendly_error_message` | line 657 | `agent/llm/streaming.py` |
+| `_stream_with_ssl_retry` | line 770 | `agent/llm/streaming.py` |
 
 **Naming:** Leading underscores dropped since these are now public within the `agent.llm` package. The `agent/runtime.py` re-exports keep the old underscore-prefixed names as aliases for backward compatibility.
 
@@ -726,13 +732,14 @@ Moves these functions verbatim from `runtime.py`:
 
 Moves these functions verbatim:
 
-| Function | Current location |
+| Function | Current location (runtime.py) |
 |---|---|
-| `_extract_tool_calls` → `extract_tool_calls` | runtime.py line 812 |
-| `_extract_text_content` → `extract_text_content` | runtime.py line 858 |
-| `_extract_usage` → `extract_usage` | runtime.py line 879 |
+| `_extract_tool_calls` → `extract_tool_calls` | line 1170 |
+| `_extract_text_content` → `extract_text_content` | line 1224 |
+| `_extract_usage` → `extract_usage` | line 1277 |
+| `_is_empty_content` | line 1245 (stays in runtime.py — used by text-content placeholder logic at lines 2386, 2423, not a pure extractor) |
 
-The `_RESPONSE_FORMAT` dict (runtime.py lines 433–440) is replaced by each provider's `.response_format` property. The extractors take an optional `response_format: str` parameter instead of looking up `_RESPONSE_FORMAT`:
+The `_RESPONSE_FORMAT` dict (runtime.py line 460) is replaced by each provider's `.response_format` property. The extractors take an optional `response_format: str` parameter instead of looking up `_RESPONSE_FORMAT`:
 
 ```python
 def extract_tool_calls(response: dict, response_format: str = "openai") -> list[tuple[str, str, dict]]:
@@ -751,10 +758,10 @@ def extract_usage(response: dict, response_format: str = "openai") -> tuple[int,
 
 Moves these functions verbatim:
 
-| Function | Current location |
+| Function | Current location (runtime.py) |
 |---|---|
-| `_convert_messages_for_anthropic` → `convert_messages_for_anthropic` | runtime.py line 283 |
-| `_convert_tools_for_anthropic` → `convert_tools_for_anthropic` | runtime.py line 335 |
+| `_convert_messages_for_anthropic` → `convert_messages_for_anthropic` | line 286 |
+| `_convert_tools_for_anthropic` → `convert_tools_for_anthropic` | line 338 |
 
 These are called only by `AnthropicProvider`, so they could live inside `anthropic_provider.py`. But keeping them in `convert.py` makes them testable in isolation and available to future Anthropic-compatible providers.
 
@@ -762,14 +769,14 @@ These are called only by `AnthropicProvider`, so they could live inside `anthrop
 
 Moves `_model_id`, `_cost_for_model`, and all cost tables verbatim:
 
-| Symbol | Current location |
+| Symbol | Current location (runtime.py) |
 |---|---|
-| `_OPENAI_COST` | runtime.py line 159 |
-| `_MINIMAX_COST` | runtime.py line 160 |
-| `_ANTHROPIC_COST` | runtime.py line 161 |
-| `_PROVIDER_COSTS` | runtime.py line 163 |
-| `_model_id` → `model_id` | runtime.py line 172 |
-| `_cost_for_model` → `cost_for_model` | runtime.py line 182 |
+| `_OPENAI_COST` | line 162 |
+| `_MINIMAX_COST` | line 163 |
+| `_ANTHROPIC_COST` | line 164 |
+| `_PROVIDER_COSTS` | line 166 |
+| `_model_id` → `model_id` | line 175 |
+| `_cost_for_model` → `cost_for_model` | line 185 |
 
 #### B.3.9 `agent/llm/registry.py`
 
@@ -805,7 +812,7 @@ def list_providers() -> list[str]:
     return sorted(_REGISTRY.keys())
 ```
 
-**Key insight:** The old `_PROVIDER_CALLERS` dispatch dict mapped provider names to *functions*. The registry maps provider names to *objects* with both `.call()` and `.stream()` methods. This collapses two dispatch dicts (`_PROVIDER_CALLERS` + `_PROVIDER_STREAMERS`) into one registry.
+**Key insight:** The old `_PROVIDER_CALLERS` dispatch dict (line 423) mapped provider names to *functions*. The registry maps provider names to *objects* with both `.call()` and `.stream()` methods. This collapses two dispatch dicts (`_PROVIDER_CALLERS` + `_PROVIDER_STREAMERS` at line 1155) into one registry.
 
 #### B.3.10 `agent/llm/__init__.py`
 
@@ -832,21 +839,29 @@ __all__ = [
 
 ### B.4 Wiring in `AgentRuntime`
 
-#### B.4.1 `_call_llm` method changes (runtime.py line 2132)
+#### B.4.1 `_call_llm` method changes (runtime.py line 2655)
 
-The `_call_llm` method currently resolves the caller via `_PROVIDER_CALLERS[caller_key]`. After extraction:
+The `_call_llm` method currently resolves the caller via `_PROVIDER_CALLERS[caller_key]` at line 2719:
 
 ```python
-# Before:
+# Before (runtime.py lines 2719–2726):
 caller = _PROVIDER_CALLERS.get(caller_key)
-return caller(base_url=..., api_key=..., model=..., ...)
+if caller is None:
+    raise ValueError(...)
+return caller(
+    base_url=provider_cfg.base_url,
+    api_key=effective_api_key,
+    model=model,
+    messages=messages,
+    tools=tools if tools else None,
+    timeout=float(self._config.tool_timeout_seconds),
+    x_title=x_title,
+)
 
 # After:
 from agent.llm.registry import get_provider
 
-# Resolve provider: explicit caller field > model prefix > error
-provider_id = caller_key  # or model.split("/")[0]
-provider = get_provider(provider_id)
+provider = get_provider(caller_key)
 return provider.call(
     base_url=provider_cfg.base_url,
     api_key=effective_api_key,
@@ -858,56 +873,65 @@ return provider.call(
 )
 ```
 
-#### B.4.2 `_call_llm_streaming` method changes (runtime.py line 2241)
+#### B.4.2 `_call_llm_streaming` method changes (runtime.py line 2788)
 
 ```python
-# Before:
+# Before (runtime.py lines 2807–2809):
 streamer = _PROVIDER_STREAMERS.get(caller_key)
-for ev in streamer(base_url, api_key, model, messages, tools, timeout, x_title=x_title):
+if streamer is None:
+    raise ValueError(...)
+for ev in _stream_with_ssl_retry(streamer, ...):
     ...
 
 # After:
 provider = get_provider(caller_key)
-for ev in provider.stream(
-    base_url=base_url, api_key=api_key, model=model,
-    messages=messages, tools=tools, timeout=timeout, x_title=x_title,
-):
+for ev in _stream_with_ssl_retry(provider.stream, ...):
     ...
 ```
 
 #### B.4.3 Extractor call-site changes
 
-The three extractor functions are called in `_run_loop` at lines ~1793–1814:
+The three extractor functions are called in `_run_loop` at runtime.py lines 2252–2256:
 
 ```python
 # Before:
-tool_calls_raw = _extract_tool_calls(response, provider_name)
-text_content = _extract_text_content(response, provider_name)
-prompt_tokens, completion_tokens = _extract_usage(response, provider_name)
+loop_provider = model.split("/")[0] if "/" in model else model
+text_content = _extract_text_content(response, loop_provider)
+tool_calls_raw = _extract_tool_calls(response, loop_provider)
+prompt_tok, comp_tok = _extract_usage(response, loop_provider)
+cost = _cost_for_model(conv.model, prompt_tok, comp_tok)
 
 # After:
 from agent.llm.extractors import extract_tool_calls, extract_text_content, extract_usage
+from agent.llm.registry import get_provider
+from agent.llm.cost import cost_for_model
 
-provider = get_provider(provider_name)
+loop_provider = model.split("/")[0] if "/" in model else model
+provider = get_provider(loop_provider)
 fmt = provider.response_format
-tool_calls_raw = extract_tool_calls(response, fmt)
 text_content = extract_text_content(response, fmt)
-prompt_tokens, completion_tokens = extract_usage(response, fmt)
+tool_calls_raw = extract_tool_calls(response, fmt)
+prompt_tok, comp_tok = extract_usage(response, fmt)
+cost = cost_for_model(conv.model, prompt_tok, comp_tok)
 ```
 
 #### B.4.4 Cost function call-site changes
 
+The `_call_for_summary` method (runtime.py line 3187) also uses `_cost_for_model` and `_extract_text_content` — these must be updated from the re-exports:
+
 ```python
-# Before (runtime.py line ~1799, ~1910):
-from agent.runtime import _model_id, _cost_for_model
+# Before (runtime.py line ~3285):
+from agent.runtime import _extract_text_content
+text = _extract_text_content(response_dict, provider_name)
 
 # After:
-from agent.llm.cost import model_id, cost_for_model
+from agent.llm.extractors import extract_text_content
+text = extract_text_content(response_dict, fmt)
 ```
 
 ### B.5 Backward compatibility re-exports in `agent/runtime.py`
 
-After extraction, add these re-exports near the top of `runtime.py` (after existing imports):
+After extraction, add these re-exports near the top of `runtime.py` (after existing imports, before line 42):
 
 ```python
 # ── Backward-compatibility re-exports (provider extraction) ────────────────────
@@ -922,6 +946,13 @@ from agent.llm.streaming import (
     parse_sse_line as _parse_sse_line,
     parse_sse_delta as _parse_sse_delta,
     urlopen_with_ssl_retry as _urlopen_with_ssl_retry,
+    stream_with_ssl_retry as _stream_with_ssl_retry,
+    is_retryable_ssl_error as _is_retryable_ssl_error,
+    friendly_error_message as _friendly_error_message,
+    RETRYABLE_SSL_ERRORS as _RETRYABLE_SSL_ERRORS,
+    RETRYABLE_OSERROR_TYPES as _RETRYABLE_OSERROR_TYPES,
+    MAX_SSL_RETRIES as _MAX_SSL_RETRIES,
+    SSL_RETRY_BASE_MS as _SSL_RETRY_BASE_MS,
 )
 from agent.llm.extractors import (
     extract_tool_calls as _extract_tool_calls,
@@ -936,6 +967,9 @@ from agent.llm.cost import (
     model_id as _model_id,
     cost_for_model as _cost_for_model,
     PROVIDER_COSTS as _PROVIDER_COSTS,
+    OPENAI_COST as _OPENAI_COST,
+    MINIMAX_COST as _MINIMAX_COST,
+    ANTHROPIC_COST as _ANTHROPIC_COST,
 )
 
 # Provider call/stream functions — wrapped as module-level functions for patch compatibility
@@ -963,11 +997,11 @@ _PROVIDER_STREAMERS = {
 }
 ```
 
-**Note:** The `_RESPONSE_FORMAT` dict is NOT re-exported — it is replaced by `provider.response_format`. Any code that referenced `_RESPONSE_FORMAT` must be updated to use `get_provider(provider_name).response_format`. This is verified by `grep -n "_RESPONSE_FORMAT" agent/runtime.py` returning zero matches after migration.
+**Note:** The `_RESPONSE_FORMAT` dict (line 460) is NOT re-exported — it is replaced by `provider.response_format`. Any code that referenced `_RESPONSE_FORMAT` must be updated to use `get_provider(provider_name).response_format`. This is verified by `grep -rn "_RESPONSE_FORMAT" agent/runtime.py` returning zero matches after migration.
 
 ### B.6 StreamingCallKwargs and TestStreamingSignature
 
-The `StreamingCallKwargs` TypedDict (runtime.py line 42) and `TestStreamingSignature` regression test (test_agent_runtime.py line 1413) must continue to pass unchanged.
+The `StreamingCallKwargs` TypedDict (runtime.py line 42) and `TestStreamingSignature` regression test (test_agent_runtime.py line 1841, previously 1413) must continue to pass unchanged.
 
 **What changes:** The `_call_llm_streaming` method signature does NOT change. It still takes the same parameters. The method body changes to use `get_provider(caller_key).stream(...)` instead of `_PROVIDER_STREAMERS[caller_key](...)`.
 
@@ -987,13 +1021,13 @@ The `StreamingCallKwargs` TypedDict (runtime.py line 42) and `TestStreamingSigna
 | `agent/llm/extractors.py` | **NEW** — response extractors |
 | `agent/llm/convert.py` | **NEW** — Anthropic message/tool converters |
 | `agent/llm/cost.py` | **NEW** — cost table + model_id + cost_for_model |
-| `agent/runtime.py` | Delete 15 functions + cost tables (lines 159–898, ~740 lines). Add re-exports. Update `_call_llm` and `_call_llm_streaming` to use registry. Update extractor calls. |
+| `agent/runtime.py` | Delete ~970 lines of module-level functions (lines 162–1168 cost + LLM callers + SSE + streaming + extractors + converters). Add re-exports. Update `_call_llm` (line 2655), `_call_llm_streaming` (line 2788), `_call_for_summary` (line 3187), and extractor call sites at lines 2252–2256. |
 
 ### B.8 Lines freed from runtime.py
 
-~740 lines (all module-level LLM functions, SSE helpers, extractors, converters, cost tables).
+~970 lines (all module-level LLM functions: cost tables at 162–190, callers at 195–422, SSE helpers at 476–1164, streaming at 863–1168, extractors at 1170–1310, converters at 286–362, _RESPONSE_FORMAT at 460).
 
-After Track A + Track B: `runtime.py` shrinks from 2,495 → ~1,710 lines (a 31% reduction, back below the 2,000-line "actively slowing" threshold from the proposal).
+After Track A + Track B: `runtime.py` shrinks from 3,297 → ~2,280 lines (a 31% reduction, back below the 2,500-line threshold).
 
 ### B.9 Tests
 
@@ -1077,8 +1111,8 @@ Minimum test cases:
 
 | Risk | Mitigation |
 |---|---|
-| Streaming regression (SSE ordering, tool-call delta accumulation) | All 6 stream functions moved verbatim. `TestStreamingSignature` passes unchanged. New `test_llm_streaming.py` provides isolated SSE tests. |
-| `_RESPONSE_FORMAT` removal breaks callers | All callers updated in the same PR. Verified by `grep -n "_RESPONSE_FORMAT" agent/` returning zero. |
+| Streaming regression (SSE ordering, tool-call delta accumulation) | All 6 stream functions moved verbatim. `TestStreamingSignature` passes unchanged (line 1841). New `test_llm_streaming.py` provides isolated SSE tests. |
+| `_RESPONSE_FORMAT` removal breaks callers | All callers updated in the same PR. Verified by `grep -rn "_RESPONSE_FORMAT" agent/` returning zero. |
 | Test patches break (`patch("agent.runtime._call_openai", ...)`) | Re-exports keep old names alive. Tests patched via `_PROVIDER_CALLERS` dict still work because the dict is re-exported. |
 | `SSEEvent` import from `agent.runtime` breaks | `SSEEvent` re-exported from `agent.runtime` via `from agent.llm.streaming import SSEEvent`. |
 | Provider body-level error (MiniMax HTTP 200) silently swallowed | Test #11 reproduces the exact payload from production. |
@@ -1091,7 +1125,7 @@ Minimum test cases:
 
 1. **Day 1:** Create `agent/tool_middleware.py` with Protocol, ToolContext, and all middleware classes. Write unit tests (test cases 1–13). Run tests in isolation.
 2. **Day 2:** Wire `ToolMiddlewareChain` into `AgentRuntime.__init__`. Replace enforcement + stuck detection inline blocks in `_run_loop` with chain call. Run integration tests (14–15).
-3. **Day 3:** Sad-path tests (16–18). Run full test suite for relevant test files: `test_agent_runtime.py` (TestApproval, TestStuckDetection, TestPerProjectEnforcement), `test_tool_middleware.py`. Fix regressions.
+3. **Day 3:** Sad-path tests (16–18). Run full test suite for relevant test files: `test_agent_runtime.py` (TestApproval at line 1125, TestStuckDetection at line 2047, TestPerProjectEnforcement), `test_tool_middleware.py`. Fix regressions.
 4. **Day 4:** Buffer for regression fixing. Commit.
 
 ### Phase 2: Track B — LLM Provider (5–7 days, two sub-phases)
@@ -1099,19 +1133,19 @@ Minimum test cases:
 **Phase 2a: Non-streaming extraction (3 days)**
 
 5. **Day 5:** Create `agent/llm/` package. Move cost functions to `agent/llm/cost.py`. Move converters to `agent/llm/convert.py`. Move extractors to `agent/llm/extractors.py`. Write cost/extractor/convert unit tests (23–35). Run tests.
-6. **Day 6:** Move `_call_openai`, `_call_minimax`, `_call_anthropic` into provider classes. Create registry. Write provider `call()` tests (1–4, 11–12, 16–18). Re-export from runtime.py.
-7. **Day 7:** Update `_call_llm` method to use registry. Update extractor call sites in `_run_loop`. Run `test_agent_runtime.py` TestApproval (uses `_call_llm` mock). Fix regressions. Commit Phase 2a.
+6. **Day 6:** Move `_call_openai` (line 195), `_call_minimax` (line 238), `_call_anthropic` (line 363) into provider classes. Create registry. Write provider `call()` tests (1–4, 11–12, 16–18). Re-export from runtime.py.
+7. **Day 7:** Update `_call_llm` method (line 2655) to use registry. Update extractor call sites at lines 2252–2256 in `_run_loop`. Run `test_agent_runtime.py` TestApproval (uses `_call_llm` mock). Fix regressions. Commit Phase 2a.
 
 **Phase 2b: Streaming extraction (3 days)**
 
-8. **Day 8:** Move SSE helpers to `agent/llm/streaming.py`. Move stream functions into provider classes. Write streaming unit tests (5–10, 13–15, 19–22, 41–50).
-9. **Day 9:** Update `_call_llm_streaming` to use registry. Verify `TestStreamingSignature` passes unchanged. Run `TestStreaming`, `TestStreamingUsageCapture`, `TestStreamAnthropicEvents`. Fix regressions.
+8. **Day 8:** Move SSE helpers to `agent/llm/streaming.py` (lines 476–864). Move stream functions into provider classes: `_stream_openai_events` (line 863), `_stream_minimax_events` (line 941), `_stream_anthropic_events` (line 1052). Write streaming unit tests (5–10, 13–15, 19–22, 41–50).
+9. **Day 9:** Update `_call_llm_streaming` (line 2788) to use registry. Verify `TestStreamingSignature` passes unchanged (line 1841). Run `TestStreaming`, `TestStreamingUsageCapture` (line 1915), `TestStreamAnthropicEvents`. Fix regressions.
 10. **Day 10:** Delete old module-level functions from `runtime.py` (keep re-exports). Run full test suite for relevant test files. Fix regressions. Commit Phase 2b.
 
 ### Phase 3: Verification
 
 11. **Day 11:** Final verification:
-    - `wc -l agent/runtime.py` — verify under 1,800 lines
+    - `wc -l agent/runtime.py` — verify under 2,400 lines
     - `grep -rn "_RESPONSE_FORMAT" agent/` — verify zero matches
     - `grep -rn "def _call_openai\|def _call_minimax\|def _call_anthropic" agent/runtime.py` — verify zero matches (moved to provider classes)
     - `grep -rn "def _stream_openai\|def _stream_minimax\|def _stream_anthropic" agent/runtime.py` — verify zero matches
@@ -1127,30 +1161,30 @@ Every factual claim in this spec is verifiable. Run these commands before and af
 ```bash
 # Line count (before / after)
 wc -l agent/runtime.py
-# Before: 2495. After Track A+B: ~1710
+# Before: 3297. After Track A+B: ~2280
 
 # Provider functions exist at current locations (before extraction)
 grep -n "^def _call_openai\|^def _call_minimax\|^def _call_anthropic" agent/runtime.py
-# Before: lines 192, 235, 360. After: zero matches.
+# Before: lines 195, 238, 363. After: zero matches.
 
 grep -n "^def _stream_openai\|^def _stream_minimax\|^def _stream_anthropic" agent/runtime.py
-# Before: lines 543, 599, 694. After: zero matches.
+# Before: lines 863, 941, 1052. After: zero matches.
 
 # Dispatch dicts (before extraction)
 grep -n "^_PROVIDER_CALLERS\|^_PROVIDER_STREAMERS\|^_RESPONSE_FORMAT" agent/runtime.py
-# Before: lines 420, 797, 433. After: only re-export lines.
+# Before: lines 423, 1155, 460. After: only re-export lines.
 
 # TestStreamingSignature regression test location
 grep -n "class TestStreamingSignature" tests/test_agent_runtime.py
-# Line 1413. Must pass unchanged after extraction.
+# Line 1841 (was 1413). Must pass unchanged after extraction.
 
 # Enforcement check call site
 grep -n "_enforcement_check" agent/runtime.py
-# Before: line 31 (import), line 2015 (call). After: import only (call moves to middleware).
+# Before: line 31 (import), line 2530 (call). After: import only (call moves to middleware).
 
 # Stuck detection call site
 grep -n "_check_stuck" agent/runtime.py
-# Before: line 2039 (call), line 2353 (def). After: def stays (method on AgentRuntime),
+# Before: line 2554 (call), line 2909 (def). After: def stays (method on AgentRuntime),
 #   call moves into StuckDetectionMiddleware via function reference.
 
 # New modules exist
@@ -1179,8 +1213,8 @@ python3 -c "from agent.llm.registry import get_provider; p = get_provider('opena
 1. **Do NOT modify `agent/context_strategy.py`** — it is the template, not a target.
 2. **Do NOT modify `agent/enforcement.py`** — it is called as-is by the middleware. Its internal structure is a separate audit.
 3. **Do NOT modify `agent/tools.py`** — `ToolResult`, `execute_tool`, and `is_sensitive_path` are consumed, not changed.
-4. **Do NOT modify `tests/test_agent_runtime.py`** — existing tests must pass unchanged (they use `_call_llm` mock pattern, `TestStreamingSignature` checks signature compatibility). If a test cannot pass without modification, STOP and flag it.
-5. **Do NOT change `_call_llm_streaming`'s method signature** — `StreamingCallKwargs` TypedDict and `TestStreamingSignature` enforce this.
+4. **Do NOT modify `tests/test_agent_runtime.py`** — existing tests must pass unchanged (they use `_call_llm` mock pattern, `TestStreamingSignature` at line 1841 checks signature compatibility). If a test cannot pass without modification, STOP and flag it.
+5. **Do NOT change `_call_llm_streaming`'s method signature** — `StreamingCallKwargs` TypedDict (line 42) and `TestStreamingSignature` (line 1841) enforce this.
 6. **Do NOT rename `_dispatch_approval`** — it is called from inline approval logic that stays in `_run_loop`.
 7. **Re-exports in `runtime.py` must keep ALL existing test patches working.** Verify with `grep -rn "patch.*agent.runtime._call\|patch.*agent.runtime._stream\|patch.*agent.runtime._PROVIDER" tests/`.
 8. **Each track ships in its own commit.** Track A is one commit. Track B is two commits (2a non-streaming, 2b streaming). This enables independent revert.
@@ -1208,7 +1242,7 @@ COMPLETENESS:
 - [x] Track B Phase 2b: _call_llm_streaming updated to use registry — evidence: grep "get_provider" in _call_llm_streaming body
 - [x] Track B Phase 2b: TestStreamingSignature passes unchanged — evidence: pytest test_agent_runtime.py::TestStreamingSignature
 - [x] Track B Phase 2b: Streaming unit tests pass — evidence: pytest test_llm_streaming.py
-- [x] Phase 3: runtime.py under 1,800 lines — evidence: wc -l
+- [x] Phase 3: runtime.py under 2,400 lines — evidence: wc -l
 - [x] Phase 3: No _RESPONSE_FORMAT references — evidence: grep -rn "_RESPONSE_FORMAT" agent/ returns zero
 ```
 
