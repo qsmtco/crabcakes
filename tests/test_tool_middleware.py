@@ -332,7 +332,7 @@ class TestSadPath:
         mw = EnforcementMiddleware(enf_check)
         executor = MagicMock(return_value=_make_result(output="wrote 42 bytes"))
 
-        with patch.object(logging, "exception") as mock_log:
+        with patch("agent.tool_middleware.logger.exception") as mock_exc:
             result = mw(
                 "write_file",
                 {"path": "crash.py"},
@@ -342,7 +342,7 @@ class TestSadPath:
 
         assert result.success is True
         assert result.output == "wrote 42 bytes"
-        mock_log.assert_called_once()
+        mock_exc.assert_called_once()
 
     def test_stuck_check_raises_does_not_crash_loop(self) -> None:
         """Exception in stuck_check is caught; original result returned."""
