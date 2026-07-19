@@ -351,13 +351,13 @@ class TestSadPath:
         mw = StuckDetectionMiddleware(stuck_check, pending)
         executor = MagicMock(return_value=_make_result(output="done"))
 
-        with patch.object(logging, "exception") as mock_log:
+        with patch("agent.tool_middleware.logger.exception") as mock_exc:
             result = mw("read_file", {"path": "x.py"}, _make_context(), executor)
 
         assert result.success is True
         assert result.output == "done"
         assert pending == {}
-        mock_log.assert_called_once()
+        mock_exc.assert_called_once()
 
     def test_chain_with_empty_middleware_list(self) -> None:
         """Empty middleware list results in executor being called directly."""
