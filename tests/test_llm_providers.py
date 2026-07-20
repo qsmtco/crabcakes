@@ -517,3 +517,37 @@ class TestAnthropicStream:
             ))
 
         assert events[-1].type == "done"
+
+
+# ======================================================================
+# Streaming dispatch integration test (BACKLOG-1d)
+# ======================================================================
+
+
+class TestStreamingDispatch:
+    """Verify _call_llm_streaming dispatches through get_provider().stream()."""
+
+    def test_streaming_dispatch_uses_get_provider(self):
+        """_call_llm_streaming must call get_provider(caller_key).stream()."""
+        from unittest.mock import MagicMock, patch
+        from agent.llm.streaming import SSEEvent
+
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = iter([
+            SSEEvent(type="text_delta", data={"content": "hi"}),
+            SSEEvent(type="done", data={}),
+        ])
+
+        with patch("agent.runtime._get_provider", return_value=mock_provider):
+            # Import here to avoid module-level dependency
+            from agent.runtime import _get_provider as gp
+            provider = gp("openai")
+            events = list(provider.stream(
+                base_url="https://api.openai.com/v1",
+                api_key="test", model="gpt-4o",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=None, timeout=30,
+            ))
+
+        assert mock_provider.stream.called
+        assert any(e.type == "text_delta" for e in events)
