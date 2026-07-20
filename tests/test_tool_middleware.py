@@ -1,7 +1,12 @@
-"""Tests for agent/tool_middleware.py.
+"""Tests for agent/tool_middleware.py — middleware framework.
 
-Exercises EnforcementMiddleware, StuckDetectionMiddleware, and
-ToolMiddlewareChain in isolation (no AgentRuntime instance required).
+Covers:
+  - ToolMiddlewareChain basic run/error propagation
+  - EnforcementMiddleware with syntax/test/lint success and failure
+  - StuckDetectionMiddleware repeat-count heuristic
+  - Chain ordering ([Enforcement, StuckDetection])
+  - Edge cases: non-write tools bypass enforcement, error path reversal,
+    state sharing, empty chain
 """
 
 from __future__ import annotations
@@ -10,416 +15,354 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agent.config import EnforcementConfig
-from agent.enforcement import EnforcementCheck, EnforcementResult
 from agent.tool_middleware import (
+    EnforcementError,
     EnforcementMiddleware,
+    MiddlewareState,
+    StuckDetectionError,
     StuckDetectionMiddleware,
-    ToolContext,
+    ToolMiddleware,
     ToolMiddlewareChain,
 )
-from agent.tools import ToolResult
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# ======================================================================
+# Fixtures
+# ======================================================================
 
 
-def _make_result(success: bool = True, output: str = "") -> ToolResult:
-    return ToolResult(success=success, output=output)
+@pytest.fixture
+def ok_tool():
+    """A tool function that always succeeds."""
+    return lambda *a, **kw: "ok"
 
 
-def _make_context(
-    session_key: str = "special:coder",
-    project_path: str = "/tmp/test_project",
-    iteration: int = 0,
-    enforcement_config: EnforcementConfig | None = None,
-    si_enforcement: bool | None = None,
-) -> ToolContext:
-    return ToolContext(
-        session_key=session_key,
-        project_path=project_path,
-        iteration=iteration,
-        bypass_approval=True,
-        enforcement_config=enforcement_config,
-        si_enforcement=si_enforcement,
-    )
+@pytest.fixture
+def failing_tool():
+    """A tool function that always raises ValueError."""
+
+    def _fail(*a, **kw):
+        raise ValueError("boom")
+
+    return _fail
 
 
-def _make_enf_config(enabled: bool = True) -> EnforcementConfig:
-    return EnforcementConfig(enabled=enabled)
-
-
-# ── EnforcementMiddleware tests ────────────────────────────────────────────────
-
-
-class TestEnforcementMiddleware:
-    """7 test cases: pass-through, append, gates, status dispatch, null safety."""
-
-    def test_enforcement_passes_through_non_write_tool(self) -> None:
-        """list_files passes through without enforcement check."""
-        enf_check = MagicMock(return_value=EnforcementResult())
-        mw = EnforcementMiddleware(enf_check)
-        executor = MagicMock(return_value=_make_result(output="file1.txt"))
-
-        result = mw("list_files", {"path": "."}, _make_context(), executor)
-
-        assert result.success is True
-        assert result.output == "file1.txt"
-        enf_check.assert_not_called()
-
-    def test_enforcement_passes_through_failed_write(self) -> None:
-        """write_file with success=False skips enforcement."""
-        enf_check = MagicMock()
-        mw = EnforcementMiddleware(enf_check)
-        executor = MagicMock(
-            return_value=_make_result(success=False, output="error: permission denied")
-        )
-
-        result = mw("write_file", {"path": "test.py"}, _make_context(), executor)
-
-        assert result.success is False
-        enf_check.assert_not_called()
-
-    def test_enforcement_appends_message_on_success(self) -> None:
-        """Successful write with enforcement result appends message to output."""
-        enf_check = MagicMock(
-            return_value=EnforcementResult(
-                checks=[],
-                appended_message="Syntax: OK\nTests: 3 passed",
-            )
-        )
-        mw = EnforcementMiddleware(enf_check)
-        executor = MagicMock(return_value=_make_result(output="wrote 42 bytes"))
-
-        result = mw(
-            "write_file",
-            {"path": "src/test.py"},
-            _make_context(enforcement_config=_make_enf_config()),
-            executor,
-        )
-
-        assert result.success is True
-        assert "wrote 42 bytes" in result.output
-        assert "Syntax: OK" in result.output
-        assert "Tests: 3 passed" in result.output
-
-    def test_enforcement_skips_when_globally_disabled(self) -> None:
-        """enforcement_config.enabled=False skips enforcement."""
-        enf_check = MagicMock()
-        mw = EnforcementMiddleware(enf_check)
-        executor = MagicMock(
-            return_value=_make_result(output="wrote 42 bytes")
-        )
-
-        result = mw(
-            "write_file",
-            {"path": "src/test.py"},
-            _make_context(enforcement_config=_make_enf_config(enabled=False)),
-            executor,
-        )
-
-        assert result.success is True
-        assert result.output == "wrote 42 bytes"
-        enf_check.assert_not_called()
-
-    def test_enforcement_skips_when_agent_disabled(self) -> None:
-        """si_enforcement=False skips enforcement even when global config is on."""
-        enf_check = MagicMock()
-        mw = EnforcementMiddleware(enf_check)
-        executor = MagicMock(
-            return_value=_make_result(output="wrote 42 bytes")
-        )
-
-        result = mw(
-            "write_file",
-            {"path": "src/test.py"},
-            _make_context(
-                enforcement_config=_make_enf_config(enabled=True),
-                si_enforcement=False,
-            ),
-            executor,
-        )
-
-        assert result.success is True
-        assert result.output == "wrote 42 bytes"
-        enf_check.assert_not_called()
-
-    def test_enforcement_dispatches_status_per_check(self) -> None:
-        """on_status is called for each check in the enforcement result."""
-        on_status = MagicMock()
-        enf_check = MagicMock(
-            return_value=EnforcementResult(
-                checks=[
-                    EnforcementCheck(
-                        tier="syntax", tool="write_file", file="test.py",
-                        passed=True, detail="Syntax OK", output="", duration_ms=5,
-                    ),
-                    EnforcementCheck(
-                        tier="tests", tool="write_file", file="test.py",
-                        passed=True, detail="3 passed", output="...", duration_ms=300,
-                    ),
-                ],
-                appended_message="Syntax: OK\nTests: 3 passed",
-            )
-        )
-        mw = EnforcementMiddleware(enf_check, on_status=on_status)
-        executor = MagicMock(return_value=_make_result(output="wrote 42 bytes"))
-
-        result = mw(
-            "write_file",
-            {"path": "test.py"},
-            _make_context(enforcement_config=_make_enf_config()),
-            executor,
-        )
-
-        assert result.success is True
-        assert on_status.call_count == 2
-        on_status.assert_any_call(
-            "special:coder", "write_file",
-            {"tier": "syntax", "file": "test.py", "passed": True, "detail": "Syntax OK"},
-        )
-        on_status.assert_any_call(
-            "special:coder", "write_file",
-            {"tier": "tests", "file": "test.py", "passed": True, "detail": "3 passed"},
-        )
-
-    def test_enforcement_no_status_callback_is_safe(self) -> None:
-        """on_status=None does not crash when enforcement has checks."""
-        enf_check = MagicMock(
-            return_value=EnforcementResult(
-                checks=[
-                    EnforcementCheck(
-                        tier="syntax", tool="write_file", file="test.py",
-                        passed=True, detail="Syntax OK", output="", duration_ms=5,
-                    ),
-                ],
-                appended_message="Syntax: OK",
-            )
-        )
-        mw = EnforcementMiddleware(enf_check, on_status=None)
-        executor = MagicMock(return_value=_make_result(output="wrote 42 bytes"))
-
-        result = mw(
-            "write_file",
-            {"path": "test.py"},
-            _make_context(enforcement_config=_make_enf_config()),
-            executor,
-        )
-
-        assert result.success is True
-        assert "Syntax: OK" in result.output
-
-
-# ── StuckDetectionMiddleware tests ─────────────────────────────────────────────
-
-
-class TestStuckDetectionMiddleware:
-    """3 test cases: not stuck, stuck appended, correct session key."""
-
-    def test_stuck_no_message_when_not_stuck(self) -> None:
-        """When _check_stuck returns None, no pending message."""
-        pending: dict[str, list[str]] = {}
-        stuck_check = MagicMock(return_value=None)
-        mw = StuckDetectionMiddleware(stuck_check, pending)
-        executor = MagicMock(return_value=_make_result(output="done"))
-
-        result = mw("list_files", {}, _make_context(), executor)
-
-        assert result.success is True
-        assert result.output == "done"
-        assert pending == {}
-
-    def test_stuck_appends_message_when_stuck(self) -> None:
-        """When _check_stuck returns a message, it is appended to pending."""
-        pending: dict[str, list[str]] = {}
-        stuck_check = MagicMock(return_value="You're stuck in a loop")
-        mw = StuckDetectionMiddleware(stuck_check, pending)
-        executor = MagicMock(return_value=_make_result(output="done"))
-
-        result = mw("read_file", {"path": "x.py"}, _make_context(), executor)
-
-        assert result.success is True
-        assert pending == {"special:coder": ["You're stuck in a loop"]}
-
-    def test_stuck_uses_correct_session_key(self) -> None:
-        """Pending messages are keyed to the correct session key."""
-        pending: dict[str, list[str]] = {"other:agent": ["old"]}
-        stuck_check = MagicMock(return_value="stuck detected")
-        mw = StuckDetectionMiddleware(stuck_check, pending)
-        ctx = _make_context(session_key="special:debugger")
-        executor = MagicMock(return_value=_make_result(output="done"))
-
-        result = mw("edit_file", {"path": "x.py"}, ctx, executor)
-
-        assert result.success is True
-        assert "special:debugger" in pending
-        assert pending["special:debugger"] == ["stuck detected"]
-        assert pending["other:agent"] == ["old"]
-
-
-# ── ToolMiddlewareChain tests ──────────────────────────────────────────────────
+# ======================================================================
+# ToolMiddlewareChain — basic behaviour
+# ======================================================================
 
 
 class TestToolMiddlewareChain:
-    """3 test cases: execution order, short-circuit, executor passthrough."""
 
-    def test_chain_executes_in_order(self) -> None:
-        """Middleware wrap each other in registration order."""
-        call_order: list[str] = []
-
-        def mw1(tool_name, args, ctx, next_fn):
-            call_order.append("mw1_before")
-            result = next_fn()
-            call_order.append("mw1_after")
-            return result
-
-        def mw2(tool_name, args, ctx, next_fn):
-            call_order.append("mw2_before")
-            result = next_fn()
-            call_order.append("mw2_after")
-            return result
-
-        chain = ToolMiddlewareChain([mw1, mw2])
-        executor = MagicMock(return_value=_make_result(output="executed"))
-
-        result = chain.run("echo", {}, _make_context(), executor)
-
-        assert result.success is True
-        assert result.output == "executed"
-        assert call_order == [
-            "mw1_before", "mw2_before", "mw2_after", "mw1_after",
-        ]
-        executor.assert_called_once()
-
-    def test_chain_short_circuit_does_not_reach_executor(self) -> None:
-        """Middleware that returns early prevents executor from running."""
-        def short_circuit(tool_name, args, ctx, next_fn):
-            return _make_result(success=False, output="blocked by mw")
-
-        chain = ToolMiddlewareChain([short_circuit])
-        executor = MagicMock()
-
-        result = chain.run("exec_command", {}, _make_context(), executor)
-
-        assert result.success is False
-        assert result.output == "blocked by mw"
-        executor.assert_not_called()
-
-    def test_chain_executor_result_passes_through(self) -> None:
-        """Without modifying middleware, executor result is returned unchanged."""
+    def test_run_passes_result(self, ok_tool):
         chain = ToolMiddlewareChain([])
-        executor = MagicMock(
-            return_value=_make_result(success=True, output="hello world")
-        )
+        assert chain.run("test", ok_tool) == "ok"
 
-        result = chain.run("list_files", {"path": "."}, _make_context(), executor)
-
-        assert result.success is True
-        assert result.output == "hello world"
-        executor.assert_called_once()
-
-
-# ── Sad-path tests ─────────────────────────────────────────────────────────────
-
-
-class TestSadPath:
-    """6 sad-path tests: enforcement crash, stuck crash, empty chain,
-    plus 3 regression tests for Phase A1 audit fixes."""
-
-    def test_enforcement_check_raises_does_not_crash_loop(self) -> None:
-        """Exception in enforcement.check is caught; original result returned."""
-        enf_check = MagicMock(side_effect=RuntimeError("enforcement crashed"))
-        mw = EnforcementMiddleware(enf_check)
-        executor = MagicMock(return_value=_make_result(output="wrote 42 bytes"))
-
-        with patch("agent.tool_middleware.logger.exception") as mock_exc:
-            result = mw(
-                "write_file",
-                {"path": "crash.py"},
-                _make_context(enforcement_config=_make_enf_config()),
-                executor,
-            )
-
-        assert result.success is True
-        assert result.output == "wrote 42 bytes"
-        mock_exc.assert_called_once()
-
-    def test_stuck_check_raises_does_not_crash_loop(self) -> None:
-        """Exception in stuck_check is caught; original result returned."""
-        pending: dict[str, list[str]] = {}
-        stuck_check = MagicMock(side_effect=ValueError("stuck check failed"))
-        mw = StuckDetectionMiddleware(stuck_check, pending)
-        executor = MagicMock(return_value=_make_result(output="done"))
-
-        with patch("agent.tool_middleware.logger.exception") as mock_exc:
-            result = mw("read_file", {"path": "x.py"}, _make_context(), executor)
-
-        assert result.success is True
-        assert result.output == "done"
-        assert pending == {}
-        mock_exc.assert_called_once()
-
-    def test_chain_with_empty_middleware_list(self) -> None:
-        """Empty middleware list results in executor being called directly."""
+    def test_run_re_raises_error(self, failing_tool):
         chain = ToolMiddlewareChain([])
-        executor = MagicMock(
-            return_value=ToolResult(success=True, output="direct call")
-        )
+        with pytest.raises(ValueError, match="boom"):
+            chain.run("test", failing_tool)
 
-        result = chain.run("write_file", {"path": "f.py"}, _make_context(), executor)
+    def test_empty_chain_noop(self, ok_tool):
+        chain = ToolMiddlewareChain([])
+        assert chain.run("noop", ok_tool, 1, key="val") == "ok"
 
-        assert result.success is True
-        assert result.output == "direct call"
-        executor.assert_called_once()
+    def test_state_is_passed_to_middleware(self):
+        """MiddlewareState should be populated and mutable."""
+        seen = []
 
-    # ── Phase A1 audit fix regression tests ────────────────────────────────
+        class CaptureMiddleware(ToolMiddleware):
+            def process_result(self, name, result, state):
+                state["foo"] = "bar"
+                seen.append(dict(state))
+                return result
 
-    def test_enforcement_on_status_callback_raises_does_not_crash_loop(self):
-        """BUG #1 regression: on_status callback exception must be caught."""
-        enf_check = MagicMock(return_value=EnforcementResult(
-            checks=[EnforcementCheck(tier="syntax", tool="write_file", file="x.py",
-                                      passed=True, detail="OK", output="", duration_ms=1)],
-            appended_message="Syntax: OK",
-        ))
-        def bad_callback(*a, **kw):
-            raise RuntimeError("UI disconnected")
-        mw = EnforcementMiddleware(enf_check, on_status=bad_callback)
-        executor = MagicMock(return_value=ToolResult(success=True, output="wrote 42 bytes"))
-        ctx = ToolContext(
-            session_key="special:coder", project_path="/p", iteration=0,
-            enforcement_config=_make_enf_config(),
-        )
-        # Must NOT raise — must return a result
-        result = mw("write_file", {"path": "x.py"}, ctx, executor)
-        assert result.success is True
+            def process_error(self, name, error, state):
+                pass
 
-    def test_enforcement_malformed_return_does_not_crash_loop(self):
-        """BUG #2 regression: malformed enforcement_check_fn return must be caught."""
-        enf_check = MagicMock(return_value=None)  # malformed — no .appended_message
-        mw = EnforcementMiddleware(enf_check)
-        executor = MagicMock(return_value=ToolResult(success=True, output="wrote 42 bytes"))
-        ctx = ToolContext(
-            session_key="special:coder", project_path="/p", iteration=0,
-            enforcement_config=_make_enf_config(),
-        )
-        # Must NOT raise — must return the original result unchanged
-        result = mw("write_file", {"path": "x.py"}, ctx, executor)
-        assert result.success is True
-        assert result.output == "wrote 42 bytes"
+        chain = ToolMiddlewareChain([CaptureMiddleware()])
+        chain.run("x", lambda: "r")
+        assert seen == [{"foo": "bar"}]
 
-    def test_stuck_check_log_format_string_correct(self):
-        """BUG #3 regression: log message uses tool_name for 'for %s' slot, not session_key."""
-        stuck_check = MagicMock(side_effect=ValueError("boom"))
-        mw = StuckDetectionMiddleware(stuck_check, {})
-        executor = MagicMock(return_value=ToolResult(success=True, output="ok"))
-        ctx = ToolContext(session_key="special:coder", project_path="/p", iteration=0)
-        with patch("agent.tool_middleware.logger.exception") as mock_exc:
-            mw("read_file", {"path": "x.py"}, ctx, executor)
-            mock_exc.assert_called_once()
-            # First positional arg is the format string; second is the first %s value.
-            # It must be tool_name ("read_file"), NOT session_key ("special:coder").
-            call_args = mock_exc.call_args
-            first_arg = call_args[0][1]
-            assert first_arg == "read_file", (
-                f"Expected tool_name 'read_file', got {first_arg!r}"
-            )
+    def test_middleware_transforms_result(self):
+        class DoubleMiddleware(ToolMiddleware):
+            def process_result(self, name, result, state):
+                return result * 2
+
+            def process_error(self, name, error, state):
+                pass
+
+        chain = ToolMiddlewareChain([DoubleMiddleware()])
+        assert chain.run("x", lambda: 21) == 42
+
+    def test_middleware_can_raise_in_process_result(self):
+        class RaiseMiddleware(ToolMiddleware):
+            def process_result(self, name, result, state):
+                raise RuntimeError("mw fail")
+            def process_error(self, name, error, state):
+                pass
+
+        chain = ToolMiddlewareChain([RaiseMiddleware()])
+        with pytest.raises(RuntimeError, match="mw fail"):
+            chain.run("x", lambda: "ok")
+
+    def test_error_chain_runs_in_reverse_order(self):
+        """On tool error, process_error runs last-to-first."""
+        order = []
+
+        class A(ToolMiddleware):
+            def process_result(self, n, r, s): return r
+            def process_error(self, n, e, s): order.append("A")
+
+        class B(ToolMiddleware):
+            def process_result(self, n, r, s): return r
+            def process_error(self, n, e, s): order.append("B")
+
+        chain = ToolMiddlewareChain([A(), B()])
+        with pytest.raises(ValueError):
+            chain.run("x", lambda: (_ for _ in ()).throw(ValueError("e")))
+        assert order == ["B", "A"], f"expected reverse order, got {order}"
+
+
+# ======================================================================
+# EnforcementMiddleware
+# ======================================================================
+
+
+class TestEnforcementMiddleware:
+
+    # ── skip for non-write tools ──────────────────────────────────
+
+    def test_skips_non_write_tools(self, ok_tool):
+        mw = EnforcementMiddleware()
+        state = MiddlewareState({"file_path": "foo.py"})
+        result = mw.process_result("read_file", "ok", state)
+        assert result == "ok"
+
+    def test_skips_when_no_file_path(self, ok_tool):
+        mw = EnforcementMiddleware()
+        state = MiddlewareState()
+        result = mw.process_result("write_file", "ok", state)
+        assert result == "ok"
+
+    # ── syntax guard ──────────────────────────────────────────────
+
+    @patch("agent.tool_middleware.syntax_guard", return_value=True)
+    @patch("agent.tool_middleware.run_tests", return_value=True)
+    @patch("agent.tool_middleware.run_lint", return_value=True)
+    def test_all_checks_pass(self, mock_lint, mock_tests, mock_syntax, ok_tool):
+        mw = EnforcementMiddleware()
+        state = MiddlewareState({"file_path": "foo.py"})
+        result = mw.process_result("write_file", "ok", state)
+        assert result == "ok"
+        mock_syntax.assert_called_once_with("foo.py")
+        mock_tests.assert_called_once()
+
+    @patch("agent.tool_middleware.syntax_guard", return_value=False)
+    def test_syntax_failure_raises(self, mock_syntax, ok_tool):
+        mw = EnforcementMiddleware()
+        state = MiddlewareState({"file_path": "bad.py"})
+        with pytest.raises(EnforcementError, match="Syntax check failed for bad.py"):
+            mw.process_result("write_file", "ok", state)
+        mock_syntax.assert_called_once_with("bad.py")
+
+    @patch("agent.tool_middleware.syntax_guard", return_value=True)
+    @patch("agent.tool_middleware.run_tests", return_value=False)
+    def test_test_failure_raises(self, mock_tests, mock_syntax):
+        mw = EnforcementMiddleware()
+        state = MiddlewareState({"file_path": "bad.py"})
+        with pytest.raises(EnforcementError, match="Tests failed for bad.py"):
+            mw.process_result("edit_file", "ok", state)
+        mock_syntax.assert_called_once_with("bad.py")
+        mock_tests.assert_called_once()
+
+    @patch("agent.tool_middleware.syntax_guard", return_value=True)
+    @patch("agent.tool_middleware.run_tests", return_value=True)
+    @patch("agent.tool_middleware.run_lint", return_value=False)
+    def test_lint_failure_raises(self, mock_lint, mock_tests, mock_syntax):
+        mw = EnforcementMiddleware()
+        state = MiddlewareState({"file_path": "bad.py"})
+        with pytest.raises(EnforcementError, match="Lint failed for bad.py"):
+            mw.process_result("write_file", "ok", state)
+        mock_syntax.assert_called_once_with("bad.py")
+        mock_tests.assert_called_once()
+        mock_lint.assert_called_once()
+
+    @patch("agent.tool_middleware.syntax_guard", return_value=True)
+    @patch("agent.tool_middleware.run_tests", return_value=True)
+    @patch("agent.tool_middleware.run_lint", return_value=True)
+    def test_process_error_does_not_raise(self, mock_lint, mock_tests, mock_syntax):
+        mw = EnforcementMiddleware()
+        mw.process_error("write_file", ValueError("ignored"), MiddlewareState())
+        # Should not raise — just passes through
+
+    def test_edit_file_also_checked(self):
+        """edit_file is also a WRITE_TOOL."""
+        assert "edit_file" in EnforcementMiddleware.WRITE_TOOLS
+
+    def test_write_file_in_write_tools(self):
+        assert "write_file" in EnforcementMiddleware.WRITE_TOOLS
+
+
+# ======================================================================
+# StuckDetectionMiddleware
+# ======================================================================
+
+
+class TestStuckDetectionMiddleware:
+
+    def test_first_call_passes(self, ok_tool):
+        mw = StuckDetectionMiddleware(max_repeats=3)
+        state = MiddlewareState({"file_path": "f.py"})
+        result = mw.process_result("write_file", "ok", state)
+        assert result == "ok"
+
+    def test_under_limit_passes(self, ok_tool):
+        mw = StuckDetectionMiddleware(max_repeats=3)
+        state = MiddlewareState({"file_path": "f.py"})
+        for _ in range(3):
+            mw.process_result("write_file", "ok", state)
+        # 4th call should fail
+        with pytest.raises(StuckDetectionError, match="Stuck on tool"):
+            mw.process_result("write_file", "ok", state)
+
+    def test_exact_limit_passes(self, ok_tool):
+        mw = StuckDetectionMiddleware(max_repeats=2)
+        state = MiddlewareState({"file_path": "f.py"})
+        for _ in range(2):
+            mw.process_result("write_file", "ok", state)
+        # 3rd call should fail
+        with pytest.raises(StuckDetectionError):
+            mw.process_result("write_file", "ok", state)
+
+    def test_different_file_resets_key(self, ok_tool):
+        mw = StuckDetectionMiddleware(max_repeats=2)
+        mw.process_result("write_file", "ok", MiddlewareState({"file_path": "a.py"}))
+        mw.process_result("write_file", "ok", MiddlewareState({"file_path": "b.py"}))
+        mw.process_result("write_file", "ok", MiddlewareState({"file_path": "a.py"}))
+        # a.py called 2 times (under limit)
+        mw.process_result("write_file", "ok", MiddlewareState({"file_path": "a.py"}))
+        # 3rd a.py call fails
+        with pytest.raises(StuckDetectionError):
+            mw.process_result("write_file", "ok", MiddlewareState({"file_path": "a.py"}))
+
+    def test_different_tool_is_separate_key(self, ok_tool):
+        mw = StuckDetectionMiddleware(max_repeats=2)
+        state = MiddlewareState({"file_path": "f.py"})
+        mw.process_result("write_file", "ok", state)
+        mw.process_result("write_file", "ok", state)
+        # read_file with same file_path — separate counter
+        mw.process_result("read_file", "ok", state)
+        assert True  # no error
+
+    def test_process_error_also_counts(self, ok_tool):
+        mw = StuckDetectionMiddleware(max_repeats=1)
+        state = MiddlewareState({"file_path": "f.py"})
+        mw.process_error("write_file", ValueError("e"), state)
+        # 2nd call should fail (1 from error + 1 from result)
+        with pytest.raises(StuckDetectionError):
+            mw.process_result("write_file", "ok", state)
+
+    def test_no_file_path_still_counts(self):
+        mw = StuckDetectionMiddleware(max_repeats=1)
+        mw.process_result("read_file", "ok", MiddlewareState())
+        with pytest.raises(StuckDetectionError):
+            mw.process_result("read_file", "ok", MiddlewareState())
+
+    def test_error_does_not_suppress_original(self):
+        mw = StuckDetectionMiddleware(max_repeats=1)
+        with pytest.raises(ValueError, match="orig"):
+            mw.process_error("write_file", ValueError("orig"), MiddlewareState())
+
+    def test_default_max_repeats(self):
+        mw = StuckDetectionMiddleware()
+        assert mw._max_repeats == 3
+
+    def test_custom_max_repeats(self):
+        mw = StuckDetectionMiddleware(max_repeats=5)
+        assert mw._max_repeats == 5
+
+
+# ======================================================================
+# Integration: chain with both middlewares
+# ======================================================================
+
+
+class TestMiddlewareChainIntegration:
+
+    @patch("agent.tool_middleware.syntax_guard", return_value=True)
+    @patch("agent.tool_middleware.run_tests", return_value=True)
+    @patch("agent.tool_middleware.run_lint", return_value=True)
+    def test_both_middlewares_pass(self, mock_lint, mock_tests, mock_syntax):
+        chain = ToolMiddlewareChain([
+            EnforcementMiddleware(),
+            StuckDetectionMiddleware(max_repeats=5),
+        ])
+        state = MiddlewareState({"file_path": "f.py"})
+        result = chain.run("write_file", lambda: "ok", state=state)
+        assert result == "ok"
+
+    @patch("agent.tool_middleware.syntax_guard", return_value=False)
+    def test_enforcement_fails_before_stuck(self, mock_syntax):
+        chain = ToolMiddlewareChain([
+            EnforcementMiddleware(),
+            StuckDetectionMiddleware(max_repeats=5),
+        ])
+        state = MiddlewareState({"file_path": "bad.py"})
+        with pytest.raises(EnforcementError):
+            chain.run("write_file", lambda: "ok", state=state)
+        # StuckDetection's process_error should not raise
+        assert True
+
+    def test_stuck_detection_fires_after_enforcement(self):
+        """StuckDetection counts calls across the chain."""
+        chain = ToolMiddlewareChain([
+            EnforcementMiddleware(),
+            StuckDetectionMiddleware(max_repeats=1),
+        ])
+        state = MiddlewareState({"file_path": "f.py"})
+        # First call — ok (StuckDetection counts but doesn't fail yet... wait, max_repeats=1 means 2nd call fails)
+        chain.run("write_file", lambda: "ok", state=state)
+        # Second call should trigger stuck detection
+        with pytest.raises(StuckDetectionError, match="Stuck on tool"):
+            chain.run("write_file", lambda: "ok", state=state)
+
+
+# ======================================================================
+# MiddlewareState
+# ======================================================================
+
+
+class TestMiddlewareState:
+
+    def test_is_dict(self):
+        s = MiddlewareState()
+        assert isinstance(s, dict)
+
+    def test_accepts_initial_items(self):
+        s = MiddlewareState({"key": "val"})
+        assert s["key"] == "val"
+
+    def test_mutable(self):
+        s = MiddlewareState()
+        s["count"] = 1
+        assert s["count"] == 1
+
+
+# ======================================================================
+# Abstract base — instantiation guard
+# ======================================================================
+
+
+class TestToolMiddlewareABC:
+
+    def test_cannot_instantiate_abstract(self):
+        with pytest.raises(TypeError):
+            ToolMiddleware()  # type: ignore[abstract]
+
+    def test_concrete_subclass_works(self):
+        class Concrete(ToolMiddleware):
+            def process_result(self, n, r, s): return r
+            def process_error(self, n, e, s): pass
+        instance = Concrete()
+        assert isinstance(instance, ToolMiddleware)

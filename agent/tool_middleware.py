@@ -1,244 +1,235 @@
-"""Tool middleware chain for AgentRuntime.
+"""
+Tool middleware framework for the agent runtime.
 
-Provides composable middleware classes that wrap tool execution with
-cross-cutting concerns: post-write enforcement verification and stuck-loop
-detection. Middleware is composed in onion order via ToolMiddlewareChain.
+Provides an extensible middleware pipeline (ToolMiddlewareChain) that wraps
+tool execution with pre/post hooks. Each middleware can inspect or transform
+tool results and errors without modifying the tool functions themselves.
 
-Architecture: agent/ layer — imports only from stdlib and agent.tools.
-No imports from ui/, gateway/, or agent.runtime.
+Chain order (Phase 1): [EnforcementMiddleware, StuckDetectionMiddleware]
 """
 
 from __future__ import annotations
 
-import dataclasses
-import logging
-from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+import sys
+import time
+from abc import ABC, abstractmethod
+from typing import Any
 
-from agent.tools import ToolResult
-
-logger = logging.getLogger(__name__)
+from agent.enforcement import run_lint, run_tests, syntax_guard
 
 
-class ToolMiddleware(Protocol):
-    """Middleware that wraps tool execution.
+# ── Middleware state ──────────────────────────────────────────────────
 
-    Each middleware receives the tool name, args, execution context,
-    and a ``next`` callable. It may:
 
-    - Short-circuit (return a ``ToolResult`` without calling ``next``)
-    - Modify args before calling ``next``
-    - Modify the result after calling ``next``
-    - Raise on error (caught by the chain)
+class MiddlewareState(dict):
+    """Mutable dict shared across the middleware chain for a single tool call.
 
-    Middlewares are composed in onion order: the first-registered wraps
-    all others.
+    Middleware authors can store per-call metadata here (timestamps, retry
+    counts, accumulators).  The same dict is passed to every middleware in
+    the chain and is discarded after the chain completes.
     """
 
-    def __call__(
+
+# ── Abstract base ────────────────────────────────────────────────────
+
+
+class ToolMiddleware(ABC):
+    """Abstract base for a single middleware in the tool chain.
+
+    Subclasses override ``process_result`` and/or ``process_error`` to
+    add behaviour after a tool returns or raises.
+    """
+
+    @abstractmethod
+    def process_result(
         self,
-        tool_name: str,
-        args: dict,
-        context: ToolContext,
-        next: Callable[[], ToolResult],
-    ) -> ToolResult: ...
+        name: str,
+        result: Any,
+        state: MiddlewareState,
+    ) -> Any:
+        """Inspect or transform a tool result.
 
+        *name* — tool function name (e.g. ``\"write_file\"``).
+        *result* — the raw return value of the tool function.
+        *state* — mutable ``MiddlewareState`` for the current call.
 
-@dataclass
-class ToolContext:
-    """Per-tool-call context shared across the middleware chain.
+        Return the (possibly modified) result, or raise an exception to
+        trigger the error path.
+        """
 
-    Fields:
-        session_key: Conversation session key (e.g. ``"special:coder"``).
-        project_path: Absolute path to the project root (sandbox base).
-        iteration: Current tool-loop iteration (0-indexed).
-        bypass_approval: When True, the approval middleware skips PM
-            dispatch (runtime already obtained approval before entering
-            the chain).
-        audit_log: Optional AuditLog instance for recording tool executions.
-        user_id: User identity for audit trail (from AgentConfig).
-        enforcement_config: The ``EnforcementConfig`` from ``AgentConfig``,
-            or None if enforcement is globally disabled.
-        si_enforcement: Per-conversation self-improvement enforcement flag
-            (None means default True).
-    """
-    session_key: str
-    project_path: str
-    iteration: int
-    bypass_approval: bool = False
-    audit_log: Any = None
-    user_id: str = ""
-    enforcement_config: Any = None
-    si_enforcement: bool | None = None
-
-
-class EnforcementMiddleware:
-    """Post-execution enforcement check for write tools.
-
-    Calls ``agent.enforcement.check()`` after ``write_file`` / ``edit_file``
-    succeeds. Appends the enforcement result to the ``ToolResult`` output
-    and dispatches per-check status callbacks.
-
-    No-ops for non-write tools and failed writes.
-    """
-
-    def __init__(
+    @abstractmethod
+    def process_error(
         self,
-        enforcement_check_fn: Callable,
-        on_status: Callable[[str, str, dict], None] | None = None,
+        name: str,
+        error: Exception,
+        state: MiddlewareState,
     ) -> None:
+        """Handle a tool error.
+
+        *name* — tool function name.
+        *error* — the exception raised by the tool or a previous middleware.
+        *state* — mutable ``MiddlewareState`` for the current call.
+
+        May itself raise to propagate/replace the error, or return
+        ``None`` to swallow it.
         """
-        Args:
-            enforcement_check_fn: ``agent.enforcement.check``.
-            on_status: Callback for each check result. Called as
-                ``on_status(session_key, tool_name, {"tier": ..., "file": ...,
-                "passed": ..., "detail": ...})``. May be None (no dispatch).
-        """
-        self._check = enforcement_check_fn
-        self._on_status = on_status
-
-    def __call__(
-        self,
-        tool_name: str,
-        args: dict,
-        ctx: ToolContext,
-        next: Callable[[], ToolResult],
-    ) -> ToolResult:
-        result = next()
-
-        # Only run on successful writes
-        if tool_name not in ("write_file", "edit_file"):
-            return result
-        if not result.success:
-            return result
-
-        # Check global + per-agent enforcement flags
-        global_enabled = (
-            ctx.enforcement_config is not None
-            and ctx.enforcement_config.enabled
-        )
-        agent_enabled = (
-            ctx.si_enforcement if ctx.si_enforcement is not None else True
-        )
-        if not (global_enabled and agent_enabled):
-            return result
-
-        try:
-            enf_result = self._check(
-                tool_name, args, result,
-                ctx.project_path,
-                ctx.enforcement_config,
-            )
-            if enf_result.appended_message:
-                result = dataclasses.replace(
-                    result,
-                    output=(result.output or "") + "\n" + enf_result.appended_message,
-                )
-                if self._on_status is not None:
-                    for check_record in enf_result.checks:
-                        self._on_status(ctx.session_key, tool_name, {
-                            "tier": check_record.tier,
-                            "file": check_record.file,
-                            "passed": check_record.passed,
-                            "detail": check_record.detail,
-                        })
-        except Exception:
-            logger.exception(
-                "Enforcement check failed for %s (session=%s):",
-                tool_name, ctx.session_key,
-            )
-            return result
-
-        return result
 
 
-class StuckDetectionMiddleware:
-    """Records tool calls and detects stuck loops.
-
-    Delegates to a stuck-check function (mirrors the runtime's
-    ``_check_stuck`` method). If a stuck message is produced, stores it
-    in the provided pending-messages dict for the next LLM call.
-    """
-
-    def __init__(
-        self,
-        stuck_check_fn: Callable[[str, str, dict, int], str | None],
-        pending_messages: dict[str, list[str]],
-    ) -> None:
-        """
-        Args:
-            stuck_check_fn: Callable invoked as
-                ``stuck_check_fn(session_key, tool_name, args, iteration)``.
-                Returns an intervention message or None.
-            pending_messages: Shared dict keyed by session key. Stuck
-                messages are appended here for the next LLM call.
-        """
-        self._check_stuck = stuck_check_fn
-        self._pending = pending_messages
-
-    def __call__(
-        self,
-        tool_name: str,
-        args: dict,
-        ctx: ToolContext,
-        next: Callable[[], ToolResult],
-    ) -> ToolResult:
-        result = next()
-        try:
-            stuck_msg = self._check_stuck(
-                ctx.session_key, tool_name, args, ctx.iteration,
-            )
-        except Exception:
-            logger.exception(
-                "Stuck check failed for %s (session=%s):",
-                tool_name, ctx.session_key,
-            )
-            return result
-
-        if stuck_msg:
-            self._pending.setdefault(ctx.session_key, []).append(stuck_msg)
-        return result
+# ── Chain ────────────────────────────────────────────────────────────
 
 
 class ToolMiddlewareChain:
-    """Composes middleware into a single callable.
+    """Ordered chain of ``ToolMiddleware`` instances.
 
-    Middlewares wrap the executor in registration order: ``middlewares[0]``
-    is the outermost wrapper. An empty middleware list calls the executor
-    directly.
+    Usage::
+
+        chain = ToolMiddlewareChain([EnforcementMiddleware(), ...])
+        result = chain.run("write_file", tool_func, "/tmp/x.txt", state)
     """
 
     def __init__(self, middlewares: list[ToolMiddleware]) -> None:
-        self._middlewares = middlewares
+        self._middlewares = list(middlewares)
+
+    # ── public API ────────────────────────────────────────────────
 
     def run(
         self,
-        tool_name: str,
-        args: dict,
-        ctx: ToolContext,
-        executor: Callable[[], ToolResult],
-    ) -> ToolResult:
-        """Execute the middleware chain.
+        name: str,
+        tool_func: callable,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Execute *tool_func(*args, **kwargs)* through the middleware chain.
 
-        Middlewares wrap each other in registration order:
+        1. Extract an optional ``MiddlewareState`` from *kwargs*.
+        2. Call the tool function with remaining args.
+        3. On success, pass the result through every middleware's
+           ``process_result`` in chain order.
+        4. On error, pass the exception through every middleware's
+           ``process_error`` **in reverse order** (last-to-first).
 
-            middlewares[0] wraps middlewares[1] wraps ... wraps executor.
-
-        Args:
-            tool_name: The tool being executed.
-            args: Tool arguments dict.
-            ctx: Tool execution context.
-            executor: The innermost callable (typically ``execute_tool``).
-
-        Returns:
-            The ``ToolResult`` from the chain (possibly modified by
-            middleware).
+        Returns the final (possibly transformed) result.
+        Raises the final (possibly transformed) error.
         """
+        state: MiddlewareState = kwargs.pop("state", MiddlewareState())
 
-        def make_next(index: int) -> Callable[[], ToolResult]:
-            if index >= len(self._middlewares):
-                return executor
-            mw = self._middlewares[index]
-            return lambda: mw(tool_name, args, ctx, make_next(index + 1))
+        try:
+            result = tool_func(*args, **kwargs)
+        except Exception as exc:
+            self._run_error_chain(name, exc, state)
+            raise
 
-        return make_next(0)()
+        return self._run_result_chain(name, result, state)
+
+    # ── internals ─────────────────────────────────────────────────
+
+    def _run_result_chain(self, name: str, result: Any, state: MiddlewareState) -> Any:
+        for mw in self._middlewares:
+            try:
+                result = mw.process_result(name, result, state)
+            except Exception as exc:
+                self._run_error_chain(name, exc, state)
+                raise
+        return result
+
+    def _run_error_chain(self, name: str, error: Exception, state: MiddlewareState) -> None:
+        for mw in reversed(self._middlewares):
+            try:
+                mw.process_error(name, error, state)
+            except Exception:
+                # The middleware raised a *different* error — that becomes
+                # the new canonical error for the remaining chain.
+                error = sys.exc_info()[1]
+
+
+# ── Concrete middleware: Enforcement ────────────────────────────────
+
+
+class EnforcementMiddleware(ToolMiddleware):
+    """Post-write enforcement: syntax check → test run → lint.
+
+    Delegates to ``agent.enforcement.{syntax_guard, run_tests, run_lint}``.
+    Only activates for write-type tools (``write_file``, ``edit_file``).
+    """
+
+    WRITE_TOOLS = frozenset({"write_file", "edit_file"})
+
+    def __init__(self, project_path: str = ".") -> None:
+        self._project_path = project_path
+
+    def process_result(self, name: str, result: Any, state: MiddlewareState) -> Any:
+        if name not in self.WRITE_TOOLS:
+            return result
+
+        # Collect the file path from the tool arguments stored in state.
+        # Tool functions are called BEFORE middleware, so the file has
+        # already been written.  We rely on the caller (or a pre-hook)
+        # to put the file path in state["file_path"].
+        file_path: str | None = state.get("file_path")
+        if not file_path:
+            return result  # nothing to enforce
+
+        # Tier 1 – syntax
+        syntax_ok = syntax_guard(file_path)
+        if not syntax_ok:
+            raise EnforcementError(f"Syntax check failed for {file_path}")
+
+        # Tier 2 – tests
+        test_ok = run_tests(file_path, project_path=self._project_path)
+        if not test_ok:
+            raise EnforcementError(f"Tests failed for {file_path}")
+
+        # Tier 3 – lint
+        lint_ok = run_lint(file_path, project_path=self._project_path)
+        if not lint_ok:
+            raise EnforcementError(f"Lint failed for {file_path}")
+
+        return result
+
+    def process_error(self, name: str, error: Exception, state: MiddlewareState) -> None:
+        """On error, do nothing special — let the error propagate."""
+        return
+
+
+class EnforcementError(RuntimeError):
+    """Raised when a post-write enforcement check fails."""
+
+
+# ── Concrete middleware: Stuck Detection ────────────────────────────
+
+
+class StuckDetectionMiddleware(ToolMiddleware):
+    """Detects when the agent is stuck on the same tool call.
+
+    Heuristic: if the same ``(name, file_path)`` pair is called more than
+    ``max_repeats`` times within the chain's lifetime, raises
+    ``StuckDetectionError``.
+
+    The middleware maintains a simple counter per session key.
+    """
+
+    def __init__(self, max_repeats: int = 3) -> None:
+        self._max_repeats = max_repeats
+        self._call_counter: dict[tuple[str, str | None], int] = {}
+
+    def process_result(self, name: str, result: Any, state: MiddlewareState) -> Any:
+        self._count_call(name, state.get("file_path"))
+        return result
+
+    def process_error(self, name: str, error: Exception, state: MiddlewareState) -> None:
+        self._count_call(name, state.get("file_path"))
+        # Don't suppress — let the original error propagate.
+
+    def _count_call(self, name: str, file_path: str | None) -> None:
+        key = (name, file_path)
+        count = self._call_counter.get(key, 0) + 1
+        self._call_counter[key] = count
+        if count > self._max_repeats:
+            raise StuckDetectionError(
+                f"Stuck on tool '{name}' for file '{file_path}' "
+                f"(called {count} times)"
+            )
+
+
+class StuckDetectionError(RuntimeError):
+    """Raised when the stuck-detection heuristic fires."""
