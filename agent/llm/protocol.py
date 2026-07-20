@@ -14,6 +14,7 @@ class LLMResponse:
     raw: dict = field(default_factory=dict)
 
 
+@runtime_checkable
 class LLMProvider(Protocol):
     """One class per provider wire protocol."""
 
