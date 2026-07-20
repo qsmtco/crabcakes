@@ -1406,21 +1406,28 @@ class TestStreaming:
         deltas = []
         rt._on_text_delta = lambda sk, d: deltas.append(d)
 
-        # Patch the streamers dict to use our mock
-        from agent import runtime as rt_module
-        orig = rt_module._PROVIDER_STREAMERS["openai"]
-        rt_module._PROVIDER_STREAMERS["openai"] = lambda *a, **kw: _mock_stream_openai_3_chunks()
-        try:
+        # Patch get_provider to return a mock provider whose stream()
+        # yields 3 text chunks (dispatch now goes through the registry).
+        from agent.llm.streaming import SSEEvent
+        from unittest.mock import MagicMock
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = iter([
+            SSEEvent(type="text_delta", data={"content": "Hello"}),
+            SSEEvent(type="text_delta", data={"content": " world"}),
+            SSEEvent(type="text_delta", data={"content": "!"}),
+            SSEEvent(type="done", data={}),
+        ])
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
             with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 rt._run_loop(sk, "say hello")
-        finally:
-            rt_module._PROVIDER_STREAMERS["openai"] = orig
 
-        # on_text_delta fires for each chunk
-        assert len(deltas) == 3, f"Expected 3 deltas, got {len(deltas)}: {deltas}"
-        assert deltas[0] == "Hello"
-        assert deltas[1] == " world"
-        assert deltas[2] == "!"
+        # on_text_delta fires for each chunk (plus the BUG #21 turn-start
+        # empty delta, so expect 4: "", "Hello", " world", "!")
+        assert len(deltas) == 4, f"Expected 4 deltas, got {len(deltas)}: {deltas}"
+        assert deltas[0] == ""  # BUG #21 turn-start signal
+        assert deltas[1] == "Hello"
+        assert deltas[2] == " world"
+        assert deltas[3] == "!"
         rt.stop()
 
     def test_response_complete_fires_after_stream(self):
