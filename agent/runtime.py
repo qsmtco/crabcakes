@@ -2548,33 +2548,48 @@ class AgentRuntime:
                     # was configured without. conv.allowed_tools is the single source of
                     # truth — set in create_conversation() from agent_def["tools"] and
                     # persisted on the conversation object.
-                    # Execute through the tool middleware chain.
-                    # The chain wraps execute_tool with EnforcementMiddleware
-                    # (post-write verification) and StuckDetectionMiddleware
-                    # (loop detection). Approval was already resolved inline
-                    # above (before on_tool_call_start) per spec §A.2.4.
-                    ctx = ToolContext(
-                        session_key=session_key,
-                        project_path=conv.project_path,
-                        iteration=iteration,
-                        bypass_approval=bypass_approval,
-                        audit_log=self._audit_log,
-                        user_id=getattr(self._config, "user_id", ""),
-                        enforcement_config=self._config.enforcement,
-                        si_enforcement=conv.si_enforcement,
-                    )
-                    result = self._tool_chain.run(
-                        tool_name=tool_name,
-                        args=args,
-                        ctx=ctx,
-                        executor=lambda: execute_tool(
-                            tool_name, args, conv.project_path, session_key,
-                            approval_callback=per_call_cb,
-                            allowed_tools=conv.allowed_tools,
-                        ),
-                    )
+                    result = execute_tool(tool_name, args, conv.project_path, session_key,
+                                          approval_callback=per_call_cb,
+                                          allowed_tools=conv.allowed_tools)
                     logger.debug("[tool-loop] sk=%s tool %s result: success=%s output_len=%d",
                                  session_key, tool_name, result.success, len(result.output or ""))
+
+                    # === ENFORCEMENT LAYER HOOK ===
+                    # Two-level gate: (1) global config enabled, (2) per-agent SI override
+                    global_enabled = self._config.enforcement.enabled
+                    agent_enabled = conv.si_enforcement if conv.si_enforcement is not None else True
+                    if tool_name in ("write_file", "edit_file") and global_enabled and agent_enabled:
+                        enf_result = _enforcement_check(
+                            tool_name, args, result,
+                            conv.project_path,
+                            self._config.enforcement,
+                        )
+                        if enf_result.appended_message:
+                            result = dataclasses.replace(
+                                result,
+                                output=(result.output or "") + "\n" + enf_result.appended_message,
+                            )
+                            for check in enf_result.checks:
+                                self._dispatch(
+                                    self._on_enforcement_status,
+                                    session_key, tool_name,
+                                    {
+                                        "tier": check.tier,
+                                        "file": check.file,
+                                        "passed": check.passed,
+                                        "detail": check.detail,
+                                    },
+                                )
+                    # === END ENFORCEMENT HOOK ===
+
+                    # §E: Stuck detection — record this tool call and check for loops
+                    stuck_msg = self._check_stuck(session_key, tool_name, args, iteration)
+                    if stuck_msg:
+                        logger.warning("[stuck-detection] sk=%s: %s", session_key, stuck_msg)
+                        # Phase CB-3: store as transient signal, NOT in conv.messages.
+                        # The next LLM call will prepend it to the request's messages list.
+                        # See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.3 (BUG #4 fix).
+                        self._pending_stuck_messages.setdefault(session_key, []).append(stuck_msg)
 
                     # Record tool result — ToolResult dataclass stays clean
                     tc.mark_completed(result.output if result.success else result.error or "")
