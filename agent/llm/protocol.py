@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any, Iterator, Protocol
+from typing import Any, Iterator, Protocol, runtime_checkable
 
 
 @dataclass
