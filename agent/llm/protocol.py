@@ -34,3 +34,14 @@ class LLMProvider(Protocol):
         timeout: float,
         x_title: str = "",
     ) -> dict: ...
+
+    def stream(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        messages: list[dict],
+        tools: list[dict] | None,
+        timeout: float,
+        x_title: str = "",
+    ) -> Iterator: ...
