@@ -163,185 +163,24 @@ class AuditLog:
             return list(self._entries)
 
 
-# ── Cost tables + functions (extracted to agent/llm/cost.py, Phase B1) ──────
-# Re-exported under legacy underscore names for backward compatibility.
-from agent.llm.cost import (
-    OPENAI_COST as _OPENAI_COST,
-    MINIMAX_COST as _MINIMAX_COST,
-    ANTHROPIC_COST as _ANTHROPIC_COST,
-    PROVIDER_COSTS as _PROVIDER_COSTS,
-    model_id as _model_id,
-    cost_for_model as _cost_for_model,
-)
+# ── LLM providers (extracted to agent/llm/, Phase B4) ───────────────────────
+# Re-exported under legacy names for backward compatibility.
+from agent.llm.openai_provider import OpenAIProvider
+from agent.llm.minimax_provider import MiniMaxProvider
+from agent.llm.anthropic_provider import AnthropicProvider
+from agent.llm.registry import get_provider as _get_provider
 
-
-# ── Provider adapters ──────────────────────────────────────────────────────────
-
-def _call_openai(
-    base_url: str,
-    api_key: str,
-    model: str,
-    messages: list[dict],
-    tools: list[dict] | None,
-    timeout: float,
-    x_title: str = "",
-) -> dict:
-    """Call OpenAI Chat Completions API (also used by OpenRouter, ZAI)."""
-    endpoint = f"{base_url.rstrip('/')}/chat/completions"
-    payload = {
-        "model": _model_id(model),
-        "messages": messages,
-    }
-    if tools:
-        payload["tools"] = tools
-        payload["tool_choice"] = "auto"
-
-    body = json.dumps(payload).encode()
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
-    }
-    if x_title:
-        headers["HTTP-Referer"] = "https://github.com/qsmtco/crabcakes"
-        headers["X-Title"] = x_title
-    req = urllib.request.Request(
-        endpoint,
-        data=body,
-        headers=headers,
-        method="POST",
-    )
-    try:
-        with _urlopen_with_ssl_retry(req, timeout=timeout) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(
-            f"OpenAI API error {e.code} {e.reason}: {body}"
-        ) from e
-
-
-def _call_minimax(
-    base_url: str,
-    api_key: str,
-    model: str,
-    messages: list[dict],
-    tools: list[dict] | None,
-    timeout: float,
-    x_title: str = "",
-) -> dict:
-    """Call MiniMax ChatCompletion v2 API."""
-    endpoint = f"{base_url.rstrip('/')}/text/chatcompletion_v2"
-    payload = {
-        "model": _model_id(model),
-        "messages": messages,
-    }
-    if tools:
-        payload["tools"] = tools
-
-    body = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        endpoint,
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST",
-    )
-    try:
-        with _urlopen_with_ssl_retry(req, timeout=timeout) as resp:
-            result = json.loads(resp.read())
-            # MiniMax returns body-level errors with HTTP 200:
-            # {"base_resp":{"status_code":1004,"status_msg":"login fail..."}}
-            base_resp = result.get("base_resp", {})
-            status_code = base_resp.get("status_code", 0)
-            if status_code != 0:
-                status_msg = base_resp.get("status_msg", "unknown error")
-                raise RuntimeError(
-                    f"MiniMax API error (status_code={status_code}): {status_msg}"
-                )
-            return result
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(
-            f"MiniMax API error {e.code} {e.reason}: {body}"
-        ) from e
-
-
-# ── Anthropic converters (extracted to agent/llm/convert.py, Phase B2) ──────
-# Re-exported under legacy underscore names for backward compatibility.
-from agent.llm.convert import (
-    convert_messages_for_anthropic as _convert_messages_for_anthropic,
-    convert_tools_for_anthropic as _convert_tools_for_anthropic,
-)
-
-
-def _call_anthropic(
-    base_url: str,
-    api_key: str,
-    model: str,
-    messages: list[dict],
-    tools: list[dict] | None,
-    timeout: float,
-    x_title: str = "",
-) -> dict:
-    """Call Anthropic Messages API."""
-    endpoint = f"{base_url.rstrip('/')}/messages"
-    # Extract system prompt and STRIP system-role messages from the messages
-    # list before passing to the helper. The Anthropic API expects the system
-    # prompt in payload['system'] (NOT as a user-role message), and the helper
-    # would otherwise convert the system message into a user message, causing
-    # the system prompt to be sent TWICE (once as system, once as first user).
-    # PHASE-1 AUDIT BUG #1 fix.
-    system_msg: str | None = None
-    non_system_messages: list[dict] = []
-    for msg in messages:
-        if msg.get("role") == "system":
-            if system_msg is None:
-                content = msg.get("content", "")
-                system_msg = content if isinstance(content, str) else ""
-        else:
-            non_system_messages.append(msg)
-    # Convert messages and tools using shared helpers
-    api_messages = _convert_messages_for_anthropic(non_system_messages)
-
-    payload: dict[str, Any] = {
-        "model": _model_id(model),
-        "messages": api_messages,
-        "max_tokens": 4096,
-    }
-    if system_msg:
-        payload["system"] = system_msg
-    if tools:
-        payload["tools"] = _convert_tools_for_anthropic(tools)
-
-    body = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        endpoint,
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        },
-        method="POST",
-    )
-    try:
-        with _urlopen_with_ssl_retry(req, timeout=timeout) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(
-            f"Anthropic API error {e.code} {e.reason}: {body}"
-        ) from e
-
+# Bound methods for test-patch compatibility (patch("agent.runtime._call_openai"))
+_call_openai = OpenAIProvider("openai").call
+_call_minimax = MiniMaxProvider().call
+_call_anthropic = AnthropicProvider().call
 
 _PROVIDER_CALLERS: dict[str, Any] = {
     "openai": _call_openai,
     "minimax": _call_minimax,
     "anthropic": _call_anthropic,
-    "openrouter": _call_openai,  # OpenAI-compatible API
-    "zai": _call_openai,        # OpenAI-compatible API
+    "openrouter": OpenAIProvider("openrouter").call,
+    "zai": OpenAIProvider("zai").call,
 }
 
 
