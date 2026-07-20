@@ -1589,6 +1589,49 @@ def get_valid_callers() -> frozenset[str]     # §caller-validation — single s
 
 **Thread safety:** All callbacks dispatched via `GLib.idle_add()`. `_tool_history` protected by dedicated `_tool_history_lock` (separate from `self._lock` to avoid deadlock with `cancel()`).
 
+### 3.21m.1 `agent/tool_middleware.py` — Tool Middleware Chain (Phase A1)
+
+**Responsibility:** Composable middleware that wraps tool execution with cross-cutting concerns (post-write enforcement verification and stuck-loop detection). Replaces inline policy blocks that were in `_run_loop`.
+
+**Owns:** `ToolMiddleware` (Protocol), `ToolContext` (dataclass), `EnforcementMiddleware`, `StuckDetectionMiddleware`, `ToolMiddlewareChain`.
+
+**Architecture:** `agent/` layer — imports only from `agent.tools` and stdlib. No UI, gateway, or `agent.runtime` imports. The chain is constructed in `AgentRuntime.__init__` and invoked via `self._tool_chain.run()` in `_run_loop`.
+
+**Public API:**
+```python
+class ToolMiddlewareChain:
+    def __init__(middlewares: list[ToolMiddleware])
+    def run(tool_name, args, ctx: ToolContext, executor: Callable[[], ToolResult]) -> ToolResult
+
+@dataclass ToolContext:
+    session_key, project_path, iteration, bypass_approval, audit_log, user_id, enforcement_config, si_enforcement
+```
+
+### 3.21m.2 `agent/llm/` — LLM Provider Abstraction Package (Phase B1–B6)
+
+**Responsibility:** Encapsulate LLM provider wire protocols (OpenAI, MiniMax, Anthropic) behind a uniform `call()` + `stream()` interface. Extracted from `agent/runtime.py` to reduce file size and enable per-provider testing.
+
+**Public API:**
+```python
+get_provider(provider_id: str) -> LLMProvider    # registry lookup
+list_providers() -> list[str]                     # sorted provider IDs
+LLMProvider — Protocol with call() + stream() + provider_id + response_format
+LLMResponse — normalized response dataclass
+```
+
+**Sub-modules:**
+- `protocol.py` — LLMProvider Protocol (@runtime_checkable) + LLMResponse dataclass
+- `registry.py` — provider registry (5 entries: openai, minimax, anthropic, openrouter, zai)
+- `openai_provider.py` — OpenAIProvider (handles openai, openrouter, zai; call + stream)
+- `minimax_provider.py` — MiniMaxProvider (ChatCompletion v2; call + stream)
+- `anthropic_provider.py` — AnthropicProvider (Messages API; call + stream)
+- `streaming.py` — SSE helpers (sse_lines, parse_sse_line, parse_sse_delta) + SSL retry infrastructure
+- `extractors.py` — response extractors (tool_calls, text_content, usage); takes `response_format: str` parameter
+- `convert.py` — Anthropic message/tool format converters
+- `cost.py` — cost tables + model_id + cost_for_model
+
+**Architecture:** `agent/` layer — imports from stdlib + `agent.tools` only. No UI or gateway imports. Provider classes import SSE helpers and cost functions from sibling modules within the package.
+
 ### 3.21n `agent/tools.py` — Tool Definitions + Execution (Phase 1.1)
 
 **Responsibility:** 9 tools for local file/exec/web operations, sandboxed to `project_path`, with PM approval gating for `exec_command`.
