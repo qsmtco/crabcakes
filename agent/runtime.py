@@ -2548,9 +2548,31 @@ class AgentRuntime:
                     # was configured without. conv.allowed_tools is the single source of
                     # truth — set in create_conversation() from agent_def["tools"] and
                     # persisted on the conversation object.
-                    result = execute_tool(tool_name, args, conv.project_path, session_key,
-                                          approval_callback=per_call_cb,
-                                          allowed_tools=conv.allowed_tools)
+                    # Execute through the tool middleware chain.
+                    # The chain wraps execute_tool with EnforcementMiddleware
+                    # (post-write verification) and StuckDetectionMiddleware
+                    # (loop detection). Approval was already resolved inline
+                    # above (before on_tool_call_start) per spec §A.2.4.
+                    ctx = ToolContext(
+                        session_key=session_key,
+                        project_path=conv.project_path,
+                        iteration=iteration,
+                        bypass_approval=bypass_approval,
+                        audit_log=self._audit_log,
+                        user_id=getattr(self._config, "user_id", ""),
+                        enforcement_config=self._config.enforcement,
+                        si_enforcement=conv.si_enforcement,
+                    )
+                    result = self._tool_chain.run(
+                        tool_name=tool_name,
+                        args=args,
+                        ctx=ctx,
+                        executor=lambda: execute_tool(
+                            tool_name, args, conv.project_path, session_key,
+                            approval_callback=per_call_cb,
+                            allowed_tools=conv.allowed_tools,
+                        ),
+                    )
                     logger.debug("[tool-loop] sk=%s tool %s result: success=%s output_len=%d",
                                  session_key, tool_name, result.success, len(result.output or ""))
 
