@@ -31,12 +31,13 @@ from agent.tools import ToolResult
 
 def _make_context(**overrides) -> ToolContext:
     """Create a ToolContext with sensible test defaults."""
-    return ToolContext(
+    defaults = dict(
         session_key="test-session",
         project_path="/tmp/test",
         iteration=0,
-        **overrides,
     )
+    defaults.update(overrides)
+    return ToolContext(**defaults)
 
 
 def _make_result(
