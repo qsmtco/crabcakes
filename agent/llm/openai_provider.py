@@ -17,6 +17,8 @@ from agent.llm.streaming import (
     urlopen_with_ssl_retry,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class OpenAIProvider:
     """Handles OpenAI, OpenRouter, and ZAI APIs (all OpenAI-compatible).
