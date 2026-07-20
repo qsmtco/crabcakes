@@ -646,6 +646,12 @@ def build_awareness_dict(project_path: str) -> dict[str, str]:
     else:
         parts["PROJECT_MEMORY"] = ""
 
+    # Current task — extracted from the latest context.md heading.
+    # Injected as TRUSTED data (not in the untrusted fence) because it is
+    # an operational directive the agent must follow.
+    task = get_current_task(project_path)
+    parts["CURRENT_TASK"] = task if task else "(no current task recorded)"
+
     # Workflow status — lazy import to avoid circular dependency
     try:
         from utils.workflow_state import get_workflow_content
