@@ -583,7 +583,7 @@ def detect_tech_stack(project_path: str) -> list[str]:
 def build_awareness_dict(project_path: str) -> dict[str, str]:
     """Return awareness data as a dict of template variables.
 
-    Keys: PROJECT_NAME, TEAM_ROSTER, CURRENT_STATE, PROJECT_MEMORY, WORKFLOW_STATUS.
+    Keys: PROJECT_NAME, TEAM_ROSTER, CURRENT_STATE, PROJECT_MEMORY, CURRENT_TASK, WORKFLOW_STATUS.
     Parallel to build_awareness_block() but returns structured data
     instead of formatted text.
     """
