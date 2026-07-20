@@ -7,7 +7,6 @@ import urllib.error
 import urllib.request
 
 from agent.llm.cost import model_id
-from agent.runtime import _urlopen_with_ssl_retry
 
 
 class MiniMaxProvider:
@@ -37,6 +36,7 @@ class MiniMaxProvider:
         x_title: str = "",
     ) -> dict:
         """Call MiniMax ChatCompletion v2 API."""
+        from agent.runtime import _urlopen_with_ssl_retry
         endpoint = f"{base_url.rstrip('/')}/text/chatcompletion_v2"
         payload = {
             "model": model_id(model),
