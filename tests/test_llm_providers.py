@@ -528,9 +528,16 @@ class TestStreamingDispatch:
     """Verify _call_llm_streaming dispatches through get_provider().stream()."""
 
     def test_streaming_dispatch_uses_get_provider(self):
-        """_call_llm_streaming must call get_provider(caller_key).stream()."""
+        """_call_llm_streaming must call get_provider(caller_key).stream().
+
+        This is a regression guard: if the dispatch reverts to
+        _PROVIDER_STREAMERS[caller_key], this test fails because
+        mock_provider.stream would never be called via the registry path.
+        """
         from unittest.mock import MagicMock, patch
         from agent.llm.streaming import SSEEvent
+        from agent.config import AgentConfig, LLMProviderConfig
+        from agent.runtime import AgentRuntime
 
         mock_provider = MagicMock()
         mock_provider.stream.return_value = iter([
@@ -538,16 +545,33 @@ class TestStreamingDispatch:
             SSEEvent(type="done", data={}),
         ])
 
-        with patch("agent.runtime._get_provider", return_value=mock_provider):
-            # Import here to avoid module-level dependency
-            from agent.runtime import _get_provider as gp
-            provider = gp("openai")
-            events = list(provider.stream(
-                base_url="https://api.openai.com/v1",
-                api_key="test", model="gpt-4o",
-                messages=[{"role": "user", "content": "hi"}],
-                tools=None, timeout=30,
-            ))
+        cfg = AgentConfig(
+            providers={
+                "openai": LLMProviderConfig(
+                    name="openai", base_url="https://api.openai.com/v1",
+                    api_key="test-key", default_model="gpt-4o",
+                )
+            },
+            default_provider="openai", default_model="openai/gpt-4o",
+            max_tool_iterations=5, tool_timeout_seconds=30,
+            auto_save_conversations=False,
+        )
+        rt = AgentRuntime(cfg)
+        rt.start()
 
-        assert mock_provider.stream.called
-        assert any(e.type == "text_delta" for e in events)
+        with patch("agent.runtime._get_provider", return_value=mock_provider):
+            rt._call_llm_streaming(
+                session_key="test-stream",
+                base_url="https://api.openai.com/v1",
+                api_key="test-key",
+                model="openai/gpt-4o",
+                caller_key="openai",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=None,
+                timeout=30.0,
+            )
+
+        assert mock_provider.stream.called, (
+            "Expected _call_llm_streaming to dispatch through get_provider().stream()"
+        )
+        rt.stop()
