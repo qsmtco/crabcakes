@@ -272,6 +272,9 @@ _stream_openai_events = OpenAIProvider("openai").stream
 _stream_minimax_events = MiniMaxProvider().stream
 _stream_anthropic_events = AnthropicProvider().stream
 
+# DEPRECATED: dispatch now uses get_provider(caller_key).stream().
+# This dict is retained for backward compatibility with test patches.
+# Do not add new dispatch logic here — use agent.llm.registry.get_provider().
 _PROVIDER_STREAMERS: dict[str, Any] = {
     "openai": _stream_openai_events,
     "minimax": _stream_minimax_events,
