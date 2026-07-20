@@ -2986,7 +2986,8 @@ class AgentRuntime:
                 provider_name,
             )
 
-        response_dict = caller(
+        provider = _get_provider(caller_key)
+        response_dict = provider.call(
             base_url=provider_cfg.base_url,
             api_key=api_key,
             model=model,
