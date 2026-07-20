@@ -91,13 +91,25 @@ crabcakes/
 │   │                          # build_system_prompt, build_file_context, check
 │   ├── kb_lookup.py          # KB lookup — cosine-sim retrieval over indexed KB chunks (Auxilium Tier 1)
 │   ├── kb_server.py          # KB HTTP server — wraps kb_lookup in OpenAI-compatible API on localhost:18790 (KB Provider Phase 1)
-│   ├── runtime.py           # AgentRuntime — tool loop, LLM API, streaming (with SSE usage capture), cost tracking + enforcement hook, stuck-detection transient prefix (CB-3)
+│   ├── runtime.py           # AgentRuntime — tool loop, streaming, cost tracking (2344 lines; cost/LLM/SSE/extractors extracted to llm/)
 │   ├── tools.py              # Tool definitions + execution (read_file, write_file, edit_file, exec_command, etc.)
 │   ├── config.py             # LLM provider config + EnforcementConfig dataclass
 │   ├── context.py            # System prompt builder (via prompts/system/ templates) + file context builder + .gitignore parsing
 │   ├── context_strategy.py   # Pluggable context compaction strategy (Phase 4–9; ContextStrategy protocol + DefaultContextStrategy)
+│   ├── tool_middleware.py    # Tool middleware chain: EnforcementMiddleware + StuckDetectionMiddleware (Phase A1 extraction)
 │   ├── special_agents.py     # Coder + Debugger + Crabcakes agent definitions (auto_open, api_key_built_in, auto_add_to_projects fields)
-│   └── enforcement.py        # Post-write verification: syntax guard, test runner, lint check (Phase 3)
+│   ├── enforcement.py        # Post-write verification: syntax guard, test runner, lint check (Phase 3)
+│   └── llm/                  # LLM provider abstraction package (Phase B1–B6 extraction)
+│       ├── __init__.py       # Public API: get_provider, list_providers, LLMProvider, LLMResponse
+│       ├── protocol.py       # LLMProvider Protocol (call + stream) + LLMResponse dataclass
+│       ├── registry.py       # Provider registry: get_provider(id) -> LLMProvider
+│       ├── openai_provider.py # OpenAIProvider — handles openai, openrouter, zai (call + stream)
+│       ├── minimax_provider.py # MiniMaxProvider — ChatCompletion v2 (call + stream)
+│       ├── anthropic_provider.py # AnthropicProvider — Messages API (call + stream)
+│       ├── streaming.py      # SSE helpers (sse_lines, parse_sse_line, parse_sse_delta) + SSL retry infra
+│       ├── extractors.py     # Response extractors: extract_tool_calls, extract_text_content, extract_usage
+│       ├── convert.py        # Anthropic message/tool format converters
+│       └── cost.py           # Cost tables + model_id + cost_for_model
 │
 ├── ui/                        # All UI components
 │   ├── __init__.py
