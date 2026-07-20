@@ -349,3 +349,171 @@ class TestAnthropicProvider:
         # Anthropic format uses input_schema, not parameters
         tool = payload["tools"][0]
         assert "input_schema" in tool
+
+
+# ======================================================================
+# Streaming tests (Phase B6)
+# ======================================================================
+
+
+class TestOpenAIStream:
+    """Tests for OpenAIProvider.stream() — SSE event generation."""
+
+    def test_openai_stream_yields_text_delta(self):
+        """SSE text content forwarded as text_delta events."""
+        from agent.llm.openai_provider import OpenAIProvider
+        from agent.llm.streaming import SSEEvent
+
+        lines = [
+            b'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+            b'data: {"choices":[{"delta":{"content":" world"}}]}',
+            b'data: [DONE]',
+        ]
+
+        class FakeResp:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def __iter__(self): return iter(lines)
+
+        with patch("agent.llm.openai_provider.urlopen_with_ssl_retry", return_value=FakeResp()):
+            provider = OpenAIProvider()
+            events = list(provider.stream(
+                base_url="https://api.openai.com/v1",
+                api_key="test", model="gpt-4o",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=None, timeout=30,
+            ))
+
+        text_events = [e for e in events if e.type == "text_delta"]
+        assert len(text_events) == 2
+        assert text_events[0].data["content"] == "Hello"
+        assert text_events[1].data["content"] == " world"
+        assert events[-1].type == "done"
+
+    def test_openai_stream_yields_tool_call_delta(self):
+        """SSE tool call fragments forwarded as tool_call_delta events."""
+        from agent.llm.openai_provider import OpenAIProvider
+
+        lines = [
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"ls","arguments":""}}]}}]}',
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{}"}}]}}]}',
+            b'data: [DONE]',
+        ]
+
+        class FakeResp:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def __iter__(self): return iter(lines)
+
+        with patch("agent.llm.openai_provider.urlopen_with_ssl_retry", return_value=FakeResp()):
+            provider = OpenAIProvider()
+            events = list(provider.stream(
+                base_url="https://api.openai.com/v1",
+                api_key="test", model="gpt-4o",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=None, timeout=30,
+            ))
+
+        tool_events = [e for e in events if e.type == "tool_call_delta"]
+        assert len(tool_events) >= 1
+
+    def test_openai_stream_yields_done_on_bracket_done(self):
+        """[DONE] marker produces a done event."""
+        from agent.llm.openai_provider import OpenAIProvider
+
+        lines = [b'data: [DONE]']
+
+        class FakeResp:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def __iter__(self): return iter(lines)
+
+        with patch("agent.llm.openai_provider.urlopen_with_ssl_retry", return_value=FakeResp()):
+            provider = OpenAIProvider()
+            events = list(provider.stream(
+                base_url="https://api.openai.com/v1",
+                api_key="test", model="gpt-4o",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=None, timeout=30,
+            ))
+
+        assert events[-1].type == "done"
+
+
+class TestMiniMaxStream:
+
+    def test_minimax_stream_finish_reason_signals_done(self):
+        """finish_reason='stop' produces a done event."""
+        from agent.llm.minimax_provider import MiniMaxProvider
+
+        lines = [
+            b'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}',
+        ]
+
+        class FakeResp:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def __iter__(self): return iter(lines)
+
+        with patch("agent.llm.minimax_provider.urlopen_with_ssl_retry", return_value=FakeResp()):
+            provider = MiniMaxProvider()
+            events = list(provider.stream(
+                base_url="https://api.minimax.chat/v1",
+                api_key="test", model="minimax/MiniMax-M3",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=None, timeout=30,
+            ))
+
+        assert events[-1].type == "done"
+
+
+class TestAnthropicStream:
+
+    def test_anthropic_stream_text_delta_forwarded(self):
+        """Anthropic text_delta events forwarded."""
+        from agent.llm.anthropic_provider import AnthropicProvider
+
+        lines = [
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}',
+            b'data: {"type":"message_stop"}',
+        ]
+
+        class FakeResp:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def __iter__(self): return iter(lines)
+
+        with patch("agent.llm.anthropic_provider.urlopen_with_ssl_retry", return_value=FakeResp()):
+            provider = AnthropicProvider()
+            events = list(provider.stream(
+                base_url="https://api.anthropic.com",
+                api_key="test", model="claude-3-5-sonnet-20241022",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=None, timeout=30,
+            ))
+
+        text_events = [e for e in events if e.type == "text_delta"]
+        assert len(text_events) == 1
+        assert text_events[0].data["content"] == "Hello"
+
+    def test_anthropic_stream_message_stop_signals_done(self):
+        """message_stop event produces a done event."""
+        from agent.llm.anthropic_provider import AnthropicProvider
+
+        lines = [b'data: {"type":"message_stop"}']
+
+        class FakeResp:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def __iter__(self): return iter(lines)
+
+        with patch("agent.llm.anthropic_provider.urlopen_with_ssl_retry", return_value=FakeResp()):
+            provider = AnthropicProvider()
+            events = list(provider.stream(
+                base_url="https://api.anthropic.com",
+                api_key="test", model="claude-3-5-sonnet-20241022",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=None, timeout=30,
+            ))
+
+        assert events[-1].type == "done"
