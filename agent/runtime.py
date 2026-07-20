@@ -2342,6 +2342,7 @@ class AgentRuntime:
             timeout=float(self._config.tool_timeout_seconds),
             x_title="crabcakes-summary",
         )
-        from agent.runtime import _extract_text_content
-        text = _extract_text_content(response_dict, provider_name)
+        from agent.runtime import _extract_text_content, _RESPONSE_FORMAT
+        fmt = _RESPONSE_FORMAT.get(provider_name, "openai")
+        text = _extract_text_content(response_dict, response_format=fmt)
         return text
