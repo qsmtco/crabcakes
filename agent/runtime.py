@@ -244,8 +244,6 @@ for _pk, _caller in _PROVIDER_CALLERS.items():
 
 # ── SSE streaming helpers (extracted to agent/llm/streaming.py, Phase B5) ──
 # Re-exported under legacy underscore names for backward compatibility.
-# SSEEvent stays public (already in __all__). Stream event functions
-# (_stream_openai_events etc.) stay here — they move in Phase B6.
 from agent.llm.streaming import (
     SSEEvent,
     sse_lines as _sse_lines,
