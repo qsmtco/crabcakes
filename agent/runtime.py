@@ -193,6 +193,10 @@ _call_openai = OpenAIProvider("openai").call
 _call_minimax = MiniMaxProvider().call
 _call_anthropic = AnthropicProvider().call
 
+# DEPRECATED: dispatch now uses get_provider(caller_key).call().
+# This dict is retained for backward compatibility with test patches and
+# get_valid_callers(). Do not add new dispatch logic here — use
+# agent.llm.registry.get_provider().
 _PROVIDER_CALLERS: dict[str, Any] = {
     "openai": _call_openai,
     "minimax": _call_minimax,
