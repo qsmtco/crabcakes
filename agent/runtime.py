@@ -157,37 +157,16 @@ class AuditLog:
             return list(self._entries)
 
 
-# ── Cost tables (USD per 1M tokens) ─────────────────────────────────────────
-
-_OPENAI_COST = {"prompt": 2.5, "completion": 10.0}    # GPT-4o
-_MINIMAX_COST = {"prompt": 0.5, "completion": 1.0}   # MiniMax-M2
-_ANTHROPIC_COST = {"prompt": 3.0, "completion": 15.0} # Claude 3.5
-
-_PROVIDER_COSTS: dict[str, dict[str, float]] = {
-    "openai": _OPENAI_COST,
-    "minimax": _MINIMAX_COST,
-    "anthropic": _ANTHROPIC_COST,
-    "openrouter": _OPENAI_COST,  # varies by model, using openai as fallback
-    "zai": _OPENAI_COST,        # free tier, no cost
-}
-
-
-def _model_id(model: str) -> str:
-    """Strip the provider prefix, returning the model ID sent to the API.
-
-    'minimax/MiniMax-M2.7'       -> 'MiniMax-M2.7'
-    'openrouter/deepseek/deepseek-v4-pro' -> 'deepseek/deepseek-v4-pro'
-    """
-    parts = model.split("/", 1)
-    return parts[1] if len(parts) > 1 else parts[0]
-
-
-def _cost_for_model(model: str, prompt_tokens: int, completion_tokens: int) -> float:
-    """Compute cost in USD for a model call."""
-    provider = model.split("/")[0] if "/" in model else model
-    costs = _PROVIDER_COSTS.get(provider, _OPENAI_COST)
-    return (prompt_tokens / 1_000_000 * costs["prompt"] +
-            completion_tokens / 1_000_000 * costs["completion"])
+# ── Cost tables + functions (extracted to agent/llm/cost.py, Phase B1) ──────
+# Re-exported under legacy underscore names for backward compatibility.
+from agent.llm.cost import (
+    OPENAI_COST as _OPENAI_COST,
+    MINIMAX_COST as _MINIMAX_COST,
+    ANTHROPIC_COST as _ANTHROPIC_COST,
+    PROVIDER_COSTS as _PROVIDER_COSTS,
+    model_id as _model_id,
+    cost_for_model as _cost_for_model,
+)
 
 
 # ── Provider adapters ──────────────────────────────────────────────────────────
