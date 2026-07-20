@@ -10,6 +10,8 @@ Covers spec §A.5 test cases:
 
 from __future__ import annotations
 
+import unittest.mock
+import uuid
 from unittest.mock import MagicMock
 
 import pytest
