@@ -1749,6 +1749,17 @@ class AgentRuntime:
         else:
             inner()
 
+    def _dispatch_enforcement_status(
+        self, session_key: str, tool_name: str, status: dict
+    ) -> None:
+        """Dispatch a per-check enforcement status to the callback.
+
+        Called by EnforcementMiddleware for each EnforcementCheck result.
+        Wraps the existing _dispatch(self._on_enforcement_status, ...) pattern
+        that was inline in _run_loop (spec §A.2.3).
+        """
+        self._dispatch(self._on_enforcement_status, session_key, tool_name, status)
+
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def start(self) -> None:
