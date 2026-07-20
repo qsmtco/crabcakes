@@ -1545,7 +1545,9 @@ took ~6s per call for a 100K-char system prompt before the cache).
 
 **Responsibility:** Core agent loop — conversation management, LLM API calls, tool execution, streaming SSE responses, cost tracking, conversation persistence.
 
-**Owns:** `AgentConfig`, provider adapters (OpenAI/MiniMax/Anthropic), conversation store, tool loop.
+**Owns:** `AgentConfig`, conversation store, tool loop. Provider adapters, cost functions, SSE helpers, extractors, and converters have been extracted to `agent/llm/` (Phase B1–B6). Tool middleware (enforcement + stuck detection) extracted to `agent/tool_middleware.py` (Phase A1). All symbols re-exported under legacy underscore names for backward compatibility.
+
+**Modular extraction (Phase 1):** `runtime.py` reduced from 3297 → 2344 lines (28.9%). LLM dispatch now uses `get_provider(caller_key).call()` / `.stream()`. Tool execution now routes through `self._tool_chain.run()`. See `docs/post-mortems/2026-07-20-RUNTIME-MODULAR-EXTRACTION-PHASE-1-POST-MORTEM.md`.
 
 **Public API:**
 ```python
