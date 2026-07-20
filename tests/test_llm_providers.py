@@ -63,11 +63,14 @@ class TestOpenAIProvider:
 
         # Verify the request was built correctly
         call_args = mock_request.call_args
-        assert call_args[0][1] == "https://api.openai.com/v1/chat/completions"
-        payload = json.loads(call_args[1]["data"])
+        # urllib.request.Request(endpoint, data=..., headers=..., method=...)
+        # Only endpoint is positional; the rest are keyword args.
+        assert call_args[0][0] == "https://api.openai.com/v1/chat/completions"
+        kwargs = call_args[1]
+        payload = json.loads(kwargs["data"])
         assert payload["model"] == model_id("openai/gpt-4o")
         assert "tool_choice" not in payload
-        assert call_args[1]["headers"]["Authorization"] == "Bearer sk-test"
+        assert kwargs["headers"]["Authorization"] == "Bearer sk-test"
 
     @patch("agent.llm.openai_provider.urllib.request.Request")
     @patch("agent.llm.openai_provider.urllib.request.urlopen")
@@ -197,7 +200,7 @@ class TestMiniMaxProvider:
 
         assert result["choices"][0]["message"]["content"] == "hello from minimax"
         # Verify correct endpoint
-        assert mock_request.call_args[0][1] == "https://api.minimax.chat/v1/text/chatcompletion_v2"
+        assert mock_request.call_args[0][0] == "https://api.minimax.chat/v1/text/chatcompletion_v2"
 
     @patch("agent.llm.minimax_provider.urllib.request.Request")
     @patch("agent.llm.minimax_provider.urllib.request.urlopen")
