@@ -47,7 +47,6 @@ class MiniMaxProvider:
         x_title: str = "",
     ) -> dict:
         """Call MiniMax ChatCompletion v2 API."""
-        from agent.runtime import _urlopen_with_ssl_retry
         endpoint = f"{base_url.rstrip('/')}/text/chatcompletion_v2"
         payload = {
             "model": model_id(model),
@@ -67,7 +66,7 @@ class MiniMaxProvider:
             method="POST",
         )
         try:
-            with _urlopen_with_ssl_retry(req, timeout=timeout) as resp:
+            with urlopen_with_ssl_retry(req, timeout=timeout) as resp:
                 result = json.loads(resp.read())
                 # MiniMax returns body-level errors with HTTP 200:
                 # {"base_resp":{"status_code":1004,"status_msg":"login fail..."}}
@@ -84,3 +83,106 @@ class MiniMaxProvider:
             raise RuntimeError(
                 f"MiniMax API error {e.code} {e.reason}: {body}"
             ) from e
+
+    def stream(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        messages: list[dict],
+        tools: list[dict] | None,
+        timeout: float,
+        x_title: str = "",
+    ):
+        """Yield SSE events from MiniMax ChatCompletion streaming API (OpenAI-compatible)."""
+        endpoint = f"{base_url.rstrip('/')}/text/chatcompletion_v2"
+        payload = {
+            "model": model_id(model),
+            "messages": messages,
+            "stream": True,
+        }
+        if tools:
+            payload["tools"] = tools
+
+        body = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            endpoint,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        try:
+            resp = urlopen_with_ssl_retry(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            try:
+                body = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                body = "(could not read body)"
+            logger.error(
+                "Provider HTTP %d from %s (model=%s): %s",
+                e.code, req.full_url, model, body[:500],
+            )
+            raise
+        with resp as resp:
+            # MiniMax may return a body-level error with HTTP 200 (not SSE).
+            first_line = None
+            for line in sse_lines(resp):
+                if line.strip():
+                    first_line = line
+                    break
+            if first_line is not None:
+                try:
+                    parsed = json.loads(first_line.decode("utf-8"))
+                    base_resp = parsed.get("base_resp", {})
+                    status_code = base_resp.get("status_code", 0)
+                    if status_code != 0:
+                        status_msg = base_resp.get("status_msg", "unknown error")
+                        raise RuntimeError(
+                            f"MiniMax API error (status_code={status_code}): {status_msg}"
+                        )
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+
+                ev = parse_sse_line(first_line)
+                if ev is not None:
+                    if ev.type == "done":
+                        yield SSEEvent(type="done", data={})
+                        return
+                    if ev.type == "raw":
+                        d = ev.data
+                        choice = first_choice(d)
+                        if choice:
+                            for out_ev in parse_sse_delta(d):
+                                yield out_ev
+                            finish_reason = choice.get("finish_reason")
+                            if finish_reason in ("stop", "tool_calls", "length"):
+                                usage = d.get("usage")
+                                if usage:
+                                    yield SSEEvent(type="usage", data={"usage": usage})
+                                yield SSEEvent(type="done", data={})
+                                return
+
+            for line in sse_lines(resp):
+                ev = parse_sse_line(line)
+                if ev is None:
+                    continue
+                if ev.type == "done":
+                    yield SSEEvent(type="done", data={})
+                    return
+                if ev.type != "raw":
+                    continue
+                d = ev.data
+                choice = first_choice(d)
+                if choice:
+                    for out_ev in parse_sse_delta(d):
+                        yield out_ev
+                    finish_reason = choice.get("finish_reason")
+                    if finish_reason in ("stop", "tool_calls", "length"):
+                        usage = d.get("usage")
+                        if usage:
+                            yield SSEEvent(type="usage", data={"usage": usage})
+                        yield SSEEvent(type="done", data={})
+                        return
