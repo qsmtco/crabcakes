@@ -1858,7 +1858,8 @@ class AgentRuntime:
         # PHASE-11: caller_key is resolved by _call_llm before calling this method
         # (explicit caller > default_model prefix > model prefix). Symmetric with
         # the non-streaming path.
-        streamer = _PROVIDER_STREAMERS.get(caller_key)
+        provider = _get_provider(caller_key)
+        streamer = provider.stream
         if streamer is None:
             raise ValueError(
                 f"No streaming caller for caller_key={caller_key!r} "
