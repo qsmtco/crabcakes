@@ -2470,7 +2470,8 @@ class AgentRuntime:
             )
 
         try:
-            return caller(
+            provider = _get_provider(caller_key)
+            return provider.call(
                 base_url=provider_cfg.base_url,
                 api_key=effective_api_key,
                 model=model,
