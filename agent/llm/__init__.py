@@ -1,10 +1,17 @@
 """LLM provider abstraction layer.
 
-This package will host the extracted provider adapters, streaming helpers,
-extractors, and cost functions from agent/runtime.py. Phase B1 extracts cost
-functions only; subsequent phases add the rest.
-
-Public API (incomplete — grows with each phase):
-    cost_for_model(model, prompt_tokens, completion_tokens) -> float
-    model_id(model) -> str
+Public API:
+    get_provider(id) -> LLMProvider
+    list_providers() -> list[str]
+    LLMProvider — Protocol
+    LLMResponse — normalized response dataclass
 """
+from agent.llm.protocol import LLMProvider, LLMResponse
+from agent.llm.registry import get_provider, list_providers
+
+__all__ = [
+    "get_provider",
+    "list_providers",
+    "LLMProvider",
+    "LLMResponse",
+]
