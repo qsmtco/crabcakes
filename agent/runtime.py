@@ -1308,11 +1308,12 @@ class AgentRuntime:
                 # Determine provider from conversation model
                 model = conv.model or self._config.default_model
                 loop_provider = model.split("/")[0] if "/" in model else model
-                text_content = _extract_text_content(response, loop_provider)
-                tool_calls_raw = _extract_tool_calls(response, loop_provider)
+                loop_fmt = _RESPONSE_FORMAT.get(loop_provider, "openai")
+                text_content = _extract_text_content(response, response_format=loop_fmt)
+                tool_calls_raw = _extract_tool_calls(response, response_format=loop_fmt)
 
                 # Record usage
-                prompt_tok, comp_tok = _extract_usage(response, loop_provider)
+                prompt_tok, comp_tok = _extract_usage(response, response_format=loop_fmt)
                 cost = _cost_for_model(conv.model, prompt_tok, comp_tok)
                 conv.record_usage(prompt_tok + comp_tok, cost)
                 self._dispatch(self._on_token_usage, session_key, prompt_tok + comp_tok, cost)
