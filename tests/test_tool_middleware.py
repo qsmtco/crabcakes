@@ -348,3 +348,96 @@ class TestToolMiddlewareProtocol:
 
         instance = Concrete()
         assert callable(instance)
+
+
+# ======================================================================
+# Integration — chain wiring (spec §A.5 cases 14-15)
+#
+# These tests verify the wiring that AgentRuntime.__init__ performs:
+# the chain is constructed with EnforcementMiddleware (wrapping the
+# enforcement check fn + on_status dispatcher) and StuckDetectionMiddleware
+# (wrapping _check_stuck + _pending_stuck_messages). A full _run_loop
+# integration test requires GTK + provider config and is environment-
+# dependent; these tests exercise the same wiring directly.
+# ======================================================================
+
+
+class TestIntegration:
+    """Integration tests for the chain wiring used by AgentRuntime.__init__.
+
+    Spec §A.5 cases 14 (enforcement fires on write) and 15 (stuck detection
+    fires). These construct the same chain shape that __init__ builds and
+    run it end-to-end with a mock executor, verifying the middleware
+    actually fires on a realistic tool-call flow.
+    """
+
+    def test_enforcement_fires_on_write_in_chain(self):
+        """End-to-end: a write_file call through the wired chain triggers
+        the enforcement check and appends its message to the result."""
+        enf_result = MagicMock()
+        enf_result.appended_message = "[enforcement] syntax OK"
+        enf_result.checks = []
+        check_fn = MagicMock(return_value=enf_result)
+        status_calls = []
+        on_status = lambda sk, name, status: status_calls.append((sk, name, status))
+
+        pending_messages: dict = {}
+        stuck_check_fn = MagicMock(return_value=None)  # not stuck
+
+        chain = ToolMiddlewareChain([
+            EnforcementMiddleware(check_fn, on_status=on_status),
+            StuckDetectionMiddleware(stuck_check_fn, pending_messages),
+        ])
+
+        ctx = _make_context(
+            session_key="special:coder",
+            project_path="/proj",
+            iteration=0,
+            enforcement_config=MagicMock(enabled=True),
+            si_enforcement=True,
+        )
+        # Executor simulates a successful write_file
+        executor = lambda: _make_result(success=True, output="wrote 42 bytes")
+
+        result = chain.run("write_file", {"path": "/proj/x.py"}, ctx, executor)
+
+        # Enforcement check fired
+        check_fn.assert_called_once()
+        # Result includes both the tool output and the appended enforcement message
+        assert "wrote 42 bytes" in result.output
+        assert "[enforcement] syntax OK" in result.output
+        # Stuck check also fired (after enforcement)
+        stuck_check_fn.assert_called_once()
+        # No stuck message produced → nothing in pending
+        assert pending_messages == {}
+
+    def test_stuck_detection_fires_in_chain(self):
+        """End-to-end: when stuck_check_fn returns a message, it lands in
+        the pending_messages dict keyed by session_key."""
+        check_fn = MagicMock()
+        # _check_stuck returns an intervention message
+        stuck_msg = "⚠️ Loop detected: same tool+args 3 times"
+        stuck_check_fn = MagicMock(return_value=stuck_msg)
+        pending_messages: dict = {}
+
+        chain = ToolMiddlewareChain([
+            EnforcementMiddleware(check_fn),
+            StuckDetectionMiddleware(stuck_check_fn, pending_messages),
+        ])
+
+        ctx = _make_context(
+            session_key="special:coder",
+            project_path="/proj",
+            iteration=3,
+            enforcement_config=MagicMock(enabled=True),
+        )
+        executor = lambda: _make_result(success=True, output="result")
+
+        chain.run("write_file", {"path": "/proj/y.py"}, ctx, executor)
+
+        # Stuck check was called with the wired args
+        stuck_check_fn.assert_called_once_with(
+            "special:coder", "write_file", {"path": "/proj/y.py"}, 3
+        )
+        # Message landed in pending, keyed by session
+        assert pending_messages["special:coder"] == [stuck_msg]
