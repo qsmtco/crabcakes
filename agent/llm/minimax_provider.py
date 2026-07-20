@@ -60,7 +60,7 @@ class MiniMaxProvider:
                 result = json.loads(resp.read())
                 # MiniMax returns body-level errors with HTTP 200:
                 # {"base_resp":{"status_code":1004,"status_msg":"login fail..."}}
-                base_resp = result.get("base_resp", {})
+                base_resp = result.get("base_resp") or {}
                 status_code = base_resp.get("status_code", 0)
                 if status_code != 0:
                     status_msg = base_resp.get("status_msg", "unknown error")
