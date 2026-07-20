@@ -9,7 +9,6 @@ from typing import Any
 
 from agent.llm.convert import convert_messages_for_anthropic, convert_tools_for_anthropic
 from agent.llm.cost import model_id
-from agent.runtime import _urlopen_with_ssl_retry
 
 
 class AnthropicProvider:
@@ -38,6 +37,7 @@ class AnthropicProvider:
         x_title: str = "",
     ) -> dict:
         """Call Anthropic Messages API."""
+        from agent.runtime import _urlopen_with_ssl_retry
         endpoint = f"{base_url.rstrip('/')}/messages"
         # Extract system prompt and STRIP system-role messages from the messages
         # list before passing to the helper. The Anthropic API expects the system
