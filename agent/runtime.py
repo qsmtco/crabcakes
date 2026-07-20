@@ -1083,79 +1083,14 @@ _PROVIDER_STREAMERS: dict[str, Any] = {
 
 # ── Tool call normalization ─────────────────────────────────────────────────────
 
-def _extract_tool_calls(response: dict, provider: str) -> list[tuple[str, str, dict]]:
-    """
-    Extract tool calls from an API response dict.
-
-    Returns [(call_id, tool_name, arguments)].
-
-    Handles OpenAI, MiniMax, and Anthropic formats.
-    """
-    calls = []
-    fmt = _RESPONSE_FORMAT.get(provider, "openai")
-
-    if fmt == "openai":
-        # OpenAI/MiniMax Chat Completions format
-        choices = response.get("choices", [])
-        if not choices:
-            return []
-        delta = choices[0].get("delta", {})
-        message = choices[0].get("message", delta)
-
-        if message.get("tool_calls"):
-            for tc in message["tool_calls"]:
-                func = tc.get("function", {})
-                # QTR-FIX: use `or` so that None / empty-string ids fall through
-                # to the synthetic fallback instead of propagating as an empty
-                # tool_call_id. The previous form `tc.get("id", default)` only
-                # substituted when the key was absent — explicit None / "" slipped
-                # through and later matched `if not call_id` guards in unexpected
-                # places. See `_extract_tool_calls (empty-id fallback)` regression
-                # test for the synthetic-id contract.
-                call_id = tc.get("id") or f"call_{uuid.uuid4().hex[:8]}"
-                name = func.get("name", "")
-                args_raw = func.get("arguments", "{}")
-                if isinstance(args_raw, str):
-                    args = json.loads(args_raw)
-                else:
-                    args = args_raw or {}
-                calls.append((call_id, name, args))
-
-    elif fmt == "anthropic":
-        # Anthropic Messages API format
-        content = response.get("content", [])
-        if not isinstance(content, list):
-            return []
-        for block in content:
-            if block.get("type") == "tool_use":
-                # QTR-FIX: same None / empty-string fallback as the OpenAI path.
-                call_id = block.get("id") or f"call_{uuid.uuid4().hex[:8]}"
-                name = block.get("name", "")
-                args = block.get("input", {})
-                calls.append((call_id, name, args))
-
-    return calls
-
-
-def _extract_text_content(response: dict, provider: str) -> str:
-    """Extract text content from an API response."""
-    fmt = _RESPONSE_FORMAT.get(provider, "openai")
-
-    if fmt == "openai":
-        choices = response.get("choices", [])
-        if not choices:
-            return ""
-        msg = choices[0].get("message", {})
-        return msg.get("content", "") or ""
-
-    elif fmt == "anthropic":
-        content = response.get("content", [])
-        if not isinstance(content, list):
-            return ""
-        parts = [b.get("text", "") for b in content if b.get("type") == "text"]
-        return "".join(parts)
-
-    return ""
+# ── Response extractors (extracted to agent/llm/extractors.py, Phase B3) ────
+# Re-exported under legacy underscore names for backward compatibility.
+# _is_empty_content stays here (used at non-extractor sites).
+from agent.llm.extractors import (
+    extract_tool_calls as _extract_tool_calls,
+    extract_text_content as _extract_text_content,
+    extract_usage as _extract_usage,
+)
 
 
 def _is_empty_content(text) -> bool:
