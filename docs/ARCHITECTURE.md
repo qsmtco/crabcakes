@@ -3948,9 +3948,21 @@ crabcakes/
 │   ├── enforcement.py            # ~882 lines — Post-write verification: 3-tier checks + per-project override
 │   ├── kb_lookup.py              # ~279 lines — KB cosine-sim retrieval (Auxilium Tier 1)
 │   ├── kb_server.py              # ~457 lines — KB HTTP server on localhost:18790
-│   ├── runtime.py                # ~2418 lines — AgentRuntime: tool loop, enforcement, streaming, cost, compaction
+│   ├── runtime.py                # ~2344 lines — AgentRuntime: tool loop, streaming, cost, compaction (cost/LLM/SSE/extractors extracted)
+│   ├── tool_middleware.py        # ~244 lines — Tool middleware chain: enforcement + stuck detection (Phase A1)
 │   ├── special_agents.py         # ~172 lines — SpecialAgentDef, get_special_agents(), reload_registry()
-│   └── tools.py                  # ~1108 lines — 8+ tools: read_file, write_file, edit_file, exec_command, etc.
+│   ├── tools.py                  # ~1108 lines — 8+ tools: read_file, write_file, edit_file, exec_command, etc.
+│   └── llm/                      # LLM provider abstraction package (Phase B1–B6)
+│       ├── __init__.py           # Public API: get_provider, list_providers, LLMProvider, LLMResponse
+│       ├── protocol.py           # LLMProvider Protocol (@runtime_checkable) + LLMResponse dataclass
+│       ├── registry.py           # Provider registry: get_provider(id) -> LLMProvider
+│       ├── openai_provider.py    # OpenAIProvider — handles openai, openrouter, zai (call + stream)
+│       ├── minimax_provider.py   # MiniMaxProvider — ChatCompletion v2 (call + stream)
+│       ├── anthropic_provider.py # AnthropicProvider — Messages API (call + stream)
+│       ├── streaming.py          # SSE helpers + SSL retry infrastructure
+│       ├── extractors.py         # Response extractors: tool_calls, text_content, usage
+│       ├── convert.py            # Anthropic message/tool format converters
+│       └── cost.py               # Cost tables + model_id + cost_for_model
 │
 ├── scripts/
 │   ├── audit_attack_scenarios.py  # streaming security audit scenarios
