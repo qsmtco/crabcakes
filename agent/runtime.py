@@ -29,6 +29,12 @@ if TYPE_CHECKING:
     from agent.config import LLMProviderConfig
 
 from agent.enforcement import check as _enforcement_check
+from agent.tool_middleware import (
+    EnforcementMiddleware,
+    StuckDetectionMiddleware,
+    ToolContext,
+    ToolMiddlewareChain,
+)
 
 # KB provider sentinel — imported lazily to avoid requiring kb_server when KB is unused.
 try:
