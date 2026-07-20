@@ -1125,42 +1125,6 @@ def _is_empty_content(text) -> bool:
     return False
 
 
-def _extract_usage(response: dict, provider: str = "openai") -> tuple[int, int]:
-    """Extract (prompt_tokens, completion_tokens) from API response."""
-    usage = response.get("usage")
-    if not usage:
-        return 0, 0
-    fmt = _RESPONSE_FORMAT.get(provider, "openai")
-    if fmt == "anthropic":
-        return (
-            usage.get("input_tokens", 0),
-            usage.get("output_tokens", 0),
-        )
-    # OpenAI / MiniMax
-    return (
-        usage.get("prompt_tokens", 0),
-        usage.get("completion_tokens", 0),
-    )
-
-
-def _extract_usage(response: dict, provider: str = "openai") -> tuple[int, int]:
-    """Extract (prompt_tokens, completion_tokens) from API response."""
-    usage = response.get("usage")
-    if not usage:
-        return 0, 0
-    fmt = _get_response_format().get(provider, "openai")
-    if fmt == "anthropic":
-        return (
-            usage.get("input_tokens", 0),
-            usage.get("output_tokens", 0),
-        )
-    # OpenAI / MiniMax
-    return (
-        usage.get("prompt_tokens", 0),
-        usage.get("completion_tokens", 0),
-    )
-
-
 # ── KB synthesis helper ───────────────────────────────────────────────────────
 
 def _format_chunks_for_llm(chunks: list) -> str:
