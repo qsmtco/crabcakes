@@ -29,6 +29,12 @@ if TYPE_CHECKING:
     from agent.config import LLMProviderConfig
 
 from agent.enforcement import check as _enforcement_check
+from agent.tool_middleware import (
+    EnforcementMiddleware,
+    StuckDetectionMiddleware,
+    ToolContext,
+    ToolMiddlewareChain,
+)
 
 # KB provider sentinel — imported lazily to avoid requiring kb_server when KB is unused.
 try:
@@ -1612,6 +1618,21 @@ class AgentRuntime:
         # A-4: Audit log for tool executions
         self._audit_log = AuditLog()
 
+        # Track-A: Tool middleware chain (enforcement + stuck detection).
+        # Approval gating stays inline in _run_loop (temporal ordering:
+        # must fire before on_tool_call_start). The chain wraps only the
+        # execution phase. See spec §A.2.3-§A.2.4.
+        self._tool_chain = ToolMiddlewareChain([
+            EnforcementMiddleware(
+                enforcement_check_fn=_enforcement_check,
+                on_status=self._dispatch_enforcement_status,
+            ),
+            StuckDetectionMiddleware(
+                stuck_check_fn=self._check_stuck,
+                pending_messages=self._pending_stuck_messages,
+            ),
+        ])
+
         # §0: Pluggable context management strategy.
         # DefaultContextStrategy is the extracted trim_to_token_limit algorithm
         # (Phase 1). Future: configurable via AgentConfig.context_strategy.
@@ -1637,6 +1658,17 @@ class AgentRuntime:
             self._GLib.idle_add(inner)
         else:
             inner()
+
+    def _dispatch_enforcement_status(
+        self, session_key: str, tool_name: str, status: dict
+    ) -> None:
+        """Dispatch a per-check enforcement status to the callback.
+
+        Called by EnforcementMiddleware for each EnforcementCheck result.
+        Wraps the existing _dispatch(self._on_enforcement_status, ...) pattern
+        that was inline in _run_loop (spec §A.2.3).
+        """
+        self._dispatch(self._on_enforcement_status, session_key, tool_name, status)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
