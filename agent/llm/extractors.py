@@ -1,8 +1,8 @@
 """Response extractors for LLM API responses.
 
 Extracted from agent/runtime.py (Phase B3). Parses tool calls, text content,
-and token usage from both OpenAI and Anthropic response formats. Pure functions
-except for the response_format lookup (lazy import from runtime).
+and token usage from both OpenAI and Anthropic response formats. Pure functions —
+the response format is passed explicitly via the ``response_format`` parameter.
 
 Note: _is_empty_content stays in runtime.py — it is used at non-extractor sites.
 """
@@ -16,17 +16,9 @@ import uuid
 logger = logging.getLogger(__name__)
 
 
-def _get_response_format() -> dict:
-    """Get the response format mapping (populated by runtime at startup).
-
-    Lazy import to avoid circular dependency: runtime.py imports this module
-    for the extractor functions, so we cannot import runtime at module top.
-    """
-    from agent.runtime import _RESPONSE_FORMAT
-    return _RESPONSE_FORMAT
-
-
-def extract_tool_calls(response: dict, provider: str) -> list[tuple[str, str, dict]]:
+def extract_tool_calls(
+    response: dict, response_format: str = "openai"
+) -> list[tuple[str, str, dict]]:
     """
     Extract tool calls from an API response dict.
 
@@ -35,9 +27,8 @@ def extract_tool_calls(response: dict, provider: str) -> list[tuple[str, str, di
     Handles OpenAI, MiniMax, and Anthropic formats.
     """
     calls = []
-    fmt = _get_response_format().get(provider, "openai")
 
-    if fmt == "openai":
+    if response_format == "openai":
         # OpenAI/MiniMax Chat Completions format
         choices = response.get("choices", [])
         if not choices:
@@ -64,7 +55,7 @@ def extract_tool_calls(response: dict, provider: str) -> list[tuple[str, str, di
                     args = args_raw or {}
                 calls.append((call_id, name, args))
 
-    elif fmt == "anthropic":
+    elif response_format == "anthropic":
         # Anthropic Messages API format
         content = response.get("content", [])
         if not isinstance(content, list):
@@ -80,18 +71,16 @@ def extract_tool_calls(response: dict, provider: str) -> list[tuple[str, str, di
     return calls
 
 
-def extract_text_content(response: dict, provider: str) -> str:
+def extract_text_content(response: dict, response_format: str = "openai") -> str:
     """Extract text content from an API response."""
-    fmt = _get_response_format().get(provider, "openai")
-
-    if fmt == "openai":
+    if response_format == "openai":
         choices = response.get("choices", [])
         if not choices:
             return ""
         msg = choices[0].get("message", {})
         return msg.get("content", "") or ""
 
-    elif fmt == "anthropic":
+    elif response_format == "anthropic":
         content = response.get("content", [])
         if not isinstance(content, list):
             return ""
@@ -101,13 +90,14 @@ def extract_text_content(response: dict, provider: str) -> str:
     return ""
 
 
-def extract_usage(response: dict, provider: str = "openai") -> tuple[int, int]:
+def extract_usage(
+    response: dict, response_format: str = "openai"
+) -> tuple[int, int]:
     """Extract (prompt_tokens, completion_tokens) from API response."""
     usage = response.get("usage")
     if not usage:
         return 0, 0
-    fmt = _get_response_format().get(provider, "openai")
-    if fmt == "anthropic":
+    if response_format == "anthropic":
         return (
             usage.get("input_tokens", 0),
             usage.get("output_tokens", 0),
