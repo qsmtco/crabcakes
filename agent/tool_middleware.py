@@ -11,7 +11,6 @@ Chain order (Phase 1): [EnforcementMiddleware, StuckDetectionMiddleware]
 from __future__ import annotations
 
 import sys
-import time
 from abc import ABC, abstractmethod
 from typing import Any
 
