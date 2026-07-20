@@ -29,12 +29,6 @@ if TYPE_CHECKING:
     from agent.config import LLMProviderConfig
 
 from agent.enforcement import check as _enforcement_check
-from agent.tool_middleware import (
-    EnforcementMiddleware,
-    StuckDetectionMiddleware,
-    ToolContext,
-    ToolMiddlewareChain,
-)
 
 # KB provider sentinel — imported lazily to avoid requiring kb_server when KB is unused.
 try:
@@ -163,42 +157,275 @@ class AuditLog:
             return list(self._entries)
 
 
-# ── Cost tables + functions (extracted to agent/llm/cost.py, Phase B1) ──────
-# Re-exported under legacy underscore names for backward compatibility.
-from agent.llm.cost import (
-    OPENAI_COST as _OPENAI_COST,
-    MINIMAX_COST as _MINIMAX_COST,
-    ANTHROPIC_COST as _ANTHROPIC_COST,
-    PROVIDER_COSTS as _PROVIDER_COSTS,
-    model_id as _model_id,
-    cost_for_model as _cost_for_model,
-)
+# ── Cost tables (USD per 1M tokens) ─────────────────────────────────────────
 
-# ── Anthropic converters (extracted to agent/llm/convert.py, Phase B2) ──────
-# Re-exported under legacy underscore names for backward compatibility.
-from agent.llm.convert import (
-    convert_messages_for_anthropic as _convert_messages_for_anthropic,
-    convert_tools_for_anthropic as _convert_tools_for_anthropic,
-)
+_OPENAI_COST = {"prompt": 2.5, "completion": 10.0}    # GPT-4o
+_MINIMAX_COST = {"prompt": 0.5, "completion": 1.0}   # MiniMax-M2
+_ANTHROPIC_COST = {"prompt": 3.0, "completion": 15.0} # Claude 3.5
 
-# ── LLM providers (extracted to agent/llm/, Phase B4) ───────────────────────
-# Re-exported under legacy names for backward compatibility.
-from agent.llm.openai_provider import OpenAIProvider
-from agent.llm.minimax_provider import MiniMaxProvider
-from agent.llm.anthropic_provider import AnthropicProvider
-from agent.llm.registry import get_provider as _get_provider
+_PROVIDER_COSTS: dict[str, dict[str, float]] = {
+    "openai": _OPENAI_COST,
+    "minimax": _MINIMAX_COST,
+    "anthropic": _ANTHROPIC_COST,
+    "openrouter": _OPENAI_COST,  # varies by model, using openai as fallback
+    "zai": _OPENAI_COST,        # free tier, no cost
+}
 
-# Bound methods for test-patch compatibility (patch("agent.runtime._call_openai"))
-_call_openai = OpenAIProvider("openai").call
-_call_minimax = MiniMaxProvider().call
-_call_anthropic = AnthropicProvider().call
+
+def _model_id(model: str) -> str:
+    """Strip the provider prefix, returning the model ID sent to the API.
+
+    'minimax/MiniMax-M2.7'       -> 'MiniMax-M2.7'
+    'openrouter/deepseek/deepseek-v4-pro' -> 'deepseek/deepseek-v4-pro'
+    """
+    parts = model.split("/", 1)
+    return parts[1] if len(parts) > 1 else parts[0]
+
+
+def _cost_for_model(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    """Compute cost in USD for a model call."""
+    provider = model.split("/")[0] if "/" in model else model
+    costs = _PROVIDER_COSTS.get(provider, _OPENAI_COST)
+    return (prompt_tokens / 1_000_000 * costs["prompt"] +
+            completion_tokens / 1_000_000 * costs["completion"])
+
+
+# ── Provider adapters ──────────────────────────────────────────────────────────
+
+def _call_openai(
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict],
+    tools: list[dict] | None,
+    timeout: float,
+    x_title: str = "",
+) -> dict:
+    """Call OpenAI Chat Completions API (also used by OpenRouter, ZAI)."""
+    endpoint = f"{base_url.rstrip('/')}/chat/completions"
+    payload = {
+        "model": _model_id(model),
+        "messages": messages,
+    }
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
+
+    body = json.dumps(payload).encode()
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    if x_title:
+        headers["HTTP-Referer"] = "https://github.com/qsmtco/crabcakes"
+        headers["X-Title"] = x_title
+    req = urllib.request.Request(
+        endpoint,
+        data=body,
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with _urlopen_with_ssl_retry(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"OpenAI API error {e.code} {e.reason}: {body}"
+        ) from e
+
+
+def _call_minimax(
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict],
+    tools: list[dict] | None,
+    timeout: float,
+    x_title: str = "",
+) -> dict:
+    """Call MiniMax ChatCompletion v2 API."""
+    endpoint = f"{base_url.rstrip('/')}/text/chatcompletion_v2"
+    payload = {
+        "model": _model_id(model),
+        "messages": messages,
+    }
+    if tools:
+        payload["tools"] = tools
+
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        endpoint,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    try:
+        with _urlopen_with_ssl_retry(req, timeout=timeout) as resp:
+            result = json.loads(resp.read())
+            # MiniMax returns body-level errors with HTTP 200:
+            # {"base_resp":{"status_code":1004,"status_msg":"login fail..."}}
+            base_resp = result.get("base_resp", {})
+            status_code = base_resp.get("status_code", 0)
+            if status_code != 0:
+                status_msg = base_resp.get("status_msg", "unknown error")
+                raise RuntimeError(
+                    f"MiniMax API error (status_code={status_code}): {status_msg}"
+                )
+            return result
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"MiniMax API error {e.code} {e.reason}: {body}"
+        ) from e
+
+
+def _convert_messages_for_anthropic(messages: list[dict]) -> list[dict]:
+    """Convert OpenAI-format message dicts → Anthropic message format.
+
+    Handles:
+    - system: stripped, returned as user role with text content
+    - assistant with tool_calls: converted to Anthropic content blocks
+    - tool: converted to Anthropic tool_result blocks
+    - all others: passed through as-is
+    """
+    api_messages: list[dict] = []
+    for msg in messages:
+        role = msg.get("role", "")
+        if role == "system":
+            content_text = msg.get("content", "")
+            if content_text:
+                api_messages.append({"role": "user", "content": content_text})
+        elif role == "assistant" and msg.get("tool_calls"):
+            content_blocks: list[dict] = []
+            if msg.get("content"):
+                content_blocks.append({"type": "text", "text": msg["content"]})
+            for tc in msg["tool_calls"]:
+                args_str = tc["function"]["arguments"]
+                if isinstance(args_str, str):
+                    try:
+                        args_str = json.loads(args_str)
+                    except Exception as e:
+                        # Phase 9: log instead of silently passing. Malformed
+                        # JSON args may indicate upstream provider corruption;
+                        # a debug message lets the developer trace it without
+                        # disrupting the message conversion.
+                        logger.debug("Failed to parse tool-call args JSON: %s", e)
+                content_blocks.append({
+                    "type": "tool_use",
+                    "id": tc["id"],
+                    "name": tc["function"]["name"],
+                    "input": args_str,
+                })
+            api_messages.append({"role": "assistant", "content": content_blocks})
+        elif role == "tool":
+            api_messages.append({
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": msg["tool_call_id"],
+                    "content": msg["content"],
+                }],
+            })
+        else:
+            api_messages.append(msg)
+    return api_messages
+
+
+def _convert_tools_for_anthropic(tools: list[dict]) -> list[dict]:
+    """Convert OpenAI-format tool dicts → Anthropic tool schema.
+
+    Input:  [{"function": {"name", "description", "parameters"}}}]
+    Output: [{"name", "description", "input_schema"}]
+
+    Defensive: defaults missing 'description' to '' and missing/'None'
+    'parameters' to {} so malformed upstream tool dicts don't crash
+    with KeyError. Anthropic accepts input_schema={} (no required params).
+    """
+    result: list[dict] = []
+    for t in tools:
+        fn = t.get("function") or {}
+        params = fn.get("parameters")
+        if not isinstance(params, dict):
+            params = {}
+        entry: dict[str, object] = {
+            "name": fn.get("name", ""),
+            "description": fn.get("description", ""),
+            "input_schema": params,
+        }
+        result.append(entry)
+    return result
+
+
+def _call_anthropic(
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict],
+    tools: list[dict] | None,
+    timeout: float,
+    x_title: str = "",
+) -> dict:
+    """Call Anthropic Messages API."""
+    endpoint = f"{base_url.rstrip('/')}/messages"
+    # Extract system prompt and STRIP system-role messages from the messages
+    # list before passing to the helper. The Anthropic API expects the system
+    # prompt in payload['system'] (NOT as a user-role message), and the helper
+    # would otherwise convert the system message into a user message, causing
+    # the system prompt to be sent TWICE (once as system, once as first user).
+    # PHASE-1 AUDIT BUG #1 fix.
+    system_msg: str | None = None
+    non_system_messages: list[dict] = []
+    for msg in messages:
+        if msg.get("role") == "system":
+            if system_msg is None:
+                content = msg.get("content", "")
+                system_msg = content if isinstance(content, str) else ""
+        else:
+            non_system_messages.append(msg)
+    # Convert messages and tools using shared helpers
+    api_messages = _convert_messages_for_anthropic(non_system_messages)
+
+    payload: dict[str, Any] = {
+        "model": _model_id(model),
+        "messages": api_messages,
+        "max_tokens": 4096,
+    }
+    if system_msg:
+        payload["system"] = system_msg
+    if tools:
+        payload["tools"] = _convert_tools_for_anthropic(tools)
+
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        endpoint,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+    try:
+        with _urlopen_with_ssl_retry(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Anthropic API error {e.code} {e.reason}: {body}"
+        ) from e
+
 
 _PROVIDER_CALLERS: dict[str, Any] = {
     "openai": _call_openai,
     "minimax": _call_minimax,
     "anthropic": _call_anthropic,
-    "openrouter": OpenAIProvider("openrouter").call,
-    "zai": OpenAIProvider("zai").call,
+    "openrouter": _call_openai,  # OpenAI-compatible API
+    "zai": _call_openai,        # OpenAI-compatible API
 }
 
 
@@ -238,29 +465,399 @@ for _pk, _caller in _PROVIDER_CALLERS.items():
         _RESPONSE_FORMAT[_pk] = "openai"  # openai, minimax, openrouter, zai, etc.
 
 
-# ── SSE streaming helpers (extracted to agent/llm/streaming.py, Phase B5) ──
-# Re-exported under legacy underscore names for backward compatibility.
-# SSEEvent stays public (already in __all__). Stream event functions
-# (_stream_openai_events etc.) stay here — they move in Phase B6.
-from agent.llm.streaming import (
-    SSEEvent,
-    sse_lines as _sse_lines,
-    parse_sse_line as _parse_sse_line,
-    parse_sse_delta as _parse_sse_delta,
-    first_choice as _first_choice,
-    urlopen_with_ssl_retry as _urlopen_with_ssl_retry,
-    stream_with_ssl_retry as _stream_with_ssl_retry,
-    is_retryable_ssl_error as _is_retryable_ssl_error,
-    friendly_error_message as _friendly_error_message,
-    RETRYABLE_SSL_ERRORS as _RETRYABLE_SSL_ERRORS,
-    RETRYABLE_OSERROR_TYPES as _RETRYABLE_OSERROR_TYPES,
-    MAX_SSL_RETRIES as _MAX_SSL_RETRIES,
-    SSL_RETRY_BASE_MS as _SSL_RETRY_BASE_MS,
-)
+# ── SSE Streaming (Phase 1.3b) ─────────────────────────────────────────────────
 
 import ssl
 import urllib.error
 import urllib.request
+from collections import namedtuple
+
+# SSE event types
+SSEEvent = namedtuple("SSEEvent", ["type", "data"])
+# Types: 'text_delta', 'tool_call_delta', 'tool_call_done', 'done'
+
+
+def _sse_lines(resp) -> Iterator[bytes]:
+    """Read all SSE lines from an HTTP response. Handles chunked transfer encoding."""
+    # Read line-by-line (not byte-by-byte) — avoids 100-1000x syscall overhead
+    for line in resp:
+        yield line.strip()
+
+
+def _parse_sse_line(line: bytes) -> SSEEvent | None:
+    """Parse one SSE line into an SSEEvent. Returns None for non-data lines."""
+    line = line.strip()
+    if not line or line.startswith(b":"):
+        return None
+    if line.startswith(b"data: "):
+        data = line[6:]
+    elif line.startswith(b"data:"):
+        data = line[5:].lstrip()
+    else:
+        return None
+    if data == b"[DONE]" or data == b"DONE":
+        return SSEEvent(type="done", data={})
+    try:
+        return SSEEvent(type="raw", data=json.loads(data.decode("utf-8")))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        logger.debug(
+            "[sse-line] drop malformed frame (%s): %r",
+            type(e).__name__,
+            line[:200],
+        )
+        return None
+
+
+def _parse_sse_delta(d: dict) -> list[SSEEvent]:
+    """Extract text_delta and tool_call_delta events from an SSE delta dict.
+
+    Shared by _stream_openai_events and _stream_minimax_events.
+    The dict is the parsed JSON of an SSE `data:` line whose type is "raw"
+    (i.e., it has a `choices` field with a delta).
+
+    finish_reason / usage handling is NOT included — each caller processes
+    those inline because OpenAI and MiniMax emit them differently
+    (OpenAI: usage in a trailing chunk with empty choices; MiniMax: usage
+    inline alongside finish_reason).
+    """
+    events: list[SSEEvent] = []
+    choice = _first_choice(d)
+    delta = choice.get("delta", {}) if isinstance(choice, dict) else {}
+    content = delta.get("content")
+    if content is not None:
+        events.append(SSEEvent(type="text_delta", data={"content": content}))
+    tc_delta = delta.get("tool_calls", [])
+    for tcd in tc_delta:
+        idx = tcd.get("index", 0)
+        if "function" in tcd:
+            fname = tcd["function"].get("name") or ""
+            fargs = tcd["function"].get("arguments", "") or ""
+            events.append(SSEEvent(type="tool_call_delta", data={
+                "index": idx, "name": fname, "arguments": fargs,
+                "id": tcd.get("id", "") or "",
+            }))
+    return events
+
+
+def _first_choice(d: dict) -> dict:
+    """Return choices[0] from an OpenAI-format SSE frame, or {} if missing/empty.
+
+    Defensive against three legitimate frame shapes:
+      - {"choices": [...]} — normal delta/finish frame
+      - {"choices": [], "usage": {...}} — OpenAI trailing usage frame
+      - {} or {"usage": {...}} — keepalive / pre-delta frame
+
+    Replaces the unsafe d.get("choices", [{}])[0] pattern.
+    """
+    choices = d.get("choices")
+    return choices[0] if choices else {}
+
+
+# Transient SSL/network errors that warrant a retry.
+_RETRYABLE_SSL_ERRORS = frozenset({
+    "SSLV3_ALERT_BAD_RECORD_MAC",
+    "SSLV3_ALERT_BAD_RECORD_MD5",
+    "TLSV1_ALERT_DECRYPTION_FAILED",
+    "TLSV1_ALERT_RECORD_OVERFLOW",
+    "SSL_ERROR_SYSCALL",
+    # SSLEOFError variants: server drops TLS connection mid-handshake or
+    # mid-request. Emitted by MiniMax gateway on long-running streams and
+    # by other providers under load. Transient — safe to retry with
+    # exponential backoff. See docs/specs/SPEC-SSL-RETRY-FIX.md Layer 1.
+    "EOF occurred in violation of protocol",
+    "UNEXPECTED_EOF_WHILE_READING",
+})
+
+# OSError subclasses that indicate a transient TCP-level failure
+# (NOT ssl.SSLError). ConnectionResetError happens when the peer
+# abruptly closes a half-open socket; BrokenPipeError happens when
+# writing to a socket the peer has already closed. Both are safe
+# to retry. MUST be a tuple (not a list) for use with `except` and
+# `isinstance`. See docs/specs/SPEC-SSL-RETRY-FIX.md Layer 1.
+_RETRYABLE_OSERROR_TYPES: tuple[type[Exception], ...] = (
+    ConnectionResetError,
+    BrokenPipeError,
+)
+
+_MAX_SSL_RETRIES = 3
+_SSL_RETRY_BASE_MS = 500
+
+
+def _is_retryable_ssl_error(exc: BaseException) -> bool:
+    """Return True if `exc` (or anything in its reason/cause chain) is a
+    transient SSL error that should trigger a retry.
+
+    Walks three layers of the exception chain:
+      1. `exc` itself
+      2. `exc.reason` — populated by `urllib.request.do_open` when it
+         wraps an `OSError` (including `ssl.SSLError`) in
+         `urllib.error.URLError`. THIS IS THE KEY BUG FIX: the old
+         `except ssl.SSLError` never fires when `do_open` wraps the
+         SSL error in URLError first.
+      3. `exc.__cause__` — populated by `raise X from Y` chains, e.g.
+         `raise URLError(ssl.SSLError(...)) from ssl.SSLEOFError(...)`.
+
+    For each candidate:
+      - If it is an instance of `_RETRYABLE_OSERROR_TYPES`, return True.
+        These are TCP-level resets that never produce an SSL reason
+        string at all.
+      - If it is an `ssl.SSLError`, check if `str(cand)` contains any
+        token from `_RETRYABLE_SSL_ERRORS`. Token-match (not isinstance
+        check) because `ssl.SSLError` is one class but the reason
+        string varies by underlying cause.
+      - If it is a string (which happens when URLError is constructed
+        with `URLError("EOF occurred in violation of protocol")` —
+        .reason is then the raw string, not an exception), token-match
+        the string itself. This is the common urllib idiom.
+
+    Returns False for anything else (DNS failures, timeouts that aren't
+    SSL-related, configuration errors, etc.) — those should surface to
+    the caller immediately.
+
+    See docs/specs/SPEC-SSL-RETRY-FIX.md §Helpers for the contract.
+    """
+    # String-coerced reason for the outer exception. str(URLError(s))
+    # is "<urlopen error s>", but tokens like "EOF occurred in violation
+    # of protocol" still appear as substrings of that wrapped form.
+    outer_text = str(exc) if exc is not None else ""
+
+    candidates: list[object] = [exc]
+    # urllib.error.URLError exposes the underlying error as .reason —
+    # sometimes a string (urllib's own "EOF occurred in violation of
+    # protocol" path), sometimes an exception (do_open's wrap).
+    reason = getattr(exc, "reason", None)
+    if reason is not None and reason is not exc:
+        candidates.append(reason)
+    # `raise X from Y` populates __cause__
+    cause = getattr(exc, "__cause__", None)
+    if isinstance(cause, BaseException) and cause is not exc:
+        candidates.append(cause)
+
+    for cand in candidates:
+        # OSError subclass fast-path: ConnectionResetError, BrokenPipeError
+        if isinstance(cand, BaseException) and isinstance(cand, _RETRYABLE_OSERROR_TYPES):
+            return True
+        # SSL token-match path: works for ssl.SSLError AND for the string
+        # form passed as URLError.reason.
+        if isinstance(cand, ssl.SSLError):
+            reason_str = str(cand)
+            if any(tok in reason_str for tok in _RETRYABLE_SSL_ERRORS):
+                return True
+        elif isinstance(cand, str):
+            if any(tok in cand for tok in _RETRYABLE_SSL_ERRORS):
+                return True
+    # Outer-exception string fallback. URLError("EOF...") gives
+    # str(exc) == "<urlopen error EOF occurred in violation of protocol>",
+    # which still contains the token as a substring.
+    if outer_text and any(tok in outer_text for tok in _RETRYABLE_SSL_ERRORS):
+        return True
+    return False
+
+
+def _friendly_error_message(exc: Exception) -> str:
+    """Translate a raw network/SSL exception into a user-facing message.
+
+    Walks the same exception chain as `_is_retryable_ssl_error`
+    (`exc` → `.reason` → `.__cause__`) so that an `ssl.SSLEOFError` wrapped
+    in `urllib.error.URLError` by `do_open` is still classified correctly.
+
+      - `ssl.SSLError` whose text contains "EOF" or "shutdown" →
+        "Connection to the AI provider was lost mid-response. Please try
+        sending your message again."
+      - Other `ssl.SSLError` → "Secure connection error: <reason>. Please
+        try again." (rare; included so that any unmapped SSL failure still
+        reads as a network problem rather than a Python traceback).
+      - `ConnectionResetError` / `BrokenPipeError` →
+        "Connection to the AI provider was reset. Please try sending your
+        message again."
+      - Anything else → `str(exc)` unchanged. Non-network errors are not
+        rewritten because the user (or the agent itself) often needs the
+        original message (e.g. validation errors).
+
+    See docs/specs/SPEC-SSL-RETRY-FIX.md Layer 3 for the design.
+    """
+    if exc is None:
+        return ""
+    chain: list[object] = [exc]
+    reason = getattr(exc, "reason", None)
+    if reason is not None and reason is not exc:
+        chain.append(reason)
+    cause = getattr(exc, "__cause__", None)
+    if isinstance(cause, BaseException) and cause is not exc:
+        chain.append(cause)
+
+    for cand in chain:
+        if isinstance(cand, ssl.SSLError):
+            text = str(cand)
+            lowered = text.lower()
+            if "eof" in lowered or "shutdown" in lowered:
+                return ("Connection to the AI provider was lost mid-response. "
+                        "Please try sending your message again.")
+            return f"Secure connection error: {text}. Please try again."
+        if isinstance(cand, (ConnectionResetError, BrokenPipeError)):
+            return ("Connection to the AI provider was reset. "
+                    "Please try sending your message again.")
+    return str(exc)
+
+
+def _urlopen_with_ssl_retry(req, timeout, *, max_retries=_MAX_SSL_RETRIES):
+    """Like urllib.request.urlopen but retries on transient SSL errors.
+
+    Three exception types trigger a retry attempt (all decided by
+    `_is_retryable_ssl_error` which walks the exception chain):
+
+      1. `ssl.SSLError` — raw SSL failure caught directly.
+      2. `urllib.error.URLError` — `urllib.request.do_open` wraps the
+         underlying `OSError`/`ssl.SSLError` in `URLError` during the
+         request-send phase. The old `except ssl.SSLError` never fires
+         here; the new `except URLError` unwraps via `_is_retryable_ssl_error`.
+      3. `_RETRYABLE_OSERROR_TYPES` — TCP-level `ConnectionResetError` /
+         `BrokenPipeError` that arrive WITHOUT being wrapped in URLError
+         (e.g. on the read side of a half-closed connection).
+
+    Each branch: if not retryable or max attempts reached, re-raise the
+    original exception unchanged. Otherwise log a warning and sleep with
+    exponential backoff (500ms × 2^attempt).
+
+    See docs/specs/SPEC-SSL-RETRY-FIX.md Layer 1 for the design.
+    """
+    last_exc = None
+    for attempt in range(max_retries + 1):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except (ConnectionResetError, BrokenPipeError) as e:
+            # Bare OSError subclasses — never SSL-wrapped, retry directly.
+            if attempt == max_retries:
+                raise
+            last_exc = e
+            wait_s = (_SSL_RETRY_BASE_MS / 1000) * (2 ** attempt)
+            logger.warning(
+                "[ssl-retry] attempt %d/%d for %s — %s; retrying in %.1fs",
+                attempt + 1, max_retries, req.full_url, e, wait_s,
+            )
+            time.sleep(wait_s)
+        except urllib.error.URLError as e:
+            # do_open wraps the underlying SSL/OSError in URLError.
+            # Walk the chain via _is_retryable_ssl_error to decide.
+            if not _is_retryable_ssl_error(e) or attempt == max_retries:
+                raise
+            last_exc = e
+            reason_str = str(e)
+            wait_s = (_SSL_RETRY_BASE_MS / 1000) * (2 ** attempt)
+            logger.warning(
+                "[ssl-retry] attempt %d/%d for %s — %s; retrying in %.1fs",
+                attempt + 1, max_retries, req.full_url, reason_str, wait_s,
+            )
+            time.sleep(wait_s)
+        except ssl.SSLError as e:
+            # Direct SSL error (bypassed urllib wrapping, e.g. in tests
+            # or when called from custom sockets). Token-match against
+            # _RETRYABLE_SSL_ERRORS.
+            reason = str(e)
+            is_retryable = any(tok in reason for tok in _RETRYABLE_SSL_ERRORS)
+            if not is_retryable or attempt == max_retries:
+                raise
+            last_exc = e
+            wait_s = (_SSL_RETRY_BASE_MS / 1000) * (2 ** attempt)
+            logger.warning(
+                "[ssl-retry] attempt %d/%d for %s — %s; retrying in %.1fs",
+                attempt + 1, max_retries, req.full_url, reason, wait_s,
+            )
+            time.sleep(wait_s)
+    raise last_exc  # should not reach here
+
+
+def _stream_with_ssl_retry(
+    streamer,
+    *,
+    max_retries: int = _MAX_SSL_RETRIES,
+    **kwargs,
+):
+    """Wrap an SSE-event generator and retry the entire stream on transient
+    SSL/network failures during body iteration.
+
+    `_urlopen_with_ssl_retry` only protects the request-send phase. Once
+    `urlopen()` returns and the SSE body is being read line-by-line, an
+    `ssl.SSLEOFError` raised from the underlying socket is surfaced directly
+    to the caller of `streamer(...)`. This wrapper catches those mid-stream
+    drops and re-issues the full streaming call so the connection is
+    re-established from scratch.
+
+    Suppresses retry once any `text_delta` event has been yielded (the user
+    has already seen partial text; a retry would produce garbled duplicate
+    output in the UI). In that case the exception is re-raised so the caller
+    surfaces it via `_friendly_error_message`.
+
+    Args:
+        streamer: A callable matching the `_stream_openai_events` /
+            `_stream_minimax_events` / `_stream_anthropic_events` signature:
+            keyword arguments `base_url`, `api_key`, `model`, `messages`,
+            `tools`, `timeout`, `x_title`. Called once per attempt.
+        max_retries: Total retry budget (default `_MAX_SSL_RETRIES`).
+        **kwargs: Forwarded verbatim to `streamer`.
+
+    Yields:
+        SSEEvent instances as produced by `streamer`.
+
+    Raises:
+        ssl.SSLError / ConnectionResetError / BrokenPipeError /
+        urllib.error.URLError: if the failure is unretryable (already
+            yielded text), not a transient SSL/network error, or the retry
+            budget is exhausted.
+
+    See docs/specs/SPEC-SSL-RETRY-FIX.md Layer 2 for the design.
+    """
+    last_exc: BaseException | None = None
+    for attempt in range(max_retries + 1):
+        streamed_text = False
+        try:
+            for ev in streamer(**kwargs):
+                if ev.type == "text_delta":
+                    streamed_text = True
+                yield ev
+            return
+        except (ConnectionResetError, BrokenPipeError) as e:
+            if streamed_text or attempt == max_retries:
+                raise
+            last_exc = e
+            wait_s = (_SSL_RETRY_BASE_MS / 1000) * (2 ** attempt)
+            logger.warning(
+                "[ssl-retry-stream] attempt %d/%d — %s; retrying in %.1fs",
+                attempt + 1, max_retries, e, wait_s,
+            )
+            time.sleep(wait_s)
+        except urllib.error.URLError as e:
+            if streamed_text or attempt == max_retries:
+                raise
+            # do_open wraps the underlying SSL/OSError in URLError — walk
+            # the chain to decide whether this is a transient SSL drop.
+            if not _is_retryable_ssl_error(e):
+                raise
+            last_exc = e
+            wait_s = (_SSL_RETRY_BASE_MS / 1000) * (2 ** attempt)
+            logger.warning(
+                "[ssl-retry-stream] attempt %d/%d — %s; retrying in %.1fs",
+                attempt + 1, max_retries, e, wait_s,
+            )
+            time.sleep(wait_s)
+        except ssl.SSLError as e:
+            reason = str(e)
+            is_retryable = any(tok in reason for tok in _RETRYABLE_SSL_ERRORS)
+            if streamed_text or not is_retryable or attempt == max_retries:
+                raise
+            last_exc = e
+            wait_s = (_SSL_RETRY_BASE_MS / 1000) * (2 ** attempt)
+            logger.warning(
+                "[ssl-retry-stream] attempt %d/%d — %s; retrying in %.1fs",
+                attempt + 1, max_retries, reason, wait_s,
+            )
+            time.sleep(wait_s)
+    # All retries exhausted; last_exc is guaranteed to be set because the
+    # only way to exit the loop without returning/raising is via the
+    # `if attempt == max_retries: raise` branches above (which raise before
+    # reassigning last_exc). Defensive raise anyway.
+    if last_exc is not None:
+        raise last_exc
 
 
 def _stream_openai_events(
@@ -570,14 +1167,79 @@ _PROVIDER_STREAMERS: dict[str, Any] = {
 
 # ── Tool call normalization ─────────────────────────────────────────────────────
 
-# ── Response extractors (extracted to agent/llm/extractors.py, Phase B3) ────
-# Re-exported under legacy underscore names for backward compatibility.
-# _is_empty_content stays here (used at non-extractor sites).
-from agent.llm.extractors import (
-    extract_tool_calls as _extract_tool_calls,
-    extract_text_content as _extract_text_content,
-    extract_usage as _extract_usage,
-)
+def _extract_tool_calls(response: dict, provider: str) -> list[tuple[str, str, dict]]:
+    """
+    Extract tool calls from an API response dict.
+
+    Returns [(call_id, tool_name, arguments)].
+
+    Handles OpenAI, MiniMax, and Anthropic formats.
+    """
+    calls = []
+    fmt = _RESPONSE_FORMAT.get(provider, "openai")
+
+    if fmt == "openai":
+        # OpenAI/MiniMax Chat Completions format
+        choices = response.get("choices", [])
+        if not choices:
+            return []
+        delta = choices[0].get("delta", {})
+        message = choices[0].get("message", delta)
+
+        if message.get("tool_calls"):
+            for tc in message["tool_calls"]:
+                func = tc.get("function", {})
+                # QTR-FIX: use `or` so that None / empty-string ids fall through
+                # to the synthetic fallback instead of propagating as an empty
+                # tool_call_id. The previous form `tc.get("id", default)` only
+                # substituted when the key was absent — explicit None / "" slipped
+                # through and later matched `if not call_id` guards in unexpected
+                # places. See `_extract_tool_calls (empty-id fallback)` regression
+                # test for the synthetic-id contract.
+                call_id = tc.get("id") or f"call_{uuid.uuid4().hex[:8]}"
+                name = func.get("name", "")
+                args_raw = func.get("arguments", "{}")
+                if isinstance(args_raw, str):
+                    args = json.loads(args_raw)
+                else:
+                    args = args_raw or {}
+                calls.append((call_id, name, args))
+
+    elif fmt == "anthropic":
+        # Anthropic Messages API format
+        content = response.get("content", [])
+        if not isinstance(content, list):
+            return []
+        for block in content:
+            if block.get("type") == "tool_use":
+                # QTR-FIX: same None / empty-string fallback as the OpenAI path.
+                call_id = block.get("id") or f"call_{uuid.uuid4().hex[:8]}"
+                name = block.get("name", "")
+                args = block.get("input", {})
+                calls.append((call_id, name, args))
+
+    return calls
+
+
+def _extract_text_content(response: dict, provider: str) -> str:
+    """Extract text content from an API response."""
+    fmt = _RESPONSE_FORMAT.get(provider, "openai")
+
+    if fmt == "openai":
+        choices = response.get("choices", [])
+        if not choices:
+            return ""
+        msg = choices[0].get("message", {})
+        return msg.get("content", "") or ""
+
+    elif fmt == "anthropic":
+        content = response.get("content", [])
+        if not isinstance(content, list):
+            return ""
+        parts = [b.get("text", "") for b in content if b.get("type") == "text"]
+        return "".join(parts)
+
+    return ""
 
 
 def _is_empty_content(text) -> bool:
@@ -610,6 +1272,24 @@ def _is_empty_content(text) -> bool:
         if text.translate(str.maketrans("", "", _ZWS)).strip() == "":
             return True
     return False
+
+
+def _extract_usage(response: dict, provider: str = "openai") -> tuple[int, int]:
+    """Extract (prompt_tokens, completion_tokens) from API response."""
+    usage = response.get("usage")
+    if not usage:
+        return 0, 0
+    fmt = _RESPONSE_FORMAT.get(provider, "openai")
+    if fmt == "anthropic":
+        return (
+            usage.get("input_tokens", 0),
+            usage.get("output_tokens", 0),
+        )
+    # OpenAI / MiniMax
+    return (
+        usage.get("prompt_tokens", 0),
+        usage.get("completion_tokens", 0),
+    )
 
 
 # ── KB synthesis helper ───────────────────────────────────────────────────────
@@ -1022,21 +1702,6 @@ class AgentRuntime:
         # A-4: Audit log for tool executions
         self._audit_log = AuditLog()
 
-        # Track-A: Tool middleware chain (enforcement + stuck detection).
-        # Approval gating stays inline in _run_loop (temporal ordering:
-        # must fire before on_tool_call_start). The chain wraps only the
-        # execution phase. See spec §A.2.3-§A.2.4.
-        self._tool_chain = ToolMiddlewareChain([
-            EnforcementMiddleware(
-                enforcement_check_fn=_enforcement_check,
-                on_status=self._dispatch_enforcement_status,
-            ),
-            StuckDetectionMiddleware(
-                stuck_check_fn=self._check_stuck,
-                pending_messages=self._pending_stuck_messages,
-            ),
-        ])
-
         # §0: Pluggable context management strategy.
         # DefaultContextStrategy is the extracted trim_to_token_limit algorithm
         # (Phase 1). Future: configurable via AgentConfig.context_strategy.
@@ -1062,17 +1727,6 @@ class AgentRuntime:
             self._GLib.idle_add(inner)
         else:
             inner()
-
-    def _dispatch_enforcement_status(
-        self, session_key: str, tool_name: str, status: dict
-    ) -> None:
-        """Dispatch a per-check enforcement status to the callback.
-
-        Called by EnforcementMiddleware for each EnforcementCheck result.
-        Wraps the existing _dispatch(self._on_enforcement_status, ...) pattern
-        that was inline in _run_loop (spec §A.2.3).
-        """
-        self._dispatch(self._on_enforcement_status, session_key, tool_name, status)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -1862,34 +2516,48 @@ class AgentRuntime:
                     # was configured without. conv.allowed_tools is the single source of
                     # truth — set in create_conversation() from agent_def["tools"] and
                     # persisted on the conversation object.
-                    #
-                    # Execute through the tool middleware chain.
-                    # The chain wraps execute_tool with EnforcementMiddleware
-                    # (post-write verification) and StuckDetectionMiddleware
-                    # (loop detection). Approval was already resolved inline
-                    # above (before on_tool_call_start) per spec §A.2.4.
-                    ctx = ToolContext(
-                        session_key=session_key,
-                        project_path=conv.project_path,
-                        iteration=iteration,
-                        bypass_approval=bypass_approval,
-                        audit_log=self._audit_log,
-                        user_id=getattr(self._config, "user_id", ""),
-                        enforcement_config=self._config.enforcement,
-                        si_enforcement=conv.si_enforcement,
-                    )
-                    result = self._tool_chain.run(
-                        tool_name=tool_name,
-                        args=args,
-                        ctx=ctx,
-                        executor=lambda: execute_tool(
-                            tool_name, args, conv.project_path, session_key,
-                            approval_callback=per_call_cb,
-                            allowed_tools=conv.allowed_tools,
-                        ),
-                    )
+                    result = execute_tool(tool_name, args, conv.project_path, session_key,
+                                          approval_callback=per_call_cb,
+                                          allowed_tools=conv.allowed_tools)
                     logger.debug("[tool-loop] sk=%s tool %s result: success=%s output_len=%d",
                                  session_key, tool_name, result.success, len(result.output or ""))
+
+                    # === ENFORCEMENT LAYER HOOK ===
+                    # Two-level gate: (1) global config enabled, (2) per-agent SI override
+                    global_enabled = self._config.enforcement.enabled
+                    agent_enabled = conv.si_enforcement if conv.si_enforcement is not None else True
+                    if tool_name in ("write_file", "edit_file") and global_enabled and agent_enabled:
+                        enf_result = _enforcement_check(
+                            tool_name, args, result,
+                            conv.project_path,
+                            self._config.enforcement,
+                        )
+                        if enf_result.appended_message:
+                            result = dataclasses.replace(
+                                result,
+                                output=(result.output or "") + "\n" + enf_result.appended_message,
+                            )
+                            for check in enf_result.checks:
+                                self._dispatch(
+                                    self._on_enforcement_status,
+                                    session_key, tool_name,
+                                    {
+                                        "tier": check.tier,
+                                        "file": check.file,
+                                        "passed": check.passed,
+                                        "detail": check.detail,
+                                    },
+                                )
+                    # === END ENFORCEMENT HOOK ===
+
+                    # §E: Stuck detection — record this tool call and check for loops
+                    stuck_msg = self._check_stuck(session_key, tool_name, args, iteration)
+                    if stuck_msg:
+                        logger.warning("[stuck-detection] sk=%s: %s", session_key, stuck_msg)
+                        # Phase CB-3: store as transient signal, NOT in conv.messages.
+                        # The next LLM call will prepend it to the request's messages list.
+                        # See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.3 (BUG #4 fix).
+                        self._pending_stuck_messages.setdefault(session_key, []).append(stuck_msg)
 
                     # Record tool result — ToolResult dataclass stays clean
                     tc.mark_completed(result.output if result.success else result.error or "")
@@ -2100,8 +2768,7 @@ class AgentRuntime:
             )
 
         try:
-            provider = _get_provider(caller_key)
-            return provider.call(
+            return caller(
                 base_url=provider_cfg.base_url,
                 api_key=effective_api_key,
                 model=model,
@@ -2616,8 +3283,7 @@ class AgentRuntime:
                 provider_name,
             )
 
-        provider = _get_provider(caller_key)
-        response_dict = provider.call(
+        response_dict = caller(
             base_url=provider_cfg.base_url,
             api_key=api_key,
             model=model,
