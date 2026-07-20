@@ -1,8 +1,7 @@
 """SSE streaming helpers and SSL retry infrastructure.
 
-Extracted from agent/runtime.py (Phase B5). These are the infrastructure
-primitives that the stream functions (still in runtime.py) depend on.
-The stream functions themselves move in Phase B6.
+Extracted from agent/runtime.py (Phase B5). These helpers are consumed by
+the provider classes' stream() methods in agent/llm/*_provider.py.
 
 Public API:
     SSEEvent — namedtuple for SSE events
