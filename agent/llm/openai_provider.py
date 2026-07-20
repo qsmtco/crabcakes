@@ -47,7 +47,6 @@ class OpenAIProvider:
         x_title: str = "",
     ) -> dict:
         """Call OpenAI Chat Completions API (also used by OpenRouter, ZAI)."""
-        from agent.runtime import _urlopen_with_ssl_retry
         endpoint = f"{base_url.rstrip('/')}/chat/completions"
         payload = {
             "model": model_id(model),
@@ -72,10 +71,83 @@ class OpenAIProvider:
             method="POST",
         )
         try:
-            with _urlopen_with_ssl_retry(req, timeout=timeout) as resp:
+            with urlopen_with_ssl_retry(req, timeout=timeout) as resp:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", errors="replace")
             raise RuntimeError(
                 f"OpenAI API error {e.code} {e.reason}: {body}"
             ) from e
+
+    def stream(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        messages: list[dict],
+        tools: list[dict] | None,
+        timeout: float,
+        x_title: str = "",
+    ):
+        """Yield SSE events from OpenAI Chat Completions streaming API (also used by OpenRouter, ZAI)."""
+        endpoint = f"{base_url.rstrip('/')}/chat/completions"
+        payload = {
+            "model": model_id(model),
+            "messages": messages,
+            "stream": True,
+        }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        body = json.dumps(payload).encode()
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+        if x_title:
+            headers["HTTP-Referer"] = "https://github.com/qsmtco/crabcakes"
+            headers["X-Title"] = x_title
+        req = urllib.request.Request(
+            endpoint,
+            data=body,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            resp = urlopen_with_ssl_retry(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            try:
+                body = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                body = "(could not read body)"
+            logger.error(
+                "Provider HTTP %d from %s (model=%s): %s",
+                e.code, req.full_url, model, body[:500],
+            )
+            raise
+        with resp as resp:
+            for line in sse_lines(resp):
+                ev = parse_sse_line(line)
+                if ev is None:
+                    continue
+                if ev.type == "done":
+                    yield SSEEvent(type="done", data={})
+                    return
+                if ev.type != "raw":
+                    continue
+                d = ev.data
+                choice = first_choice(d)
+                if choice:
+                    for out_ev in parse_sse_delta(d):
+                        yield out_ev
+                    finish_reason = choice.get("finish_reason")
+                    if finish_reason in ("stop", "tool_calls", "length"):
+                        usage = d.get("usage")
+                        if usage:
+                            yield SSEEvent(type="usage", data={"usage": usage})
+                        yield SSEEvent(type="done", data={})
+                        return
+                usage = d.get("usage")
+                if usage:
+                    yield SSEEvent(type="usage", data={"usage": usage})
