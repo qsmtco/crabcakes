@@ -7,7 +7,6 @@ import urllib.error
 import urllib.request
 
 from agent.llm.cost import model_id
-from agent.runtime import _urlopen_with_ssl_retry
 
 
 class OpenAIProvider:
@@ -40,6 +39,7 @@ class OpenAIProvider:
         x_title: str = "",
     ) -> dict:
         """Call OpenAI Chat Completions API (also used by OpenRouter, ZAI)."""
+        from agent.runtime import _urlopen_with_ssl_retry
         endpoint = f"{base_url.rstrip('/')}/chat/completions"
         payload = {
             "model": model_id(model),
