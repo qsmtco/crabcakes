@@ -52,7 +52,9 @@ TEAM_FILENAME = "team.json"
 AWARENESS_FILENAME = "awareness.json"
 CONTEXT_FILENAME = "context.md"
 
-MAX_CONTEXT_SIZE = 50 * 1024  # 50 KB cap for context.md
+MAX_CONTEXT_SIZE = 50 * 1024  # 50 KB cap for context.md (write side)
+CONTEXT_READ_CAP = 8000       # Max chars injected into agent prompts (read side)
+MAX_CONTEXT_ENTRIES = 50      # Max entries before FIFO eviction
 
 # ── Awareness mtime cache ─────────────────────────────────────────────────────
 _AWARENESS_CACHE: dict[str, tuple[float, dict]] = {}
@@ -312,6 +314,25 @@ def append_project_context(project_path: str, entry: str) -> None:
     save_project_context(project_path, existing + separator + entry)
 
 
+def get_current_task(project_path: str) -> str:
+    """Extract the most recent dated entry heading from context.md.
+
+    Returns the heading text (e.g., "2026-07-20 — Phase B6 complete") or
+    empty string if context.md is empty or has no '## ' headings.
+
+    This is injected as a TRUSTED directive (outside the untrusted fence)
+    so agents treat it as an operational instruction, not data.
+    """
+    context = load_project_context(project_path)
+    if not context.strip():
+        return ""
+    # Find the last '## ' heading
+    headings = [line for line in context.split("\n") if line.startswith("## ")]
+    if not headings:
+        return ""
+    return headings[-1][4:].strip()  # strip "## " prefix
+
+
 # ── Awareness snapshot ────────────────────────────────────────────────────────
 
 
@@ -488,9 +509,9 @@ def build_awareness_block(
     if context.strip():
         # HIGH-5: wrap in untrusted-data fence to mitigate prompt injection
         context_wrapped = _untrusted_fence(
-            context[:3000], "context.md"
+            context[:CONTEXT_READ_CAP], "context.md"
         )
-        if len(context) > 3000:
+        if len(context) > CONTEXT_READ_CAP:
             context_wrapped += "\n[... context memory truncated ...]"
         parts.append(f"## Project Memory\n\n{context_wrapped}")
 
@@ -618,8 +639,8 @@ def build_awareness_dict(project_path: str) -> dict[str, str]:
     context = load_project_context(project_path)
     if context.strip():
         # HIGH-5: wrap in untrusted-data fence to mitigate prompt injection
-        context_wrapped = _untrusted_fence(context[:3000], "context.md")
-        if len(context) > 3000:
+        context_wrapped = _untrusted_fence(context[:CONTEXT_READ_CAP], "context.md")
+        if len(context) > CONTEXT_READ_CAP:
             context_wrapped += "\n[... context memory truncated ...]"
         parts["PROJECT_MEMORY"] = context_wrapped
     else:
