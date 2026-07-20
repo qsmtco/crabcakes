@@ -163,6 +163,24 @@ class AuditLog:
             return list(self._entries)
 
 
+# ── Cost tables + functions (extracted to agent/llm/cost.py, Phase B1) ──────
+# Re-exported under legacy underscore names for backward compatibility.
+from agent.llm.cost import (
+    OPENAI_COST as _OPENAI_COST,
+    MINIMAX_COST as _MINIMAX_COST,
+    ANTHROPIC_COST as _ANTHROPIC_COST,
+    PROVIDER_COSTS as _PROVIDER_COSTS,
+    model_id as _model_id,
+    cost_for_model as _cost_for_model,
+)
+
+# ── Anthropic converters (extracted to agent/llm/convert.py, Phase B2) ──────
+# Re-exported under legacy underscore names for backward compatibility.
+from agent.llm.convert import (
+    convert_messages_for_anthropic as _convert_messages_for_anthropic,
+    convert_tools_for_anthropic as _convert_tools_for_anthropic,
+)
+
 # ── LLM providers (extracted to agent/llm/, Phase B4) ───────────────────────
 # Re-exported under legacy names for backward compatibility.
 from agent.llm.openai_provider import OpenAIProvider
