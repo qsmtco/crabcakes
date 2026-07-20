@@ -1708,6 +1708,21 @@ class AgentRuntime:
         # A-4: Audit log for tool executions
         self._audit_log = AuditLog()
 
+        # Track-A: Tool middleware chain (enforcement + stuck detection).
+        # Approval gating stays inline in _run_loop (temporal ordering:
+        # must fire before on_tool_call_start). The chain wraps only the
+        # execution phase. See spec §A.2.3-§A.2.4.
+        self._tool_chain = ToolMiddlewareChain([
+            EnforcementMiddleware(
+                enforcement_check_fn=_enforcement_check,
+                on_status=self._dispatch_enforcement_status,
+            ),
+            StuckDetectionMiddleware(
+                stuck_check_fn=self._check_stuck,
+                pending_messages=self._pending_stuck_messages,
+            ),
+        ])
+
         # §0: Pluggable context management strategy.
         # DefaultContextStrategy is the extracted trim_to_token_limit algorithm
         # (Phase 1). Future: configurable via AgentConfig.context_strategy.
