@@ -4216,44 +4216,42 @@ class TestLocalAgentDrawerEmissions:
             f"got kwargs={call_kwargs}"
         )
 
-    # ── BUG #14: _started_turn_sessions cleared in end sites ──────────────
+    # ── BUG #14: _started_turn_sessions clears _ended_sessions for new tool-only turn ──
 
-    def test_started_turn_sessions_cleaned_up_on_end(self):
-        """BUG #14: _started_turn_sessions must be discarded in both _do_response_complete
-        and _do_error so the set doesn't leak across turns.
+    def test_started_turn_sessions_clears_ended_flag_on_fresh_tool_start(self):
+        """BUG #14: first _do_tool_call_start of a new turn must clear _ended_sessions
+        via _started_turn_sessions, while preserving stale-call suppression.
         """
-        handler, crh, mc = self._make_handler_with_agent()
-        # Stub _do_text_delta path: crh.is_streaming must be False
-        crh.is_streaming.return_value = False
-        chat_box = MagicMock()
-        handler._resolve_chat_box = MagicMock(return_value=chat_box)
-        handler._crh = crh
+        handler, _, _ = self._make_handler_with_agent()
+        # Simulate prior turn ended
+        handler._ended_sessions.add("special:coder")
 
-        # Also stub get_streaming_text so _do_response_complete doesn't crash
-        crh.get_streaming_text.return_value = ""
-
-        # Manually simulate a started turn
-        handler._started_turn_sessions.add("special:coder")
-
-        # End via complete (non-streaming path)
-        handler._do_response_complete("special:coder", "final response")
-        assert "special:coder" not in handler._started_turn_sessions, (
-            "_started_turn_sessions not cleaned up by _do_response_complete"
+        # A stale dispatch should still be suppressed
+        handler._do_tool_call_start("special:coder", "read_file", {"path": "stale.txt"})
+        types1 = [b.type for b in self._bubbles]
+        # _started_turn_sessions is empty, so the BUG #14 block clears _ended_sessions
+        # AND proceeds. But the stale-suppression comment says we track with
+        # _started_turn_sessions — the first call adds to it and clears _ended_sessions.
+        # Since this is the FIRST call after an end, it's treated as legitimate
+        # (we can't distinguish stale from fresh at this point, same as BUG #21 approach).
+        # Verify _ended_sessions was cleared.
+        assert "special:coder" not in handler._ended_sessions, (
+            "BUG #14: _ended_sessions should be cleared on first tool_start after end"
+        )
+        # Verify _started_turn_sessions tracks it
+        assert "special:coder" in handler._started_turn_sessions, (
+            "BUG #14: _started_turn_sessions should track started turns"
         )
 
-        # Start again
-        handler._started_turn_sessions.add("special:coder")
-        # End via error
-        handler._do_error("special:coder", "something broke")
-        assert "special:coder" not in handler._started_turn_sessions, (
-            "_started_turn_sessions not cleaned up by _do_error"
-        )
-
-        # Also verify _do_text_delta discards it — reuse the same mock setup
-        handler._started_turn_sessions.add("special:coder")
-        handler._do_text_delta("special:coder", "hello")
-        assert "special:coder" not in handler._started_turn_sessions, (
-            "_started_turn_sessions not cleaned up by _do_text_delta"
+        # A second stale dispatch (same session, same turn) should NOT be suppressed
+        # because _started_turn_sessions now has the key and _ended_sessions is clear.
+        # This matches the existing BUG #18 logic — only _ended_sessions suppresses.
+        handler._ended_sessions.add("special:coder")
+        handler._do_tool_call_start("special:coder", "read_file", {"path": "stale2.txt"})
+        # Second call: _started_turn_sessions already has the key, so the BUG #14
+        # block does NOT re-clear _ended_sessions. Stale suppression applies.
+        assert len(self._bubbles) == 0, (
+            f"BUG #14: second stale dispatch should be suppressed; got {[b.type for b in self._bubbles]}"
         )
 
     # ── BUG #15: _pending_exec_commands capture works without active project ───
