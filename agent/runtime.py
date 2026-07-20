@@ -2375,10 +2375,7 @@ class AgentRuntime:
                     # was configured without. conv.allowed_tools is the single source of
                     # truth — set in create_conversation() from agent_def["tools"] and
                     # persisted on the conversation object.
-                    result = execute_tool(tool_name, args, conv.project_path, session_key,
-                                          approval_callback=per_call_cb,
-                                          allowed_tools=conv.allowed_tools)
-
+                    #
                     # Execute through the tool middleware chain.
                     # The chain wraps execute_tool with EnforcementMiddleware
                     # (post-write verification) and StuckDetectionMiddleware
