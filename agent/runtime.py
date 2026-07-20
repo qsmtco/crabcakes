@@ -1451,13 +1451,14 @@ class AgentRuntime:
                             messages_with_context = self._inject_kb_context(messages, kb_context, text)
                             fb_response = self._call_llm(session_key, messages_with_context, tools)
                             fb_provider = fallback_model.split("/")[0] if "/" in fallback_model else fallback_model
-                            fb_text = _extract_text_content(fb_response, fb_provider)
-                            fb_tool_calls = _extract_tool_calls(fb_response, fb_provider)
+                            fb_fmt = _RESPONSE_FORMAT.get(fb_provider, "openai")
+                            fb_text = _extract_text_content(fb_response, response_format=fb_fmt)
+                            fb_tool_calls = _extract_tool_calls(fb_response, response_format=fb_fmt)
                             # Use fallback response as the text content
                             text_content = fb_text
                             tool_calls_raw = fb_tool_calls
                             # Record fallback usage
-                            fb_prompt, fb_comp = _extract_usage(fb_response, fb_provider)
+                            fb_prompt, fb_comp = _extract_usage(fb_response, response_format=fb_fmt)
                             fb_cost = _cost_for_model(fallback_model, fb_prompt, fb_comp)
                             conv.record_usage(fb_prompt + fb_comp, fb_cost)
                             self._dispatch(self._on_token_usage, session_key, fb_prompt + fb_comp, fb_cost)
