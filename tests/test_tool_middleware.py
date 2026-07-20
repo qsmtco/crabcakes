@@ -443,3 +443,79 @@ class TestIntegration:
         )
         # Message landed in pending, keyed by session
         assert pending_messages["special:coder"] == [stuck_msg]
+
+    def test_run_loop_invokes_tool_chain(self):
+        """Regression guard: _run_loop must call self._tool_chain.run(...).
+
+        Without this test, a silent revert of Edit 4 (replacing the chain
+        call with the old inline blocks) is undetectable — the existing
+        TestIntegration tests construct their own chain and bypass
+        AgentRuntime entirely. This test constructs a real AgentRuntime,
+        runs _run_loop with a mock LLM that returns a write_file tool call,
+        and asserts the chain's run() method was invoked.
+        """
+        from agent.config import AgentConfig, LLMProviderConfig
+        from agent.runtime import AgentRuntime
+
+        # Build a minimal config (mirror _make_cfg from test_agent_runtime.py)
+        cfg = AgentConfig(
+            providers={
+                "openai": LLMProviderConfig(
+                    name="openai",
+                    base_url="https://api.openai.com/v1",
+                    api_key="test-key",
+                    default_model="gpt-4o",
+                )
+            },
+            default_provider="openai",
+            default_model="openai/gpt-4o",
+            max_tool_iterations=5,
+            tool_timeout_seconds=30,
+            auto_save_conversations=False,
+        )
+        rt = AgentRuntime(cfg)
+        rt.start()
+        sk = f"test-{uuid.uuid4().hex[:8]}"
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        # Mock _call_llm to return a write_file tool call, then "Done."
+        responses = [
+            {
+                "choices": [{"message": {
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": '{"path": "/tmp/test_out.txt", "content": "hello"}',
+                        },
+                    }],
+                }}],
+                "usage": {"prompt_tokens": 50, "completion_tokens": 10},
+            },
+            {
+                "choices": [{"message": {"content": "Done."}}],
+                "usage": {"prompt_tokens": 50, "completion_tokens": 5},
+            },
+        ]
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk2, msgs, tools: responses.pop(0)):
+            # Patch the chain's run method to track invocation
+            original_run = rt._tool_chain.run
+            chain_calls = []
+            def tracking_run(*args, **kwargs):
+                chain_calls.append(kwargs.get("tool_name", args[0] if args else None))
+                return original_run(*args, **kwargs)
+            rt._tool_chain.run = tracking_run
+
+            rt._run_loop(sk, "write a file")
+
+        # THE CRITICAL ASSERTION: the chain was invoked at least once
+        assert len(chain_calls) >= 1, (
+            f"Expected _tool_chain.run to be called during _run_loop, "
+            f"but it was never invoked. chain_calls={chain_calls}"
+        )
+        # And specifically for a write_file tool call
+        assert "write_file" in chain_calls, (
+            f"Expected write_file in chain calls, got {chain_calls}"
+        )
+        rt.stop()
