@@ -495,7 +495,7 @@ class TestToolLoop:
         rt.create_conversation("Coder", sk, "/tmp")
 
         results = []
-        rt._on_tool_call_result = lambda sk2, n, r: results.append((n, r))
+        rt._on_tool_call_result = lambda sk2, n, r, success=True: results.append((n, r))
 
         responses = [
             _resp(tool_calls=[{"id": "call_ls", "function": {"name": "list_files", "arguments": '{"path": "."}'}}]),
@@ -622,7 +622,7 @@ class TestToolLoop:
             "usage": {"prompt_tokens": 50, "completion_tokens": 5},
         }
         results = []
-        rt._on_tool_call_result = lambda sk2, n, r: results.append((n, r))
+        rt._on_tool_call_result = lambda sk2, n, r, success=True: results.append((n, r))
 
         with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: tc_response):
             with caplog.at_level(logging.WARNING, logger="agent.runtime"):
@@ -1130,7 +1130,7 @@ class TestApproval:
         rt.create_conversation("Coder", sk, "/tmp")
 
         results = []
-        rt._on_tool_call_result = lambda sk2, n, r: results.append((n, r))
+        rt._on_tool_call_result = lambda sk2, n, r, success=True: results.append((n, r))
 
         responses = [
             _resp(tool_calls=[{
@@ -1177,7 +1177,7 @@ class TestApproval:
         rt.create_conversation("Coder", sk, "/tmp")
 
         results = []
-        rt._on_tool_call_result = lambda sk2, n, r: results.append((n, r))
+        rt._on_tool_call_result = lambda sk2, n, r, success=True: results.append((n, r))
 
         responses = [
             _resp(tool_calls=[{
