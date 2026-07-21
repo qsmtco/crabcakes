@@ -1467,7 +1467,7 @@ class AgentRuntime:
                                 tool_calls_raw = fb_tool_calls
                                 # Record fallback usage
                                 fb_prompt, fb_comp = _extract_usage(fb_response, response_format=fb_fmt)
-                                fb_cost = _cost_for_model(fallback_model, fb_prompt, fb_comp)
+                                fb_cost = cost_for_model(fallback_model, fb_prompt, fb_comp)
                                 conv.record_usage(fb_prompt + fb_comp, fb_cost)
                                 self._dispatch(self._on_token_usage, session_key, fb_prompt + fb_comp, fb_cost)
                                 logger.debug("[tool-loop] sk=%s fallback response: text_len=%d tool_calls=%d",
