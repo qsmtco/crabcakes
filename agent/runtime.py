@@ -36,6 +36,14 @@ from agent.tool_middleware import (
     ToolContext,
     ToolMiddlewareChain,
 )
+from agent.persistence import (
+    conversations_dir,
+    load_conversation_from_disk,
+    migrate_conversation_files,
+    resolve_api_key_for_conversation,
+    resolve_session_workspace,
+    save_conversation_to_disk,
+)
 
 # KB provider sentinel — imported lazily to avoid requiring kb_server when KB is unused.
 try:
