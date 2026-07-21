@@ -562,8 +562,8 @@ class AgentRuntimeHandler:
         rt.force_compact(conv, target_budget)
 
         try:
-            from agent.runtime import _save_conversation_to_disk
-            _save_conversation_to_disk(conv, session_key)
+            from agent.persistence import save_conversation_to_disk
+            save_conversation_to_disk(conv, session_key)
         except Exception:
             logger.exception(
                 "compact_conversation: persist failed; in-memory compact succeeded"
