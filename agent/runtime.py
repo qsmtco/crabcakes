@@ -1508,7 +1508,7 @@ class AgentRuntime:
         (TestStreamingSignature) derives expected_params from the TypedDict.
 
         Returns:
-            Assembled response dict compatible with _extract_tool_calls / _extract_text_content.
+            Assembled response dict compatible with extract_tool_calls / extract_text_content.
         """
         # PHASE-11: caller_key is resolved by _call_llm before calling this method
         # (explicit caller > default_model prefix > model prefix). Symmetric with
@@ -1995,7 +1995,7 @@ class AgentRuntime:
             timeout=float(self._config.tool_timeout_seconds),
             x_title="crabcakes-summary",
         )
-        from agent.runtime import _extract_text_content, _RESPONSE_FORMAT
+        from agent.llm.extractors import extract_text_content
         fmt = _RESPONSE_FORMAT.get(provider_name, "openai")
-        text = _extract_text_content(response_dict, response_format=fmt)
+        text = extract_text_content(response_dict, response_format=fmt)
         return text
