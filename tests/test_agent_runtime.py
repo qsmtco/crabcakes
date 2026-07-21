@@ -16,11 +16,10 @@ import pytest
 
 from agent.llm.cost import cost_for_model
 
-from agent.runtime import (
-    AgentRuntime,
-    _extract_tool_calls,
-    _extract_text_content,
-    _extract_usage,
+from agent.llm.extractors import (
+    extract_tool_calls,
+    extract_text_content,
+    extract_usage,
 )
 
 
