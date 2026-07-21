@@ -947,7 +947,7 @@ class AgentRuntime:
                     tool_calls_raw = extract_tool_calls(response, response_format=loop_fmt)
 
                     # Record usage
-                    prompt_tok, comp_tok = _extract_usage(response, response_format=loop_fmt)
+                    prompt_tok, comp_tok = extract_usage(response, response_format=loop_fmt)
                     cost = cost_for_model(conv.model, prompt_tok, comp_tok)
                     conv.record_usage(prompt_tok + comp_tok, cost)
                     self._dispatch(self._on_token_usage, session_key, prompt_tok + comp_tok, cost)
@@ -1086,13 +1086,13 @@ class AgentRuntime:
                                 fb_response = self._call_llm(session_key, messages_with_context, tools)
                                 fb_provider = fallback_model.split("/")[0] if "/" in fallback_model else fallback_model
                                 fb_fmt = _RESPONSE_FORMAT.get(fb_provider, "openai")
-                                fb_text = _extract_text_content(fb_response, response_format=fb_fmt)
-                                fb_tool_calls = _extract_tool_calls(fb_response, response_format=fb_fmt)
+                                fb_text = extract_text_content(fb_response, response_format=fb_fmt)
+                                fb_tool_calls = extract_tool_calls(fb_response, response_format=fb_fmt)
                                 # Use fallback response as the text content
                                 text_content = fb_text
                                 tool_calls_raw = fb_tool_calls
                                 # Record fallback usage
-                                fb_prompt, fb_comp = _extract_usage(fb_response, response_format=fb_fmt)
+                                fb_prompt, fb_comp = extract_usage(fb_response, response_format=fb_fmt)
                                 fb_cost = cost_for_model(fallback_model, fb_prompt, fb_comp)
                                 conv.record_usage(fb_prompt + fb_comp, fb_cost)
                                 self._dispatch(self._on_token_usage, session_key, fb_prompt + fb_comp, fb_cost)
