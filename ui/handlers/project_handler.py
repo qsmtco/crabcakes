@@ -740,14 +740,10 @@ class ProjectHandler:
                         f"Step count reset to 0."
                     ),
                 )
-            else:
-                return CommandResult(
-                    handled=True,
-                    response_text=(
-                        f"Could not clear {agent_name}: a tool loop is currently running. "
-                        f"Wait for it to finish, then run /clear again."
-                    ),
-                )
+            return CommandResult(
+                handled=True,
+                response_text=f"Could not clear {agent_name}'s conversation.",
+            )
 
         # Unknown session prefix — refuse cleanly.
         return CommandResult(
