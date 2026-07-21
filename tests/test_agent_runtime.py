@@ -69,15 +69,15 @@ def _make_streaming_lambda(rt):
 
 class TestCostComputation:
     def test_openai_gpt4o(self):
-        cost = _cost_for_model("openai/gpt-4o", 1000, 500)
+        cost = cost_for_model("openai/gpt-4o", 1000, 500)
         assert abs(cost - 0.0075) < 0.0001
 
     def test_minimax(self):
-        cost = _cost_for_model("minimax/MiniMax-M2.5", 1000, 500)
+        cost = cost_for_model("minimax/MiniMax-M2.5", 1000, 500)
         assert abs(cost - 0.001) < 0.0001
 
     def test_unknown_uses_openai_rates(self):
-        assert _cost_for_model("unknown/model", 1000, 500) > 0
+        assert cost_for_model("unknown/model", 1000, 500) > 0
 
 
 # ═══════════════════════════════════════════════════════════════════

@@ -41,15 +41,4 @@ class TestCostForModel:
         assert cost > 0
 
 
-class TestRuntimeReexport:
-    """Backward compat: verify the legacy underscore names in agent.runtime still work."""
 
-    def test_cost_for_model(self):
-        from agent.runtime import _cost_for_model
-        result = _cost_for_model("openai/gpt-4o", 1000, 500)
-        expected = cost_for_model("openai/gpt-4o", 1000, 500)
-        assert abs(result - expected) < 0.0001
-
-    def test_model_id(self):
-        from agent.runtime import _model_id
-        assert _model_id("minimax/MiniMax-M2.7") == model_id("minimax/MiniMax-M2.7")
