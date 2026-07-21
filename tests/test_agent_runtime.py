@@ -3689,7 +3689,7 @@ class TestStreamOpenaiEventsFinishReason:
         from agent.runtime import _stream_openai_events
 
         with unittest.mock.patch.object(
-            rt_module, "_urlopen_with_ssl_retry",
+            "agent.llm.openai_provider.urlopen_with_ssl_retry",
             lambda req, timeout: self._fake_urlopen(raw_sse),
         ):
             return list(_stream_openai_events(
