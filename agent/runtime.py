@@ -727,6 +727,10 @@ class AgentRuntime:
         self._lock = threading.Lock()
         self._running = False
 
+        # FIX-CLEAR-ASK-RACE: sessions with an in-flight _run_loop. Used by
+        # is_loop_active() and maintained by _run_loop's try/finally.
+        self._active_loops: set[str] = set()
+
         # §E: Stuck detection — per-session tool call history for detecting loops
         # session_key → list[dict{"tool", "args_hash", "iteration"}]
         self._tool_history: dict[str, list[dict]] = {}
