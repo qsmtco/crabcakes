@@ -26,6 +26,7 @@
 #   detect_tech_stack(project_path) -> list[str]
 #   generate_project_skeleton(project_path, project_name) -> None
 
+import hashlib
 import json
 import logging
 import os
