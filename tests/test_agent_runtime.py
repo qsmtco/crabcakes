@@ -2868,7 +2868,7 @@ class TestLoadConversationStaleTolerance:
         (d / "special:debugger.json").write_text(_json.dumps(persisted))
 
         # Act
-        from agent.runtime import _load_conversation_from_disk
+        from agent.persistence import load_conversation_from_disk
         result = _load_conversation_from_disk("special:debugger")
         assert result is not None, "load() should still find the file"
         conv, _ = result
@@ -2909,7 +2909,7 @@ class TestLoadConversationStaleTolerance:
         }
         (d / "special:debugger.json").write_text(_json.dumps(persisted))
 
-        from agent.runtime import _load_conversation_from_disk
+        from agent.persistence import load_conversation_from_disk
         conv, _ = _load_conversation_from_disk("special:debugger")
 
         assert conv is not None
@@ -3398,7 +3398,7 @@ class TestAllowedToolsFallback:
         )
 
         # Act
-        from agent.runtime import _load_conversation_from_disk
+        from agent.persistence import load_conversation_from_disk
         result = _load_conversation_from_disk("special:debugger")
         assert result is not None
         conv, _ = result
@@ -3459,7 +3459,7 @@ class TestAllowedToolsFallback:
         )
 
         # Act
-        from agent.runtime import _load_conversation_from_disk
+        from agent.persistence import load_conversation_from_disk
         result = _load_conversation_from_disk("special:coder")
         assert result is not None
         conv, _ = result
@@ -3504,7 +3504,7 @@ class TestAllowedToolsFallback:
             "agent.special_agents.get_special_agent", lambda sk: None
         )
 
-        from agent.runtime import _load_conversation_from_disk
+        from agent.persistence import load_conversation_from_disk
         result = _load_conversation_from_disk("special:deleted_agent")
         assert result is not None
         conv, _ = result
