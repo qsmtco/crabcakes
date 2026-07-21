@@ -441,6 +441,10 @@ def append_project_context(project_path: str, entry: str) -> None:
     # FIFO eviction: split into entries, cap at MAX_CONTEXT_ENTRIES.
     # The new entry is appended AFTER eviction so it is never the one evicted.
     entries = _split_entries(existing)
+    if not entries and existing.strip():
+        # No '## ' headings found — preserve the entire existing content
+        # as a single entry to avoid data loss.
+        entries = [existing.strip()]
     if len(entries) >= MAX_CONTEXT_ENTRIES:
         entries = entries[-(MAX_CONTEXT_ENTRIES - 1):]
     entries.append(entry)
