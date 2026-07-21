@@ -260,9 +260,6 @@ class TestContextReadCap:
 #  Phase CB-3: Awareness variable size caps (BUG #6 fix)
 # ═══════════════════════════════════════════════════════════════════
 
-from utils.project_awareness import build_awareness_dict
-
-
 class TestAwarenessCaps:
     """Phase CB-3 (BUG #6 fix): TEAM_ROSTER ≤ 500 chars, CURRENT_STATE ≤ 1,000 chars."""
 
