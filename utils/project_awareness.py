@@ -350,11 +350,13 @@ def _extract_phase_id(entry: str) -> str:
     if not heading:
         return ""
 
-    # Split on em-dash (—) or double-hyphen (--) if present
-    for sep in ("—", "--"):
+    # Split on common date/phase separators. Em-dash is the canonical format,
+    # but en-dash, hyphen, and colon appear in real-world entries.
+    # See Phase 3 audit BUG #3.
+    for sep in ("—", "–", "--", "-", ":"):
         if sep in heading:
             # Take everything after the separator, strip status words
-            after = heading.split(sep, 1)[1].strip()
+            after = heading.split(sep, 1)[1].strip().lstrip("—–-:").strip()
             # Remove trailing completion/status words for matching
             for word in ("complete", "completed", "done", "finished", "✅"):
                 if after.lower().endswith(" " + word):
