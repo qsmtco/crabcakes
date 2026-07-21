@@ -420,27 +420,62 @@ def _split_entries(content: str) -> list[str]:
     """Split context.md content into individual entries by '## ' heading delimiter.
 
     Each entry starts with '## ' (the standard dated-heading format). Content
-    before the first '## ' heading (if any) is prepended to the first entry,
-    or dropped if it's only whitespace.
+    before the first '## ' heading (if any) is prepended to the first entry's
+    body, or dropped if it's only whitespace.
+
+    Code-block awareness: '## ' inside a fenced code block (triple backticks)
+    is NOT treated as a heading boundary. See Phase 3 audit BUG #5.
 
     Returns a list of entry strings, each starting with '## '. Empty list if
     content is empty or has no '## ' headings.
     """
     if not content.strip():
         return []
-    # Split on '## ' that appears at the start of a line.
-    # The regex lookbehind ensures we split at line-start '## '.
-    parts = re.split(r'(?m)^## ', content)
-    # The first part is content before the first '## ' heading — usually empty
-    # or a header comment. If it's non-empty, prepend it to the first real entry.
-    if parts and parts[0].strip():
-        # Prepend to the next part (the first real heading body)
-        if len(parts) > 1:
-            parts[1] = parts[0] + "\n\n## " + parts[1]
-        # If there's only the preamble and no headings, return empty
-    # Re-add the '## ' prefix to each entry body (the split consumed it)
-    entries = ["## " + p.strip() for p in parts[1:] if p.strip()]
-    return entries
+
+    lines = content.split("\n")
+    preamble: list[str] = []
+    entries: list[str] = []
+    current: list[str] = []
+    in_code_block = False
+    seen_heading = False
+
+    for line in lines:
+        # Track code-block context (triple backtick fence).
+        if line.lstrip().startswith("```"):
+            in_code_block = not in_code_block
+            if current:
+                current.append(line)
+            elif preamble:
+                preamble.append(line)
+            continue
+
+        # A heading boundary is '## ' at line start, OUTSIDE a code block.
+        if not in_code_block and line.startswith("## "):
+            if not seen_heading:
+                # First heading — flush preamble into the new entry's body
+                seen_heading = True
+                current = list(preamble) + [line] if preamble else [line]
+                preamble = []
+            else:
+                # Subsequent heading — flush current entry, start new one
+                if current:
+                    entries.append("\n".join(current))
+                current = [line]
+        elif not seen_heading:
+            # Before any heading — accumulate as preamble
+            preamble.append(line)
+        else:
+            # Inside an entry body
+            if current:
+                current.append(line)
+
+    # Flush the last entry
+    if current:
+        entries.append("\n".join(current))
+
+    # If there was preamble but no headings at all, return empty
+    # (append_project_context's fallback handles non-heading content).
+    return [e.strip() for e in entries if e.strip()]
 
 
 def append_project_context(project_path: str, entry: str) -> None:
