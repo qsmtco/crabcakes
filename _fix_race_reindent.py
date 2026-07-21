@@ -3,49 +3,26 @@
 
 Original structure:
     def _run_loop(...):
-        """..."""
-        with self._lock:            # indent=8
-            if not self._running:   # indent=12
+        with self._lock:
+            if not self._running:
                 return
-            conv = ...              # indent=12
-            if conv is None:        # indent=12
-                ...                 # indent=16
-                return
-                                    # blank
-        # BUG #21: ...              # indent=8
-        ...body...
-        try:                        # indent=8
-            ...body...
-        except Exception as e:      # indent=8
-            ...body...
-        # last line: self._dispatch(...)  # indent=12
+            conv = ...
+            ...
 
 New structure:
     def _run_loop(...):
-        """..."""
-        # FIX-CLEAR-ASK-RACE: ...   # indent=8
-        # ...
-        # ...
-        with self._lock:            # indent=8
-            self._active_loops.add  # indent=12
-        try:                        # indent=8
-            with self._lock:        # indent=12 (was 8)
-                if not...           # indent=16 (was 12)
+        with self._lock:
+            self._active_loops.add(...)
+        try:
+            with self._lock:
+                if not self._running:
                     return
-                conv = ...          # indent=16 (was 12)
-                if conv is None:    # indent=16 (was 12)
-                    ...             # indent=20 (was 16)
-                    return
-                                    # blank
-            # BUG #21: ...          # indent=12 (was 8)
-            ...body...              # all +4
-            try:                    # indent=12 (was 8)
+                conv = ...
+                ...
                 ...body...
-            except Exception as e:  # indent=12 (was 8)
-                ...body...
-        finally:                    # indent=8
-            with self._lock:        # indent=12
-                self._active_loops  # indent=16
+        finally:
+            with self._lock:
+                self._active_loops.discard(...)
 """
 
 with open('agent/runtime.py', 'r') as f:
