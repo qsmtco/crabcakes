@@ -95,11 +95,7 @@ logger = logging.getLogger(__name__)
 from agent.llm.cost import cost_for_model
 
 # ── Anthropic converters (extracted to agent/llm/convert.py, Phase B2) ──────
-# Re-exported under legacy underscore names for backward compatibility.
-from agent.llm.convert import (
-    convert_messages_for_anthropic as _convert_messages_for_anthropic,
-    convert_tools_for_anthropic as _convert_tools_for_anthropic,
-)
+from agent.llm.convert import convert_messages_for_anthropic, convert_tools_for_anthropic
 
 # ── LLM providers (extracted to agent/llm/, Phase B4) ───────────────────────
 # Re-exported under legacy names for backward compatibility.
