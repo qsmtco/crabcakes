@@ -159,21 +159,20 @@ for _pk, _caller in _PROVIDER_CALLERS.items():
 
 
 # ── SSE streaming helpers (extracted to agent/llm/streaming.py, Phase B5) ──
-# Re-exported under legacy underscore names for backward compatibility.
 from agent.llm.streaming import (
     SSEEvent,
-    sse_lines as _sse_lines,
-    parse_sse_line as _parse_sse_line,
-    parse_sse_delta as _parse_sse_delta,
-    first_choice as _first_choice,
-    urlopen_with_ssl_retry as _urlopen_with_ssl_retry,
-    stream_with_ssl_retry as _stream_with_ssl_retry,
-    is_retryable_ssl_error as _is_retryable_ssl_error,
-    friendly_error_message as _friendly_error_message,
-    RETRYABLE_SSL_ERRORS as _RETRYABLE_SSL_ERRORS,
-    RETRYABLE_OSERROR_TYPES as _RETRYABLE_OSERROR_TYPES,
-    MAX_SSL_RETRIES as _MAX_SSL_RETRIES,
-    SSL_RETRY_BASE_MS as _SSL_RETRY_BASE_MS,
+    sse_lines,
+    parse_sse_line,
+    parse_sse_delta,
+    first_choice,
+    urlopen_with_ssl_retry,
+    stream_with_ssl_retry,
+    is_retryable_ssl_error,
+    friendly_error_message,
+    RETRYABLE_SSL_ERRORS,
+    RETRYABLE_OSERROR_TYPES,
+    MAX_SSL_RETRIES,
+    SSL_RETRY_BASE_MS,
 )
 
 import urllib.error
