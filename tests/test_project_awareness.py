@@ -336,19 +336,28 @@ class TestAwarenessCacheFixes:
         """Same-length different-content writes invalidate the cache (BUG #8).
 
         len()-based fingerprints collide here; sha1 does not.
+        Forces all .crabcakes/ mtimes to the same tick so the cache hit
+        depends entirely on the content fingerprint (not mtime).
         """
-        import os
         init_project_config(str(tmp_path), "p")
         content_a = "## Task A complete now\n" + ("A" * 180)
         content_b = "## Task B complete now\n" + ("B" * 180)  # same length, different content
         assert len(content_a) == len(content_b)
         save_project_context(str(tmp_path), content_a)
         d1 = build_awareness_dict(str(tmp_path))
+        # Grab the reference mtime BEFORE the second write
+        crab_dir = os.path.join(str(tmp_path), ".crabcakes")
+        all_paths = [crab_dir] + [
+            os.path.join(crab_dir, f)
+            for f in os.listdir(crab_dir)
+            if os.path.isfile(os.path.join(crab_dir, f))
+        ]
+        m_ref = max(os.stat(p).st_mtime_ns for p in all_paths)
         save_project_context(str(tmp_path), content_b)
-        # Pin mtime to force the same-tick scenario
-        ctx_path = os.path.join(str(tmp_path), ".crabcakes", "context.md")
-        m = os.stat(ctx_path).st_mtime
-        os.utime(ctx_path, (m, m))
+        # Pin ALL .crabcakes/ files to the same mtime so the cache sees
+        # no mtime change — the only differentiator is the content fingerprint.
+        for p in all_paths:
+            os.utime(p, ns=(m_ref, m_ref))
         d2 = build_awareness_dict(str(tmp_path))
         assert d2["CURRENT_TASK"] == "Task B complete now", \
             f"Cache stale (BUG #8): {d2['CURRENT_TASK']!r}"
