@@ -1724,8 +1724,8 @@ class AgentRuntimeHandler:
         # translate it to a user-friendly message for display while keeping
         # the exception stored in _last_error_exception for context enrichment.
         if isinstance(message, BaseException):
-            from agent.runtime import _friendly_error_message
-            display_msg = _friendly_error_message(message)
+            from agent.llm.streaming import friendly_error_message
+            display_msg = friendly_error_message(message)
         else:
             display_msg = str(message)
         # Resolve agent display name from the local registry so the error
