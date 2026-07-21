@@ -693,7 +693,7 @@ class TestMigrateConversationFiles:
 
     def test_migration_idempotent(self, tmp_path):
         """Migration must not re-process already-migrated files."""
-        from agent.runtime import _migrate_conversation_files
+        from agent.persistence import migrate_conversation_files
 
         import agent.runtime
         agent.persistence._CONVERSATION_MIGRATION_DONE = False
@@ -712,7 +712,7 @@ class TestMigrateConversationFiles:
 
     def test_migration_ignores_non_json_files(self, tmp_path):
         """Migration must skip non-.json files in the conversations directory."""
-        from agent.runtime import _migrate_conversation_files
+        from agent.persistence import migrate_conversation_files
 
         import agent.runtime
         agent.persistence._CONVERSATION_MIGRATION_DONE = False
