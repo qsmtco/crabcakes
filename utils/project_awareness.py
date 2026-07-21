@@ -350,14 +350,16 @@ def _extract_phase_id(entry: str) -> str:
                 if after.lower().endswith(" " + word):
                     after = after[: -len(word)].rstrip()
                     break
-            return after.lower()
+            # Strip trailing punctuation (colons, periods, dashes) that would
+            # break substring matching against differently-punctuated headings.
+            return after.rstrip(":.-—").rstrip().lower()
 
     # No separator — use the whole heading body (minus status words)
     for word in ("complete", "completed", "done", "finished", "✅"):
         if heading.lower().endswith(" " + word):
             heading = heading[: -len(word)].rstrip()
             break
-    return heading.lower()
+    return heading.rstrip(":.-—").rstrip().lower()
 
 
 def _mark_superseded(existing: str, new_entry: str) -> str:
