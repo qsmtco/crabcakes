@@ -3590,24 +3590,24 @@ class TestSSEFrameShapeHardening:
 
     def test_first_choice_normal_frame(self):
         """Normal delta frame: choices[0] is returned."""
-        from agent.runtime import _first_choice
+        from agent.llm.streaming import first_choice
         result = _first_choice({"choices": [{"delta": {"content": "hi"}}]})
         assert result == {"delta": {"content": "hi"}}
 
     def test_first_choice_empty_choices_with_usage(self):
         """OpenAI trailing usage frame: choices is [], should return {}."""
-        from agent.runtime import _first_choice
+        from agent.llm.streaming import first_choice
         result = _first_choice({"choices": [], "usage": {"total_tokens": 42}})
         assert result == {}
 
     def test_first_choice_no_choices_key(self):
         """Keepalive frame: no choices key at all, should return {}."""
-        from agent.runtime import _first_choice
+        from agent.llm.streaming import first_choice
         assert _first_choice({}) == {}
 
     def test_first_choice_only_usage(self):
         """Usage-only frame: {"usage": {...}}, no choices."""
-        from agent.runtime import _first_choice
+        from agent.llm.streaming import first_choice
         assert _first_choice({"usage": {"prompt_tokens": 10}}) == {}
 
     def test_parse_sse_delta_empty_choices_no_crash(self):
