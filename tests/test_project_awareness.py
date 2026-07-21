@@ -301,4 +301,29 @@ class TestAwarenessCaps:
         marker = "[... current state truncated ...]"
         assert marker in state, f"Expected truncation marker. State length was {len(state)}"
         assert len(state) <= CURRENT_STATE_MAX_CHARS + len("\n") + len(marker), \
-            f"CURRENT_STATE length {len(state)} exceeds cap+marker"
+            f"CURRENT_STATE length {len(state)} exceeds cap+marker
+
+
+class TestAwarenessCacheFixes:
+    """Regression tests for audit BUG #2 (staleness) and BUG #3 (alias)."""
+
+    def test_cache_invalidates_on_rapid_write(self, tmp_path):
+        """Two writes within the same mtime tick return different CURRENT_TASK."""
+        init_project_config(str(tmp_path), "p")
+        save_project_context(str(tmp_path), "## Task1 complete\n")
+        d1 = build_awareness_dict(str(tmp_path))
+        # Write again immediately (same filesystem second)
+        save_project_context(str(tmp_path), "## Task1 complete\n\n## Task2 in progress\n")
+        d2 = build_awareness_dict(str(tmp_path))
+        assert d2["CURRENT_TASK"] == "Task2 in progress", \
+            f"Cache returned stale value: {d2['CURRENT_TASK']!r}"
+
+    def test_returned_dict_isolated_from_cache(self, tmp_path):
+        """Mutating the returned dict does not poison the cache."""
+        init_project_config(str(tmp_path), "p")
+        save_project_context(str(tmp_path), "## Real task\n")
+        d1 = build_awareness_dict(str(tmp_path))
+        d1["CURRENT_TASK"] = "TAMPERED"
+        d2 = build_awareness_dict(str(tmp_path))
+        assert d2["CURRENT_TASK"] == "Real task", \
+            f"Cache was poisoned by caller mutation: {d2['CURRENT_TASK']!r}""
