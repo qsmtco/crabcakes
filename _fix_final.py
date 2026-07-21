@@ -121,7 +121,7 @@ new_lines.append('        try:\n')
 for i in range(2, 9):
     line = lines[i]
     indent = len(line) - len(line.lstrip())
-    new_lines.append(' ' * (indent + 4) + line.lstrip() + '\n')
+    new_lines.append(' ' * (indent + 4) + line.lstrip())
 
 # Re-indented body: lines 9 through last_content_idx (+4 spaces)
 # Line 9 is typically blank
