@@ -330,7 +330,7 @@ def get_current_task(project_path: str) -> str:
     headings = [line for line in context.split("\n") if line.startswith("## ")]
     if not headings:
         return ""
-    return headings[-1][4:].strip()  # strip "## " prefix
+    return headings[-1][3:].strip()  # strip "## " prefix (3 chars)
 
 
 # ── Awareness snapshot ────────────────────────────────────────────────────────
