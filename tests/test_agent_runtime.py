@@ -3585,7 +3585,7 @@ class TestPreCallBudgetGuard:
 # ═══════════════════════════════════════════════════════════════════
 
 class TestSSEFrameShapeHardening:
-    """Phase 1 hardening: first_choice helper + _parse_sse_delta safety
+    """Phase 1 hardening: first_choice helper + parse_sse_delta safety
     against empty-choices frames (OpenAI trailing usage, keepalive, etc.)."""
 
     def test_first_choice_normal_frame(self):
@@ -3611,20 +3611,20 @@ class TestSSEFrameShapeHardening:
         assert first_choice({"usage": {"prompt_tokens": 10}}) == {}
 
     def test_parse_sse_delta_empty_choices_no_crash(self):
-        """_parse_sse_delta must not crash on empty choices (the original bug)."""
+        """parse_sse_delta must not crash on empty choices (the original bug)."""
         from agent.llm.streaming import parse_sse_delta
-        result = _parse_sse_delta({"choices": [], "usage": {"total_tokens": 42}})
+        result = parse_sse_delta({"choices": [], "usage": {"total_tokens": 42}})
         assert result == []
 
     def test_parse_sse_delta_no_choices_key_no_crash(self):
-        """_parse_sse_delta must not crash when choices key is absent."""
+        """parse_sse_delta must not crash when choices key is absent."""
         from agent.llm.streaming import parse_sse_delta
-        assert _parse_sse_delta({}) == []
+        assert parse_sse_delta({}) == []
 
     def test_parse_sse_delta_normal_text_delta(self):
         """Normal text delta still works after hardening."""
         from agent.llm.streaming import parse_sse_delta
-        events = _parse_sse_delta(
+        events = parse_sse_delta(
             {"choices": [{"delta": {"content": "hello"}}]}
         )
         assert len(events) == 1
@@ -3634,7 +3634,7 @@ class TestSSEFrameShapeHardening:
     def test_parse_sse_delta_tool_call_delta(self):
         """Tool call deltas still work after hardening."""
         from agent.llm.streaming import parse_sse_delta
-        events = _parse_sse_delta(
+        events = parse_sse_delta(
             {"choices": [{"delta": {"tool_calls": [
                 {"index": 0, "id": "call_1",
                  "function": {"name": "read_file", "arguments": "{\"path\":\"a.py\"}"}}
