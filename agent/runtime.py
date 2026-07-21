@@ -1532,7 +1532,7 @@ class AgentRuntime:
         # Phase CB-3: usage captured from SSE "usage" event (BUG #3 fix).
         captured_usage: dict = {}
 
-        for ev in _stream_with_ssl_retry(
+        for ev in stream_with_ssl_retry(
             streamer,
             base_url=base_url,
             api_key=api_key,
