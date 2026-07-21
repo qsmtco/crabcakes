@@ -1,136 +1,105 @@
 #!/usr/bin/env python3
-"""Transform _run_loop: add outer try/finally, re-indent body.
+"""Fix the indentation of the _run_loop function body and add is_loop_active.
 
-Reads the current function, builds the new version, replaces it.
+The current state has the marker + outer try + re-indented guard check,
+but the `# BUG #21` comment at line 1185 is at 16 spaces (inside the
+with block) instead of 12 spaces (inside the outer try).
+
+This is because the first edit_file only replaced the function header
+up to the first `# BUG #21` line, but the continuation lines were
+not re-indented.
+
+Fix: read the function, re-indent the body correctly, add is_loop_active.
 """
 
 with open('agent/runtime.py', 'r') as f:
-    text = f.read()
+    lines = f.readlines()
 
-# Find _run_loop boundaries
-FN_SENTINEL = '    def _run_loop(self, session_key: str, text: str) -> None:\n'
-NEXT_FN_SENTINEL = '    def _dispatch_approval('
+# Find _run_loop
+fn_start = None
+fn_end = None
+for i, line in enumerate(lines):
+    stripped = line.strip()
+    if fn_start is None and stripped.startswith('def _run_loop('):
+        fn_start = i
+    if fn_start is not None and i > fn_start + 1:
+        if stripped.startswith('def ') and line.startswith('    '):
+            fn_end = i
+            break
 
-fn_start = text.index(FN_SENTINEL)
-fn_end = text.index(NEXT_FN_SENTINEL, fn_start)
+if fn_end is None:
+    fn_end = len(lines)
 
-print(f"_run_loop: chars {fn_start} to {fn_end}")
+print(f"_run_loop: lines {fn_start+1} to {fn_end}")
 
-# Extract the function body (the part after the def line + docstring)
-fn_body = text[fn_start:fn_end]
+# The current function structure:
+# Line 0 (fn_start):     def _run_loop(...):  indent=4
+# Line 1:                """..."""            indent=8
+# Line 2:                # FIX-CLEAR-ASK-RACE  indent=8 -- marker
+# Line 3:                # ...                 indent=8
+# Line 4:                # ...                 indent=8
+# Line 5:                with self._lock:     indent=8 -- marker add
+# Line 6:                    self._active_loops.add  indent=12
+# Line 7:                try:                 indent=8 -- outer try
+# Line 8:                    with self._lock: indent=12 -- guard check
+# Line 9:                        if not...   indent=16
+# Line 10:                           return  indent=20
+# Line 11:                       conv = ...  indent=16
+# Line 12:                       if conv...  indent=16
+# Line 13:                           self._dispatch... indent=20
+# Line 14:                           return  indent=20
+# Line 15: (blank)
+# Line 16:                   # BUG #21: ...  indent=16 -- WRONG, should be 12
+# Line 17:                    # This guarantees... indent=12 -- CORRECT
+# ...body at indent=12 (correct)
+# ...inner try/except at indent=12 (correct)
+# Line N-1: ...dispatch(e)  indent=16 (inside the exception handler)
+# Line N:   finally:       indent=8 -- from the partial script run
+# Line N+1: # FIX-CLEAR-ASK-RACE... indent=12
+# Line N+2: with self._lock: indent=12
+# Line N+3:     self._active_loops.discard indent=16
+# Line N+4: (blank)
+# Line N+5: def _dispatch_approval...
 
-# The old function structure:
-# line 0:  def _run_loop(...):
-# line 1:  """..."""
-# line 2:  with self._lock:
-# ...
-# line 8:  return
-# line 9:  (blank)
-# line 10: # BUG #21: ...
-# ...
-# line N:  self._dispatch(self._on_error, session_key, e)
-# line N+1: (blank, trailing newline)
+# The issue: the `# BUG #21` line (line 16) is at 16 spaces (inside the with block)
+# but should be at 12 spaces (inside the outer try, outside the with block).
+# This is because the edit_file replaced the old `with self._lock:` block with
+# the new marker + try + re-indented guard check, but the `# BUG #21` line at
+# 8 spaces in the old file became 12 spaces in the new text (inside the outer try).
+# However, the continuation lines were at 8 spaces in the original and were NOT
+# part of the match, so they stayed at 8 spaces. Then... something moved them to 12.
 
-lines = fn_body.splitlines(True)
+# Let me look at the actual structure
+print("=== Current function structure ===")
+for i in range(fn_start, fn_end):
+    indent = len(lines[i]) - len(lines[i].lstrip())
+    print(f"{i+1:4d}: indent={indent:2d} | {lines[i].rstrip()}")
 
-# Verify structure
-assert lines[0] == FN_SENTINEL, f'Expected function def, got {lines[0]!r}'
-assert lines[1].strip().startswith('"""'), f'Expected docstring, got {lines[1]!r}'
-assert lines[2].strip() == 'with self._lock:', f'Expected with self._lock at line 2, got {lines[2]!r}'
+# The actual issue seems to be:
+# 1. The `# BUG #21` line is at 16 spaces (inside the with block) 
+# 2. It should be at 12 spaces (inside the outer try, after the with block)
+# 
+# This is because the old_text had `# BUG #21` at 8 spaces, and the new_text
+# had it at 12 spaces. But the edit_file inserted it INSIDE the with block
+# (after the `return` at 20 spaces, with the `# BUG #21` at 16 spaces).
+# 
+# Wait, no. The edit_file's new_text has:
+#         try:
+#             with self._lock:
+#                 if not self._running:
+#                     return
+#                 conv = ...
+#                 if conv is None:
+#                     self._dispatch(...)
+#                     return
+# 
+#         # BUG #21: ...
+# 
+# The `# BUG #21` line is at 12 spaces (inside the outer try, after the with block).
+# But the sed output shows it at 16 spaces. That doesn't match.
+# 
+# Unless the edit_file's match didn't include the `return` at the end of the
+# with block, and the `# BUG #21` line ended up inside the with block.
 
-# The original `with self._lock:` block is lines 2-8
-# Line 2:         with self._lock:
-# Line 3:             if not self._running:
-# Line 4:                 return
-# Line 5:             conv = ...
-# Line 6:             if conv is None:
-# Line 7:                 self._dispatch(...)
-# Line 8:                 return
-# Line 9: blank
-
-# Build new function
-new_lines = []
-
-# Line 0: function def (unchanged)
-new_lines.append(lines[0])
-
-# Line 1: docstring (unchanged)
-new_lines.append(lines[1])
-
-# FIX-CLEAR-ASK-RACE marker block
-new_lines.append('        # FIX-CLEAR-ASK-RACE: mark this session as having an active loop so\n')
-new_lines.append('        # clear_conversation() can refuse to wipe it mid-turn. Cleared in the\n')
-new_lines.append('        # finally block at the end of this function.\n')
-new_lines.append('        with self._lock:\n')
-new_lines.append('            self._active_loops.add(session_key)\n')
-new_lines.append('        try:\n')
-
-# Re-indented original guard check (lines 2-8): add 4 spaces
-for i in range(2, 9):
-    old = lines[i]
-    indent = len(old) - len(old.lstrip())
-    stripped = old.lstrip()
-    new_lines.append(' ' * (indent + 4) + stripped)
-
-# Re-indented body: lines 9 through N-1 (the blank line is the last)
-# N is the last line index (fn_end - fn_start - 1 is the trailing newline/blank)
-# The last content line is N-1 or N-2
-# Let me find the last line before the trailing blank
-last_content_idx = len(lines) - 1
-while last_content_idx >= 0:
-    if lines[last_content_idx].strip():
-        break
-    last_content_idx -= 1
-
-print(f'Last content line index: {last_content_idx}')
-print(f'Last content: {lines[last_content_idx].rstrip()}')
-
-# Body is lines 9 through last_content_idx (inclusive)
-for i in range(9, last_content_idx + 1):
-    old = lines[i]
-    if old.strip():
-        indent = len(old) - len(old.lstrip())
-        stripped = old.lstrip()
-        new_lines.append(' ' * (indent + 4) + stripped)
-    else:
-        # Blank line — keep as-is but ensure it ends with newline
-        stripped = old.rstrip('\n')
-        new_lines.append(stripped + '\n')
-
-# Finally block
-new_lines.append('        finally:\n')
-new_lines.append('            # FIX-CLEAR-ASK-RACE: always release the active-loop marker, even\n')
-new_lines.append('            # on exception or early return, so a crashed loop doesn\'t block\n')
-new_lines.append('            # /clear for this session permanently.\n')
-new_lines.append('            with self._lock:\n')
-new_lines.append('                self._active_loops.discard(session_key)\n')
-
-# Trailing blank line (the one between functions)
-# The original trailing blank line was at the end of the function body
-# We need to add it back
-new_lines.append('\n')
-
-new_fn_body = ''.join(new_lines)
-
-# Replace in text
-new_text = text[:fn_start] + new_fn_body + text[fn_end:]
-
-with open('agent/runtime.py', 'w') as f:
-    f.write(new_text)
-
-print('Done writing.')
-
-# Verify
-import ast
-try:
-    ast.parse(new_text)
-    print('OK: ast.parse passes')
-except SyntaxError as e:
-    print(f'FAIL: {e}')
-    # Show the problematic area
-    lines = new_text.splitlines(True)
-    lineno = e.lineno
-    if lineno:
-        for i in range(max(0, lineno-5), min(len(lines), lineno+5)):
-            marker = ' >>>' if i == lineno - 1 else '    '
-            print(f'{marker} {i+1}: {lines[i].rstrip()}')
+# I think the issue is clearer now. Let me just fix it by replacing the
+# specific lines that are wrong.
