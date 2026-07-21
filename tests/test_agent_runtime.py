@@ -1515,19 +1515,17 @@ class TestStreaming:
         sk = _uniq()
         rt.create_conversation("Coder", sk, "/tmp")
 
-        from agent import runtime as rt_module
-        from agent.runtime import SSEEvent
+        from agent.llm.streaming import SSEEvent
+        from unittest.mock import MagicMock
 
-        def streamer_no_index(*a, **kw):
+        def streamer_no_index():
             yield SSEEvent(type="tool_call_delta", data={"name": "list_files", "arguments": '{"path": "."}'})
 
-        orig = rt_module._PROVIDER_STREAMERS["openai"]
-        rt_module._PROVIDER_STREAMERS["openai"] = streamer_no_index
-        try:
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = streamer_no_index()
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
             with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 rt._run_loop(sk, "list files")
-        finally:
-            rt_module._PROVIDER_STREAMERS["openai"] = orig
 
         # If the bug is unfixed, this test crashes with KeyError before reaching here
         conv = rt.get_conversation(sk)
