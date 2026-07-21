@@ -1920,8 +1920,8 @@ class TestStreamingUsageCapture:
     def test_streaming_captures_openai_usage_chunk(self):
         """An OpenAI-compatible stream that emits a usage chunk in the final frame
         must surface the usage in the response dict (not {})."""
-        from agent import runtime as rt_module
         from agent.runtime import SSEEvent
+        from unittest.mock import MagicMock
 
         def mock_stream_with_usage():
             yield SSEEvent(type="text_delta", data={"content": "Hello"})
@@ -1939,13 +1939,11 @@ class TestStreamingUsageCapture:
         usage_calls = []
         rt._on_token_usage = lambda sk, tokens, cost: usage_calls.append((tokens, cost))
 
-        orig = rt_module._PROVIDER_STREAMERS["openai"]
-        rt_module._PROVIDER_STREAMERS["openai"] = lambda *a, **kw: mock_stream_with_usage()
-        try:
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = mock_stream_with_usage()
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
             with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 rt._run_loop(sk, "say hello")
-        finally:
-            rt_module._PROVIDER_STREAMERS["openai"] = orig
         rt.stop()
 
         # on_token_usage should have fired with non-zero tokens
