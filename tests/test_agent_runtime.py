@@ -2520,8 +2520,8 @@ class TestStreamAnthropicEvents:
             resp.iter_lines = MagicMock(return_value=iter([body]))
             return resp
 
-        with patch("agent.runtime._urlopen_with_ssl_retry", side_effect=fake_urlopen):
-            with patch("agent.runtime._sse_lines", return_value=iter([
+        with patch("agent.llm.anthropic_provider.urlopen_with_ssl_retry", side_effect=fake_urlopen):
+            with patch("agent.llm.anthropic_provider.sse_lines", return_value=iter([
                 b'data: {"type": "message_stop"}\n\n'
             ])):
                 # Provide minimal args
