@@ -306,13 +306,146 @@ def save_project_context(project_path: str, content: str) -> None:
         _logger.error("save_project_context: failed at %s: %s", project_path, e)
 
 
-def append_project_context(project_path: str, entry: str) -> None:
+def _signals_completion(entry: str) -> bool:
+    """Return True if an entry signals phase/task completion.
+
+    Detects: 'complete', 'completed', 'done', 'finished', '✅', 'COMPLETE',
+    'DONE' (case-insensitive). Matches anywhere in the entry text so it
+    catches 'Phase A1 complete', 're-audit: COMPLETE', 'fix verified ✅', etc.
     """
-    Append an entry to .crabcakes/context.md. Adds separator if file has content.
+    entry_lower = entry.lower()
+    return any(w in entry_lower for w in ("complete", "done", "finished", "✅"))
+
+
+def _extract_phase_id(entry: str) -> str:
+    """Extract a phase/task identifier from an entry's '## ' heading.
+
+    Handles the standard context.md format: '## DATE — PHASE DESCRIPTION'.
+    Returns the text after the em-dash (or the first '## ' heading's body if
+    no em-dash), stripped of trailing status words and whitespace.
+    Returns empty string if no '## ' heading is found.
+
+    Examples:
+      '## 2026-07-20 — Phase B6 complete'  -> 'phase b6'
+      '## 2026-07-19 — Phase A1 complete'  -> 'phase a1'
+      '## 2026-07-20 — In-flight loops'    -> 'in-flight loops'
+      'no heading here'                    -> ''
+    """
+    # Find the first '## ' heading in the entry
+    heading = None
+    for line in entry.split("\n"):
+        if line.startswith("## "):
+            heading = line[3:].strip()
+            break
+    if not heading:
+        return ""
+
+    # Split on em-dash (—) or double-hyphen (--) if present
+    for sep in ("—", "--"):
+        if sep in heading:
+            # Take everything after the separator, strip status words
+            after = heading.split(sep, 1)[1].strip()
+            # Remove trailing completion/status words for matching
+            for word in ("complete", "completed", "done", "finished", "✅"):
+                if after.lower().endswith(" " + word):
+                    after = after[: -len(word)].rstrip()
+                    break
+            return after.lower()
+
+    # No separator — use the whole heading body (minus status words)
+    for word in ("complete", "completed", "done", "finished", "✅"):
+        if heading.lower().endswith(" " + word):
+            heading = heading[: -len(word)].rstrip()
+            break
+    return heading.lower()
+
+
+def _mark_superseded(existing: str, new_entry: str) -> str:
+    """Mark 'in progress' / 'pending' entries as [SUPERSEDED] when a completion arrives.
+
+    Extracts a phase identifier from the new entry's heading by splitting on
+    the em-dash separator (the standard context.md format: '## DATE — PHASE').
+    Then scans existing entry headings for entries that:
+      (a) contain the same phase identifier (case-insensitive), AND
+      (b) indicate 'in progress', 'pending', or 'current task' status.
+
+    Matching entries are marked '[SUPERSEDED]' (appended to the heading line).
+    Already-superseded entries are not re-marked. Entries are never deleted.
+
+    Returns the modified existing-content string. If no phase identifier can
+    be extracted from the new entry, returns existing unchanged (conservative).
+    """
+    phase_id = _extract_phase_id(new_entry)
+    if not phase_id:
+        return existing  # No identifiable phase — don't touch anything
+
+    lines = existing.split("\n")
+    result = []
+    for line in lines:
+        if line.startswith("## ") and phase_id in line.lower():
+            lower = line.lower()
+            if any(w in lower for w in ("in progress", "pending", "current task")):
+                if "[SUPERSEDED]" not in line:
+                    line = line + " [SUPERSEDED]"
+        result.append(line)
+    return "\n".join(result)
+
+
+def _split_entries(content: str) -> list[str]:
+    """Split context.md content into individual entries by '## ' heading delimiter.
+
+    Each entry starts with '## ' (the standard dated-heading format). Content
+    before the first '## ' heading (if any) is prepended to the first entry,
+    or dropped if it's only whitespace.
+
+    Returns a list of entry strings, each starting with '## '. Empty list if
+    content is empty or has no '## ' headings.
+    """
+    if not content.strip():
+        return []
+    # Split on '## ' that appears at the start of a line.
+    # The regex lookbehind ensures we split at line-start '## '.
+    parts = re.split(r'(?m)^## ', content)
+    # The first part is content before the first '## ' heading — usually empty
+    # or a header comment. If it's non-empty, prepend it to the first real entry.
+    if parts and parts[0].strip():
+        # Prepend to the next part (the first real heading body)
+        if len(parts) > 1:
+            parts[1] = parts[0] + "\n\n## " + parts[1]
+        # If there's only the preamble and no headings, return empty
+    # Re-add the '## ' prefix to each entry body (the split consumed it)
+    entries = ["## " + p.strip() for p in parts[1:] if p.strip()]
+    return entries
+
+
+def append_project_context(project_path: str, entry: str) -> None:
+    """Append an entry to .crabcakes/context.md with lifecycle management.
+
+    - Supersedes stale "in progress" / "pending" entries for the same phase
+      when a "complete" / "done" entry is appended. Marks them [SUPERSEDED]
+      in place (does not delete — preserves audit trail).
+    - Enforces MAX_CONTEXT_ENTRIES with FIFO eviction (oldest entries dropped).
+
+    The entry is expected to start with a '## ' heading. Entries without a
+    heading are appended without supersedure processing (format preserved).
+
+    See SPEC-CONTEXT-MD-SYSTEM-FIX.md §3.1d.
     """
     existing = load_project_context(project_path)
-    separator = "\n\n" if existing.strip() else ""
-    save_project_context(project_path, existing + separator + entry)
+
+    # Supersedure: if the new entry signals completion, mark matching
+    # "in progress" entries as [SUPERSEDED].
+    if _signals_completion(entry):
+        existing = _mark_superseded(existing, entry)
+
+    # FIFO eviction: split into entries, cap at MAX_CONTEXT_ENTRIES.
+    # The new entry is appended AFTER eviction so it is never the one evicted.
+    entries = _split_entries(existing)
+    if len(entries) >= MAX_CONTEXT_ENTRIES:
+        entries = entries[-(MAX_CONTEXT_ENTRIES - 1):]
+    entries.append(entry)
+
+    save_project_context(project_path, "\n\n".join(entries))
 
 
 def get_current_task(project_path: str) -> str:
