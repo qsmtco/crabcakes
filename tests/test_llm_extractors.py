@@ -135,16 +135,5 @@ class TestExtractUsage:
 
 
 class TestReExports:
-
-    def test_runtime_reexport_extract_tool_calls(self):
-        """Legacy underscore name importable from agent.runtime."""
-        from agent.runtime import _extract_tool_calls
-        assert _extract_tool_calls is extract_tool_calls
-
-    def test_runtime_reexport_extract_text_content(self):
-        from agent.runtime import _extract_text_content
-        assert _extract_text_content is extract_text_content
-
-    def test_runtime_reexport_extract_usage(self):
-        from agent.runtime import _extract_usage
-        assert _extract_usage is extract_usage
+    # Re-export tests removed in Phase 8 — the underscored aliases no longer
+    # exist in agent.runtime. The canonical functions live in agent.llm.extractors.
