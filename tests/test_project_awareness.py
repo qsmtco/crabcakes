@@ -437,3 +437,27 @@ class TestAppendProjectContextLifecycle:
         # Should only have ONE [SUPERSEDED] marker on the original entry
         assert result.count("[SUPERSEDED]") == 1, \
             f"Expected 1 [SUPERSEDED], got {result.count('[SUPERSEDED]')}: {result!r}"
+
+    def test_append_supersedes_punctuated_phase(self, tmp_path):
+        """Supersession works when new entry has colon-punctuation (BUG: format-fragility).
+
+        're-audit: COMPLETE' must supersede 're-audit in progress' even though
+        the colon makes the phase identifiers textually different.
+        """
+        init_project_config(str(tmp_path), "p")
+        save_project_context(str(tmp_path), "## 2026-07-17 — activity-drawer re-audit in progress\nWorking.")
+        append_project_context(str(tmp_path), "## 2026-07-17 — activity-drawer re-audit: COMPLETE\nDone.")
+        result = load_project_context(str(tmp_path))
+        assert "[SUPERSEDED]" in result, f"Colon-punctuated completion should supersede: {result!r}"
+
+    def test_append_does_not_overmatch_phase_suffix(self, tmp_path):
+        """Completing Phase A1 must NOT supersede Phase A10 (BUG: substring-overmatch).
+
+        'phase a1' must not match 'phase a10' — word boundary required.
+        """
+        init_project_config(str(tmp_path), "p")
+        save_project_context(str(tmp_path), "## 2026-07-19 — Phase A10 in progress\nWorking A10.")
+        append_project_context(str(tmp_path), "## 2026-07-20 — Phase A1 complete\nDone A1.")
+        result = load_project_context(str(tmp_path))
+        assert "[SUPERSEDED]" not in result, \
+            f"Phase A1 must not supersede Phase A10 (substring overmatch): {result!r}"
