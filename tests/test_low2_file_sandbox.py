@@ -13,7 +13,7 @@ import tempfile
 
 import pytest
 
-from agent.runtime import _resolve_session_workspace
+from agent.persistence import resolve_session_workspace
 from agent.tools import execute_tool
 
 
