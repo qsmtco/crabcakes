@@ -1974,8 +1974,8 @@ class TestStreamingUsageCapture:
 
     def test_streaming_captures_anthropic_usage_in_message_delta(self):
         """Anthropic streams emit usage in message_delta events; the fix must capture these too."""
-        from agent import runtime as rt_module
         from agent.runtime import SSEEvent
+        from unittest.mock import MagicMock
 
         def mock_anthropic_stream_with_usage():
             yield SSEEvent(type="text_delta", data={"content": "Hello from Anthropic"})
@@ -1990,9 +1990,9 @@ class TestStreamingUsageCapture:
         sk = _uniq()
         rt.create_conversation("Coder", sk, "/tmp")
 
-        orig = rt_module._PROVIDER_STREAMERS.get("anthropic")
-        rt_module._PROVIDER_STREAMERS["anthropic"] = lambda *a, **kw: mock_anthropic_stream_with_usage()
-        try:
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = mock_anthropic_stream_with_usage()
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
             response = rt._call_llm_streaming(
                 session_key=sk,
                 base_url="https://api.anthropic.com/v1",
@@ -2003,9 +2003,6 @@ class TestStreamingUsageCapture:
                 tools=None,
                 timeout=30.0,
             )
-        finally:
-            if orig is not None:
-                rt_module._PROVIDER_STREAMERS["anthropic"] = orig
         rt.stop()
 
         assert response["usage"] == {"input_tokens": 200, "output_tokens": 80}, \
