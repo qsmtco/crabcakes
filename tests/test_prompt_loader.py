@@ -157,6 +157,7 @@ class TestVariableContractIntegration:
         provided_vars = {
             "AGENT_NAME", "PROJECT_PATH", "PROJECT_NAME",
             "TEAM_ROSTER", "CURRENT_STATE", "PROJECT_MEMORY",
+            "CURRENT_TASK",
             "REVIEW_MODE", "TOOL_LIST", "WORKFLOW_STATUS",
         }
 
