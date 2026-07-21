@@ -362,3 +362,78 @@ class TestAwarenessCacheFixes:
         d2 = build_awareness_dict(str(tmp_path))
         assert d2["CURRENT_TASK"] == "Task B complete now", \
             f"Cache stale (BUG #8): {d2['CURRENT_TASK']!r}"
+
+
+class TestAppendProjectContextLifecycle:
+    """SPEC-CONTEXT-MD-SYSTEM-FIX §3.1d — append supersedure + FIFO eviction."""
+
+    def test_append_supersedes_in_progress_entry(self, tmp_path):
+        """Appending 'Phase B4 complete' marks 'Phase B4 in progress' as [SUPERSEDED]."""
+        init_project_config(str(tmp_path), "p")
+        save_project_context(str(tmp_path), "## 2026-07-19 — Phase B4 in progress\nDetails here.")
+        append_project_context(str(tmp_path), "## 2026-07-20 — Phase B4 complete\nDone.")
+        result = load_project_context(str(tmp_path))
+        assert "[SUPERSEDED]" in result, f"Expected [SUPERSEDED] marker, got: {result!r}"
+        assert "Phase B4 in progress" in result  # original entry preserved
+        assert "Phase B4 complete" in result     # new entry appended
+
+    def test_append_does_not_supersede_when_no_completion_word(self, tmp_path):
+        """Appending a non-completion entry does not supersede anything."""
+        init_project_config(str(tmp_path), "p")
+        save_project_context(str(tmp_path), "## 2026-07-19 — Phase B4 in progress\nWorking.")
+        append_project_context(str(tmp_path), "## 2026-07-20 — Phase B4 notes\nJust notes.")
+        result = load_project_context(str(tmp_path))
+        assert "[SUPERSEDED]" not in result, f"Should not supersede without completion word: {result!r}"
+
+    def test_append_does_not_supersede_unrelated_phase(self, tmp_path):
+        """Completing Phase B4 does not supersede Phase A1 in progress."""
+        init_project_config(str(tmp_path), "p")
+        save_project_context(str(tmp_path), "## 2026-07-19 — Phase A1 in progress\nWorking.")
+        append_project_context(str(tmp_path), "## 2026-07-20 — Phase B4 complete\nDone.")
+        result = load_project_context(str(tmp_path))
+        assert "[SUPERSEDED]" not in result, f"Should not supersede unrelated phase: {result!r}"
+
+    def test_append_supersedes_case_insensitive(self, tmp_path):
+        """'COMPLETE' (uppercase) in the new entry still triggers supersedure."""
+        init_project_config(str(tmp_path), "p")
+        save_project_context(str(tmp_path), "## 2026-07-19 — Phase B4 in progress\nWorking.")
+        append_project_context(str(tmp_path), "## 2026-07-20 — Phase B4 COMPLETE\nDone.")
+        result = load_project_context(str(tmp_path))
+        assert "[SUPERSEDED]" in result, f"Case-insensitive completion should supersede: {result!r}"
+
+    def test_append_fifo_eviction_at_50(self, tmp_path):
+        """Appending the 51st entry evicts the oldest (FIFO)."""
+        init_project_config(str(tmp_path), "p")
+        # Fill with 50 entries
+        for i in range(50):
+            append_project_context(str(tmp_path), f"## 2026-01-{i+1:02d} — Entry {i}\nBody.")
+        result = load_project_context(str(tmp_path))
+        assert "Entry 0" in result  # oldest still present at exactly 50
+        # Append the 51st
+        append_project_context(str(tmp_path), "## 2026-02-01 — Entry 50\nBody.")
+        result = load_project_context(str(tmp_path))
+        assert "Entry 0" not in result, f"FIFO should have evicted Entry 0: {result[:200]!r}"
+        assert "Entry 50" in result  # newest present
+
+    def test_append_preserves_non_matching_entries(self, tmp_path):
+        """Entries that don't match the completing phase are untouched."""
+        init_project_config(str(tmp_path), "p")
+        save_project_context(str(tmp_path),
+            "## 2026-07-19 — Phase A1 complete\nDone A1.\n\n"
+            "## 2026-07-19 — Phase B4 in progress\nWorking B4.")
+        append_project_context(str(tmp_path), "## 2026-07-20 — Phase B4 complete\nDone B4.")
+        result = load_project_context(str(tmp_path))
+        assert "Phase A1 complete" in result
+        assert "Phase B4 in progress" in result
+        assert "[SUPERSEDED]" in result
+
+    def test_append_idempotent_supersedure(self, tmp_path):
+        """Appending the same completion twice does not double-mark [SUPERSEDED]."""
+        init_project_config(str(tmp_path), "p")
+        save_project_context(str(tmp_path), "## 2026-07-19 — Phase B4 in progress\nWorking.")
+        append_project_context(str(tmp_path), "## 2026-07-20 — Phase B4 complete\nDone.")
+        append_project_context(str(tmp_path), "## 2026-07-21 — Phase B4 complete (re-confirmed)\nDone again.")
+        result = load_project_context(str(tmp_path))
+        # Should only have ONE [SUPERSEDED] marker on the original entry
+        assert result.count("[SUPERSEDED]") == 1, \
+            f"Expected 1 [SUPERSEDED], got {result.count('[SUPERSEDED]')}: {result!r}"
