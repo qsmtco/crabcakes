@@ -306,15 +306,25 @@ def save_project_context(project_path: str, content: str) -> None:
         _logger.error("save_project_context: failed at %s: %s", project_path, e)
 
 
+# Word-boundary completion detection. Prevents false positives like
+# "abandoned", "undone", "incomplete", "condone" matching "done".
+# See Phase 3 audit BUG #2.
+_COMPLETION_RE = re.compile(
+    r"\b(?:complete|completed|done|finished)\b|✅",
+    re.IGNORECASE,
+)
+
+
 def _signals_completion(entry: str) -> bool:
     """Return True if an entry signals phase/task completion.
 
-    Detects: 'complete', 'completed', 'done', 'finished', '✅', 'COMPLETE',
-    'DONE' (case-insensitive). Matches anywhere in the entry text so it
-    catches 'Phase A1 complete', 're-audit: COMPLETE', 'fix verified ✅', etc.
+    Uses word-boundary matching so "abandoned", "undone", "incomplete",
+    "condone" do NOT trigger completion. Detects: complete, completed, done,
+    finished (case-insensitive), and the ✅ emoji.
+
+    See SPEC-CONTEXT-MD-SYSTEM-FIX.md §3.1d + Phase 3 audit BUG #2.
     """
-    entry_lower = entry.lower()
-    return any(w in entry_lower for w in ("complete", "done", "finished", "✅"))
+    return bool(_COMPLETION_RE.search(entry))
 
 
 def _extract_phase_id(entry: str) -> str:
