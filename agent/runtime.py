@@ -343,7 +343,7 @@ class AgentRuntime:
 
         # HIGH-3: one-time migration on startup — removes api_key from existing files
         try:
-            _migrate_conversation_files()
+            migrate_conversation_files()
         except Exception:
             logger.exception("[runtime] conversation migration failed (non-fatal)")
 
@@ -438,7 +438,7 @@ class AgentRuntime:
             self._running = False
             for sk, conv in list(self._conversations.items()):
                 try:
-                    _save_conversation_to_disk(conv, sk)
+                    save_conversation_to_disk(conv, sk)
                 except Exception:
                     logger.exception("Failed to save conversation %s", sk)
         logger.info("AgentRuntime stopped")
@@ -1212,7 +1212,7 @@ class AgentRuntime:
                                             agent_tools_module.is_sensitive_path(args.get("path", ""))))
                         per_call_cb = (lambda *a: True) if bypass_approval else None
                         # LOW-2: resolve workspace before use; raises ValueError if project_path is empty
-                        workspace = _resolve_session_workspace(conv.project_path, session_key)
+                        workspace = resolve_session_workspace(conv.project_path, session_key)
                         # project_path is the sandbox base for all tools AND exec_command cwd.
                         # scratch_dir (workspace) is resolved for future use but no longer
                         # overrides exec_command CWD — see exec-cwd-fix spec.
@@ -1708,12 +1708,12 @@ class AgentRuntime:
             conv = self._conversations.get(session_key)
             if conv is None:
                 raise ValueError(f"No conversation found for {session_key}")
-            path = _save_conversation_to_disk(conv, session_key)
+            path = save_conversation_to_disk(conv, session_key)
         return path
 
     def load_conversation(self, session_key: str) -> bool:
         """Load a conversation from disk into the runtime. Returns True if found."""
-        result = _load_conversation_from_disk(session_key)
+        result = load_conversation_from_disk(session_key)
         if result is None:
             return False
         conv, _ = result
