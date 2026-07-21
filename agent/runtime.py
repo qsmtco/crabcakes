@@ -1168,15 +1168,21 @@ class AgentRuntime:
 
     def _run_loop(self, session_key: str, text: str) -> None:
         """Background thread: run the full tool loop for one user message."""
+        # FIX-CLEAR-ASK-RACE: mark this session as having an active loop so
+        # clear_conversation() can refuse to wipe it mid-turn. Cleared in the
+        # finally block at the end of this function.
         with self._lock:
-            if not self._running:
-                return
-            conv = self._conversations.get(session_key)
-            if conv is None:
-                self._dispatch(self._on_error, session_key, "No conversation found")
-                return
+            self._active_loops.add(session_key)
+        try:
+            with self._lock:
+                if not self._running:
+                    return
+                conv = self._conversations.get(session_key)
+                if conv is None:
+                    self._dispatch(self._on_error, session_key, "No conversation found")
+                    return
 
-        # BUG #21: Fire a turn-start signal BEFORE any LLM call or tool processing.
+            # BUG #21: Fire a turn-start signal BEFORE any LLM call or tool processing.
         # This guarantees the handler clears _ended_sessions and emits the drawer
         # lifecycle-start separator for EVERY turn — including tool-only turns
         # (LLM streams zero text_delta events). Reuses _on_text_delta with an
