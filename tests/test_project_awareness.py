@@ -331,3 +331,24 @@ class TestAwarenessCacheFixes:
         d2 = build_awareness_dict(str(tmp_path))
         assert d2["CURRENT_TASK"] == "Real task", \
             f"Cache was poisoned by caller mutation: {d2['CURRENT_TASK']!r}"
+
+    def test_cache_invalidates_on_same_length_write(self, tmp_path):
+        """Same-length different-content writes invalidate the cache (BUG #8).
+
+        len()-based fingerprints collide here; sha1 does not.
+        """
+        import os
+        init_project_config(str(tmp_path), "p")
+        content_a = "## Task A complete now\n" + ("A" * 180)
+        content_b = "## Task B complete now\n" + ("B" * 180)  # same length, different content
+        assert len(content_a) == len(content_b)
+        save_project_context(str(tmp_path), content_a)
+        d1 = build_awareness_dict(str(tmp_path))
+        save_project_context(str(tmp_path), content_b)
+        # Pin mtime to force the same-tick scenario
+        ctx_path = os.path.join(str(tmp_path), ".crabcakes", "context.md")
+        m = os.stat(ctx_path).st_mtime
+        os.utime(ctx_path, (m, m))
+        d2 = build_awareness_dict(str(tmp_path))
+        assert d2["CURRENT_TASK"] == "Task B complete now", \
+            f"Cache stale (BUG #8): {d2['CURRENT_TASK']!r}"
