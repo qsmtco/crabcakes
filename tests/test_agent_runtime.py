@@ -3612,18 +3612,18 @@ class TestSSEFrameShapeHardening:
 
     def test_parse_sse_delta_empty_choices_no_crash(self):
         """_parse_sse_delta must not crash on empty choices (the original bug)."""
-        from agent.runtime import _parse_sse_delta
+        from agent.llm.streaming import parse_sse_delta
         result = _parse_sse_delta({"choices": [], "usage": {"total_tokens": 42}})
         assert result == []
 
     def test_parse_sse_delta_no_choices_key_no_crash(self):
         """_parse_sse_delta must not crash when choices key is absent."""
-        from agent.runtime import _parse_sse_delta
+        from agent.llm.streaming import parse_sse_delta
         assert _parse_sse_delta({}) == []
 
     def test_parse_sse_delta_normal_text_delta(self):
         """Normal text delta still works after hardening."""
-        from agent.runtime import _parse_sse_delta
+        from agent.llm.streaming import parse_sse_delta
         events = _parse_sse_delta(
             {"choices": [{"delta": {"content": "hello"}}]}
         )
@@ -3633,7 +3633,7 @@ class TestSSEFrameShapeHardening:
 
     def test_parse_sse_delta_tool_call_delta(self):
         """Tool call deltas still work after hardening."""
-        from agent.runtime import _parse_sse_delta
+        from agent.llm.streaming import parse_sse_delta
         events = _parse_sse_delta(
             {"choices": [{"delta": {"tool_calls": [
                 {"index": 0, "id": "call_1",
