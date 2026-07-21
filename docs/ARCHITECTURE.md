@@ -1545,9 +1545,9 @@ took ~6s per call for a 100K-char system prompt before the cache).
 
 **Responsibility:** Core agent loop — conversation management, LLM API calls, tool execution, streaming SSE responses, cost tracking, conversation persistence.
 
-**Owns:** `AgentConfig`, conversation store, tool loop. Provider adapters, cost functions, SSE helpers, extractors, and converters have been extracted to `agent/llm/` (Phase B1–B6). Tool middleware (enforcement + stuck detection) extracted to `agent/tool_middleware.py` (Phase A1). All symbols re-exported under legacy underscore names for backward compatibility.
+**Owns:** `AgentConfig`, conversation store, tool loop. Provider adapters, cost functions, SSE helpers, extractors, and converters have been extracted to `agent/llm/` (Phase B1–B6). Tool middleware (enforcement + stuck detection) extracted to `agent/tool_middleware.py` (Phase A1). AuditLog extracted to `agent/audit.py` (Phase 5). Conversation persistence extracted to `agent/persistence.py` (Phase 6). All pure re-export aliases removed (Phase 4 + Phase 8); imports now go directly to the canonical modules.
 
-**Modular extraction (Phase 1):** `runtime.py` reduced from 3297 → 2344 lines (28.9%). LLM dispatch now uses `get_provider(caller_key).call()` / `.stream()`. Tool execution now routes through `self._tool_chain.run()`. See `docs/post-mortems/2026-07-20-RUNTIME-MODULAR-EXTRACTION-PHASE-1-POST-MORTEM.md`.
+**Modular extraction (Phase 1 + Phases 4–8):** `runtime.py` reduced from 3297 → 1995 lines (39.5%). Cost re-exports removed (Phase 4). AuditLog extracted to `agent/audit.py` (Phase 5, ~79 lines). Persistence extracted to `agent/persistence.py` (Phase 6, ~280 lines). Pure re-export aliases for converters/streaming/extractors removed (Phase 8). LLM dispatch uses `get_provider(caller_key).call()` / `.stream()`. Tool execution routes through `self._tool_chain.run()`. `_PROVIDER_CALLERS` retained for validation taxonomy; `_PROVIDER_STREAMERS` is dead infrastructure (superseded by registry dispatch in Phase B6) but retained for script backward compat. See post-mortems for both phases.
 
 **Public API:**
 ```python
