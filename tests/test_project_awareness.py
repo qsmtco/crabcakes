@@ -326,4 +326,4 @@ class TestAwarenessCacheFixes:
         d1["CURRENT_TASK"] = "TAMPERED"
         d2 = build_awareness_dict(str(tmp_path))
         assert d2["CURRENT_TASK"] == "Real task", \
-            f"Cache was poisoned by caller mutation: {d2['CURRENT_TASK']!r}""
+            f"Cache was poisoned by caller mutation: {d2['CURRENT_TASK']!r}"
