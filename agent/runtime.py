@@ -1696,7 +1696,7 @@ class AgentRuntime:
         """Save conversation if auto_save is enabled."""
         if self._config.auto_save_conversations:
             try:
-                _save_conversation_to_disk(conv, session_key)
+                save_conversation_to_disk(conv, session_key)
             except Exception:
                 logger.exception("Failed to auto-save conversation %s", session_key)
 
@@ -1811,7 +1811,7 @@ class AgentRuntime:
 
     def list_conversations(self) -> list[tuple[str, str]]:
         """List all saved conversations: [(session_key, agent_name)]."""
-        d = _conversations_dir()
+        d = conversations_dir()
         try:
             files = [f for f in os.listdir(d) if f.endswith(".json")]
         except OSError:
