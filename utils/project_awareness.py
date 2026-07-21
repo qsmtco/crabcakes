@@ -368,7 +368,7 @@ def _mark_superseded(existing: str, new_entry: str) -> str:
     Extracts a phase identifier from the new entry's heading by splitting on
     the em-dash separator (the standard context.md format: '## DATE — PHASE').
     Then scans existing entry headings for entries that:
-      (a) contain the same phase identifier (case-insensitive), AND
+      (a) contain the same phase identifier (word-boundary match, case-insensitive), AND
       (b) indicate 'in progress', 'pending', or 'current task' status.
 
     Matching entries are marked '[SUPERSEDED]' (appended to the heading line).
@@ -381,10 +381,21 @@ def _mark_superseded(existing: str, new_entry: str) -> str:
     if not phase_id:
         return existing  # No identifiable phase — don't touch anything
 
+    # Build a word-boundary regex so 'phase a1' does NOT match 'phase a10'.
+    # re.escape handles any regex metacharacters in the phase identifier.
+    # The trailing \b prevents suffix matches (a1 matching a10); the leading
+    # \b prevents prefix matches.
+    try:
+        phase_pattern = re.compile(r"\b" + re.escape(phase_id) + r"\b", re.IGNORECASE)
+    except re.error:
+        # If the phase_id is somehow un-escapable, fall back to no supersession
+        # (conservative — don't risk false positives).
+        return existing
+
     lines = existing.split("\n")
     result = []
     for line in lines:
-        if line.startswith("## ") and phase_id in line.lower():
+        if line.startswith("## ") and phase_pattern.search(line):
             lower = line.lower()
             if any(w in lower for w in ("in progress", "pending", "current task")):
                 if "[SUPERSEDED]" not in line:
