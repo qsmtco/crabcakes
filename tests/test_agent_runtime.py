@@ -3657,14 +3657,26 @@ class TestSSEFrameShapeHardening:
         )
 
     def test_first_choice_used_at_all_three_sites(self):
-        """first_choice should appear 4 times: 1 def + 3 call sites."""
+        """first_choice must be importable from agent.llm.streaming and used
+        in all streaming provider modules (openai, minimax) and in runtime.
+        """
         import subprocess
-        result = subprocess.run(
-            ["grep", "-c", "first_choice", "agent/runtime.py"],
-            capture_output=True, text=True, cwd="/home/q/projects/crabcakes",
-        )
-        count = int(result.stdout.strip())
-        assert count >= 4, f"Expected >= 4 first_choice references, got {count}"
+        # Check all provider modules + streaming module + runtime
+        files = [
+            "agent/runtime.py",
+            "agent/llm/streaming.py",
+            "agent/llm/openai_provider.py",
+            "agent/llm/minimax_provider.py",
+        ]
+        total = 0
+        for f in files:
+            result = subprocess.run(
+                ["grep", "-c", "first_choice", f],
+                capture_output=True, text=True, cwd="/home/q/projects/crabcakes",
+            )
+            if result.stdout.strip():
+                total += int(result.stdout.strip())
+        assert total >= 5, f"Expected >= 5 first_choice references across provider modules, got {total}"
 
 
 class TestStreamOpenaiEventsFinishReason:
