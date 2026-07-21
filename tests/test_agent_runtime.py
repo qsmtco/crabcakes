@@ -1724,8 +1724,8 @@ class TestStreaming:
         sk = _uniq()
         rt.create_conversation("Coder", sk, "/tmp")
 
-        with unittest.mock.patch.object(
-            rt_module, "_urlopen_with_ssl_retry",
+        with unittest.mock.patch(
+            "agent.llm.anthropic_provider.urlopen_with_ssl_retry",
             lambda req, timeout: _make_fake_urlopen(raw_sse),
         ):
             response = rt._call_llm_streaming(
