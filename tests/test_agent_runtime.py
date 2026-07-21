@@ -1491,14 +1491,12 @@ class TestStreaming:
         sk = _uniq()
         rt.create_conversation("Coder", sk, "/tmp")
 
-        from agent import runtime as rt_module
-        orig = rt_module._PROVIDER_STREAMERS["openai"]
-        rt_module._PROVIDER_STREAMERS["openai"] = lambda *a, **kw: _mock_stream_openai_3_chunks()
-        try:
+        from unittest.mock import MagicMock
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = _mock_stream_openai_3_chunks()
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
             with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 rt._run_loop(sk, "say hello")
-        finally:
-            rt_module._PROVIDER_STREAMERS["openai"] = orig
 
         conv = rt.get_conversation(sk)
         # Last message should be the assistant response with full text
