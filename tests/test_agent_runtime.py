@@ -2570,15 +2570,11 @@ class TestStreamAnthropicEvents:
             {"role": "tool", "tool_call_id": "call_1", "content": "file contents"},
         ]
 
-        with patch("agent.runtime._urlopen_with_ssl_retry", side_effect=fake_urlopen):
-            with patch("agent.runtime._sse_lines", return_value=iter([
+        with patch("agent.llm.anthropic_provider.urlopen_with_ssl_retry", side_effect=fake_urlopen):
+            with patch("agent.llm.anthropic_provider.sse_lines", return_value=iter([
                 b'data: {"type": "message_stop"}\n\n'
             ])):
                 list(_stream_anthropic_events(
-                    base_url="https://api.anthropic.com",
-                    api_key="test-key",
-                    model="claude-3-5-sonnet-20241022",
-                    messages=raw_messages,  # raw OpenAI-format dicts
                     tools=None,
                     timeout=30.0,
                 ))
