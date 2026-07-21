@@ -656,8 +656,8 @@ class TestMigrateConversationFiles:
 
     def test_migration_removes_api_key(self, tmp_path):
         """Migration must delete api_key from old conversation files."""
-        from agent.runtime import (
-            _migrate_conversation_files,
+        from agent.persistence import (
+            migrate_conversation_files,
             _CONVERSATION_MIGRATION_DONE,
         )
 
