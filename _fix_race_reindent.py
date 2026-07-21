@@ -1,135 +1,136 @@
 #!/usr/bin/env python3
 """Transform _run_loop: add outer try/finally, re-indent body.
 
-Original structure:
-    def _run_loop(...):
-        with self._lock:
-            if not self._running:
-                return
-            conv = ...
-            ...
-
-New structure:
-    def _run_loop(...):
-        with self._lock:
-            self._active_loops.add(...)
-        try:
-            with self._lock:
-                if not self._running:
-                    return
-                conv = ...
-                ...
-                ...body...
-        finally:
-            with self._lock:
-                self._active_loops.discard(...)
+Reads the current function, builds the new version, replaces it.
 """
 
 with open('agent/runtime.py', 'r') as f:
-    lines = f.readlines()
+    text = f.read()
 
 # Find _run_loop boundaries
-fn_start = None
-fn_end = None
-for i, line in enumerate(lines):
-    stripped = line.strip()
-    if fn_start is None and stripped.startswith('def _run_loop('):
-        fn_start = i
-    if fn_start is not None and i > fn_start + 1:
-        if stripped.startswith('def ') and line.startswith('    '):
-            fn_end = i
-            break
+FN_SENTINEL = '    def _run_loop(self, session_key: str, text: str) -> None:\n'
+NEXT_FN_SENTINEL = '    def _dispatch_approval('
 
-if fn_end is None:
-    fn_end = len(lines)
+fn_start = text.index(FN_SENTINEL)
+fn_end = text.index(NEXT_FN_SENTINEL, fn_start)
 
-print(f"_run_loop: lines {fn_start+1} to {fn_end}")
+print(f"_run_loop: chars {fn_start} to {fn_end}")
 
-# Verify the original first 10 lines
-print("=== Original first 8 lines of body ===")
-for i in range(fn_start + 2, min(fn_start + 10, fn_end)):
-    indent = len(lines[i]) - len(lines[i].lstrip())
-    print(f"  line {i+1}: indent={indent:2d} | {lines[i].rstrip()}")
+# Extract the function body (the part after the def line + docstring)
+fn_body = text[fn_start:fn_end]
 
-# The original `with self._lock:` block is lines fn_start+2 through fn_start+8
-# This is the guard check. These 7 lines need to be replaced with:
-#   3 lines of marker + 1 with + 1 add + 1 try + 7 re-indented lines
+# The old function structure:
+# line 0:  def _run_loop(...):
+# line 1:  """..."""
+# line 2:  with self._lock:
+# ...
+# line 8:  return
+# line 9:  (blank)
+# line 10: # BUG #21: ...
+# ...
+# line N:  self._dispatch(self._on_error, session_key, e)
+# line N+1: (blank, trailing newline)
 
-# The body to re-indent starts at fn_start+9 (blank line after the guard check)
-# through fn_end-1 (last line of except block)
+lines = fn_body.splitlines(True)
 
-# Find the original `with self._lock:` block end (line fn_start+8 should be `return`)
-# Let me verify
-assert lines[fn_start + 2].strip() == 'with self._lock:', \
-    f"Expected 'with self._lock:' at line {fn_start+3}, got {lines[fn_start+2].strip()}"
+# Verify structure
+assert lines[0] == FN_SENTINEL, f'Expected function def, got {lines[0]!r}'
+assert lines[1].strip().startswith('"""'), f'Expected docstring, got {lines[1]!r}'
+assert lines[2].strip() == 'with self._lock:', f'Expected with self._lock at line 2, got {lines[2]!r}'
 
-# The last line of the with block is the `return` at fn_start+8
-# After that, fn_start+9 is blank, fn_start+10 is `# BUG #21`
+# The original `with self._lock:` block is lines 2-8
+# Line 2:         with self._lock:
+# Line 3:             if not self._running:
+# Line 4:                 return
+# Line 5:             conv = ...
+# Line 6:             if conv is None:
+# Line 7:                 self._dispatch(...)
+# Line 8:                 return
+# Line 9: blank
 
-# Build new lines
+# Build new function
 new_lines = []
 
-# Part 1: Everything before the function
-new_lines.extend(lines[:fn_start])
+# Line 0: function def (unchanged)
+new_lines.append(lines[0])
 
-# Part 2: Function def and docstring (unchanged)
-new_lines.append(lines[fn_start])
-new_lines.append(lines[fn_start + 1])
+# Line 1: docstring (unchanged)
+new_lines.append(lines[1])
 
-# Part 3: FIX-CLEAR-ASK-RACE marker + new with block + outer try
-new_lines.append("        # FIX-CLEAR-ASK-RACE: mark this session as having an active loop so\n")
-new_lines.append("        # clear_conversation() can refuse to wipe it mid-turn. Cleared in the\n")
-new_lines.append("        # finally block at the end of this function.\n")
-new_lines.append("        with self._lock:\n")
-new_lines.append("            self._active_loops.add(session_key)\n")
-new_lines.append("        try:\n")
+# FIX-CLEAR-ASK-RACE marker block
+new_lines.append('        # FIX-CLEAR-ASK-RACE: mark this session as having an active loop so\n')
+new_lines.append('        # clear_conversation() can refuse to wipe it mid-turn. Cleared in the\n')
+new_lines.append('        # finally block at the end of this function.\n')
+new_lines.append('        with self._lock:\n')
+new_lines.append('            self._active_loops.add(session_key)\n')
+new_lines.append('        try:\n')
 
-# Part 4: Re-indented original guard check (lines fn_start+2 to fn_start+8)
-# These were at indent 8/12/16, now need to be at indent 12/16/20
-for i in range(fn_start + 2, fn_start + 9):
-    line = lines[i]
-    indent = len(line) - len(line.lstrip())
-    new_indent = indent + 4
-    new_lines.append(' ' * new_indent + line.lstrip() + ('\n' if not line.endswith('\n') else ''))
+# Re-indented original guard check (lines 2-8): add 4 spaces
+for i in range(2, 9):
+    old = lines[i]
+    indent = len(old) - len(old.lstrip())
+    stripped = old.lstrip()
+    new_lines.append(' ' * (indent + 4) + stripped)
 
-# Part 5: Re-indented body from fn_start+9 to fn_end-1
-# fn_start+9 is the blank line (or the # BUG #21 line)
-for i in range(fn_start + 9, fn_end - 1):
-    line = lines[i]
-    if line.strip():
-        indent = len(line) - len(line.lstrip())
-        new_indent = indent + 4
-        new_lines.append(' ' * new_indent + line.lstrip() + ('\n' if not line.endswith('\n') else ''))
+# Re-indented body: lines 9 through N-1 (the blank line is the last)
+# N is the last line index (fn_end - fn_start - 1 is the trailing newline/blank)
+# The last content line is N-1 or N-2
+# Let me find the last line before the trailing blank
+last_content_idx = len(lines) - 1
+while last_content_idx >= 0:
+    if lines[last_content_idx].strip():
+        break
+    last_content_idx -= 1
+
+print(f'Last content line index: {last_content_idx}')
+print(f'Last content: {lines[last_content_idx].rstrip()}')
+
+# Body is lines 9 through last_content_idx (inclusive)
+for i in range(9, last_content_idx + 1):
+    old = lines[i]
+    if old.strip():
+        indent = len(old) - len(old.lstrip())
+        stripped = old.lstrip()
+        new_lines.append(' ' * (indent + 4) + stripped)
     else:
-        # Blank line — keep as-is
-        new_lines.append(line if line.endswith('\n') else line + '\n')
+        # Blank line — keep as-is but ensure it ends with newline
+        stripped = old.rstrip('\n')
+        new_lines.append(stripped + '\n')
 
-# Part 6: finally block
-new_lines.append("        finally:\n")
-new_lines.append("            # FIX-CLEAR-ASK-RACE: always release the active-loop marker, even\n")
-new_lines.append("            # on exception or early return, so a crashed loop doesn't block\n")
-new_lines.append("            # /clear for this session permanently.\n")
-new_lines.append("            with self._lock:\n")
-new_lines.append("                self._active_loops.discard(session_key)\n")
+# Finally block
+new_lines.append('        finally:\n')
+new_lines.append('            # FIX-CLEAR-ASK-RACE: always release the active-loop marker, even\n')
+new_lines.append('            # on exception or early return, so a crashed loop doesn\'t block\n')
+new_lines.append('            # /clear for this session permanently.\n')
+new_lines.append('            with self._lock:\n')
+new_lines.append('                self._active_loops.discard(session_key)\n')
 
-# Part 7: Blank line separator between functions
-new_lines.append(lines[fn_end - 1] if lines[fn_end - 1].endswith('\n') else lines[fn_end - 1] + '\n')
+# Trailing blank line (the one between functions)
+# The original trailing blank line was at the end of the function body
+# We need to add it back
+new_lines.append('\n')
 
-# Part 8: Everything after the function
-new_lines.extend(lines[fn_end:])
+new_fn_body = ''.join(new_lines)
 
-# Write back
+# Replace in text
+new_text = text[:fn_start] + new_fn_body + text[fn_end:]
+
 with open('agent/runtime.py', 'w') as f:
-    f.writelines(new_lines)
+    f.write(new_text)
 
-print("Done writing.")
+print('Done writing.')
 
 # Verify
 import ast
 try:
-    ast.parse(open('agent/runtime.py').read())
-    print("✅ ast.parse OK")
+    ast.parse(new_text)
+    print('OK: ast.parse passes')
 except SyntaxError as e:
-    print(f"❌ SyntaxError: {e}")
-    import traceback
-    traceback.print_exc()
+    print(f'FAIL: {e}')
+    # Show the problematic area
+    lines = new_text.splitlines(True)
+    lineno = e.lineno
+    if lineno:
+        for i in range(max(0, lineno-5), min(len(lines), lineno+5)):
+            marker = ' >>>' if i == lineno - 1 else '    '
+            print(f'{marker} {i+1}: {lines[i].rstrip()}')
