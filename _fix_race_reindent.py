@@ -1,11 +1,51 @@
 #!/usr/bin/env python3
-"""Replace _run_loop with outer try/finally and re-indent body.
+"""Transform _run_loop: add outer try/finally, re-indent body.
 
-Strategy:
-1. Extract the original body (lines after the initial `with self._lock:` block)
-2. Add 4 spaces to each line
-3. Build the new function with marker, outer try, re-indented body, finally
-4. Write back
+Original structure:
+    def _run_loop(...):
+        """..."""
+        with self._lock:            # indent=8
+            if not self._running:   # indent=12
+                return
+            conv = ...              # indent=12
+            if conv is None:        # indent=12
+                ...                 # indent=16
+                return
+                                    # blank
+        # BUG #21: ...              # indent=8
+        ...body...
+        try:                        # indent=8
+            ...body...
+        except Exception as e:      # indent=8
+            ...body...
+        # last line: self._dispatch(...)  # indent=12
+
+New structure:
+    def _run_loop(...):
+        """..."""
+        # FIX-CLEAR-ASK-RACE: ...   # indent=8
+        # ...
+        # ...
+        with self._lock:            # indent=8
+            self._active_loops.add  # indent=12
+        try:                        # indent=8
+            with self._lock:        # indent=12 (was 8)
+                if not...           # indent=16 (was 12)
+                    return
+                conv = ...          # indent=16 (was 12)
+                if conv is None:    # indent=16 (was 12)
+                    ...             # indent=20 (was 16)
+                    return
+                                    # blank
+            # BUG #21: ...          # indent=12 (was 8)
+            ...body...              # all +4
+            try:                    # indent=12 (was 8)
+                ...body...
+            except Exception as e:  # indent=12 (was 8)
+                ...body...
+        finally:                    # indent=8
+            with self._lock:        # indent=12
+                self._active_loops  # indent=16
 """
 
 with open('agent/runtime.py', 'r') as f:
@@ -28,55 +68,38 @@ if fn_end is None:
 
 print(f"_run_loop: lines {fn_start+1} to {fn_end}")
 
-# The original function is:
-# line fn_start:   def _run_loop(...
-# line fn_start+1: """..."""
-# line fn_start+2: with self._lock:    (8 spaces)
-# line fn_start+3:     if not...       (12 spaces)
-# line fn_start+4:         return      (16 spaces)
-# line fn_start+5:     conv = ...      (12 spaces)
-# line fn_start+6:     if conv is...   (12 spaces)
-# line fn_start+7:         self._dispatch... (16 spaces)
-# line fn_start+8:         return      (16 spaces)
-# line fn_start+9: (blank)
-# line fn_start+10: # BUG #21: ...     (8 spaces)
-# ...
-# line fn_end-1:    self._dispatch(...)  (12 spaces)
-# line fn_end-1: (blank)
-# line fn_end:     def _dispatch_approval(...
+# Verify the original first 10 lines
+print("=== Original first 8 lines of body ===")
+for i in range(fn_start + 2, min(fn_start + 10, fn_end)):
+    indent = len(lines[i]) - len(lines[i].lstrip())
+    print(f"  line {i+1}: indent={indent:2d} | {lines[i].rstrip()}")
 
-# The body to re-indent: everything from fn_start+2 (the original `with self._lock:`)
-# to fn_end-1 (the last line of the function body, which is the except block's dispatch).
-# We need to:
-# 1. Replace fn_start+2 through fn_start+8 with the new marker + outer try + re-indented with block
-# 2. Re-indent fn_start+9 through fn_end-1 by +4 spaces
-# 3. Add finally block
+# The original `with self._lock:` block is lines fn_start+2 through fn_start+8
+# This is the guard check. These 7 lines need to be replaced with:
+#   3 lines of marker + 1 with + 1 add + 1 try + 7 re-indented lines
 
-# Find the original `with self._lock:` block boundaries
-# The original with block starts at fn_start+2 and ends at fn_start+8 (the last return)
+# The body to re-indent starts at fn_start+9 (blank line after the guard check)
+# through fn_end-1 (last line of except block)
+
+# Find the original `with self._lock:` block end (line fn_start+8 should be `return`)
 # Let me verify
-print(f"fn_start+2: {lines[fn_start+2].rstrip()}")
-print(f"fn_start+8: {lines[fn_start+8].rstrip()}")
+assert lines[fn_start + 2].strip() == 'with self._lock:', \
+    f"Expected 'with self._lock:' at line {fn_start+3}, got {lines[fn_start+2].strip()}"
 
-# The original `with self._lock:` block (lines fn_start+2 through fn_start+8):
-# This is the initial guard check. We need to replace it with the marker + outer try
-# + re-indented guard check.
+# The last line of the with block is the `return` at fn_start+8
+# After that, fn_start+9 is blank, fn_start+10 is `# BUG #21`
 
-# The body to re-indent (lines fn_start+9 through fn_end-1):
-# These are the lines after the initial guard check, at 8-space indent.
-# We need to re-indent them to 12 spaces (inside the outer try).
-
-# Build new function
+# Build new lines
 new_lines = []
 
 # Part 1: Everything before the function
 new_lines.extend(lines[:fn_start])
 
-# Part 2: Function def and docstring
-new_lines.append(lines[fn_start])        # def _run_loop
-new_lines.append(lines[fn_start + 1])    # docstring
+# Part 2: Function def and docstring (unchanged)
+new_lines.append(lines[fn_start])
+new_lines.append(lines[fn_start + 1])
 
-# Part 3: Marker + outer try + re-indented guard check
+# Part 3: FIX-CLEAR-ASK-RACE marker + new with block + outer try
 new_lines.append("        # FIX-CLEAR-ASK-RACE: mark this session as having an active loop so\n")
 new_lines.append("        # clear_conversation() can refuse to wipe it mid-turn. Cleared in the\n")
 new_lines.append("        # finally block at the end of this function.\n")
@@ -84,27 +107,27 @@ new_lines.append("        with self._lock:\n")
 new_lines.append("            self._active_loops.add(session_key)\n")
 new_lines.append("        try:\n")
 
-# The original guard check was at lines fn_start+2 through fn_start+8.
-# It was indented at 8/12/16 spaces. We need it at 12/16/20 spaces (inside outer try).
+# Part 4: Re-indented original guard check (lines fn_start+2 to fn_start+8)
+# These were at indent 8/12/16, now need to be at indent 12/16/20
 for i in range(fn_start + 2, fn_start + 9):
     line = lines[i]
     indent = len(line) - len(line.lstrip())
     new_indent = indent + 4
-    new_lines.append(' ' * new_indent + line.lstrip())
+    new_lines.append(' ' * new_indent + line.lstrip() + ('\n' if not line.endswith('\n') else ''))
 
-# Part 4: Body after the guard check, re-indented by +4 spaces
-# Lines fn_start+9 through fn_end-1
+# Part 5: Re-indented body from fn_start+9 to fn_end-1
+# fn_start+9 is the blank line (or the # BUG #21 line)
 for i in range(fn_start + 9, fn_end - 1):
     line = lines[i]
     if line.strip():
         indent = len(line) - len(line.lstrip())
         new_indent = indent + 4
-        new_lines.append(' ' * new_indent + line.lstrip())
+        new_lines.append(' ' * new_indent + line.lstrip() + ('\n' if not line.endswith('\n') else ''))
     else:
-        # Empty line — keep as-is (blank line separator)
-        new_lines.append(line)
+        # Blank line — keep as-is
+        new_lines.append(line if line.endswith('\n') else line + '\n')
 
-# Part 5: Finally block
+# Part 6: finally block
 new_lines.append("        finally:\n")
 new_lines.append("            # FIX-CLEAR-ASK-RACE: always release the active-loop marker, even\n")
 new_lines.append("            # on exception or early return, so a crashed loop doesn't block\n")
@@ -112,10 +135,10 @@ new_lines.append("            # /clear for this session permanently.\n")
 new_lines.append("            with self._lock:\n")
 new_lines.append("                self._active_loops.discard(session_key)\n")
 
-# Part 6: Blank line separator
-new_lines.append(lines[fn_end - 1])  # the blank line before next def
+# Part 7: Blank line separator between functions
+new_lines.append(lines[fn_end - 1] if lines[fn_end - 1].endswith('\n') else lines[fn_end - 1] + '\n')
 
-# Part 7: Everything after the function
+# Part 8: Everything after the function
 new_lines.extend(lines[fn_end:])
 
 # Write back
@@ -131,6 +154,5 @@ try:
     print("✅ ast.parse OK")
 except SyntaxError as e:
     print(f"❌ SyntaxError: {e}")
-    # Show the problematic area
     import traceback
     traceback.print_exc()
