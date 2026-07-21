@@ -170,7 +170,6 @@ def test_runtime_reexport_sse_event():
 
 
 def test_runtime_reexport_stream_with_ssl_retry():
-    """from agent.runtime import _stream_with_ssl_retry works."""
-    from agent.runtime import _stream_with_ssl_retry
-    from agent.llm.streaming import stream_with_ssl_retry
-    assert _stream_with_ssl_retry is stream_with_ssl_retry
+    # Re-export test removed in Phase 8 — _stream_with_ssl_retry no longer
+    # exists in agent.runtime. The canonical function is agent.llm.streaming.stream_with_ssl_retry.
+    pass
