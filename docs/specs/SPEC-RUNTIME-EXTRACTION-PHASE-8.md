@@ -94,7 +94,7 @@ from agent.llm.convert import (
 from agent.llm.convert import convert_messages_for_anthropic, convert_tools_for_anthropic
 ```
 
-**Update call sites:** grep for `_convert_messages_for_anthropic` and `_convert_tools_for_anthropic` in runtime.py, replace with the non-underscored names.
+**Update call sites:** grep for `_convert_messages_for_anthropic` and `_convert_tools_for_anthropic` in runtime.py (2 call sites), replace with the non-underscored names.
 
 #### 3.1b: Streaming block (lines 245-262)
 
@@ -119,7 +119,7 @@ from agent.llm.streaming import (
 )
 ```
 
-**Update call sites:** grep for each `_X` symbol in runtime.py, replace with `X`.
+**Update call sites:** grep for each `_X` symbol in runtime.py (10+ call sites), replace with `X`.
 
 #### 3.1c: Extractors block (lines 264-270)
 
@@ -137,69 +137,44 @@ from agent.llm.extractors import (
 from agent.llm.extractors import extract_tool_calls, extract_text_content, extract_usage
 ```
 
-**Update call sites:** grep for `_extract_tool_calls`, `_extract_text_content`, `_extract_usage`, replace with non-underscored names.
+**Update call sites:** grep for `_extract_tool_calls`, `_extract_text_content`, `_extract_usage` in runtime.py (16 call sites), replace with non-underscored names.
 
-#### 3.1d: Provider block + bound-method shims (lines 184-196)
+#### 3.1d: Update `__all__`
 
-This is the most complex. The current block has:
-```python
-from agent.llm.openai_provider import OpenAIProvider
-from agent.llm.minimax_provider import MiniMaxProvider
-from agent.llm.anthropic_provider import AnthropicProvider
-from agent.llm.registry import get_provider as _get_provider
+Remove these underscored aliases from `__all__`:
+- `_extract_tool_calls`
+- `_extract_text_content`
+- `_extract_usage`
+- `_is_retryable_ssl_error`
+- `_stream_with_ssl_retry`
+- `_friendly_error_message`
 
-# Bound methods for test-patch compatibility
-_call_openai = OpenAIProvider("openai").call
-_call_minimax = MiniMaxProvider().call
-_call_anthropic = AnthropicProvider().call
-```
-
-**Remove** the bound-method shims entirely. Keep the provider class imports if they're used directly in runtime.py (check with grep). Replace `_get_provider` with direct `get_provider` import.
-
-**Update call sites:** grep for `_call_openai`, `_call_minimax`, `_call_anthropic`, `_get_provider` in runtime.py. If any remain (beyond the re-export block), they must be updated to use the provider registry pattern (`get_provider(key).call(...)` / `get_provider(key).stream(...)`).
-
-**Check `_PROVIDER_CALLERS` and `_PROVIDER_STREAMERS`:** these may still exist as dispatch dicts. Grep for them. If they exist only for test-patch compatibility and are not used in the actual dispatch logic (which now uses `get_provider()`), remove them and update tests.
-
-#### 3.1e: Update `__all__`
-
-Remove all underscored aliases from `__all__`. The public API of runtime.py is `AgentRuntime` (and possibly `SSEEvent`, `StreamingCallKwargs` if they're used externally). Everything else lives in `agent/llm/*`.
+**Do NOT remove** from `__all__`: `_PROVIDER_CALLERS`, `_PROVIDER_STREAMERS` (still active dispatch infrastructure, deferred).
 
 ### 3.2 `tests/test_agent_runtime.py`
 
-**Update patch targets.** Find all `patch("agent.runtime._X")` calls and update to `patch("agent.llm.X")` or `patch("agent.llm.module.X")`.
-
-Grep first:
+**Update patch targets** for the 3 in-scope blocks. Grep first:
 ```bash
-grep -n 'patch("agent\.runtime\._\|patch("agent\.runtime\._PROVIDER' tests/test_agent_runtime.py
+grep -n 'patch("agent\.runtime\._extract_\|patch("agent\.runtime\._sse_\|patch("agent\.runtime\._parse_sse\|patch("agent\.runtime\._stream_with_ssl\|patch("agent\.runtime\._urlopen_with_ssl\|patch("agent\.runtime\._convert_messages\|patch("agent\.runtime\._convert_tools\|patch("agent\.runtime\._first_choice' tests/test_agent_runtime.py
 ```
 
-Common patterns to update:
-- `patch("agent.runtime._call_openai")` → `patch("agent.llm.openai_provider.OpenAIProvider.call")` or equivalent
-- `patch("agent.runtime._extract_tool_calls")` → `patch("agent.llm.extractors.extract_tool_calls")`
-- `patch("agent.runtime._PROVIDER_CALLERS")` → may need restructuring
+Update each patch target from `agent.runtime._X` to the new location (`agent.llm.extractors.X`, `agent.llm.streaming.X`, `agent.llm.convert.X`).
 
-**This is the riskiest part of Phase 8.** Test patches that target specific import locations must be updated carefully. If a test patches `agent.runtime._call_openai` and the call site now does `from agent.llm.openai_provider import OpenAIProvider`, the patch target must change to where the name is looked up.
-
-### 3.3 `scripts/audit_*.py`
-
-Check if scripts reference `runtime._PROVIDER_CALLERS` or `runtime._PROVIDER_STREAMERS`:
-```bash
-grep -rn "_PROVIDER_CALLERS\|_PROVIDER_STREAMERS\|_call_openai\|_call_minimax" scripts/
-```
-
-Update any references to import from `agent.llm.*` directly.
+**Do NOT touch** patches targeting `_PROVIDER_CALLERS`, `_PROVIDER_STREAMERS`, `_call_openai` — those are deferred.
 
 ### Files NOT changed
 
-- `agent/llm/*` — all modules are already correct
+- `agent/llm/*` — all modules already correct
 - `agent/audit.py` — handled in Phase 5
 - `agent/persistence.py` — handled in Phase 6
+- `scripts/audit_*.py` — these reference `_PROVIDER_CALLERS`/`_PROVIDER_STREAMERS` which are deferred. No changes needed in this phase.
+- `utils/providers_store.py` — `_VALID_CALLERS` references `_PROVIDER_CALLERS` which is deferred. No changes.
 
 ---
 
 ## 4. Data Flow
 
-No data flow change. The same functions are called at the same sites. The only change is import paths (direct from `agent.llm.*` instead of via re-export alias) and test patch targets.
+No data flow change. The same functions are called at the same sites. The only change is import paths (direct from `agent.llm.*` instead of via re-export alias).
 
 ---
 
@@ -207,24 +182,21 @@ No data flow change. The same functions are called at the same sites. The only c
 
 | File | Change type | Lines | Risk |
 |------|-------------|-------|------|
-| `agent/runtime.py` | Edit (remove ~60 lines of re-exports, update ~30 call sites, update __all__) | -50 net | Medium-High |
-| `tests/test_agent_runtime.py` | Edit (update patch targets) | ±20 | Medium-High |
-| `scripts/audit_*.py` | Edit (update imports, if needed) | ±5 | Low |
+| `agent/runtime.py` | Edit (remove ~25 lines of re-exports, update ~28 call sites, update __all__) | -15 net | Medium |
+| `tests/test_agent_runtime.py` | Edit (update patch targets for 3 blocks) | ±10 | Medium |
 
 ---
 
 ## 6. Acceptance Criteria
 
 - [ ] `grep -c "Re-exported under legacy" agent/runtime.py` returns **0**
-- [ ] `grep -c "_call_openai\|_call_minimax\|_call_anthropic" agent/runtime.py` returns **0** (unless used in a comment)
 - [ ] `grep -c "_convert_messages_for_anthropic\|_convert_tools_for_anthropic" agent/runtime.py` returns **0**
 - [ ] `grep -c "_extract_tool_calls\|_extract_text_content\|_extract_usage" agent/runtime.py` returns **0**
 - [ ] `grep -c "_sse_lines\|_parse_sse_line\|_urlopen_with_ssl_retry\|_stream_with_ssl_retry" agent/runtime.py` returns **0**
-- [ ] `__all__` in runtime.py contains only `AgentRuntime` and legitimate runtime-owned symbols (no LLM aliases)
+- [ ] `_PROVIDER_CALLERS` and `_PROVIDER_STREAMERS` still present (DEFERRED — do NOT remove)
 - [ ] `python3 -c "from agent.runtime import AgentRuntime; print('OK')"` succeeds
-- [ ] `python3 -m pytest tests/test_agent_runtime.py -q` passes (all patch targets updated)
-- [ ] `python3 -m pytest tests/test_llm_providers.py tests/test_llm_streaming.py tests/test_llm_cost.py tests/test_llm_convert.py tests/test_llm_extractors.py -q` passes
-- [ ] runtime.py line count is reduced (target: ~2,250 or lower after Phases 4+5+6+8 combined)
+- [ ] `python3 -m pytest tests/test_agent_runtime.py -q` passes
+- [ ] `python3 -m pytest tests/test_llm_providers.py tests/test_llm_streaming.py tests/test_llm_convert.py tests/test_llm_extractors.py -q` passes
 
 ---
 
@@ -232,28 +204,29 @@ No data flow change. The same functions are called at the same sites. The only c
 
 | Case | Expected behavior |
 |------|-------------------|
-| Test patches `agent.runtime._call_openai` | Updated to patch the provider class method directly |
-| Script imports `runtime._PROVIDER_CALLERS` | Updated to import from `agent.llm.registry` or removed |
-| `_is_empty_content` referenced in runtime.py | Stays in runtime.py (per Phase B3 note: "stays here, used at non-extractor sites") |
-| Provider class used directly in runtime.py | Import kept (e.g., `from agent.llm.registry import get_provider`) |
+| Test patches `agent.runtime._extract_tool_calls` | Updated to patch `agent.llm.extractors.extract_tool_calls` |
+| Test patches `agent.runtime._PROVIDER_CALLERS` | NOT touched (deferred) |
+| `_is_empty_content` referenced in runtime.py | Stays in runtime.py (not a re-export) |
+| `_format_chunks_for_llm` referenced in runtime.py | Stays in runtime.py (KB synthesis helper) |
 
 ---
 
 ## 8. ARCHITECTURE.md Updates Required
 
-- Update §3.21m: runtime.py line count after all phases; note all re-exports removed
-- Update agent/ module listing: `agent/audit.py` and `agent/persistence.py` added
-- Note: runtime.py now imports from `agent/llm/*` directly, no re-export layer
+- Update §3.21m: runtime.py line count after all phases; note pure re-export aliases removed
+- Note: `_PROVIDER_CALLERS`/`_PROVIDER_STREAMERS` dispatch refactor DEFERRED to future phase
 
 ---
 
-## 9. Implementation Order (across Phases 4-6-5-8)
+## 9. Implementation Order (across Phases 4-5-6-8)
 
 The recommended order for the supervisor to phase this work:
 
 1. **Phase 4 (Cost cleanup)** — smallest, validates the pattern. 1 file, ~7 lines removed.
 2. **Phase 5 (AuditLog)** — self-contained, new file + tests. ~79 lines moved.
 3. **Phase 6 (Persistence)** — largest, 6 functions moved. ~280 lines moved.
-4. **Phase 8 (Final reduction)** — remove all remaining re-exports. ~60 lines removed + test updates.
+4. **Phase 8 (Re-export cleanup)** — remove 3 pure alias blocks. ~15 lines removed + test updates.
 
-After all 4 phases: runtime.py should drop from 2,382 → ~1,950 lines (estimated). The proposal's target of ~1,090 requires additional extractions (tool output policy §3.6, lifecycle hooks §3.7) that are out of scope for this round.
+After all 4 phases: runtime.py drops from 2,382 → ~2,000 lines (estimated). The proposal's target of ~1,090 requires additional extractions (dispatch refactor, tool output policy §3.6, lifecycle hooks §3.7) that are out of scope for this round.
+
+**Phase 7 note:** The proposal's Phase 7 (streaming contingency) was already covered in Phase B6 (per context.md). There is no separate Phase 7 spec — the numbering gap is intentional.
