@@ -204,13 +204,8 @@ _PROVIDER_STREAMERS: dict[str, Any] = {
 # ── Tool call normalization ─────────────────────────────────────────────────────
 
 # ── Response extractors (extracted to agent/llm/extractors.py, Phase B3) ────
-# Re-exported under legacy underscore names for backward compatibility.
 # _is_empty_content stays here (used at non-extractor sites).
-from agent.llm.extractors import (
-    extract_tool_calls as _extract_tool_calls,
-    extract_text_content as _extract_text_content,
-    extract_usage as _extract_usage,
-)
+from agent.llm.extractors import extract_tool_calls, extract_text_content, extract_usage
 
 
 def _is_empty_content(text) -> bool:
