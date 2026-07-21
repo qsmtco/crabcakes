@@ -148,7 +148,7 @@ def get_valid_callers() -> frozenset[str]:
 
 # Response format families — derived from caller configuration.
 # Any provider using _call_openai or _call_minimax returns OpenAI-format responses.
-# Used by _extract_text_content, _extract_tool_calls, _extract_usage to avoid
+# Used by extract_text_content, extract_tool_calls, extract_usage to avoid
 # hardcoding provider name lists.
 _RESPONSE_FORMAT: dict[str, str] = {}
 for _pk, _caller in _PROVIDER_CALLERS.items():
