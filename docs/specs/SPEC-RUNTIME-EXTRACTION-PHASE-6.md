@@ -272,14 +272,23 @@ class TestMigrateConversationFiles:
         assert migrate_conversation_files() == 0
 ```
 
-### 3.4 Existing test files
+### 3.4 Existing test files (REQUIRED — 2 files need updates)
 
-Check and update if needed:
+Grep confirmed TWO test files reference the moved functions:
+
+**File 1: `tests/test_low2_file_sandbox.py`** — 24 references to `_resolve_session_workspace`:
 ```bash
-grep -rn "_save_conversation_to_disk\|_load_conversation_from_disk\|_conversations_dir\|_resolve_session_workspace\|_migrate_conversation_files" tests/
+grep -c "_resolve_session_workspace" tests/test_low2_file_sandbox.py  # 24
 ```
+Update the import to `from agent.persistence import resolve_session_workspace` (non-underscored) and update all 24 call sites.
 
-Any test importing these from `agent.runtime` must be updated to import from `agent.persistence` with the new names.
+**File 2: `tests/test_conversation.py`** — references to `_save_conversation_to_disk`, `_load_conversation_from_disk`, `_resolve_api_key_for_conversation`, `_conversations_dir`:
+```bash
+grep -n "_save_conversation_to_disk\|_load_conversation_from_disk\|_conversations_dir\|_resolve_api_key_for_conversation" tests/test_conversation.py
+```
+Update all imports to use `agent.persistence` with non-underscored names.
+
+**IMPORTANT:** The grep regex in the verification section must include `_resolve_api_key_for_conversation` (5 references in test_conversation.py).
 
 ### Files NOT changed
 
