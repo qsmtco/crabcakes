@@ -249,14 +249,14 @@ class TestContextReadCap:
         assert "[... context memory truncated ...]" not in d["PROJECT_MEMORY"]
 
     def test_read_cap_8000_truncates_above_limit(self, tmp_path):
-        """Truncation boundary is exactly 8000 chars (BUG #9 from re-audit)."""
+        """Truncation boundary is exactly CONTEXT_READ_CAP chars (BUG #9 from re-audit)."""
         init_project_config(str(tmp_path), "p")
         # Exactly at cap — no truncation
-        save_project_context(str(tmp_path), "x" * 8000)
+        save_project_context(str(tmp_path), "x" * CONTEXT_READ_CAP)
         d = build_awareness_dict(str(tmp_path))
         assert "[... context memory truncated ...]" not in d["PROJECT_MEMORY"]
         # One over cap — truncation message present
-        save_project_context(str(tmp_path), "x" * 8001)
+        save_project_context(str(tmp_path), "x" * (CONTEXT_READ_CAP + 1))
         d = build_awareness_dict(str(tmp_path))
         assert "[... context memory truncated ...]" in d["PROJECT_MEMORY"]
 
