@@ -1463,18 +1463,16 @@ class TestStreaming:
         tool_starts = []
         rt._on_tool_call_start = lambda sk, name, args: tool_starts.append((name, args))
 
-        from agent import runtime as rt_module
-        orig = rt_module._PROVIDER_STREAMERS["openai"]
-        rt_module._PROVIDER_STREAMERS["openai"] = lambda *a, **kw: _mock_stream_with_tool_call()
-        try:
+        from unittest.mock import MagicMock
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = _mock_stream_with_tool_call()
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
             with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 # Mock the tool execution to return immediately
                 with unittest.mock.patch("agent.tools.execute_tool") as mock_exec:
                     from agent.tools import ToolResult
                     mock_exec.return_value = ToolResult(success=True, output="file1.txt\nfile2.txt", error="")
                     rt._run_loop(sk, "list files")
-        finally:
-            rt_module._PROVIDER_STREAMERS["openai"] = orig
 
         # on_tool_call_start fires once when the full tool call is accumulated.
         # NOTE: Phase 1.3b integration — _call_llm_streaming fires on_tool_call_start
