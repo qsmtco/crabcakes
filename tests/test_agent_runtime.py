@@ -1546,7 +1546,7 @@ class TestStreaming:
 
         Regression: the old test (pre-2026-06-23) patched
         _PROVIDER_STREAMERS["openai"] with a pre-built SSEEvent generator —
-        that bypassed _sse_lines → _parse_sse_line → _stream_openai_events
+        that bypassed _sse_lines → parse_sse_line → _stream_openai_events
         entirely, so the streamer layer was never tested.
 
         This test feeds raw SSE bytes through the full pipeline (mocking only
@@ -2029,22 +2029,22 @@ class TestSSEParsing:
 
     def test_parse_sse_line_data(self):
         from agent.llm.streaming import parse_sse_line, SSEEvent
-        ev = _parse_sse_line(b"data: {\"choices\": [{\"delta\": {\"content\": \"hi\"}}]}")
+        ev = parse_sse_line(b"data: {\"choices\": [{\"delta\": {\"content\": \"hi\"}}]}")
         assert ev is not None
         assert ev.type == "raw"
         assert ev.data["choices"][0]["delta"]["content"] == "hi"
 
     def test_parse_sse_line_done(self):
         from agent.llm.streaming import parse_sse_line, SSEEvent
-        ev = _parse_sse_line(b"data: [DONE]")
+        ev = parse_sse_line(b"data: [DONE]")
         assert ev is not None
         assert ev.type == "done"
 
     def test_parse_sse_line_blank_ignored(self):
         from agent.llm.streaming import parse_sse_line
-        assert _parse_sse_line(b"") is None
-        assert _parse_sse_line(b": comment") is None
-        assert _parse_sse_line(b"  ") is None
+        assert parse_sse_line(b"") is None
+        assert parse_sse_line(b": comment") is None
+        assert parse_sse_line(b"  ") is None
 
     def test_sse_event_namedtuple(self):
         from agent.runtime import SSEEvent
@@ -3585,30 +3585,30 @@ class TestPreCallBudgetGuard:
 # ═══════════════════════════════════════════════════════════════════
 
 class TestSSEFrameShapeHardening:
-    """Phase 1 hardening: _first_choice helper + _parse_sse_delta safety
+    """Phase 1 hardening: first_choice helper + _parse_sse_delta safety
     against empty-choices frames (OpenAI trailing usage, keepalive, etc.)."""
 
     def test_first_choice_normal_frame(self):
         """Normal delta frame: choices[0] is returned."""
         from agent.llm.streaming import first_choice
-        result = _first_choice({"choices": [{"delta": {"content": "hi"}}]})
+        result = first_choice({"choices": [{"delta": {"content": "hi"}}]})
         assert result == {"delta": {"content": "hi"}}
 
     def test_first_choice_empty_choices_with_usage(self):
         """OpenAI trailing usage frame: choices is [], should return {}."""
         from agent.llm.streaming import first_choice
-        result = _first_choice({"choices": [], "usage": {"total_tokens": 42}})
+        result = first_choice({"choices": [], "usage": {"total_tokens": 42}})
         assert result == {}
 
     def test_first_choice_no_choices_key(self):
         """Keepalive frame: no choices key at all, should return {}."""
         from agent.llm.streaming import first_choice
-        assert _first_choice({}) == {}
+        assert first_choice({}) == {}
 
     def test_first_choice_only_usage(self):
         """Usage-only frame: {"usage": {...}}, no choices."""
         from agent.llm.streaming import first_choice
-        assert _first_choice({"usage": {"prompt_tokens": 10}}) == {}
+        assert first_choice({"usage": {"prompt_tokens": 10}}) == {}
 
     def test_parse_sse_delta_empty_choices_no_crash(self):
         """_parse_sse_delta must not crash on empty choices (the original bug)."""
@@ -3657,14 +3657,14 @@ class TestSSEFrameShapeHardening:
         )
 
     def test_first_choice_used_at_all_three_sites(self):
-        """_first_choice should appear 4 times: 1 def + 3 call sites."""
+        """first_choice should appear 4 times: 1 def + 3 call sites."""
         import subprocess
         result = subprocess.run(
-            ["grep", "-c", "_first_choice", "agent/runtime.py"],
+            ["grep", "-c", "first_choice", "agent/runtime.py"],
             capture_output=True, text=True, cwd="/home/q/projects/crabcakes",
         )
         count = int(result.stdout.strip())
-        assert count >= 4, f"Expected >= 4 _first_choice references, got {count}"
+        assert count >= 4, f"Expected >= 4 first_choice references, got {count}"
 
 
 class TestStreamOpenaiEventsFinishReason:
