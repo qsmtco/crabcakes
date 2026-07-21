@@ -1,124 +1,175 @@
 #!/usr/bin/env python3
-"""Re-indent the body of _run_loop inside a new outer try/finally.
+"""Transform _run_loop in agent/runtime.py to add outer try/finally.
 
-Reads agent/runtime.py, finds _run_loop, re-indents the body
-(except the function def line, docstring, and the already-correct
-top marker block), adds the outer try/finally, writes back.
+1. Find _run_loop function boundaries
+2. Replace the top: add marker + outer try, re-indent body
+3. Replace the bottom: add finally
+4. Write back
 """
 
 with open('agent/runtime.py', 'r') as f:
-    lines = f.readlines()
+    content = f.read()
+    lines = content.splitlines(keepends=True)
 
-# Find _run_loop boundaries
+# Find _run_loop
 fn_start = None
 fn_end = None
 for i, line in enumerate(lines):
-    if line.strip().startswith('def _run_loop('):
+    stripped = line.strip()
+    if fn_start is None and stripped.startswith('def _run_loop('):
         fn_start = i
-    if fn_start is not None and i > fn_start:
-        # Next function definition at same indentation level (8 spaces for class method)
-        if line.strip().startswith('def ') and line[:8] == '        ' and i > fn_start + 1:
-            fn_end = i
-            break
-        # Also check for top-level def (not a method)
-        if line.strip().startswith('def ') and not line.startswith(' ' * 8) and i > fn_start + 1:
+        continue
+    if fn_start is not None and i > fn_start + 1:
+        # Next method definition at class level (8 spaces)
+        if stripped.startswith('def ') and line.startswith('    '):
             fn_end = i
             break
 
 if fn_end is None:
-    fn_end = len(lines)  # Last function in file
+    fn_end = len(lines)
 
-print(f"Function _run_loop: lines {fn_start+1} to {fn_end}")
+print(f"_run_loop: lines {fn_start+1} to {fn_end}")
 
-# The function currently looks like:
-# line fn_start:     def _run_loop(...):
-# line fn_start+1:   """..."""
-# line fn_start+2..fn_start+5:  # FIX-CLEAR-ASK-RACE marker + with self._lock + try:
-# lines fn_start+6..fn_start+12:  with self._lock (check) — already inside outer try
-# line fn_start+13:  # BUG #21 — NOT re-indented, needs 4 spaces
+# The function currently starts like:
+# line fn_start:     def _run_loop(self, session_key: str, text: str) -> None:
+# line fn_start+1:   """Background thread: ..."""
+# line fn_start+2:   with self._lock:
+# ...
+# line fn_start+6:   return
+# line fn_start+7:   # BUG #21: Fire a turn-start signal...
+# ...
+# line fn_end-1:     self._dispatch(self._on_error, session_key, e)
+# line fn_end:       (next def or end of file)
 
-# Identify the "body start" — first line after the outer try's `with self._lock:` block
-# that needs re-indentation. This is the # BUG #21 comment line.
-body_start = None
-for i in range(fn_start + 1, fn_end):
-    stripped = lines[i]
-    # After the new outer try's `with self._lock:` block, the next line
-    # that's NOT at the re-indented level is the body to re-indent.
-    # The re-indented block is: 16 spaces (8 class + 4 try + 4 with)
-    # The body to re-indent is at: 8 spaces (class level)
-    # After re-indent it should be: 12 spaces (8 class + 4 try)
-    
-    # The first line inside the outer try AFTER the `with self._lock:` block
-    # (which is at 16 spaces) — look for lines at 8 spaces that are not docstring/marker
-    if i > fn_start + 12:  # After the marker + try + with blocks
-        if stripped.startswith('        ') and not stripped.startswith('            '):
-            if stripped.strip() and not stripped.strip().startswith('#'):
-                body_start = i
-                break
-        elif stripped.startswith('        #') and i > fn_start + 12:
-            body_start = i
-            break
+# The function body is everything from fn_start+1 (docstring) to fn_end-1.
+# The current structure:
+#   def _run_loop(...):
+#       """..."""
+#       with self._lock:           # 8-space indent
+#           if not self._running:  # 12-space
+#               return
+#           conv = ...
+#           if conv is None:
+#               ...
+#               return
+#       
+#       # BUG #21: ...              # 8-space
+#       if self._on_text_delta:     # 8-space
+#           ...
+#       
+#       try:                         # 8-space
+#           ...
+#       except Exception as e:      # 8-space
+#           ...
+#       (no finally)
 
-# More reliable: find the first line after the outer with block that is at 8-space indent
-# The outer try structure is:
-# line fn_start+2:         with self._lock:  (12 spaces)
-# line fn_start+3:             self._active_loops...  (16 spaces)
-# line fn_start+4:     try:  (12 spaces)
-# line fn_start+5:         with self._lock:  (16 spaces)
-# line fn_start+6:             if not self._running:  (20 spaces)
-# ... 
-# line fn_start+12:        return  (16 spaces)
-# Next line is at 8 spaces: needs re-indentation
+# New structure:
+#   def _run_loop(...):
+#       """..."""
+#       with self._lock:             # 8-space
+#           self._active_loops.add(session_key)  # 12-space
+#       try:                         # 8-space
+#           with self._lock:         # 12-space
+#               if not self._running:  # 16-space
+#                   return
+#               conv = ...
+#               if conv is None:
+#                   ...
+#                   return
+#           
+#           # BUG #21: ...            # 12-space
+#           if self._on_text_delta:   # 12-space
+#               ...
+#           
+#           try:                     # 12-space
+#               ...
+#           except Exception as e:  # 12-space
+#               ...
+#       finally:                     # 8-space
+#           with self._lock:         # 12-space
+#               self._active_loops.discard(session_key)  # 16-space
 
-# Actually let me just find the line after the return in the with block
-# The return is at 16 spaces (20 would be inside the if)
-# After it, we have:
-# line:             # BUG #21: Fire a turn-start... (8 spaces)
-# line:         if self._on_text_delta:  (8 spaces)
+# The tricky part: the original body is at 8-space indent (class method level).
+# After the new structure, the body (except the first `with self._lock:` block)
+# must be at 12-space indent (inside the outer try).
 
-# Let me just find the first line at 8 spaces after the function def
-# that is NOT the docstring or the marker block
-body_start = None
-for i in range(fn_start + 1, fn_end):
-    stripped = lines[i]
-    # Skip docstring
-    if i == fn_start + 1 and stripped.strip().startswith('"""'):
-        continue
-    if i == fn_start + 2 and stripped.strip().endswith('"""'):
-        continue
-    # Skip the FIX-CLEAR-ASK-RACE marker block (lines with 8 spaces)
-    # These are:
-    #         # FIX-CLEAR-ASK-RACE: ... (8 spaces)
-    #         with self._lock: (8 spaces)
-    #             self._active_loops... (12 spaces)
-    #     try: (4 spaces)
-    #         with self._lock: (8 spaces)
-    #             if not self._running... (12 spaces)
-    #                 return (16 spaces)
-    #             conv = self._conversations... (12 spaces)
-    #             if conv is None: (12 spaces)
-    #                 self._dispatch... (16 spaces)
-    #                 return (16 spaces)
-    
-    # The body to re-indent starts at the first line after this block
-    # that is at 8-space indent and is NOT part of the marker setup.
-    # Let me detect the end of the marker+try+with block by finding
-    # the last line with 12+ spaces that's part of the setup.
-    
-    if body_start is None and i > fn_start + 3:
-        # At this point we've passed the docstring
-        # Look for the transition: we're at 8 spaces but the PREVIOUS line ended the with block
-        prev = lines[i-1].rstrip()
-        if stripped.startswith('        ') and not stripped.startswith('            '):
-            if prev.strip() == 'return' and prev.startswith('                '):
-                body_start = i
-                break
+# Let me identify the transition point:
+# The first `with self._lock:` block (lines fn_start+2 to fn_start+6) stays at
+# 8-space indent but gets a new body (self._active_loops.add instead of the old checks).
+# Everything from line fn_start+7 onward needs +4 spaces.
 
-print(f"Body start: line {body_start+1 if body_start else 'not found'}")
-print(f"Lines around body_start: {repr(lines[body_start] if body_start else 'N/A')}")
+# Show the current function
+print("=== Current function (first 15 lines) ===")
+for i in range(fn_start, min(fn_start + 15, fn_end)):
+    print(f"{i:4d}: {lines[i].rstrip()}")
+print("=== Current function (last 10 lines) ===")
+for i in range(max(fn_start, fn_end - 10), fn_end):
+    print(f"{i:4d}: {lines[i].rstrip()}")
 
-# Actually, let me just take a different approach - find the exact lines
-# Let me look at what the file looks like now
-print("\n--- Current state of _run_loop ---")
-for i in range(fn_start, min(fn_start + 20, fn_end)):
-    print(f"{i+1:4d}: {lines[i].rstrip()}")
+# Build new lines
+new_lines = lines[:fn_start]  # Everything before _run_loop
+
+# Line 1: function def
+new_lines.append(lines[fn_start])
+
+# Line 2: docstring (unchanged)
+new_lines.append(lines[fn_start + 1])
+
+# Line 3-5: FIX-CLEAR-ASK-RACE marker + with self._lock + add
+# The old line fn_start+2 was: "        with self._lock:"
+# We keep that pattern but change what's inside
+new_lines.append("        # FIX-CLEAR-ASK-RACE: mark this session as having an active loop so\n")
+new_lines.append("        # clear_conversation() can refuse to wipe it mid-turn. Cleared in the\n")
+new_lines.append("        # finally block at the end of this function.\n")
+new_lines.append("        with self._lock:\n")
+new_lines.append("            self._active_loops.add(session_key)\n")
+new_lines.append("        try:\n")
+
+# Now re-indent the original body (everything from fn_start+2 to fn_end)
+# The original body starts at 8-space indent. We need to add 4 spaces to each line.
+# But we skip the first `with self._lock:` block (lines fn_start+2 to fn_start+6)
+# because we've already replaced it with the marker + new with block.
+
+# Find where the original body starts after the first `with self._lock:` block.
+# The original body is: lines[fn_start+2] to lines[fn_end-1] (inclusive)
+# But we've already replaced lines fn_start+2 through fn_start+6 with the marker.
+# So we need to re-indent lines fn_start+7 through fn_end-1 (the original body after the lock check).
+
+# Actually, let me re-think. The original function body is:
+# fn_start+2:         with self._lock:          (8 spaces)
+# fn_start+3:             if not self._running: (12 spaces)
+# fn_start+4:                 return            (16 spaces)
+# fn_start+5:             conv = ...            (12 spaces)
+# fn_start+6:             if conv is None:      (12 spaces)
+# fn_start+7:                 self._dispatch... (16 spaces)
+# fn_start+8:                 return            (16 spaces)
+# fn_start+9:                                   (blank)
+# fn_start+10:        # BUG #21: ...            (8 spaces)
+# ...
+
+# After our edit:
+# fn_start+2:         # FIX-CLEAR-ASK-RACE: ... (8)
+# fn_start+3:         # ...                      (8)
+# fn_start+4:         # ...                      (8)
+# fn_start+5:         with self._lock:           (8)
+# fn_start+6:             self._active_loops...  (12)
+# fn_start+7:         try:                       (8)
+# fn_start+8:             with self._lock:       (12)
+# fn_start+9:                 if not...          (16)
+# fn_start+10:                return            (16)
+# fn_start+11:            conv = ...             (12)
+# fn_start+12:            if conv is None:       (12)
+# fn_start+13:                self._dispatch... (16)
+# fn_start+14:                return            (16)
+# fn_start+15:                                   (blank)
+# fn_start+16:        # BUG #21: ...            (8) -- needs +4 to 12
+
+# Wait, the original fn_start+2 through fn_start+8 is the old `with self._lock:` block.
+# fn_start+9 is a blank line, and fn_start+10 is the # BUG #21 comment at 8 spaces.
+# So the body to re-indent starts at fn_start+9 (the blank line) or fn_start+10.
+
+# Let me get the actual line numbers
+print("\n=== Detailed line analysis ===")
+for i in range(fn_start, min(fn_start + 15, fn_end)):
+    indent = len(lines[i]) - len(lines[i].lstrip())
+    print(f"{i:4d}: indent={indent} | {lines[i].rstrip()}")
