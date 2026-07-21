@@ -1394,7 +1394,7 @@ def _mock_stream_with_tool_call():
 
 class TestStreaming:
     """
-    Test SSE streaming by mocking _PROVIDER_STREAMERS.
+    Test SSE streaming by mocking _get_provider (Phase B6+ pattern).
     When on_text_delta is set, _call_llm routes to _call_llm_streaming,
     which iterates the SSE generator and fires callbacks per event.
     """
