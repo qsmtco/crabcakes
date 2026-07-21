@@ -1697,8 +1697,8 @@ class TestStreaming:
             return _Ctx()
 
         # Phase 1: Verify the streamer forwards the id.
-        with unittest.mock.patch.object(
-            rt_module, "_urlopen_with_ssl_retry",
+        with unittest.mock.patch(
+            "agent.llm.anthropic_provider.urlopen_with_ssl_retry",
             lambda req, timeout: _make_fake_urlopen(raw_sse),
         ):
             events = list(_stream_anthropic_events(
