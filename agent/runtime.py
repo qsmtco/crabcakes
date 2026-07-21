@@ -943,8 +943,8 @@ class AgentRuntime:
                     model = conv.model or self._config.default_model
                     loop_provider = model.split("/")[0] if "/" in model else model
                     loop_fmt = _RESPONSE_FORMAT.get(loop_provider, "openai")
-                    text_content = _extract_text_content(response, response_format=loop_fmt)
-                    tool_calls_raw = _extract_tool_calls(response, response_format=loop_fmt)
+                    text_content = extract_text_content(response, response_format=loop_fmt)
+                    tool_calls_raw = extract_tool_calls(response, response_format=loop_fmt)
 
                     # Record usage
                     prompt_tok, comp_tok = _extract_usage(response, response_format=loop_fmt)
