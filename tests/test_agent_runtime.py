@@ -94,36 +94,36 @@ class TestExtractToolCalls:
                 ]
             }}],
         }
-        assert _extract_tool_calls(resp, "openai") == [("c1", "read_file", {"path": "a.py"})]
+        assert extract_tool_calls(resp, "openai") == [("c1", "read_file", {"path": "a.py"})]
 
     def test_openai_empty(self):
-        assert _extract_tool_calls({"choices": [{"message": {"content": "hi"}}]}, "openai") == []
+        assert extract_tool_calls({"choices": [{"message": {"content": "hi"}}]}, "openai") == []
 
     def test_anthropic_single(self):
         resp = {"content": [{"type": "tool_use", "id": "c2", "name": "list_files", "input": {"path": "."}}]}
-        assert _extract_tool_calls(resp, "anthropic") == [("c2", "list_files", {"path": "."})]
+        assert extract_tool_calls(resp, "anthropic") == [("c2", "list_files", {"path": "."})]
 
     def test_anthropic_empty(self):
-        assert _extract_tool_calls({"content": [{"type": "text", "text": "hi"}]}, "anthropic") == []
+        assert extract_tool_calls({"content": [{"type": "text", "text": "hi"}]}, "anthropic") == []
 
 
 class TestExtractText:
     def test_openai(self):
-        assert _extract_text_content({"choices": [{"message": {"content": "The answer is 42."}}]}, "openai") == "The answer is 42."
+        assert extract_text_content({"choices": [{"message": {"content": "The answer is 42."}}]}, "openai") == "The answer is 42."
 
     def test_anthropic(self):
-        assert _extract_text_content({"content": [{"type": "text", "text": "42 is the answer."}]}, "anthropic") == "42 is the answer."
+        assert extract_text_content({"content": [{"type": "text", "text": "42 is the answer."}]}, "anthropic") == "42 is the answer."
 
 
 class TestExtractUsage:
     def test_openai(self):
-        assert _extract_usage({"usage": {"prompt_tokens": 100, "completion_tokens": 50}}, "openai") == (100, 50)
+        assert extract_usage({"usage": {"prompt_tokens": 100, "completion_tokens": 50}}, "openai") == (100, 50)
 
     def test_anthropic(self):
-        assert _extract_usage({"usage": {"input_tokens": 100, "output_tokens": 50}}, "anthropic") == (100, 50)
+        assert extract_usage({"usage": {"input_tokens": 100, "output_tokens": 50}}, "anthropic") == (100, 50)
 
     def test_missing(self):
-        assert _extract_usage({}, "openai") == (0, 0)
+        assert extract_usage({}, "openai") == (0, 0)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1646,10 +1646,10 @@ class TestStreaming:
         assert tool_calls[0]["function"]["arguments"] == '{"path":"/tmp/foo.py"}'
 
         # Phase 3: Round-trip check — feed the response back into
-        # _extract_tool_calls (the path used by _run_loop on the next turn).
-        call_id, tool_name, args = _extract_tool_calls(response, "openai")[0]
+        # extract_tool_calls (the path used by _run_loop on the next turn).
+        call_id, tool_name, args = extract_tool_calls(response, "openai")[0]
         assert call_id == REAL_ID, (
-            f"_extract_tool_calls must surface the real id; got {call_id!r}"
+            f"extract_tool_calls must surface the real id; got {call_id!r}"
         )
         assert tool_name == "read_file"
 
@@ -1750,20 +1750,20 @@ class TestStreaming:
         assert tool_calls[0]["function"]["name"] == "read_file"
         assert tool_calls[0]["function"]["arguments"] == '{"path":"/tmp/bar.py"}'
 
-        # Phase 3: Round-trip check — _extract_tool_calls must surface the
+        # Phase 3: Round-trip check — extract_tool_calls must surface the
         # real id. The response is always in normalized OpenAI format regardless
         # of the actual provider, because _call_llm_streaming normalizes all
         # streaming responses to a uniform format.
-        call_id, tool_name, args = _extract_tool_calls(response, "openai")[0]
+        call_id, tool_name, args = extract_tool_calls(response, "openai")[0]
         assert call_id == ANTHROPIC_ID, (
-            f"_extract_tool_calls must surface Anthropic's id; got {call_id!r}"
+            f"extract_tool_calls must surface Anthropic's id; got {call_id!r}"
         )
         assert tool_name == "read_file"
 
     # ─────────────────────────────────────────────────────────────────────
     # QTR-FIX: regression coverage for the empty/None-id synthetic fallback.
     #
-    # The previous `_extract_tool_calls` used `tc.get("id", f"call_{...}")`,
+    # The previous `extract_tool_calls` used `tc.get("id", f"call_{...}")`,
     # which only substituted the synthetic id when the `id` key was absent.
     # A response with explicit `id: None` or `id: ""` slipped through and
     # surfaced as an empty `tool_call_id`, which some providers reject on the
@@ -1773,8 +1773,8 @@ class TestStreaming:
     # Anthropic path.
     # ─────────────────────────────────────────────────────────────────────
 
-    def test_extract_tool_calls_openai_synthetic_id_when_id_is_null(self):
-        """`_extract_tool_calls` (OpenAI path) must synthesize an id when the
+    def testextract_tool_calls_openai_synthetic_id_when_id_is_null(self):
+        """`extract_tool_calls` (OpenAI path) must synthesize an id when the
         tool_call entry has explicit `id: None`. Regression test for the QTR
         empty-id fix; `tc.get("id", default)` did not substitute when the key
         was present with value None.
@@ -1786,7 +1786,7 @@ class TestStreaming:
                 ]
             }}],
         }
-        calls = _extract_tool_calls(resp, "openai")
+        calls = extract_tool_calls(resp, "openai")
         assert len(calls) == 1
         call_id, tool_name, args = calls[0]
         assert tool_name == "read_file"
@@ -1795,8 +1795,8 @@ class TestStreaming:
         assert call_id, f"call_id must be non-empty when source id was None; got {call_id!r}"
         assert call_id.startswith("call_"), f"expected synthetic id with 'call_' prefix; got {call_id!r}"
 
-    def test_extract_tool_calls_openai_synthetic_id_when_id_is_empty_string(self):
-        """`_extract_tool_calls` (OpenAI path) must synthesize an id when the
+    def testextract_tool_calls_openai_synthetic_id_when_id_is_empty_string(self):
+        """`extract_tool_calls` (OpenAI path) must synthesize an id when the
         tool_call entry has explicit `id: ""`. Empty string is falsy and must
         fall through to the synthetic fallback.
         """
@@ -1807,7 +1807,7 @@ class TestStreaming:
                 ]
             }}],
         }
-        calls = _extract_tool_calls(resp, "openai")
+        calls = extract_tool_calls(resp, "openai")
         assert len(calls) == 1
         call_id, tool_name, args = calls[0]
         assert tool_name == "list_files"
@@ -1815,14 +1815,14 @@ class TestStreaming:
         assert call_id, f"call_id must be non-empty when source id was ''; got {call_id!r}"
         assert call_id.startswith("call_"), f"expected synthetic id with 'call_' prefix; got {call_id!r}"
 
-    def test_extract_tool_calls_anthropic_synthetic_id_when_id_is_null(self):
-        """`_extract_tool_calls` (Anthropic path) must synthesize an id when
+    def testextract_tool_calls_anthropic_synthetic_id_when_id_is_null(self):
+        """`extract_tool_calls` (Anthropic path) must synthesize an id when
         the tool_use block has explicit `id: None`.
         """
         resp = {"content": [
             {"type": "tool_use", "id": None, "name": "read_file", "input": {"path": "b.py"}},
         ]}
-        calls = _extract_tool_calls(resp, "anthropic")
+        calls = extract_tool_calls(resp, "anthropic")
         assert len(calls) == 1
         call_id, tool_name, args = calls[0]
         assert tool_name == "read_file"
@@ -1830,14 +1830,14 @@ class TestStreaming:
         assert call_id, f"call_id must be non-empty when source id was None; got {call_id!r}"
         assert call_id.startswith("call_"), f"expected synthetic id with 'call_' prefix; got {call_id!r}"
 
-    def test_extract_tool_calls_anthropic_synthetic_id_when_id_is_empty_string(self):
-        """`_extract_tool_calls` (Anthropic path) must synthesize an id when
+    def testextract_tool_calls_anthropic_synthetic_id_when_id_is_empty_string(self):
+        """`extract_tool_calls` (Anthropic path) must synthesize an id when
         the tool_use block has explicit `id: ""`.
         """
         resp = {"content": [
             {"type": "tool_use", "id": "", "name": "list_files", "input": {"path": "."}},
         ]}
-        calls = _extract_tool_calls(resp, "anthropic")
+        calls = extract_tool_calls(resp, "anthropic")
         assert len(calls) == 1
         call_id, tool_name, args = calls[0]
         assert tool_name == "list_files"
