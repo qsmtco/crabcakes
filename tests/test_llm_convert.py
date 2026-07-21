@@ -223,10 +223,10 @@ class TestBackwardCompatReexports:
     """Verify that runtime.py re-exports the converters under underscore names."""
 
     def test_runtime_reexport_convert_messages(self):
-        """from agent.runtime import _convert_messages_for_anthropic works."""
-        from agent.runtime import _convert_messages_for_anthropic
-        assert callable(_convert_messages_for_anthropic)
-        result = _convert_messages_for_anthropic([
+        """from agent.llm.convert import convert_messages_for_anthropic works."""
+        from agent.llm.convert import convert_messages_for_anthropic
+        assert callable(convert_messages_for_anthropic)
+        result = convert_messages_for_anthropic([
             {"role": "system", "content": "Hi"}
         ])
         assert result == [{"role": "user", "content": "Hi"}]
