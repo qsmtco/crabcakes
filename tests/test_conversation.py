@@ -662,7 +662,7 @@ class TestMigrateConversationFiles:
         )
 
         # Reset the module-level flag for this test
-        import agent.runtime
+        import agent.persistence
         agent.persistence._CONVERSATION_MIGRATION_DONE = False
 
         # Write an old-format conversation file with api_key
@@ -695,7 +695,7 @@ class TestMigrateConversationFiles:
         """Migration must not re-process already-migrated files."""
         from agent.persistence import migrate_conversation_files
 
-        import agent.runtime
+        import agent.persistence
         agent.persistence._CONVERSATION_MIGRATION_DONE = False
 
         # First migration
@@ -714,7 +714,7 @@ class TestMigrateConversationFiles:
         """Migration must skip non-.json files in the conversations directory."""
         from agent.persistence import migrate_conversation_files
 
-        import agent.runtime
+        import agent.persistence
         agent.persistence._CONVERSATION_MIGRATION_DONE = False
 
         # Write a non-JSON file
