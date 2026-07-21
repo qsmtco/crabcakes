@@ -71,7 +71,6 @@ __all__ = [
     "_extract_tool_calls",
     "_extract_text_content",
     "_extract_usage",
-    "_cost_for_model",
     "_PROVIDER_CALLERS",
     "_PROVIDER_STREAMERS",
     "_is_retryable_ssl_error",
