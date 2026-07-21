@@ -2028,20 +2028,20 @@ class TestSSEParsing:
     """Unit tests for SSE parsing utilities (Phase 1.3b)."""
 
     def test_parse_sse_line_data(self):
-        from agent.runtime import _parse_sse_line, SSEEvent
+        from agent.llm.streaming import parse_sse_line, SSEEvent
         ev = _parse_sse_line(b"data: {\"choices\": [{\"delta\": {\"content\": \"hi\"}}]}")
         assert ev is not None
         assert ev.type == "raw"
         assert ev.data["choices"][0]["delta"]["content"] == "hi"
 
     def test_parse_sse_line_done(self):
-        from agent.runtime import _parse_sse_line, SSEEvent
+        from agent.llm.streaming import parse_sse_line, SSEEvent
         ev = _parse_sse_line(b"data: [DONE]")
         assert ev is not None
         assert ev.type == "done"
 
     def test_parse_sse_line_blank_ignored(self):
-        from agent.runtime import _parse_sse_line
+        from agent.llm.streaming import parse_sse_line
         assert _parse_sse_line(b"") is None
         assert _parse_sse_line(b": comment") is None
         assert _parse_sse_line(b"  ") is None
