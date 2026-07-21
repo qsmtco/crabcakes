@@ -2914,6 +2914,13 @@ def load_custom_identity(project_path: str) -> dict | None
 `PROJECT_MEMORY` truncation pattern. See `TEAM_ROSTER_MAX_CHARS` and
 `CURRENT_STATE_MAX_CHARS` constants. See SPEC-CONTEXT-BLOAT-PHASE-3.md §2.4.
 
+**SPEC-CONTEXT-MD-SYSTEM-FIX — Read cap, CURRENT_TASK, lifecycle.** Three changes:
+1. **Read cap:** `CONTEXT_READ_CAP = 8000` (was hardcoded `3000`). Applied in both `build_awareness_dict()` and `build_awareness_block()`. The old 3000-char cap dropped 69%+ of content; the current-task pointer was typically truncated away.
+2. **`CURRENT_TASK` trusted directive:** `get_current_task(project_path)` extracts the last `## ` heading from `context.md`. Injected into `build_awareness_dict()` as `CURRENT_TASK` (a TRUSTED directive, NOT wrapped in `_untrusted_fence`). The `project-awareness.md` system prompt template renders it in a `## Current Task` section. `PROJECT_MEMORY` remains wrapped in the untrusted fence (HIGH-5 preserved). The `utils/prompt_loader.py` variables dict passes `CURRENT_TASK` through to the template.
+3. **`append_project_context` lifecycle:** Supersedes stale "in progress"/"pending" entries (marks `[SUPERSEDED]`) when a "complete"/"done"/"✅" entry is appended. Word-boundary regex matching prevents suffix overmatch (Phase A1 ≠ Phase A10). FIFO eviction at `MAX_CONTEXT_ENTRIES = 50`. Code-block-aware state machine in `_split_entries()` handles `## ` inside triple-backtick fences. Cache key includes SHA1 content fingerprint (mtime + content hash) so same-second writes invalidate correctly. `build_awareness_dict()` returns a shallow copy (`dict(parts)`) so caller mutation cannot poison the cache.
+
+See `docs/specs/SPEC-CONTEXT-MD-SYSTEM-FIX.md` and post-mortem `docs/post-mortems/2026-07-20-CONTEXT-MD-SYSTEM-FIX-POST-MORTEM.md`.
+
 ### 3.27a `utils/project_trust.py` — Per-Project Trust Gate (HIGH-5)
 
 **Responsibility:** Gates `.crabcakes/` rule/bug file ingestion behind a
