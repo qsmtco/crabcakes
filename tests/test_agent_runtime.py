@@ -2737,6 +2737,8 @@ class TestSystemPromptPlacement:
                 b'data: {"type": "message_stop"}\n\n'
             ])):
                 list(_stream_anthropic_events(
+                    base_url="https://api.anthropic.com",
+                    api_key="test",
                     model="claude-3-5-sonnet-20241022",
                     messages=[
                         {"role": "system", "content": "You are a helpful assistant."},
