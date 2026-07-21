@@ -2765,18 +2765,18 @@ class TestSystemPromptPlacement:
         """_convert_tools_for_anthropic must NOT raise KeyError when a tool
         dict lacks 'parameters'. It should default input_schema to {}.
         """
-        from agent.runtime import _convert_tools_for_anthropic
+        from agent.llm.convert import convert_tools_for_anthropic
 
         # Missing 'parameters' key entirely
-        result = _convert_tools_for_anthropic([{"function": {"name": "f", "description": "d"}}])
+        result = convert_tools_for_anthropic([{"function": {"name": "f", "description": "d"}}])
         assert result == [{"name": "f", "description": "d", "input_schema": {}}], result
 
         # parameters=None
-        result = _convert_tools_for_anthropic([{"function": {"name": "f", "parameters": None}}])
+        result = convert_tools_for_anthropic([{"function": {"name": "f", "parameters": None}}])
         assert result == [{"name": "f", "description": "", "input_schema": {}}], result
 
         # parameters not a dict (string)
-        result = _convert_tools_for_anthropic([{"function": {"name": "f", "parameters": "bad"}}])
+        result = convert_tools_for_anthropic([{"function": {"name": "f", "parameters": "bad"}}])
         assert result == [{"name": "f", "description": "", "input_schema": {}}], result
 
 
