@@ -461,3 +461,58 @@ class TestAppendProjectContextLifecycle:
         result = load_project_context(str(tmp_path))
         assert "[SUPERSEDED]" not in result, \
             f"Phase A1 must not supersede Phase A10 (substring overmatch): {result!r}"
+
+    def test_append_preserves_preamble_not_promoted_to_heading(self, tmp_path):
+        """Preamble text before the first '## ' is NOT promoted to a heading (BUG #1).
+
+        The preamble should appear in the first entry's body, not as a '## ' line.
+        """
+        init_project_config(str(tmp_path), "p")
+        save_project_context(str(tmp_path), "Some preamble text\n\n## First heading\nbody\n")
+        append_project_context(str(tmp_path), "## 2026-07-20 — New entry\nbody")
+        result = load_project_context(str(tmp_path))
+        # The preamble must NOT become a '## ' heading
+        assert not any(line.startswith("## Some preamble") for line in result.split("\n")), \
+            f"Preamble was promoted to heading: {result!r}"
+        # The preamble text should still be present somewhere
+        assert "Some preamble text" in result
+
+    def test_signals_completion_no_false_positives(self, tmp_path):
+        """'abandoned', 'incomplete', 'undone' do NOT trigger supersession (BUG #2)."""
+        init_project_config(str(tmp_path), "p")
+        save_project_context(str(tmp_path), "## 2026-07-19 — Phase B4 in progress\nWorking.")
+        # 'abandoned' contains 'done' as a substring but is NOT a completion
+        append_project_context(str(tmp_path), "## 2026-07-20 — abandoned approach\nNot done.")
+        result = load_project_context(str(tmp_path))
+        assert "[SUPERSEDED]" not in result, \
+            f"'abandoned' should not trigger supersession: {result!r}"
+
+    def test_append_supersedes_with_en_dash_separator(self, tmp_path):
+        """Supersession works with en-dash separator (BUG #3)."""
+        init_project_config(str(tmp_path), "p")
+        save_project_context(str(tmp_path), "## 2026-07-19 — Phase B4 in progress\nWorking.")
+        # Use en-dash (–) instead of em-dash (—)
+        append_project_context(str(tmp_path), "## 2026-07-20 – Phase B4 complete\nDone.")
+        result = load_project_context(str(tmp_path))
+        assert "[SUPERSEDED]" in result, \
+            f"En-dash separator should still allow supersession: {result!r}"
+
+    def test_split_entries_ignores_code_block_headings(self, tmp_path):
+        """'## ' inside a code block is not treated as a heading (BUG #5)."""
+        init_project_config(str(tmp_path), "p")
+        # Content with a code block containing '## '
+        save_project_context(str(tmp_path),
+            "## Real heading\n"
+            "```\n"
+            "## inside code\n"
+            "```\n"
+            "body\n")
+        append_project_context(str(tmp_path), "## 2026-07-20 — New entry\nbody")
+        result = load_project_context(str(tmp_path))
+        # The '## inside code' should NOT have been split as a separate entry
+        assert "## inside code" in result  # content preserved
+        # The entry count should be 2 (Real heading + New entry), not 3
+        from utils.project_awareness import _split_entries
+        entries = _split_entries(result)
+        assert len(entries) == 2, \
+            f"Expected 2 entries (code block not split), got {len(entries)}: {entries!r}"
