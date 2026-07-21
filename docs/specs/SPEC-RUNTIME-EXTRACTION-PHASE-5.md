@@ -53,6 +53,10 @@ DISCOVERY:
 - Read agent/runtime.py line 745: self._audit_log = AuditLog() in AgentRuntime.__init__.
 - Read agent/runtime.py lines 1543, 1563, 1633: three self._audit_log.record(...)
   call sites in _run_loop. Signature: record(tool_name, args, approved, user, result, exit_code).
+- Read agent/runtime.py line 1606: self._audit_log is also passed as audit_log=self._audit_log
+  to ToolContext (the tool middleware context object). This is a 4th reference — not a method
+  call but a parameter pass. After extraction, the imported AuditLog type is the same class,
+  so this continues to work. No change needed at this site.
 - Grep tests: tests/test_agent_runtime.py references AuditLog/AuditEntry? Verify with grep.
   No dedicated test file for audit currently exists.
 - Imports needed in agent/audit.py: hashlib, json, os, threading, time (all stdlib),
