@@ -15,7 +15,8 @@ from unittest import mock
 import pytest
 
 from agent.config import AgentConfig, LLMProviderConfig
-from agent.runtime import AgentRuntime, KB_OUT_OF_SCOPE, _extract_text_content
+from agent.runtime import AgentRuntime, KB_OUT_OF_SCOPE
+from agent.llm.extractors import extract_text_content
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
