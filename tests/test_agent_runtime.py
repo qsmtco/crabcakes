@@ -2575,6 +2575,10 @@ class TestStreamAnthropicEvents:
                 b'data: {"type": "message_stop"}\n\n'
             ])):
                 list(_stream_anthropic_events(
+                    base_url="https://api.anthropic.com",
+                    api_key="test-key",
+                    model="claude-3-5-sonnet-20241022",
+                    messages=raw_messages,
                     tools=None,
                     timeout=30.0,
                 ))
@@ -2630,6 +2634,11 @@ class TestStreamAnthropicEvents:
                 b'data: {"type": "message_stop"}\n\n'
             ])):
                 list(_stream_anthropic_events(
+                    base_url="https://api.anthropic.com",
+                    api_key="test-key",
+                    model="claude-3-5-sonnet-20241022",
+                    messages=[{"role": "user", "content": "hello"}],
+                    tools=raw_tools,
                     timeout=30.0,
                 ))
 
