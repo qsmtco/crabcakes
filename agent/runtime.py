@@ -726,10 +726,6 @@ class AgentRuntime:
         self._cancel_requested: bool = False  # immediate cancel signal for running thread
         self._lock = threading.Lock()
         self._running = False
-        # FIX-CLEAR-ASK-RACE: sessions with an in-flight _run_loop. Used by
-        # is_loop_active() and maintained by _run_loop's try/finally.
-        self._active_loops: set[str] = set()
-
 
         # FIX-CLEAR-ASK-RACE: sessions with an in-flight _run_loop. Used by
         # is_loop_active() and maintained by _run_loop's try/finally.
