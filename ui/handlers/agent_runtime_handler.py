@@ -426,19 +426,6 @@ class AgentRuntimeHandler:
 
         # In-place reset. Keep the Conversation object identity so any
         # in-flight _run_loop thread continues to see the same object.
-        # FIX-CLEAR-ASK-RACE: refuse to wipe a conversation that an in-flight
-        # _run_loop is actively reading. The /clear + /ask pairing rule can
-        # fire /clear while the /ask thread is between add_user_message and
-        # to_api_messages; wiping conv.messages at that instant produces a
-        # system-only payload that MiniMax rejects (status_code=2013). Refuse
-        # instead; the user can retry /clear once the loop finishes.
-        if rt.is_loop_active(session_key):
-            logger.warning(
-                "clear_conversation: refusing reset for %s — tool loop is active; retry after it completes",
-                session_key,
-            )
-            return False
-
         conv = rt.get_conversation(session_key)
         if conv is not None:
             try:
