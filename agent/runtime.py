@@ -162,8 +162,7 @@ class AuditLog:
             return list(self._entries)
 
 
-# ── Cost tables + functions (extracted to agent/llm/cost.py, Phase B1) ──────
-# Re-exported under legacy underscore names for backward compatibility.
+# ── Cost calculation (lives in agent/llm/cost.py, Phase B1; direct import since Phase 4) ──
 from agent.llm.cost import cost_for_model
 
 # ── Anthropic converters (extracted to agent/llm/convert.py, Phase B2) ──────
