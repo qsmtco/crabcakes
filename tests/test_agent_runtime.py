@@ -1593,8 +1593,8 @@ class TestStreaming:
 
         # Phase 1: Feed raw SSE bytes through the real _stream_openai_events
         # and verify the SSEEvent stream carries the id forward.
-        with unittest.mock.patch.object(
-            rt_module, "_urlopen_with_ssl_retry",
+        with unittest.mock.patch(
+            "agent.llm.openai_provider.urlopen_with_ssl_retry",
             lambda req, timeout: _make_fake_urlopen(raw_sse),
         ):
             events = list(_stream_openai_events(
@@ -1619,8 +1619,8 @@ class TestStreaming:
         sk = _uniq()
         rt.create_conversation("Coder", sk, "/tmp")
 
-        with unittest.mock.patch.object(
-            rt_module, "_urlopen_with_ssl_retry",
+        with unittest.mock.patch(
+            "agent.llm.openai_provider.urlopen_with_ssl_retry",
             lambda req, timeout: _make_fake_urlopen(raw_sse),
         ):
             response = rt._call_llm_streaming(
