@@ -727,6 +727,10 @@ class AgentRuntime:
         self._lock = threading.Lock()
         self._running = False
 
+        # FIX-CLEAR-ASK-RACE: sessions with an in-flight _run_loop. Used by
+        # is_loop_active() and maintained by _run_loop's try/finally.
+        self._active_loops: set[str] = set()
+
         # §E: Stuck detection — per-session tool call history for detecting loops
         # session_key → list[dict{"tool", "args_hash", "iteration"}]
         self._tool_history: dict[str, list[dict]] = {}
@@ -1164,390 +1168,376 @@ class AgentRuntime:
 
     def _run_loop(self, session_key: str, text: str) -> None:
         """Background thread: run the full tool loop for one user message."""
+        # FIX-CLEAR-ASK-RACE: mark this session as having an active loop so
+        # clear_conversation() can refuse to wipe it mid-turn. Cleared in the
+        # finally block at the end of this function.
         with self._lock:
-            if not self._running:
-                return
-            conv = self._conversations.get(session_key)
-            if conv is None:
-                self._dispatch(self._on_error, session_key, "No conversation found")
-                return
-
-        # BUG #21: Fire a turn-start signal BEFORE any LLM call or tool processing.
-        # This guarantees the handler clears _ended_sessions and emits the drawer
-        # lifecycle-start separator for EVERY turn — including tool-only turns
-        # (LLM streams zero text_delta events). Reuses _on_text_delta with an
-        # empty string: the handler's _do_text_delta clears the flag on the first
-        # delta of a turn (is_streaming is False), and the empty content is a
-        # harmless no-op for text accumulation.
-        if self._on_text_delta:
-            self._dispatch(self._on_text_delta, session_key, "")
-
+            self._active_loops.add(session_key)
         try:
-            # Step 1: add user message
-            conv.add_user_message(text)
-            logger.debug("[tool-loop] sk=%s starting user_msg_len=%d model=%s",
-                         session_key, len(text), conv.model or self._config.default_model)
-
-            # Step 2: loop until no tool calls or limit hit
-            iteration = 0
-            max_iter = self._config.max_tool_iterations
-
-            # Per-turn cache: KB chunks fetched once and reused for the entire
-            # multi-iteration loop. The user question is the same throughout;
-            # re-running kb_lookup on every iteration is wasted work and tokens.
-            _kb_cache_for_turn: str | None = None
-
-            while iteration < max_iter:
-                # Check immediate cancel signal first
-                if self._cancel_requested:
-                    self._cancel_requested = False
-                    self._dispatch(self._on_error, session_key, "Cancelled")
+            with self._lock:
+                if not self._running:
                     return
-                # Check cancellation before each iteration
-                with self._lock:
-                    if session_key in self._cancelled:
-                        self._cancelled.discard(session_key)
+                conv = self._conversations.get(session_key)
+                if conv is None:
+                    self._dispatch(self._on_error, session_key, "No conversation found")
+                    return
+
+            # BUG #21: Fire a turn-start signal BEFORE any LLM call or tool processing.
+            # This guarantees the handler clears _ended_sessions and emits the drawer
+            # lifecycle-start separator for EVERY turn — including tool-only turns
+            # (LLM streams zero text_delta events). Reuses _on_text_delta with an
+            # empty string: the handler's _do_text_delta clears the flag on the first
+            # delta of a turn (is_streaming is False), and the empty content is a
+            # harmless no-op for text accumulation.
+            if self._on_text_delta:
+                self._dispatch(self._on_text_delta, session_key, "")
+
+            try:
+                # Step 1: add user message
+                conv.add_user_message(text)
+                logger.debug("[tool-loop] sk=%s starting user_msg_len=%d model=%s",
+                             session_key, len(text), conv.model or self._config.default_model)
+
+                # Step 2: loop until no tool calls or limit hit
+                iteration = 0
+                max_iter = self._config.max_tool_iterations
+
+                # Per-turn cache: KB chunks fetched once and reused for the entire
+                # multi-iteration loop. The user question is the same throughout;
+                # re-running kb_lookup on every iteration is wasted work and tokens.
+                _kb_cache_for_turn: str | None = None
+
+                while iteration < max_iter:
+                    # Check immediate cancel signal first
+                    if self._cancel_requested:
+                        self._cancel_requested = False
                         self._dispatch(self._on_error, session_key, "Cancelled")
                         return
-                iteration += 1
-                logger.debug("[tool-loop] sk=%s iteration=%d/%d", session_key, iteration, max_iter)
+                    # Check cancellation before each iteration
+                    with self._lock:
+                        if session_key in self._cancelled:
+                            self._cancelled.discard(session_key)
+                            self._dispatch(self._on_error, session_key, "Cancelled")
+                            return
+                    iteration += 1
+                    logger.debug("[tool-loop] sk=%s iteration=%d/%d", session_key, iteration, max_iter)
 
-                # §0: Pluggable context strategy — compaction before each LLM call.
-                # The strategy lives in agent/context_strategy.py and replaces the
-                # old conv.trim_to_token_limit() call. The delegation shim on
-                # Conversation remains for backward compat with tests.
-                #
-                # _compute_compaction_threshold returns (soft_ceiling, hard_ceiling)
-                # where soft_ceiling = int(hard_ceiling * threshold) and
-                # threshold defaults to 0.80 (configurable per-provider).
-                soft_ceiling, hard_ceiling = self._compute_compaction_threshold(conv)
-                model_max = hard_ceiling  # preserve for breakdown dispatch below
-                self._context_strategy.compact(conv, soft_ceiling)
-                # §2.8: Telemetry — read strategy.last_result, append to history.
-                # Audit-Fix-7: Patch hard_ceiling — strategy doesn't know the real value
-                # (computed by _compute_compaction_threshold at the runtime level).
-                # Audit-Fix-8: Guard append+truncate with _compaction_lock.
-                # Audit-Fix-19: Only mark iteration as having compacted when messages or
-                # tokens were actually freed (filter out no-op compact() calls).
-                # Audit-Fix-26 (Bug #1): capture the result into a LOCAL variable.
-                # Reading self._compaction_this_iteration in the breakdown block
-                # below was a TOCTOU race: another session's thread could overwrite
-                # the flag between compact() and the breakdown dispatch.
-                # Audit-Fix-26 (Bug #3): tag the event with session_key so
-                # _last_trim_removed can filter per-session when called from
-                # the breakdown block (events from other sessions on the same
-                # runtime are no longer mixed into this session's breakdown).
-                ev = self._context_strategy.last_result
-                _compaction_happened = False
-                _ev_for_breakdown = None
-                if ev is not None and (ev.messages_removed > 0 or ev.tokens_freed > 0):
-                    if ev.hard_ceiling is None:
-                        ev.hard_ceiling = hard_ceiling
-                    # Tag the event with the originating session_key. Reuse the
-                    # event object directly (it's a fresh per-call dataclass).
-                    if not ev.session_key:
-                        ev.session_key = session_key
-                    _compaction_happened = True
-                    _ev_for_breakdown = ev
-                    with self._compaction_lock:
-                        self._compaction_events.append(ev)
-                        # Cap history at 100 events (prevents unbounded growth).
-                        if len(self._compaction_events) > 100:
-                            self._compaction_events = self._compaction_events[-100:]
-                # NOTE: self._compaction_this_iteration is intentionally NO LONGER
-                # written here. Bug #1 was caused by treating a per-runtime flag as
-                # if it were per-session/per-iteration; the breakdown block now
-                # uses the local _compaction_happened instead. The attribute is
-                # retained on the instance for backward-compat reads (e.g. tests)
-                # but no longer carries meaningful state. See tests for the
-                # deprecation notice.
+                    # §0: Pluggable context strategy — compaction before each LLM call.
+                    # The strategy lives in agent/context_strategy.py and replaces the
+                    # old conv.trim_to_token_limit() call. The delegation shim on
+                    # Conversation remains for backward compat with tests.
+                    #
+                    # _compute_compaction_threshold returns (soft_ceiling, hard_ceiling)
+                    # where soft_ceiling = int(hard_ceiling * threshold) and
+                    # threshold defaults to 0.80 (configurable per-provider).
+                    soft_ceiling, hard_ceiling = self._compute_compaction_threshold(conv)
+                    model_max = hard_ceiling  # preserve for breakdown dispatch below
+                    self._context_strategy.compact(conv, soft_ceiling)
+                    # §2.8: Telemetry — read strategy.last_result, append to history.
+                    # Audit-Fix-7: Patch hard_ceiling — strategy doesn't know the real value
+                    # (computed by _compute_compaction_threshold at the runtime level).
+                    # Audit-Fix-8: Guard append+truncate with _compaction_lock.
+                    # Audit-Fix-19: Only mark iteration as having compacted when messages or
+                    # tokens were actually freed (filter out no-op compact() calls).
+                    # Audit-Fix-26 (Bug #1): capture the result into a LOCAL variable.
+                    # Reading self._compaction_this_iteration in the breakdown block
+                    # below was a TOCTOU race: another session's thread could overwrite
+                    # the flag between compact() and the breakdown dispatch.
+                    # Audit-Fix-26 (Bug #3): tag the event with session_key so
+                    # _last_trim_removed can filter per-session when called from
+                    # the breakdown block (events from other sessions on the same
+                    # runtime are no longer mixed into this session's breakdown).
+                    ev = self._context_strategy.last_result
+                    _compaction_happened = False
+                    _ev_for_breakdown = None
+                    if ev is not None and (ev.messages_removed > 0 or ev.tokens_freed > 0):
+                        if ev.hard_ceiling is None:
+                            ev.hard_ceiling = hard_ceiling
+                        # Tag the event with the originating session_key. Reuse the
+                        # event object directly (it's a fresh per-call dataclass).
+                        if not ev.session_key:
+                            ev.session_key = session_key
+                        _compaction_happened = True
+                        _ev_for_breakdown = ev
+                        with self._compaction_lock:
+                            self._compaction_events.append(ev)
+                            # Cap history at 100 events (prevents unbounded growth).
+                            if len(self._compaction_events) > 100:
+                                self._compaction_events = self._compaction_events[-100:]
+                    # NOTE: self._compaction_this_iteration is intentionally NO LONGER
+                    # written here. Bug #1 was caused by treating a per-runtime flag as
+                    # if it were per-session/per-iteration; the breakdown block now
+                    # uses the local _compaction_happened instead. The attribute is
+                    # retained on the instance for backward-compat reads (e.g. tests)
+                    # but no longer carries meaningful state. See tests for the
+                    # deprecation notice.
 
-                # Get tools for this agent (filtered by allowed_tools if set)
-                from agent.tools import get_tool_definitions_for_api
-                tools = get_tool_definitions_for_api(conv.allowed_tools)
+                    # Get tools for this agent (filtered by allowed_tools if set)
+                    from agent.tools import get_tool_definitions_for_api
+                    tools = get_tool_definitions_for_api(conv.allowed_tools)
 
-                # Phase B: Merge MCP tools if configured
-                if conv.mcp_servers:
-                    try:
-                        from utils.mcp_client import get_tools_for_api
-                        mcp_tools = get_tools_for_api(
-                            conv.mcp_servers,
-                            session_key if session_key != "_unknown" else None,
-                        )
-                        tools.extend(mcp_tools)
-                    except Exception as e:
-                        logger.warning(f"Failed to load MCP tools for {session_key}: {e}")
-
-                # Build API messages AFTER compact so the wire payload reflects
-                # the trimmed conversation. Bug fix: was captured before compact().
-                from models.conversation import MessageRole
-
-                # Pre-call budget guard: if the conversation still exceeds
-                # the model's context window after compaction, raise a clear
-                # error before serializing or sending. This prevents mid-stream
-                # HTTP 400 rejections (which corrupt conversation state because
-                # the assistant message is already added by the time the error
-                # surfaces). Response reserve accounts for output tokens.
-                RESPONSE_RESERVE_TOKENS = self._RESPONSE_RESERVE_TOKENS
-                post_trim_estimate = conv.get_token_estimate()
-                effective_budget = model_max - RESPONSE_RESERVE_TOKENS
-                if post_trim_estimate >= effective_budget:
-                    usage_pct = int((post_trim_estimate / model_max) * 100) if model_max > 0 else 0
-                    raise RuntimeError(
-                        f"Conversation is at {post_trim_estimate:,}/{model_max:,} tokens "
-                        f"({usage_pct}%) after compaction — exceeds model context window. "
-                        f"Use /clear to reset or /compact to summarize the conversation."
-                    )
-                messages = conv.to_api_messages()
-
-                # KB synthesis (Tier 2): prepare messages with KB context if applicable.
-                # The helper is called once per tool-loop iteration, but kb_lookup itself
-                # only runs once per _run_loop invocation (gated by the per-turn cache
-                # passed in via kb_cache). The cache survives across iterations.
-                messages_for_call, kb_context, _kb_cache_for_turn = self._prepare_kb_synthesis(
-                    conv, text, messages, _kb_cache_for_turn
-                )
-                response = self._call_llm(session_key, messages_for_call, tools)
-
-                # Extract content and tool calls
-                # Determine provider from conversation model
-                model = conv.model or self._config.default_model
-                loop_provider = model.split("/")[0] if "/" in model else model
-                loop_fmt = _RESPONSE_FORMAT.get(loop_provider, "openai")
-                text_content = _extract_text_content(response, response_format=loop_fmt)
-                tool_calls_raw = _extract_tool_calls(response, response_format=loop_fmt)
-
-                # Record usage
-                prompt_tok, comp_tok = _extract_usage(response, response_format=loop_fmt)
-                cost = _cost_for_model(conv.model, prompt_tok, comp_tok)
-                conv.record_usage(prompt_tok + comp_tok, cost)
-                self._dispatch(self._on_token_usage, session_key, prompt_tok + comp_tok, cost)
-
-                # §4.15 — Token budget breakdown for observability.
-                # Reuses the model_max that the trim call above already computed.
-                # Audit-Fix-26 (Bugs #1, #2, #3): use LOCAL variables
-                # (_compaction_happened, _ev_for_breakdown) instead of re-reading
-                # the shared _compaction_this_iteration flag or
-                # self._context_strategy.last_result. The shared state could be
-                # mutated by another session's thread between the gate and the
-                # breakdown dispatch, causing this session to report the wrong
-                # compaction state.
-                if self._on_token_breakdown is not None:
-                    breakdown = conv.get_token_breakdown(model_max)
-                    breakdown["trimmed_this_turn"] = _compaction_happened
-                    breakdown["messages_remaining"] = len(conv.messages)
-                    # Tag the most recent breakdown so _last_trim_removed knows
-                    # which session_key to filter on. _last_trim_removed reads
-                    # this attribute, so this must happen BEFORE the dispatch.
-                    # Bug #3 fix: filter _compaction_events by session_key to
-                    # avoid cross-session contamination.
-                    self._last_breakdown_session = session_key
-                    breakdown["messages_removed_this_turn"] = (
-                        self._last_trim_removed if _compaction_happened else 0
-                    )
-                    # §0.4 + §2.8: Compaction telemetry from the strategy.
-                    # Audit-Fix-20: Only include compaction_event when actual compaction
-                    # occurred. Bug #2 fix: use the LOCAL _ev_for_breakdown instead
-                    # of re-reading self._context_strategy.last_result, which could
-                    # have been overwritten by another session's compact() call.
-                    if _compaction_happened and _ev_for_breakdown is not None:
-                        breakdown["compaction_event"] = {
-                            "trigger": _ev_for_breakdown.trigger,
-                            "layer": _ev_for_breakdown.layer,
-                            "tokens_before": _ev_for_breakdown.tokens_before,
-                            "tokens_after": _ev_for_breakdown.tokens_after,
-                            "tokens_freed": _ev_for_breakdown.tokens_freed,
-                            "soft_ceiling": _ev_for_breakdown.soft_ceiling,
-                            "hard_ceiling": _ev_for_breakdown.hard_ceiling,
-                            "summary_tokens_injected": _ev_for_breakdown.summary_tokens_injected,
-                        }
-                    self._dispatch(self._on_token_breakdown, session_key, breakdown)
-                    # Bug #1 fix: no longer reset self._compaction_this_iteration
-                    # here — the breakdown used the local _compaction_happened,
-                    # so there's no shared flag to reset. The attribute is kept
-                    # for backward-compat (read by tests) but is no longer the
-                    # source of truth for breakdown state.
-
-                logger.debug("[tool-loop] sk=%s llm response: text_len=%d tool_calls=%d tokens=%d cost=%.4f",
-                             session_key, len(text_content or ""), len(tool_calls_raw),
-                             prompt_tok + comp_tok, cost)
-
-                if not tool_calls_raw:
-                    # Text-only response — but check for empty/missing content
-                    # which may indicate a provider error that wasn't raised (e.g. body-level
-                    # error that slipped through, or malformed response with no choices)
-                    # Whitespace-only counts as empty: some strict providers (Cohere,
-                    # Anthropic strict mode) treat blank assistant content as a 400
-                    # the same as a missing/empty payload. _is_empty_content covers
-                    # falsy values (None, ""), empty lists, and strings that strip to
-                    # nothing (e.g. " \n\u200b"). Same predicate used at the
-                    # tool-call path below for consistency.
-                    if _is_empty_content(text_content):
-                        logger.warning("[tool-loop] sk=%s LLM returned no content (with tool_calls=%d, choices=%d) — treating as error",
-                                       session_key, len(tool_calls_raw), len(response.get("choices") or []))
-                        # Defense in depth: instead of persisting a corrupt empty
-                        # assistant message that downstream providers (Cohere,
-                        # strict OpenAI tool-loop, Anthropic strict mode) reject
-                        # with HTTP 400 "must have non-empty content or tool calls",
-                        # record a descriptive placeholder. The on_error dispatch
-                        # below still fires so the user sees the error; this just
-                        # prevents the corrupt entry from being saved and re-sent
-                        # on subsequent calls.
-                        # Trigger covers: missing choices, empty choices,
-                        # choices-present-but-empty-content (e.g. nemotron-3-ultra
-                        # returning finish_reason="stop" with empty content after
-                        # a tool execution completes), and whitespace-only content
-                        # (single newline, zero-width space, etc.) that strict
-                        # providers also reject.
-                        conv.add_assistant_message(
-                            "[LLM returned no content — provider error or malformed response]",
-                            [],
-                        )
-                        # BUG #2 fix: _on_error is a user-registered callback and may
-                        # throw (e.g. UI broken, dispatcher bug). If it raises, we still
-                        # need to: (a) persist the placeholder via _auto_save, and
-                        # (b) return so the caller's loop exits instead of iterating
-                        # with another empty response (which would add duplicate
-                        # placeholders until max_iterations_enforced trips).
+                    # Phase B: Merge MCP tools if configured
+                    if conv.mcp_servers:
                         try:
-                            self._dispatch(self._on_error, session_key,
-                                           "Agent returned no content. This may indicate a configuration error "
-                                           "or an issue with the LLM provider.")
-                        except Exception as _e:
-                            logger.error("[tool-loop] sk=%s _on_error handler raised %s: %s — continuing with save+return",
-                                         session_key, type(_e).__name__, _e)
+                            from utils.mcp_client import get_tools_for_api
+                            mcp_tools = get_tools_for_api(
+                                conv.mcp_servers,
+                                session_key if session_key != "_unknown" else None,
+                            )
+                            tools.extend(mcp_tools)
+                        except Exception as e:
+                            logger.warning(f"Failed to load MCP tools for {session_key}: {e}")
+
+                    # Build API messages AFTER compact so the wire payload reflects
+                    # the trimmed conversation. Bug fix: was captured before compact().
+                    from models.conversation import MessageRole
+
+                    # Pre-call budget guard: if the conversation still exceeds
+                    # the model's context window after compaction, raise a clear
+                    # error before serializing or sending. This prevents mid-stream
+                    # HTTP 400 rejections (which corrupt conversation state because
+                    # the assistant message is already added by the time the error
+                    # surfaces). Response reserve accounts for output tokens.
+                    RESPONSE_RESERVE_TOKENS = self._RESPONSE_RESERVE_TOKENS
+                    post_trim_estimate = conv.get_token_estimate()
+                    effective_budget = model_max - RESPONSE_RESERVE_TOKENS
+                    if post_trim_estimate >= effective_budget:
+                        usage_pct = int((post_trim_estimate / model_max) * 100) if model_max > 0 else 0
+                        raise RuntimeError(
+                            f"Conversation is at {post_trim_estimate:,}/{model_max:,} tokens "
+                            f"({usage_pct}%) after compaction — exceeds model context window. "
+                            f"Use /clear to reset or /compact to summarize the conversation."
+                        )
+                    messages = conv.to_api_messages()
+
+                    # KB synthesis (Tier 2): prepare messages with KB context if applicable.
+                    # The helper is called once per tool-loop iteration, but kb_lookup itself
+                    # only runs once per _run_loop invocation (gated by the per-turn cache
+                    # passed in via kb_cache). The cache survives across iterations.
+                    messages_for_call, kb_context, _kb_cache_for_turn = self._prepare_kb_synthesis(
+                        conv, text, messages, _kb_cache_for_turn
+                    )
+                    response = self._call_llm(session_key, messages_for_call, tools)
+
+                    # Extract content and tool calls
+                    # Determine provider from conversation model
+                    model = conv.model or self._config.default_model
+                    loop_provider = model.split("/")[0] if "/" in model else model
+                    loop_fmt = _RESPONSE_FORMAT.get(loop_provider, "openai")
+                    text_content = _extract_text_content(response, response_format=loop_fmt)
+                    tool_calls_raw = _extract_tool_calls(response, response_format=loop_fmt)
+
+                    # Record usage
+                    prompt_tok, comp_tok = _extract_usage(response, response_format=loop_fmt)
+                    cost = _cost_for_model(conv.model, prompt_tok, comp_tok)
+                    conv.record_usage(prompt_tok + comp_tok, cost)
+                    self._dispatch(self._on_token_usage, session_key, prompt_tok + comp_tok, cost)
+
+                    # §4.15 — Token budget breakdown for observability.
+                    # Reuses the model_max that the trim call above already computed.
+                    # Audit-Fix-26 (Bugs #1, #2, #3): use LOCAL variables
+                    # (_compaction_happened, _ev_for_breakdown) instead of re-reading
+                    # the shared _compaction_this_iteration flag or
+                    # self._context_strategy.last_result. The shared state could be
+                    # mutated by another session's thread between the gate and the
+                    # breakdown dispatch, causing this session to report the wrong
+                    # compaction state.
+                    if self._on_token_breakdown is not None:
+                        breakdown = conv.get_token_breakdown(model_max)
+                        breakdown["trimmed_this_turn"] = _compaction_happened
+                        breakdown["messages_remaining"] = len(conv.messages)
+                        # Tag the most recent breakdown so _last_trim_removed knows
+                        # which session_key to filter on. _last_trim_removed reads
+                        # this attribute, so this must happen BEFORE the dispatch.
+                        # Bug #3 fix: filter _compaction_events by session_key to
+                        # avoid cross-session contamination.
+                        self._last_breakdown_session = session_key
+                        breakdown["messages_removed_this_turn"] = (
+                            self._last_trim_removed if _compaction_happened else 0
+                        )
+                        # §0.4 + §2.8: Compaction telemetry from the strategy.
+                        # Audit-Fix-20: Only include compaction_event when actual compaction
+                        # occurred. Bug #2 fix: use the LOCAL _ev_for_breakdown instead
+                        # of re-reading self._context_strategy.last_result, which could
+                        # have been overwritten by another session's compact() call.
+                        if _compaction_happened and _ev_for_breakdown is not None:
+                            breakdown["compaction_event"] = {
+                                "trigger": _ev_for_breakdown.trigger,
+                                "layer": _ev_for_breakdown.layer,
+                                "tokens_before": _ev_for_breakdown.tokens_before,
+                                "tokens_after": _ev_for_breakdown.tokens_after,
+                                "tokens_freed": _ev_for_breakdown.tokens_freed,
+                                "soft_ceiling": _ev_for_breakdown.soft_ceiling,
+                                "hard_ceiling": _ev_for_breakdown.hard_ceiling,
+                                "summary_tokens_injected": _ev_for_breakdown.summary_tokens_injected,
+                            }
+                        self._dispatch(self._on_token_breakdown, session_key, breakdown)
+                        # Bug #1 fix: no longer reset self._compaction_this_iteration
+                        # here — the breakdown used the local _compaction_happened,
+                        # so there's no shared flag to reset. The attribute is kept
+                        # for backward-compat (read by tests) but is no longer the
+                        # source of truth for breakdown state.
+
+                    logger.debug("[tool-loop] sk=%s llm response: text_len=%d tool_calls=%d tokens=%d cost=%.4f",
+                                 session_key, len(text_content or ""), len(tool_calls_raw),
+                                 prompt_tok + comp_tok, cost)
+
+                    if not tool_calls_raw:
+                        # Text-only response — but check for empty/missing content
+                        # which may indicate a provider error that wasn't raised (e.g. body-level
+                        # error that slipped through, or malformed response with no choices)
+                        # Whitespace-only counts as empty: some strict providers (Cohere,
+                        # Anthropic strict mode) treat blank assistant content as a 400
+                        # the same as a missing/empty payload. _is_empty_content covers
+                        # falsy values (None, ""), empty lists, and strings that strip to
+                        # nothing (e.g. " \n\u200b"). Same predicate used at the
+                        # tool-call path below for consistency.
+                        if _is_empty_content(text_content):
+                            logger.warning("[tool-loop] sk=%s LLM returned no content (with tool_calls=%d, choices=%d) — treating as error",
+                                           session_key, len(tool_calls_raw), len(response.get("choices") or []))
+                            # Defense in depth: instead of persisting a corrupt empty
+                            # assistant message that downstream providers (Cohere,
+                            # strict OpenAI tool-loop, Anthropic strict mode) reject
+                            # with HTTP 400 "must have non-empty content or tool calls",
+                            # record a descriptive placeholder. The on_error dispatch
+                            # below still fires so the user sees the error; this just
+                            # prevents the corrupt entry from being saved and re-sent
+                            # on subsequent calls.
+                            # Trigger covers: missing choices, empty choices,
+                            # choices-present-but-empty-content (e.g. nemotron-3-ultra
+                            # returning finish_reason="stop" with empty content after
+                            # a tool execution completes), and whitespace-only content
+                            # (single newline, zero-width space, etc.) that strict
+                            # providers also reject.
+                            conv.add_assistant_message(
+                                "[LLM returned no content — provider error or malformed response]",
+                                [],
+                            )
+                            # BUG #2 fix: _on_error is a user-registered callback and may
+                            # throw (e.g. UI broken, dispatcher bug). If it raises, we still
+                            # need to: (a) persist the placeholder via _auto_save, and
+                            # (b) return so the caller's loop exits instead of iterating
+                            # with another empty response (which would add duplicate
+                            # placeholders until max_iterations_enforced trips).
+                            try:
+                                self._dispatch(self._on_error, session_key,
+                                               "Agent returned no content. This may indicate a configuration error "
+                                               "or an issue with the LLM provider.")
+                            except Exception as _e:
+                                logger.error("[tool-loop] sk=%s _on_error handler raised %s: %s — continuing with save+return",
+                                             session_key, type(_e).__name__, _e)
+                            self._auto_save(session_key, conv)
+                            return
+
+                        # ── KB fallback chain ────────────────────────────────────
+                        # If the primary provider returned [KB_OUT_OF_SCOPE] and a
+                        # fallback_provider is configured, retry with the fallback
+                        # model. One-shot guard prevents infinite loops.
+                        if (
+                            text_content == KB_OUT_OF_SCOPE
+                            and conv.fallback_provider
+                            and not getattr(conv, "_fallback_attempted", False)
+                        ):
+                            conv._fallback_attempted = True
+                            logger.info(
+                                "[tool-loop] sk=%s KB_OUT_OF_SCOPE — retrying with fallback provider %s",
+                                session_key, conv.fallback_provider,
+                            )
+                            original_model = conv.model
+                            # Resolve fallback model the same way the primary path does:
+                            #   f"{provider_name}/{provider.default_model}"
+                            # See AgentRuntimeHandler._resolve_agent_model() at ui/handlers/agent_runtime_handler.py
+                            fallback_provider_name = conv.fallback_provider
+                            fallback_provider_cfg = self._config.providers.get(fallback_provider_name) if fallback_provider_name else None
+                            if fallback_provider_cfg and fallback_provider_cfg.default_model:
+                                default_model = fallback_provider_cfg.default_model
+                                if "/" in default_model:
+                                    fallback_model = default_model
+                                else:
+                                    fallback_model = f"{fallback_provider_name}/{default_model}"
+                            else:
+                                # Provider not configured — fall back to provider name (runtime will error clearly)
+                                fallback_model = fallback_provider_name
+                            conv.model = fallback_model
+                            try:
+                                # Inject KB context into fallback LLM call. Uses the
+                                # same helper as the Tier 2 primary-call path so
+                                # both paths share one format string.
+                                messages_with_context = self._inject_kb_context(messages, kb_context, text)
+                                fb_response = self._call_llm(session_key, messages_with_context, tools)
+                                fb_provider = fallback_model.split("/")[0] if "/" in fallback_model else fallback_model
+                                fb_fmt = _RESPONSE_FORMAT.get(fb_provider, "openai")
+                                fb_text = _extract_text_content(fb_response, response_format=fb_fmt)
+                                fb_tool_calls = _extract_tool_calls(fb_response, response_format=fb_fmt)
+                                # Use fallback response as the text content
+                                text_content = fb_text
+                                tool_calls_raw = fb_tool_calls
+                                # Record fallback usage
+                                fb_prompt, fb_comp = _extract_usage(fb_response, response_format=fb_fmt)
+                                fb_cost = _cost_for_model(fallback_model, fb_prompt, fb_comp)
+                                conv.record_usage(fb_prompt + fb_comp, fb_cost)
+                                self._dispatch(self._on_token_usage, session_key, fb_prompt + fb_comp, fb_cost)
+                                logger.debug("[tool-loop] sk=%s fallback response: text_len=%d tool_calls=%d",
+                                             session_key, len(fb_text or ""), len(fb_tool_calls))
+                            except Exception as e:
+                                logger.warning("[tool-loop] sk=%s fallback call failed: %s", session_key, e)
+                                # Fallback failed — show the original sentinel (or error message)
+                            finally:
+                                conv.model = original_model
+
+                        # Text-only response — done
+                        logger.debug("[tool-loop] sk=%s text-only response, dispatching on_response_complete len=%d",
+                                     session_key, len(text_content or ""))
+                        conv.add_assistant_message(text_content, [])
+                        self._dispatch(self._on_response_complete, session_key, text_content)
+                        self._check_and_stop_on_limit(session_key, conv)
                         self._auto_save(session_key, conv)
                         return
 
-                    # ── KB fallback chain ────────────────────────────────────
-                    # If the primary provider returned [KB_OUT_OF_SCOPE] and a
-                    # fallback_provider is configured, retry with the fallback
-                    # model. One-shot guard prevents infinite loops.
-                    if (
-                        text_content == KB_OUT_OF_SCOPE
-                        and conv.fallback_provider
-                        and not getattr(conv, "_fallback_attempted", False)
-                    ):
-                        conv._fallback_attempted = True
-                        logger.info(
-                            "[tool-loop] sk=%s KB_OUT_OF_SCOPE — retrying with fallback provider %s",
-                            session_key, conv.fallback_provider,
+                    # Tool calls — execute each
+                    logger.debug("[tool-loop] sk=%s executing %d tool calls", session_key, len(tool_calls_raw))
+                    from models.conversation import ToolCall
+                    from agent.tools import execute_tool
+
+                    # Create assistant message once, attach all tool calls — fixes data corruption
+                    # (was: conv.messages[-1].tool_calls.append(tc) — appended to USER message)
+                    tool_call_objects = [
+                        ToolCall(call_id=call_id, tool_name=tool_name, arguments=args)
+                        for call_id, tool_name, args in tool_calls_raw
+                    ]
+
+                    # BUG #3 sweep: tool-call response with empty/whitespace text_content.
+                    # OpenAI spec allows content=null with tool_calls, but strict providers
+                    # (Cohere, Anthropic strict mode) require non-empty content even when
+                    # tool_calls are present. If a model returns tool_calls with empty
+                    # content (e.g. provider bug, malformed streaming response), substitute
+                    # a meaningful placeholder so the next LLM call doesn't 400.
+                    # The read-side filter at models/conversation.py:262 already handles
+                    # the no-content-no-tool_calls case; this fills the gap for the
+                    # tool_calls-present-but-content-empty case.
+                    if _is_empty_content(text_content):
+                        logger.warning(
+                            "[tool-loop] sk=%s tool-call response has empty content "
+                            "(tool_calls=%d) — substituting placeholder for strict-provider safety",
+                            session_key, len(tool_call_objects),
                         )
-                        original_model = conv.model
-                        # Resolve fallback model the same way the primary path does:
-                        #   f"{provider_name}/{provider.default_model}"
-                        # See AgentRuntimeHandler._resolve_agent_model() at ui/handlers/agent_runtime_handler.py
-                        fallback_provider_name = conv.fallback_provider
-                        fallback_provider_cfg = self._config.providers.get(fallback_provider_name) if fallback_provider_name else None
-                        if fallback_provider_cfg and fallback_provider_cfg.default_model:
-                            default_model = fallback_provider_cfg.default_model
-                            if "/" in default_model:
-                                fallback_model = default_model
-                            else:
-                                fallback_model = f"{fallback_provider_name}/{default_model}"
-                        else:
-                            # Provider not configured — fall back to provider name (runtime will error clearly)
-                            fallback_model = fallback_provider_name
-                        conv.model = fallback_model
-                        try:
-                            # Inject KB context into fallback LLM call. Uses the
-                            # same helper as the Tier 2 primary-call path so
-                            # both paths share one format string.
-                            messages_with_context = self._inject_kb_context(messages, kb_context, text)
-                            fb_response = self._call_llm(session_key, messages_with_context, tools)
-                            fb_provider = fallback_model.split("/")[0] if "/" in fallback_model else fallback_model
-                            fb_fmt = _RESPONSE_FORMAT.get(fb_provider, "openai")
-                            fb_text = _extract_text_content(fb_response, response_format=fb_fmt)
-                            fb_tool_calls = _extract_tool_calls(fb_response, response_format=fb_fmt)
-                            # Use fallback response as the text content
-                            text_content = fb_text
-                            tool_calls_raw = fb_tool_calls
-                            # Record fallback usage
-                            fb_prompt, fb_comp = _extract_usage(fb_response, response_format=fb_fmt)
-                            fb_cost = _cost_for_model(fallback_model, fb_prompt, fb_comp)
-                            conv.record_usage(fb_prompt + fb_comp, fb_cost)
-                            self._dispatch(self._on_token_usage, session_key, fb_prompt + fb_comp, fb_cost)
-                            logger.debug("[tool-loop] sk=%s fallback response: text_len=%d tool_calls=%d",
-                                         session_key, len(fb_text or ""), len(fb_tool_calls))
-                        except Exception as e:
-                            logger.warning("[tool-loop] sk=%s fallback call failed: %s", session_key, e)
-                            # Fallback failed — show the original sentinel (or error message)
-                        finally:
-                            conv.model = original_model
+                        text_content = "[calling tools]"
 
-                    # Text-only response — done
-                    logger.debug("[tool-loop] sk=%s text-only response, dispatching on_response_complete len=%d",
-                                 session_key, len(text_content or ""))
-                    conv.add_assistant_message(text_content, [])
-                    self._dispatch(self._on_response_complete, session_key, text_content)
-                    self._check_and_stop_on_limit(session_key, conv)
-                    self._auto_save(session_key, conv)
-                    return
+                    conv.add_assistant_message(text_content, tool_call_objects)
 
-                # Tool calls — execute each
-                logger.debug("[tool-loop] sk=%s executing %d tool calls", session_key, len(tool_calls_raw))
-                from models.conversation import ToolCall
-                from agent.tools import execute_tool
+                    # Import once per loop iteration (avoid repeated import overhead)
+                    import agent.tools as agent_tools_module
 
-                # Create assistant message once, attach all tool calls — fixes data corruption
-                # (was: conv.messages[-1].tool_calls.append(tc) — appended to USER message)
-                tool_call_objects = [
-                    ToolCall(call_id=call_id, tool_name=tool_name, arguments=args)
-                    for call_id, tool_name, args in tool_calls_raw
-                ]
+                    for call_id, tool_name, args in tool_calls_raw:
+                        tc = next(tc for tc in tool_call_objects if tc.call_id == call_id)
 
-                # BUG #3 sweep: tool-call response with empty/whitespace text_content.
-                # OpenAI spec allows content=null with tool_calls, but strict providers
-                # (Cohere, Anthropic strict mode) require non-empty content even when
-                # tool_calls are present. If a model returns tool_calls with empty
-                # content (e.g. provider bug, malformed streaming response), substitute
-                # a meaningful placeholder so the next LLM call doesn't 400.
-                # The read-side filter at models/conversation.py:262 already handles
-                # the no-content-no-tool_calls case; this fills the gap for the
-                # tool_calls-present-but-content-empty case.
-                if _is_empty_content(text_content):
-                    logger.warning(
-                        "[tool-loop] sk=%s tool-call response has empty content "
-                        "(tool_calls=%d) — substituting placeholder for strict-provider safety",
-                        session_key, len(tool_call_objects),
-                    )
-                    text_content = "[calling tools]"
-
-                conv.add_assistant_message(text_content, tool_call_objects)
-
-                # Import once per loop iteration (avoid repeated import overhead)
-                import agent.tools as agent_tools_module
-
-                for call_id, tool_name, args in tool_calls_raw:
-                    tc = next(tc for tc in tool_call_objects if tc.call_id == call_id)
-
-                    # Approval gating for exec_command — fires BEFORE tool_call_start
-                    # so the approval card appears first. Non-approval tools skip this.
-                    if tool_name == "exec_command":
-                        approved = self._dispatch_approval(session_key, tool_name, args)
-                        logger.debug("[tool-loop] sk=%s exec_command approval: %s", session_key, approved)
-                        if approved is False or approved is None:  # None = timeout = denial
-                            tc.mark_failed("exec_command requires PM approval — request denied or timed out")
-                            conv.add_tool_result(call_id, tc.result or "denied")
-                            self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied", False)
-                            self._audit_log.record(tool_name, args, approved=False,
-                                                    user=getattr(self._config, "user_id", ""),
-                                                    result="denied")  # A-4
-                            continue
-
-                    # HIGH-1: Sensitive-path write/edit also requires PM approval.
-                    # Fires before tool_call_start so the PM sees the card.
-                    if tool_name in ("write_file", "edit_file"):
-                        path_arg = args.get("path", "")
-                        if agent_tools_module.is_sensitive_path(path_arg):
+                        # Approval gating for exec_command — fires BEFORE tool_call_start
+                        # so the approval card appears first. Non-approval tools skip this.
+                        if tool_name == "exec_command":
                             approved = self._dispatch_approval(session_key, tool_name, args)
-                            logger.debug("[tool-loop] sk=%s %s sensitive approval: %s",
-                                         session_key, tool_name, approved)
-                            if approved is False or approved is None:
-                                tc.mark_failed(
-                                    f"{tool_name} blocked: {path_arg} is a sensitive path\n"
-                                    "PM approval denied or timed out."
-                                )
+                            logger.debug("[tool-loop] sk=%s exec_command approval: %s", session_key, approved)
+                            if approved is False or approved is None:  # None = timeout = denial
+                                tc.mark_failed("exec_command requires PM approval — request denied or timed out")
                                 conv.add_tool_result(call_id, tc.result or "denied")
                                 self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied", False)
                                 self._audit_log.record(tool_name, args, approved=False,
@@ -1555,100 +1545,139 @@ class AgentRuntime:
                                                         result="denied")  # A-4
                                 continue
 
-                    # Tool call start — fires AFTER approval (for exec_command and sensitive write/edit)
-                    # so the "running" card is truthful: the tool is actually about to run.
-                    self._dispatch(self._on_tool_call_start, session_key, tool_name, args)
-                    tc.mark_executing()
+                        # HIGH-1: Sensitive-path write/edit also requires PM approval.
+                        # Fires before tool_call_start so the PM sees the card.
+                        if tool_name in ("write_file", "edit_file"):
+                            path_arg = args.get("path", "")
+                            if agent_tools_module.is_sensitive_path(path_arg):
+                                approved = self._dispatch_approval(session_key, tool_name, args)
+                                logger.debug("[tool-loop] sk=%s %s sensitive approval: %s",
+                                             session_key, tool_name, approved)
+                                if approved is False or approved is None:
+                                    tc.mark_failed(
+                                        f"{tool_name} blocked: {path_arg} is a sensitive path\n"
+                                        "PM approval denied or timed out."
+                                    )
+                                    conv.add_tool_result(call_id, tc.result or "denied")
+                                    self._dispatch(self._on_tool_call_result, session_key, tool_name, tc.result or "denied", False)
+                                    self._audit_log.record(tool_name, args, approved=False,
+                                                            user=getattr(self._config, "user_id", ""),
+                                                            result="denied")  # A-4
+                                    continue
 
-                    # Execute tool
-                    logger.debug("[tool-loop] sk=%s executing tool: %s args_keys=%s",
-                                 session_key, tool_name, list(args.keys()))
-                    # Bypass exec_command's internal approval check — the runtime already
-                    # confirmed PM approval via _dispatch_approval above (returned True).
-                    # HIGH-1: write_file/edit_file with sensitive paths — runtime already
-                    # dispatched to PM above, so bypass the tool's internal check.
-                    # MED-1: Use per-call approval_callback (bypass = lambda True, normal = None).
-                    bypass_approval = (tool_name == "exec_command" or
-                                       (tool_name in ("write_file", "edit_file") and
-                                        agent_tools_module.is_sensitive_path(args.get("path", ""))))
-                    per_call_cb = (lambda *a: True) if bypass_approval else None
-                    # LOW-2: resolve workspace before use; raises ValueError if project_path is empty
-                    workspace = _resolve_session_workspace(conv.project_path, session_key)
-                    # project_path is the sandbox base for all tools AND exec_command cwd.
-                    # scratch_dir (workspace) is resolved for future use but no longer
-                    # overrides exec_command CWD — see exec-cwd-fix spec.
-                    # Allowed-tools enforcement gate (§3.21n).
-                    # Forward conv.allowed_tools so execute_tool can deny tools the agent
-                    # was configured without. conv.allowed_tools is the single source of
-                    # truth — set in create_conversation() from agent_def["tools"] and
-                    # persisted on the conversation object.
-                    #
-                    # Execute through the tool middleware chain.
-                    # The chain wraps execute_tool with EnforcementMiddleware
-                    # (post-write verification) and StuckDetectionMiddleware
-                    # (loop detection). Approval was already resolved inline
-                    # above (before on_tool_call_start) per spec §A.2.4.
-                    ctx = ToolContext(
-                        session_key=session_key,
-                        project_path=conv.project_path,
-                        iteration=iteration,
-                        bypass_approval=bypass_approval,
-                        audit_log=self._audit_log,
-                        user_id=getattr(self._config, "user_id", ""),
-                        enforcement_config=self._config.enforcement,
-                        si_enforcement=conv.si_enforcement,
-                    )
-                    result = self._tool_chain.run(
-                        tool_name=tool_name,
-                        args=args,
-                        ctx=ctx,
-                        executor=lambda: execute_tool(
-                            tool_name, args, conv.project_path, session_key,
-                            approval_callback=per_call_cb,
-                            allowed_tools=conv.allowed_tools,
-                        ),
-                    )
-                    logger.debug("[tool-loop] sk=%s tool %s result: success=%s output_len=%d",
-                                 session_key, tool_name, result.success, len(result.output or ""))
+                        # Tool call start — fires AFTER approval (for exec_command and sensitive write/edit)
+                        # so the "running" card is truthful: the tool is actually about to run.
+                        self._dispatch(self._on_tool_call_start, session_key, tool_name, args)
+                        tc.mark_executing()
 
-                    # Record tool result — ToolResult dataclass stays clean
-                    tc.mark_completed(result.output if result.success else result.error or "")
-                    tool_result_text = tc.result or ""
+                        # Execute tool
+                        logger.debug("[tool-loop] sk=%s executing tool: %s args_keys=%s",
+                                     session_key, tool_name, list(args.keys()))
+                        # Bypass exec_command's internal approval check — the runtime already
+                        # confirmed PM approval via _dispatch_approval above (returned True).
+                        # HIGH-1: write_file/edit_file with sensitive paths — runtime already
+                        # dispatched to PM above, so bypass the tool's internal check.
+                        # MED-1: Use per-call approval_callback (bypass = lambda True, normal = None).
+                        bypass_approval = (tool_name == "exec_command" or
+                                           (tool_name in ("write_file", "edit_file") and
+                                            agent_tools_module.is_sensitive_path(args.get("path", ""))))
+                        per_call_cb = (lambda *a: True) if bypass_approval else None
+                        # LOW-2: resolve workspace before use; raises ValueError if project_path is empty
+                        workspace = _resolve_session_workspace(conv.project_path, session_key)
+                        # project_path is the sandbox base for all tools AND exec_command cwd.
+                        # scratch_dir (workspace) is resolved for future use but no longer
+                        # overrides exec_command CWD — see exec-cwd-fix spec.
+                        # Allowed-tools enforcement gate (§3.21n).
+                        # Forward conv.allowed_tools so execute_tool can deny tools the agent
+                        # was configured without. conv.allowed_tools is the single source of
+                        # truth — set in create_conversation() from agent_def["tools"] and
+                        # persisted on the conversation object.
+                        #
+                        # Execute through the tool middleware chain.
+                        # The chain wraps execute_tool with EnforcementMiddleware
+                        # (post-write verification) and StuckDetectionMiddleware
+                        # (loop detection). Approval was already resolved inline
+                        # above (before on_tool_call_start) per spec §A.2.4.
+                        ctx = ToolContext(
+                            session_key=session_key,
+                            project_path=conv.project_path,
+                            iteration=iteration,
+                            bypass_approval=bypass_approval,
+                            audit_log=self._audit_log,
+                            user_id=getattr(self._config, "user_id", ""),
+                            enforcement_config=self._config.enforcement,
+                            si_enforcement=conv.si_enforcement,
+                        )
+                        result = self._tool_chain.run(
+                            tool_name=tool_name,
+                            args=args,
+                            ctx=ctx,
+                            executor=lambda: execute_tool(
+                                tool_name, args, conv.project_path, session_key,
+                                approval_callback=per_call_cb,
+                                allowed_tools=conv.allowed_tools,
+                            ),
+                        )
+                        logger.debug("[tool-loop] sk=%s tool %s result: success=%s output_len=%d",
+                                     session_key, tool_name, result.success, len(result.output or ""))
 
-                    conv.add_tool_result(call_id, tool_result_text)
-                    self._dispatch(self._on_tool_call_result, session_key, tool_name, tool_result_text, result.success)
+                        # Record tool result — ToolResult dataclass stays clean
+                        tc.mark_completed(result.output if result.success else result.error or "")
+                        tool_result_text = tc.result or ""
 
-                    # A-4: Record in audit log
-                    _audit_user = getattr(self._config, "user_id", "")
-                    self._audit_log.record(
-                        tool_name=tool_name,
-                        args=args,
-                        approved=True if bypass_approval else None,
-                        user=_audit_user,
-                        result=tool_result_text,
-                        exit_code=result.exit_code,
-                    )
+                        conv.add_tool_result(call_id, tool_result_text)
+                        self._dispatch(self._on_tool_call_result, session_key, tool_name, tool_result_text, result.success)
 
-                # Check cost/step limits after tool execution
-                if self._check_and_stop_on_limit(session_key, conv):
-                    return
+                        # A-4: Record in audit log
+                        _audit_user = getattr(self._config, "user_id", "")
+                        self._audit_log.record(
+                            tool_name=tool_name,
+                            args=args,
+                            approved=True if bypass_approval else None,
+                            user=_audit_user,
+                            result=tool_result_text,
+                            exit_code=result.exit_code,
+                        )
 
-            # Max iterations reached
-            conv.add_assistant_message("[max tool iterations reached]", [])
-            self._dispatch(self._on_error, session_key, "Max tool iterations reached")
-            self._auto_save(session_key, conv)
+                    # Check cost/step limits after tool execution
+                    if self._check_and_stop_on_limit(session_key, conv):
+                        return
 
-        except Exception as e:
-            logger.exception("Error in tool loop for %s", session_key)
-            # QTR-FIX: persist whatever partial progress was made before the
-            # exception so the next /resume / restart can recover it instead of
-            # silently dropping the in-memory conversation. conv is in scope
-            # from the surrounding `with self._lock` block above.
-            try:
+                # Max iterations reached
+                conv.add_assistant_message("[max tool iterations reached]", [])
+                self._dispatch(self._on_error, session_key, "Max tool iterations reached")
                 self._auto_save(session_key, conv)
-            except Exception:
-                logger.exception("Failed to auto_save after tool-loop error for %s", session_key)
-            self._dispatch(self._on_error, session_key, e)
+
+            except Exception as e:
+                logger.exception("Error in tool loop for %s", session_key)
+                # QTR-FIX: persist whatever partial progress was made before the
+                # exception so the next /resume / restart can recover it instead of
+                # silently dropping the in-memory conversation. conv is in scope
+                # from the surrounding `with self._lock` block above.
+                try:
+                    self._auto_save(session_key, conv)
+                except Exception:
+                    logger.exception("Failed to auto_save after tool-loop error for %s", session_key)
+                self._dispatch(self._on_error, session_key, e)
+        finally:
+            # FIX-CLEAR-ASK-RACE: always release the active-loop marker, even
+            # on exception or early return, so a crashed loop doesn't block
+            # /clear for this session permanently.
+            with self._lock:
+                self._active_loops.discard(session_key)
+
+    def is_loop_active(self, session_key: str) -> bool:
+        """Return True if a _run_loop thread is currently active for this session.
+
+        FIX-CLEAR-ASK-RACE: used by AgentRuntimeHandler.clear_conversation() to
+        refuse wiping a conversation that an in-flight loop is still reading.
+        Thread-safe via _lock. A session marked active stays active until the
+        loop's finally block discards it — including through exceptions and
+        early returns, so a crashed loop cannot permanently block /clear.
+        """
+        with self._lock:
+            return session_key in self._active_loops
+
 
     def _dispatch_approval(self, session_key: str, tool_name: str, args: dict) -> bool | None:
         """
