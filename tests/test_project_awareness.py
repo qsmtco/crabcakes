@@ -301,7 +301,7 @@ class TestAwarenessCaps:
         marker = "[... current state truncated ...]"
         assert marker in state, f"Expected truncation marker. State length was {len(state)}"
         assert len(state) <= CURRENT_STATE_MAX_CHARS + len("\n") + len(marker), \
-            f"CURRENT_STATE length {len(state)} exceeds cap+marker
+            f"CURRENT_STATE length {len(state)} exceeds cap+marker"
 
 
 class TestAwarenessCacheFixes:
