@@ -232,10 +232,10 @@ class TestBackwardCompatReexports:
         assert result == [{"role": "user", "content": "Hi"}]
 
     def test_runtime_reexport_convert_tools(self):
-        """from agent.runtime import _convert_tools_for_anthropic works."""
-        from agent.runtime import _convert_tools_for_anthropic
-        assert callable(_convert_tools_for_anthropic)
-        result = _convert_tools_for_anthropic([
+        """convert_tools_for_anthropic is callable from agent.llm.convert."""
+        from agent.llm.convert import convert_tools_for_anthropic
+        assert callable(convert_tools_for_anthropic)
+        result = convert_tools_for_anthropic([
             {"function": {"name": "t", "description": "d", "parameters": {}}}
         ])
         assert result == [{"name": "t", "description": "d", "input_schema": {}}]
