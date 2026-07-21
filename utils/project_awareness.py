@@ -592,9 +592,9 @@ def build_awareness_dict(project_path: str) -> dict[str, str]:
     if project_path and os.path.isdir(project_path):
         mtime = _awareness_dir_mtime(project_path)
         cached = _AWARENESS_CACHE.get(project_path)
-        # Cache key includes context.md content length so same-second writes
+        # Cache key includes context.md content hash (SHA1) so same-second writes
         # with different content invalidate the cache (filesystem mtime is
-        # typically 1-second granularity). See FIX audit BUG #2.
+        # typically 1-second granularity). See FIX audit BUG #2 + BUG #8.
         _ctx_for_fp = load_project_context(project_path)
         _content_fp = hashlib.sha1(_ctx_for_fp.encode("utf-8", errors="replace")).hexdigest()
         if cached and cached[0] >= mtime and cached[2] == _content_fp:
