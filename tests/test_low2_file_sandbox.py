@@ -22,58 +22,58 @@ from agent.tools import execute_tool
 # ═══════════════════════════════════════════════════════════════════
 
 class TestSessionKeyValidation:
-    """BUG #2: _resolve_session_workspace must reject malformed session_key."""
+    """BUG #2: resolve_session_workspace must reject malformed session_key."""
 
     def test_empty_project_path_raises(self):
         """LOW-2: empty project_path must raise ValueError, NOT fall back to /tmp."""
         with pytest.raises(ValueError, match="LOW-2"):
-            _resolve_session_workspace("", "session_x")
+            resolve_session_workspace("", "session_x")
 
     def test_none_project_path_raises(self):
         """LOW-2: None project_path must raise ValueError."""
         with pytest.raises(ValueError, match="LOW-2"):
-            _resolve_session_workspace(None, "session_x")
+            resolve_session_workspace(None, "session_x")
 
     def test_empty_session_key_raises(self):
         """BUG #2: empty session_key must raise ValueError (prevents root-level collison dir)."""
         with pytest.raises(ValueError, match="LOW-2"):
-            _resolve_session_workspace("/proj", "")
+            resolve_session_workspace("/proj", "")
 
     def test_whitespace_only_session_key_raises(self):
         """BUG #2: whitespace-only session_key must raise ValueError."""
         with pytest.raises(ValueError, match="LOW-2"):
-            _resolve_session_workspace("/proj", "   ")
+            resolve_session_workspace("/proj", "   ")
 
     def test_session_key_with_dotdot_raises(self):
         """BUG #2: session_key containing '..' must raise ValueError (path traversal)."""
         with pytest.raises(ValueError, match="LOW-2"):
-            _resolve_session_workspace("/proj", "../escape")
+            resolve_session_workspace("/proj", "../escape")
 
     def test_session_key_with_dotdot_in_middle_raises(self):
         """BUG #2: session_key with '..' anywhere must raise ValueError."""
         with pytest.raises(ValueError, match="LOW-2"):
-            _resolve_session_workspace("/proj", "foo..bar")
+            resolve_session_workspace("/proj", "foo..bar")
 
     def test_session_key_with_slash_raises(self):
         """BUG #2: session_key containing '/' must raise ValueError."""
         with pytest.raises(ValueError, match="LOW-2"):
-            _resolve_session_workspace("/proj", "sess/sub")
+            resolve_session_workspace("/proj", "sess/sub")
 
     def test_session_key_with_backslash_raises(self):
         """BUG #2: session_key containing '\\' must raise ValueError."""
         with pytest.raises(ValueError, match="LOW-2"):
-            _resolve_session_workspace("/proj", "sess\\sub")
+            resolve_session_workspace("/proj", "sess\\sub")
 
     def test_session_key_with_up_level_raises(self):
         """BUG #2: session_key with '..' escaping .crabcakes/tmp/ must raise ValueError."""
         with pytest.raises(ValueError, match="LOW-2"):
-            _resolve_session_workspace("/proj", "..")
+            resolve_session_workspace("/proj", "..")
 
     def test_valid_session_key_ok(self):
         """Valid [a-zA-Z0-9._:-]+ session_key works without error."""
         project = tempfile.mkdtemp()
         # These must not raise
-        ws = _resolve_session_workspace(project, "valid-sess_123.abc")
+        ws = resolve_session_workspace(project, "valid-sess_123.abc")
         assert ws.endswith("valid-sess_123.abc")
 
     def test_special_agent_colon_key_ok(self):
@@ -83,7 +83,7 @@ class TestSessionKeyValidation:
         session_key passes validation.
         """
         project = tempfile.mkdtemp()
-        ws = _resolve_session_workspace(project, "special:coder")
+        ws = resolve_session_workspace(project, "special:coder")
         # Colon is sanitized for filesystem safety
         assert ws.endswith("special-coder")
         assert ":" not in ws.split(".crabcakes")[-1]  # no colon in the relative path portion
@@ -101,7 +101,7 @@ class TestWorkspaceProperties:
         project.mkdir()
         session = "sess-abc123"
 
-        workspace = _resolve_session_workspace(str(project), session)
+        workspace = resolve_session_workspace(str(project), session)
 
         expected = project / ".crabcakes" / "tmp" / session
         assert workspace == str(expected)
@@ -112,7 +112,7 @@ class TestWorkspaceProperties:
         project.mkdir()
         session = "sess-perm-test"
 
-        workspace = _resolve_session_workspace(str(project), session)
+        workspace = resolve_session_workspace(str(project), session)
 
         mode = os.stat(workspace).st_mode & 0o777
         assert mode == 0o700, f"Expected 0o700, got {oct(mode)}"
@@ -123,8 +123,8 @@ class TestWorkspaceProperties:
         project.mkdir()
         session = "sess-idempotent"
 
-        ws1 = _resolve_session_workspace(str(project), session)
-        ws2 = _resolve_session_workspace(str(project), session)
+        ws1 = resolve_session_workspace(str(project), session)
+        ws2 = resolve_session_workspace(str(project), session)
 
         assert ws1 == ws2
 
@@ -133,8 +133,8 @@ class TestWorkspaceProperties:
         project = tmp_path / "multi_project"
         project.mkdir()
 
-        ws_a = _resolve_session_workspace(str(project), "session_a")
-        ws_b = _resolve_session_workspace(str(project), "session_b")
+        ws_a = resolve_session_workspace(str(project), "session_a")
+        ws_b = resolve_session_workspace(str(project), "session_b")
 
         assert ws_a != ws_b
 
@@ -144,7 +144,7 @@ class TestWorkspaceProperties:
         project.mkdir()
         session = "sess-nested"
 
-        workspace = _resolve_session_workspace(str(project), session)
+        workspace = resolve_session_workspace(str(project), session)
 
         assert os.path.isdir(workspace)
         assert os.path.isdir(os.path.dirname(workspace))  # tmp/
@@ -177,7 +177,7 @@ class TestFileToolsUseProjectPathNotScratchDir:
         test_file.write_text('print("hello from project")')
 
         # scratch_dir is completely separate — no src/ inside it
-        scratch = _resolve_session_workspace(str(project), session)
+        scratch = resolve_session_workspace(str(project), session)
         assert not os.path.exists(os.path.join(scratch, "src"))
 
         # Call read_file with project_path = project dir, scratch_dir = workspace
@@ -202,7 +202,7 @@ class TestFileToolsUseProjectPathNotScratchDir:
         session = "sess-bug1-scratch"
 
         # Create file ONLY in the scratch workspace (NOT in project)
-        scratch = _resolve_session_workspace(str(project), session)
+        scratch = resolve_session_workspace(str(project), session)
         scratch_file = os.path.join(scratch, "wrong.txt")
         with open(scratch_file, "w") as fh:
             fh.write("this should NOT be readable")
@@ -227,7 +227,7 @@ class TestFileToolsUseProjectPathNotScratchDir:
         project.mkdir()
         session = "sess-bug1-write"
 
-        scratch = _resolve_session_workspace(str(project), session)
+        scratch = resolve_session_workspace(str(project), session)
 
         result = execute_tool(
             "write_file",
@@ -254,7 +254,7 @@ class TestFileToolsUseProjectPathNotScratchDir:
 
         # Create different files in project and scratch
         (project / "proj_file.txt").write_text("project")
-        scratch = _resolve_session_workspace(str(project), session)
+        scratch = resolve_session_workspace(str(project), session)
         with open(os.path.join(scratch, "scratch_file.txt"), "w") as fh:
             fh.write("scratch")
 
