@@ -2675,8 +2675,7 @@ class TestSystemPromptPlacement:
             resp.read = MagicMock(return_value=body)
             return resp
 
-        with patch("agent.runtime._urlopen_with_ssl_retry", side_effect=fake_urlopen):
-            _call_anthropic(
+        with patch("agent.llm.anthropic_provider.urlopen_with_ssl_retry", side_effect=fake_urlopen):
                 base_url="https://api.anthropic.com",
                 api_key="test",
                 model="claude-3-5-sonnet-20241022",
