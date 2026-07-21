@@ -30,4 +30,8 @@ When consulting other agents via `/ask @Agent "question"`, payloads are capped a
 ## Current State
 {{CURRENT_STATE}}
 
+## Current Task
+{{CURRENT_TASK}}
+
+## Project Memory
 {{PROJECT_MEMORY}}
