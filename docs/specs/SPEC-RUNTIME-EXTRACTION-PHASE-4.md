@@ -184,8 +184,8 @@ No data flow change. The same function (`cost_for_model`) is called at the same 
 - [ ] `grep -c "from agent.llm.cost import cost_for_model" agent/runtime.py` returns **1**
 - [ ] `grep -c "cost_for_model(" agent/runtime.py` returns **2** (the 2 call sites)
 - [ ] `_cost_for_model` is NOT in `__all__`
-- [ ] `python3 -m pytest tests/test_llm_cost.py -q` passes
-- [ ] `python3 -m pytest tests/test_agent_runtime.py -q -k "cost"` passes (if any cost-related tests)
+- [ ] `python3 -m pytest tests/test_llm_cost.py -q` passes (TestRuntimeReexport deleted)
+- [ ] `python3 -m pytest tests/test_agent_runtime.py -q` passes (cost calls updated — do NOT use -k filter, run full file)
 - [ ] `python3 -c "from agent.runtime import AgentRuntime; print('OK')"` succeeds
 
 ---
