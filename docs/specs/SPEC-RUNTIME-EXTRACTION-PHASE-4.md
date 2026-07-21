@@ -128,16 +128,32 @@ Find the `__all__` list (around line 70). Remove the line:
 
 The public API for cost now lives in `agent.llm.cost`. The `__all__` in runtime.py should not re-export it.
 
-### 3.2 `tests/test_agent_runtime.py` (if needed)
+### 3.2 `tests/test_agent_runtime.py` (REQUIRED — 4 call sites)
 
-**First, check** whether `test_agent_runtime.py` imports `_cost_for_model` from `runtime`. Run:
-```bash
-grep -n "_cost_for_model\|cost_for_model" tests/test_agent_runtime.py
+The following references MUST be updated. Grep confirmed:
+```
+tests/test_agent_runtime.py:22:    _cost_for_model,       (import)
+tests/test_agent_runtime.py:71:    _cost_for_model(...)   (call)
+tests/test_agent_runtime.py:75:    _cost_for_model(...)   (call)
+tests/test_agent_runtime.py:79:    _cost_for_model(...)   (call)
 ```
 
-If the test imports `from agent.runtime import _cost_for_model`, change it to `from agent.llm.cost import cost_for_model` and update the call site in the test.
+Update the import (line 22) to:
+```python
+from agent.llm.cost import cost_for_model
+```
 
-If the test already imports from `agent.llm.cost`, no change needed.
+And update all 3 call sites (lines 71, 75, 79) from `_cost_for_model` to `cost_for_model`.
+
+### 3.3 `tests/test_llm_cost.py` (REQUIRED — TestRuntimeReexport class)
+
+Grep confirmed `tests/test_llm_cost.py` has a `TestRuntimeReexport` class (line 44) that explicitly imports `_cost_for_model` and `_model_id` from `agent.runtime`:
+```
+tests/test_llm_cost.py:48:    from agent.runtime import _cost_for_model
+tests/test_llm_cost.py:54:    from agent.runtime import _model_id
+```
+
+This test class exists SPECIFICALLY to verify the re-export. After Phase 4 removes the re-export, this test class is obsolete. **Delete the entire `TestRuntimeReexport` class** (approximately lines 44-56). The functionality it tested (that runtime re-exports cost.py) is no longer relevant — cost.py is the canonical source.
 
 ### Files NOT changed
 
