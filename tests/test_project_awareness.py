@@ -11,6 +11,7 @@ import pytest
 from models.team import ProjectTeam, TeamMember
 from utils.project_awareness import (
     CRABCAKES_DIR_NAME,
+    CONTEXT_READ_CAP,
     append_project_context,
     build_awareness_block,
     build_awareness_dict,
