@@ -58,7 +58,7 @@ CONTEXT_READ_CAP = 8000       # Max chars injected into agent prompts (read side
 MAX_CONTEXT_ENTRIES = 50      # Max entries before FIFO eviction
 
 # ── Awareness mtime cache ─────────────────────────────────────────────────────
-_AWARENESS_CACHE: dict[str, tuple[float, dict, int]] = {}
+_AWARENESS_CACHE: dict[str, tuple[float, dict, str]] = {}
 _AWARENESS_MAX_ENTRIES = 32
 
 
@@ -596,7 +596,7 @@ def build_awareness_dict(project_path: str) -> dict[str, str]:
         # with different content invalidate the cache (filesystem mtime is
         # typically 1-second granularity). See FIX audit BUG #2.
         _ctx_for_fp = load_project_context(project_path)
-        _content_fp = len(_ctx_for_fp)
+        _content_fp = hashlib.sha1(_ctx_for_fp.encode("utf-8", errors="replace")).hexdigest()
         if cached and cached[0] >= mtime and cached[2] == _content_fp:
             return cached[1]
 
