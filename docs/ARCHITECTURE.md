@@ -3955,7 +3955,7 @@ crabcakes/
 │   ├── enforcement.py            # ~882 lines — Post-write verification: 3-tier checks + per-project override
 │   ├── kb_lookup.py              # ~279 lines — KB cosine-sim retrieval (Auxilium Tier 1)
 │   ├── kb_server.py              # ~457 lines — KB HTTP server on localhost:18790
-│   ├── runtime.py                # ~2344 lines — AgentRuntime: tool loop, streaming, cost, compaction (cost/LLM/SSE/extractors extracted)
+│   ├── runtime.py                # ~1995 lines — AgentRuntime: tool loop, streaming, cost, compaction (cost/LLM/SSE/extractors/audit/persistence extracted)
 │   ├── tool_middleware.py        # ~244 lines — Tool middleware chain: enforcement + stuck detection (Phase A1)
 │   ├── special_agents.py         # ~172 lines — SpecialAgentDef, get_special_agents(), reload_registry()
 │   ├── tools.py                  # ~1108 lines — 8+ tools: read_file, write_file, edit_file, exec_command, etc.
