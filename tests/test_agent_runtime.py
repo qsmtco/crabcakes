@@ -2812,7 +2812,7 @@ def _make_runtime():
     canonical pattern in this file). Returns (rt, sk, tmp_conv_dir).
     """
     from agent.config import AgentConfig, LLMProviderConfig
-    from agent.runtime import _conversations_dir
+    from agent.persistence import conversations_dir as _conversations_dir
     cfg = AgentConfig(
         providers={
             "openai": LLMProviderConfig(
