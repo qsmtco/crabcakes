@@ -201,6 +201,61 @@ class TestDetectTechStack:
         assert stack.count("python") == 1
 
 
+class TestGetCurrentTask:
+    """SPEC-CONTEXT-MD-SYSTEM-FIX §3.4 — get_current_task and CURRENT_TASK injection."""
+
+    def test_get_current_task_returns_last_heading(self, tmp_path):
+        """Last '## ' heading text is returned, prefix stripped correctly."""
+        init_project_config(str(tmp_path), "p")
+        save_project_context(str(tmp_path),
+            "## 2026-07-20 — Phase A1 complete\n\n"
+            "## 2026-07-21 — Phase A2 in progress\n")
+        assert get_current_task(str(tmp_path)) == "2026-07-21 — Phase A2 in progress"
+
+    def test_get_current_task_empty_context(self, tmp_path):
+        """Empty context.md returns empty string."""
+        init_project_config(str(tmp_path), "p")
+        assert get_current_task(str(tmp_path)) == ""
+
+    def test_get_current_task_no_headings(self, tmp_path):
+        """Context with no '## ' headings returns empty string."""
+        init_project_config(str(tmp_path), "p")
+        save_project_context(str(tmp_path), "just plain text\nno headings here\n")
+        assert get_current_task(str(tmp_path)) == ""
+
+    def test_current_task_in_awareness_dict(self, tmp_path):
+        """build_awareness_dict populates CURRENT_TASK from the last heading."""
+        init_project_config(str(tmp_path), "p")
+        save_project_context(str(tmp_path), "## 2026-07-20 — Phase A1 complete\n")
+        d = build_awareness_dict(str(tmp_path))
+        assert d["CURRENT_TASK"] == "2026-07-20 — Phase A1 complete"
+
+
+class TestContextReadCap:
+    """SPEC-CONTEXT-MD-SYSTEM-FIX §3.4 — read cap increased from 3000 to 8000."""
+
+    def test_read_cap_8000_allows_content_beyond_old_3000_limit(self, tmp_path):
+        """PROJECT_MEMORY includes content beyond the old 3000-char limit (up to 8000)."""
+        init_project_config(str(tmp_path), "p")
+        # 5000 chars — would be truncated under the old 3000 cap, fits under 8000
+        marker_start = "MARKER_START_"
+        content = marker_start + ("x" * 5000)
+        save_project_context(str(tmp_path), content)
+        d = build_awareness_dict(str(tmp_path))
+        # The marker near the start is always present; the point is no truncation
+        # message appears because 5000 < 8000
+        assert marker_start in d["PROJECT_MEMORY"]
+        assert "[... context memory truncated ...]" not in d["PROJECT_MEMORY"]
+
+    def test_read_cap_8000_truncates_above_limit(self, tmp_path):
+        """Content > 8000 chars produces a truncation message."""
+        init_project_config(str(tmp_path), "p")
+        content = ("x" * 10000)
+        save_project_context(str(tmp_path), content)
+        d = build_awareness_dict(str(tmp_path))
+        assert "[... context memory truncated ...]" in d["PROJECT_MEMORY"]
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  Phase CB-3: Awareness variable size caps (BUG #6 fix)
 # ═══════════════════════════════════════════════════════════════════
