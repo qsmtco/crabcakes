@@ -57,7 +57,7 @@ CONTEXT_READ_CAP = 8000       # Max chars injected into agent prompts (read side
 MAX_CONTEXT_ENTRIES = 50      # Max entries before FIFO eviction
 
 # ── Awareness mtime cache ─────────────────────────────────────────────────────
-_AWARENESS_CACHE: dict[str, tuple[float, dict]] = {}
+_AWARENESS_CACHE: dict[str, tuple[float, dict, int]] = {}
 _AWARENESS_MAX_ENTRIES = 32
 
 
@@ -591,7 +591,12 @@ def build_awareness_dict(project_path: str) -> dict[str, str]:
     if project_path and os.path.isdir(project_path):
         mtime = _awareness_dir_mtime(project_path)
         cached = _AWARENESS_CACHE.get(project_path)
-        if cached and cached[0] >= mtime:
+        # Cache key includes context.md content length so same-second writes
+        # with different content invalidate the cache (filesystem mtime is
+        # typically 1-second granularity). See FIX audit BUG #2.
+        _ctx_for_fp = load_project_context(project_path)
+        _content_fp = len(_ctx_for_fp)
+        if cached and cached[0] >= mtime and cached[2] == _content_fp:
             return cached[1]
 
     parts: dict[str, str] = {}
@@ -665,5 +670,5 @@ def build_awareness_dict(project_path: str) -> dict[str, str]:
         if len(_AWARENESS_CACHE) >= _AWARENESS_MAX_ENTRIES:
             oldest = min(_AWARENESS_CACHE, key=lambda k: _AWARENESS_CACHE[k][0])
             _AWARENESS_CACHE.pop(oldest, None)
-        _AWARENESS_CACHE[project_path] = (mtime, parts)
-    return parts
+        _AWARENESS_CACHE[project_path] = (mtime, parts, _content_fp)
+    return dict(parts)  # shallow copy — values are immutable strings
