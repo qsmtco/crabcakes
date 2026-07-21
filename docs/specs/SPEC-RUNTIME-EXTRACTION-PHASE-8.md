@@ -1,13 +1,15 @@
-# SPEC: Runtime Modular Extraction — Phase 8 (Final Reduction)
+# SPEC: Runtime Modular Extraction — Phase 8 (Re-export Alias Cleanup)
 
 **Date:** 2026-07-20
 **Author:** Supervisor
-**Status:** Draft — for implementation
+**Status:** Draft — for implementation (REVISED after spec audit)
 **Implements:** `docs/proposals/PROPOSAL-runtime-modular-extraction.md` §5 (Phase 8)
 **Depends on:** Phases 4–6 (cost, audit, persistence must be extracted first)
 **Target branch:** main
 
-> **Architecture compliance:** This phase removes re-export shims from `agent/runtime.py` and updates call sites to import directly from `agent/llm/*`. No new modules. No layer violations. The re-exports exist only for backward compatibility with tests that patch `agent.runtime._call_openai` etc.
+> **Architecture compliance:** This phase removes PURE re-export alias blocks from `agent/runtime.py` and updates call sites to import directly from `agent/llm/*`. No new modules. No layer violations.
+>
+> **IMPORTANT SCOPE CORRECTION (post-audit):** The original Phase 8 draft proposed removing `_PROVIDER_CALLERS`, `_PROVIDER_STREAMERS`, and the bound-method shims (`_call_openai` etc.). **Spec audit found these are NOT pure re-exports** — they are active dispatch infrastructure: `_RESPONSE_FORMAT` is derived from `_PROVIDER_CALLERS` at module load (line 237-242), `utils/providers_store.py::_VALID_CALLERS` has a duplication invariant test, and the dispatch in `_call_llm`/`_call_llm_streaming` uses `_PROVIDER_CALLERS.get(caller_key)` directly. **Removing them is a dispatch-architecture refactor, not an alias cleanup.** That refactor is DEFERRED to a future phase. This phase only removes the pure alias re-exports.
 
 ---
 
@@ -15,36 +17,35 @@
 
 ### Problem statement
 
-After Phases B1–B6 and Phases 4–6, `agent/runtime.py` still carries **~60 lines of re-export blocks** that import symbols from `agent/llm/*` under legacy underscore names (`_cost_for_model`, `_extract_tool_calls`, `_call_openai`, etc.). These exist purely so tests that do `patch("agent.runtime._call_openai")` continue to work. The real definitions live in `agent/llm/*`; the shims are dead weight.
+After Phases B1–B6 and Phases 4–6, `agent/runtime.py` carries **3 pure re-export blocks** that import symbols from `agent/llm/*` under legacy underscore names. These are pure aliases — the underscored names are used at call sites in runtime.py but serve no purpose beyond avoiding a rename. The real definitions live in `agent/llm/*`.
 
-Additionally, there are **bound-method shims** for test-patch compatibility:
-```python
-_call_openai = OpenAIProvider("openai").call
-_call_minimax = MiniMaxProvider().call
-```
-These create bound methods at import time so tests can patch them. They should be replaced with direct imports from the provider registry.
+**What IS in scope (pure aliases — safe to remove):**
+- Converters block: `_convert_messages_for_anthropic`, `_convert_tools_for_anthropic` (2 call sites)
+- Streaming block: `_sse_lines`, `_parse_sse_line`, `_parse_sse_delta`, `_first_choice`, `_urlopen_with_ssl_retry`, `_stream_with_ssl_retry`, `_is_retryable_ssl_error`, `_friendly_error_message`, + 4 constants (10+ call sites)
+- Extractors block: `_extract_tool_calls`, `_extract_text_content`, `_extract_usage` (16 call sites)
+
+**What is NOT in scope (dispatch infrastructure — DEFERRED):**
+- `_PROVIDER_CALLERS` dict (line 200) — used for runtime dispatch at lines 1843, 2352; `_RESPONSE_FORMAT` derived from it at 237-242
+- `_PROVIDER_STREAMERS` dict (line 276) — used for runtime streaming dispatch
+- Bound-method shims `_call_openai`, `_call_minimax`, `_call_anthropic` — referenced by `_PROVIDER_CALLERS`/`_PROVIDER_STREAMERS` dict values
+- `get_valid_callers()` consumers in `utils/providers_store.py`
+- `_RESPONSE_FORMAT` dict
 
 ### Solution summary
 
-1. For each re-export block, update the call sites in runtime.py to use the public (non-underscored) names imported directly from `agent/llm/*`.
+1. For each of the 3 pure re-export blocks, update call sites in runtime.py to use the public names.
 2. Remove the re-export blocks.
-3. For test-patch compatibility: either (a) update tests to patch the new locations, or (b) keep a minimal compatibility shim. **Decision: update tests** — the re-exports are the debt; keeping them perpetuates it.
-4. Update `__all__` to remove underscored aliases.
-
-**This phase depends on Phases 4–6 being complete** (cost re-exports removed in Phase 4; the others removed here).
+3. Update `__all__` to remove the underscored aliases.
+4. Update tests that patch these specific symbols.
 
 ### Scope (in/out table)
 
-| In scope | Out of scope |
+| In scope | Out of scope (DEFERRED) |
 |----------|-------------|
-| `agent/runtime.py` — remove 4 remaining re-export blocks, update call sites, update `__all__` | `agent/llm/*` — no changes (already correct) |
-| `tests/test_agent_runtime.py` — update patch targets from `agent.runtime._X` to `agent.llm.X` | `agent/audit.py`, `agent/persistence.py` — handled in Phases 5–6 |
-| `scripts/audit_*.py` — update imports if they reference `runtime._PROVIDER_*` | New features — none |
-
-### Architecture principles that apply
-
-- DRY: one definition per symbol. Re-exports violate DRY. ✓
-- Test isolation: tests should patch the real location, not a shim. ✓
+| Remove 3 pure re-export blocks (converters, streaming, extractors) | `_PROVIDER_CALLERS` / `_PROVIDER_STREAMERS` dispatch dicts |
+| Update ~28 call sites in runtime.py to non-underscored names | Bound-method shims `_call_openai` etc. |
+| Update `__all__` | `_RESPONSE_FORMAT` derivation |
+| Update test patch targets for the 3 blocks | `get_valid_callers()` / `_VALID_CALLERS` invariant |
 
 ---
 
@@ -52,22 +53,20 @@ These create bound methods at import time so tests can patch them. They should b
 
 ```
 DISCOVERY:
-- Read agent/runtime.py re-export blocks (lines 166-270):
-  Block 1 (cost, lines 166-175): 6 symbols from agent.llm.cost — REMOVED in Phase 4.
-  Block 2 (convert, lines 177-182): 2 symbols from agent.llm.convert
-    (_convert_messages_for_anthropic, _convert_tools_for_anthropic).
-  Block 3 (providers, lines 184-196): OpenAIProvider, MiniMaxProvider, AnthropicProvider
-    imports + _get_provider + bound-method shims (_call_openai, _call_minimax,
-    _call_anthropic as bound .call methods).
-  Block 4 (streaming, lines 245-262): 13 symbols from agent.llm.streaming.
-  Block 5 (extractors, lines 264-270): 3 symbols from agent.llm.extractors.
-- Grep call sites for each underscored symbol in runtime.py (must update all).
-- Grep tests/ and scripts/ for patch("agent.runtime._X") patterns.
+- Read agent/runtime.py re-export blocks:
+  Block 1 (converters, lines 177-182): 2 symbols from agent.llm.convert. 2 call sites.
+  Block 2 (streaming, lines 245-262): 13 symbols from agent.llm.streaming. 10+ call sites.
+  Block 3 (extractors, lines 264-270): 3 symbols from agent.llm.extractors. 16 call sites.
+- NOT in scope: _PROVIDER_CALLERS (line 200), _PROVIDER_STREAMERS (line 276),
+  _RESPONSE_FORMAT (line 237), bound-method shims (lines 192-196). These are
+  dispatch infrastructure, not aliases. Spec audit BUG #15, #17, #18, #19, #20.
+- Grep tests/ for patch targets on the 3 in-scope blocks.
 - __all__ lists: _extract_tool_calls, _extract_text_content, _extract_usage,
-  _cost_for_model, _PROVIDER_CALLERS, _PROVIDER_STREAMERS, _is_retryable_ssl_error,
-  _stream_with_ssl_retry, _friendly_error_message.
-- Architecture owner: agent/llm/* owns all LLM-related symbols. runtime.py should
-  import and use them directly, not re-export under aliases.
+  _is_retryable_ssl_error, _stream_with_ssl_retry, _friendly_error_message.
+- _is_empty_content (lines 301-332) STAYS in runtime.py — not a re-export.
+- _format_chunks_for_llm (lines 335-347) STAYS in runtime.py — KB synthesis helper,
+  not an LLM/provider function. Out of scope for all phases.
+- Architecture owner: agent/llm/* owns all LLM-related symbols.
 ```
 
 ---
