@@ -165,14 +165,7 @@ class AuditLog:
 
 # ── Cost tables + functions (extracted to agent/llm/cost.py, Phase B1) ──────
 # Re-exported under legacy underscore names for backward compatibility.
-from agent.llm.cost import (
-    OPENAI_COST as _OPENAI_COST,
-    MINIMAX_COST as _MINIMAX_COST,
-    ANTHROPIC_COST as _ANTHROPIC_COST,
-    PROVIDER_COSTS as _PROVIDER_COSTS,
-    model_id as _model_id,
-    cost_for_model as _cost_for_model,
-)
+from agent.llm.cost import cost_for_model
 
 # ── Anthropic converters (extracted to agent/llm/convert.py, Phase B2) ──────
 # Re-exported under legacy underscore names for backward compatibility.
@@ -1329,7 +1322,7 @@ class AgentRuntime:
 
                     # Record usage
                     prompt_tok, comp_tok = _extract_usage(response, response_format=loop_fmt)
-                    cost = _cost_for_model(conv.model, prompt_tok, comp_tok)
+                    cost = cost_for_model(conv.model, prompt_tok, comp_tok)
                     conv.record_usage(prompt_tok + comp_tok, cost)
                     self._dispatch(self._on_token_usage, session_key, prompt_tok + comp_tok, cost)
 
