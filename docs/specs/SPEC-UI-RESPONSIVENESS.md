@@ -85,7 +85,7 @@ Add a `defer_prompt_build` parameter to `send_message()`. When `True`, `_run_loo
 
 **Detailed change:**
 
-Add method:
+Add method (includes double-checked-locking per BUG #1 fix):
 
 ```python
 def _ensure_system_prompt(self, session_key: str) -> None:
@@ -93,13 +93,18 @@ def _ensure_system_prompt(self, session_key: str) -> None:
 
     Called from _run_loop at the start, before any LLM call.
     If the conversation already has a system prompt, this is a no-op.
-    Thread-safe: conv.system_prompt write is protected by self._lock.
+
+    Thread safety (BUG #1 audit): uses double-checked-locking.
+    The first check (outside lock) is the fast path — when the prompt
+    is already built, we avoid the lock entirely. The second check
+    (inside lock) prevents concurrent writes from _run_loop (background)
+    and force_llm_compact (main thread via /compact).
     """
     conv = self._conversations.get(session_key)
     if conv is None:
         return
     if conv.system_prompt:
-        return  # Already has one — no-op
+        return  # Already has one — fast path, no lock needed
 
     from agent.context import build_system_prompt
     from agent.tools import get_all_tools
@@ -113,6 +118,7 @@ def _ensure_system_prompt(self, session_key: str) -> None:
         model_max_for_budget = 128_000
     context_mode = getattr(default_provider_cfg, "context_mode", "auto") or "auto"
 
+    # build_system_prompt is pure file I/O — safe outside the lock
     new_prompt = build_system_prompt(
         conv.agent_name,
         conv.project_path,
@@ -121,8 +127,13 @@ def _ensure_system_prompt(self, session_key: str) -> None:
         model_max_tokens=model_max_for_budget,
         context_mode=context_mode,
     )
-    conv.system_prompt = new_prompt
-    logger.info("System prompt built for %s in background thread (len=%d)", session_key, len(new_prompt))
+    # Double-checked-locking: re-check under lock to prevent concurrent write
+    # from force_llm_compact (main thread) or another _run_loop instance.
+    with self._lock:
+        if not conv.system_prompt:
+            conv.system_prompt = new_prompt
+            logger.info("System prompt built for %s in background thread (len=%d)",
+                        session_key, len(new_prompt))
 ```
 
 Add parameter to `send_message()`:
