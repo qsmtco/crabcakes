@@ -980,11 +980,15 @@ class AgentRuntimeHandler:
 
         AgentRuntime sends incremental SSE chunks. ChatRenderHandler expects
         cumulative text (same contract as gateway). Accumulate here.
+
+        Throttled: the stored text is ALWAYS updated (final render is correct),
+        but the expensive rendering pipeline is limited to ~20 calls/sec per session.
         """
         if self._crh is None:
             return
-        # Accumulate incremental delta into cumulative text
+        # Always accumulate text — ensures final output is complete
         self._streaming_text[session_key] = self._streaming_text.get(session_key, "") + text
+
         if not self._crh.is_streaming(session_key):
             chat_box = self._resolve_chat_box(session_key)
             if chat_box is not None:
@@ -1001,7 +1005,16 @@ class AgentRuntimeHandler:
                     agent_def_dl = self._agents.get(session_key)
                     agent_name_dl = agent_def_dl.display_name if agent_def_dl else "Agent"
                     self._on_drawer_lifecycle(session_key, agent_name_dl, "start")
-        self._crh.update_streaming(session_key, self._streaming_text[session_key])
+
+        # Throttle check: skip expensive rendering if we recently dispatched.
+        # The text has already been accumulated above, so the final render
+        # will be correct. The first call always passes (last defaults to 0.0,
+        # so now - 0.0 >= 0.05 on first token).
+        now = time.monotonic()
+        last = self._last_delta_dispatch.get(session_key, 0.0)
+        if now - last >= self._delta_throttle_sec:
+            self._last_delta_dispatch[session_key] = now
+            self._crh.update_streaming(session_key, self._streaming_text[session_key])
 
     def _on_tool_call_start(
         self, session_key: str, name: str, args: dict[str, Any]

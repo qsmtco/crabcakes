@@ -446,6 +446,7 @@ class AgentRuntime:
         app_title: str = "",                    # app identifier (e.g. "crabcakes")
         fallback_provider: str | None = None,    # KB fallback provider (from agent def)
         fallback_model: str | None = None,       # KB fallback model (from agent def)
+        defer_prompt_build: bool = False,        # NEW: build system prompt on background thread
     ) -> str:
         """
         Create a new conversation for an agent.
