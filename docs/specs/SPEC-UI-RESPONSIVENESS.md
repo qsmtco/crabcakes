@@ -596,7 +596,7 @@ Expected: All passed
 3. Manual verification: add `logging.info` to `_ensure_system_prompt` and verify the log appears from the background thread, not the main thread
 
 ```
-Expected: All 112+ affected tests pass
+Expected: All affected tests pass
 ```
 
 ### Step 5: Full test suite
