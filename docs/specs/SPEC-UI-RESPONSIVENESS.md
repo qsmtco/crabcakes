@@ -205,29 +205,55 @@ if rt.get_conversation(session_key) is None:
 Change to:
 
 ```python
-# New: pass empty string as system_prompt — _run_loop will build it
+# New: create_conversation will call build_system_prompt internally,
+# but we defer that to the background thread via _defer_prompt.
+# The conversation is created with a system_prompt built synchronously
+# (from create_conversation), but in the future the prompt build will
+# move to _ensure_system_prompt in the background thread.
 if rt.get_conversation(session_key) is None:
-    # Pass a sentinel so create_conversation doesn't call build_system_prompt
-    # We'll build it in the background thread via _defer_prompt.
-    rt.create_conversation(
-        agent_name=agent_def.display_name,
-        session_key=session_key,
-        project_path=project_path,
-        model=agent_model,
-        allowed_tools=agent_def.tools,
-        mcp_servers=agent_def.mcp_servers,
-        agent_role=agent_def.role,
-        si_enforcement=si_enforcement,
-        api_key=agent_def.api_key,
-        app_title=agent_def.app_title,
-        fallback_provider=agent_def.fallback_provider,
-        # defer_prompt is handled by send_message parameter
-    )
-    # Mark that the prompt should be built in background
-    defer_prompt = True
+    loaded = rt.load_conversation(session_key)
+    if loaded:
+        logger.info("send_to_special_agent: loaded persisted conversation for %s", session_key)
+        rt._rebuild_conversation_context(
+            session_key,
+            project_path,
+            agent_role=agent_def.role,
+        )
+        defer_prompt = False  # _rebuild_context already built prompt
+    else:
+        rt.create_conversation(
+            agent_name=agent_def.display_name,
+            session_key=session_key,
+            project_path=project_path,
+            model=agent_model,
+            allowed_tools=agent_def.tools,
+            mcp_servers=agent_def.mcp_servers,
+            agent_role=agent_def.role,
+            si_enforcement=si_enforcement,
+            api_key=agent_def.api_key,
+            app_title=agent_def.app_title,
+            fallback_provider=agent_def.fallback_provider,
+        )
+        defer_prompt = True  # prompt will be built in background
 else:
+    # Conversation already exists — sync latest agent config (edits
+    # take effect immediately without restart).
     defer_prompt = False
-    # ... existing sync logic for api_key, model, etc.
+    conv = rt.get_conversation(session_key)
+    if conv is not None:
+        if agent_def.api_key:
+            conv.api_key = agent_def.api_key
+        if agent_model:
+            conv.model = agent_model
+        if agent_def.app_title:
+            conv.app_title = agent_def.app_title
+        conv.fallback_provider = agent_def.fallback_provider
+        if agent_def.role:
+            conv.agent_role = agent_def.role
+        if agent_def.mcp_servers is not None:
+            conv.mcp_servers = list(agent_def.mcp_servers)
+        if si_enforcement is not None:
+            conv.si_enforcement = si_enforcement
 ```
 
 Then at the end:
@@ -482,7 +508,9 @@ User clicks Send
 
 **Per-token total:** 1 idle_add entry (halved), <1ms main-thread work (dominated by set_text).
 
-**At 50 tokens/sec:** 50 idle_add/sec, <50ms/sec of main-thread work. Frame budget at 60fps is 16ms — uses ~3 of 16ms. **Dropped frames should be eliminated.**
+**Worst-case per-token latency:** With the outer 50ms throttle (Fix 3) and the inner 150ms throttle (update_streaming), a token can be delayed up to 200ms before the bubble visually updates. In practice, the inner 150ms throttle dominates (it's the longer interval), so worst-case is ~150ms for a token that arrives just after a throttle window opens. This matches the **pre-fix** behavior — the 150ms throttle already existed in `update_streaming`. Fix 3's 50ms outer throttle does NOT increase latency — it reduces throughput to `update_streaming`, which the inner throttle was already doing. **Net effect on user-perceived visual latency:** unchanged from pre-fix (still ~150ms worst-case). The improvement is in main-thread CPU usage (less work per token), not in visual latency.
+
+**At 50 tokens/sec:** 50 idle_add/sec, <50ms/sec of main-thread work. Frame budget at 60fps is 16ms — uses ~3 of 16ms. **Dropped frames due to streaming should be eliminated.**
 
 ### 3.3 Key Structures
 
