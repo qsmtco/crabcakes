@@ -847,6 +847,12 @@ class AgentRuntime:
                     self._dispatch(self._on_error, session_key, "No conversation found")
                     return
 
+            # BUG #13 — Deferred prompt build. If create_conversation was called
+            # with defer_prompt_build=True (system_prompt == ""), build it now on
+            # the background thread. This eliminates ~300ms of main-thread blocking
+            # on every new agent conversation.
+            self._ensure_system_prompt(session_key)
+
             # BUG #21: Fire a turn-start signal BEFORE any LLM call or tool processing.
             # This guarantees the handler clears _ended_sessions and emits the drawer
             # lifecycle-start separator for EVERY turn — including tool-only turns
