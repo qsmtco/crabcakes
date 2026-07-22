@@ -74,6 +74,11 @@ class AgentRuntimeHandler:
         # Accumulated streaming text: session_key → cumulative text
         # AgentRuntime sends incremental deltas; ChatRenderHandler expects cumulative.
         self._streaming_text: dict[str, str] = {}
+        # UI responsiveness throttle: session_key → last monotonic time we dispatched
+        # update_streaming from _do_text_delta. Text is ALWAYS accumulated; rendering is
+        # throttled to at most 20 calls/sec per session.
+        self._last_delta_dispatch: dict[str, float] = {}
+        self._delta_throttle_sec = 0.05  # 50ms — at most 20 throttle-pass updates/sec
         # Pending approval cards: approval_id (card_id) → {session_key, tool_name, args}
         # Used by Phase E to resolve approvals when PM clicks Approve/Deny.
         self._pending_approvals: dict[str, dict] = {}
