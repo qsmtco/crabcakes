@@ -443,7 +443,9 @@ class ChatRenderHandler:
         main thread with set_text on every delta. The latest text is always
         stored so the final update is never lost.
 
-        Safe to call from any thread.
+        Safe to call from the GTK main thread only (caller is responsible for
+        dispatching via GLib.idle_add). After Fix 2, set_text is called directly
+        instead of through self._dispatch.
         """
         if session_key not in self._streaming_bubbles:
             print(f"[STREAM] update_streaming: SKIP sk={session_key!r} not in _streaming_bubbles")
