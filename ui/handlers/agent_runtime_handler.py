@@ -813,6 +813,7 @@ class AgentRuntimeHandler:
                 fallback_provider=agent_def.fallback_provider,
                 # fallback_model removed in 2026-06-15 — runtime derives from provider card.
                 # See SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md.
+                defer_prompt_build=True,        # NEW — prompt built in background thread
             )
         else:
             # Bug fix: sync existing conversation with latest agent definition.
