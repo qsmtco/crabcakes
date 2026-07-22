@@ -247,6 +247,8 @@ So the cleanest approach: add a deferred flag to `send_message`, don't modify `c
 
 **Risk:** MEDIUM — the `_defer_prompt` flag must not be set for the lazy reconciliation path (`_rebuild_conversation_context`). That path handles project-switching and needs the prompt built synchronously (the user expects the agent to see the new project context on the very next message). This is already handled: `_rebuild_conversation_context` fires BEFORE `send_message`, and after it runs, `conv.system_prompt` is non-empty, so `_ensure_system_prompt` is a no-op.
 
+Additionally, `force_llm_compact` (called from the main thread via `/compact`) reads and potentially rewrites `conv.system_prompt` (runtime.py lines 1898-1907). The double-checked-locking pattern in `_ensure_system_prompt` (BUG #1 fix) prevents concurrent writes: `force_llm_compact` holds `self._compaction_lock` (a threading.Lock) when it writes `conv.system_prompt`, while `_ensure_system_prompt` holds `self._lock`. These are different locks, so the race is prevented by the double-check — `_ensure_system_prompt` re-reads `conv.system_prompt` inside `self._lock` and only writes if still empty, while `force_llm_compact` temporarily replaces `conv.system_prompt` with a focus-augmented version. If both run concurrently, one of the two writes wins; the double-check ensures neither produces a corrupt partial state.
+
 **Line count estimate:** +8 lines (defer flag logic in send_to_special_agent)
 
 ### 2.3 `ui/handlers/chat_render_handler.py` — Fix 2: Eliminate double idle_add
@@ -258,7 +260,7 @@ So the cleanest approach: add a deferred flag to `send_message`, don't modify `c
 
 **Verify call sites:**
 - `agent_runtime_handler.py:998` — `self._crh.update_streaming(session_key, self._streaming_text[session_key])` — called from `_do_text_delta`, which IS on the main thread.
-- `chat_handler.py:575` — `self._chat_render_handler.update_streaming(session_key, delta_text)` — called from `_handle_streaming_delta`. Is THIS on the main thread? Let's check: `_handle_streaming_delta` is called from `_on_feed_event` via the gateway dispatch chain. Gateway events arrive on the gateway thread and are dispatched via `GLib.idle_add` to the main thread. So YES, `_handle_streaming_delta` is also on the main thread.
+- `chat_handler.py:575` — `self._chat_render_handler.update_streaming(session_key, delta_text)` — called from `_handle_streaming_delta`. Is THIS on the main thread? Let's check: `_handle_streaming_delta` is called from `on_chat_event` via the gateway dispatch chain. Gateway events arrive on the gateway thread and are dispatched via `GLib.idle_add` to the main thread. So YES, `_handle_streaming_delta` is also on the main thread.
 
 Both callers are on the main thread. Safe to call `_update()` directly.
 
@@ -354,7 +356,6 @@ def _do_text_delta(self, session_key: str, text: str) -> None:
     # Throttle check: skip expensive rendering if we recently dispatched.
     # The text has already been accumulated above, so the final render
     # will be correct. This reduces per-token main-thread work by ~80%.
-    import time
     now = time.monotonic()
     last = self._last_delta_dispatch.get(session_key, 0.0)
     if now - last >= self._delta_throttle_sec:
