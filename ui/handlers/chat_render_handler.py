@@ -462,17 +462,11 @@ class ChatRenderHandler:
             return
         self._last_stream_update[session_key] = now
 
-        def _update():
-            from utils.escaping import escape_for_pango
-            from utils.markdown import format_markdown
-            # Use sb.plain_text (always latest) not the delta_text arg.
-            # Route through escape + format_markdown so inline formatting
-            # (bold/italic/links) renders during the streaming window (Bug #10).
-            escaped = escape_for_pango(sb.plain_text)
-            formatted = format_markdown(escaped)
-            sb.label.set_markup(formatted + "<tt>▍</tt>")
-
-        self._dispatch(_update)
+        # During streaming: use plain text to avoid expensive Pango layout
+        # recalculation. Full formatting (markdown, syntax highlighting) is
+        # applied in end_streaming → build_role_bubble. We are already on the
+        # main thread (caller dispatched via GLib.idle_add), so no _dispatch needed.
+        sb.label.set_text(sb.plain_text + " ▍")
 
     def _render_plain_text(self, role: str, text: str, on_forward_click=None, agent_name: str = None):
         """
