@@ -591,7 +591,7 @@ Expected: All passed
 5. Pass `defer_prompt_build=True` in `send_to_special_agent`'s `create_conversation` call (agent_runtime_handler.py:818)
 
 **Verification:**
-1. `python3 -m pytest tests/test_runtime.py -v` — all existing tests pass
+1. `python3 -m pytest tests/test_agent_runtime.py -v` — all existing tests pass
 2. `python3 -m pytest tests/test_agent_runtime_handler.py -v` — all existing tests pass
 3. Manual verification: add `logging.info` to `_ensure_system_prompt` and verify the log appears from the background thread, not the main thread
 
