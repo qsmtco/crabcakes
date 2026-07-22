@@ -391,6 +391,8 @@ def _do_text_delta(self, session_key: str, text: str) -> None:
 
 **Thread safety:** `_do_text_delta` is always called on the main thread (dispatched by `_on_text_delta` via `GLib.idle_add`). No concurrent access to `self._last_delta_dispatch` — streaming is single-threaded on the main thread.
 
+**Import required:** Add `import time` to the top of `agent_runtime_handler.py` (alongside the existing `import logging`, `import os`, etc. at line 17-21). Do NOT use inline `import time` — it is already referenced in the code sample above at module scope (the `time.monotonic()` call assumes `time` is available at module level).
+
 **Risk:** LOW — the throttle already exists in `update_streaming` (150ms). This moves it earlier, to 50ms. The final render includes ALL accumulated text because `sb.plain_text` is always updated inside `update_streaming` regardless of throttle state. Adding 50ms throttle on top of 150ms means we dispatch at most every 50ms to `update_streaming`, which then throttles internally to 150ms for `set_markup`. This is a tighter outer throttle that costs less per token (skips the method call chain).
 
 **Line count estimate:** +10 lines (import, throttle vars, throttle check)
