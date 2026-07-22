@@ -290,8 +290,11 @@ def urlopen_with_ssl_retry(req, timeout, *, max_retries=MAX_SSL_RETRIES):
     for attempt in range(max_retries + 1):
         try:
             return urllib.request.urlopen(req, timeout=timeout)
-        except (ConnectionResetError, BrokenPipeError) as e:
+        except (ConnectionResetError, BrokenPipeError, TimeoutError) as e:
             # Bare OSError subclasses — never SSL-wrapped, retry directly.
+            # TimeoutError (Python 3.10+, alias for socket.timeout) fires
+            # when the socket read exceeds the timeout. Retryable: the
+            # provider may be slow or under load.
             if attempt == max_retries:
                 raise
             last_exc = e
