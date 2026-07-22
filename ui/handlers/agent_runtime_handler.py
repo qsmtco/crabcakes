@@ -1421,6 +1421,7 @@ class AgentRuntimeHandler:
 
         # Clear accumulated streaming text — no longer needed
         self._streaming_text.pop(session_key, None)
+        self._last_delta_dispatch.pop(session_key, None)
 
         was_streaming = self._crh.is_streaming(session_key)
         project_name = self._active_project[0] if self._active_project else None
