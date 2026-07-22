@@ -290,44 +290,31 @@ Additionally, `force_llm_compact` (called from the main thread via `/compact`) r
 
 Both callers are on the main thread. Safe to call `_update()` directly.
 
-**Detailed change:**
+**Detailed change (post-Fix-5 state — Fix 5 runs first, replacing set_markup with set_text):**
 
-Replace (lines 473):
+Replace (lines 473, after Fix 5 has replaced set_markup with set_text):
 ```python
-        def _update():
-            from utils.escaping import escape_for_pango
-            from utils.markdown import format_markdown
-            # Use sb.plain_text (always latest) not the delta_text arg.
-            # Route through escape + format_markdown so inline formatting
-            # (bold/italic/links) renders during the streaming window (Bug #10).
-            escaped = escape_for_pango(sb.plain_text)
-            formatted = format_markdown(escaped)
-            sb.label.set_markup(formatted + "<tt>▍</tt>")
+        # During streaming: use plain text to avoid expensive Pango layout
+        # recalculation. Full formatting (markdown, syntax highlighting) is
+        # applied in end_streaming → build_role_bubble.
+        sb.label.set_text(sb.plain_text + " ▍")
 
         self._dispatch(_update)
 ```
 
 With (inline the update logic, remove `_dispatch`):
 ```python
-        from utils.escaping import escape_for_pango
-        from utils.markdown import format_markdown
         # Direct update — we're already on the main thread (caller dispatched
         # via GLib.idle_add). Inlining avoids double idle_add overhead.
-        escaped = escape_for_pango(sb.plain_text)
-        formatted = format_markdown(escaped)
-        sb.label.set_markup(formatted + "<tt>▍</tt>")
+        sb.label.set_text(sb.plain_text + " ▍")
 ```
 
 **Risk:** LOW — the logic is identical, just removing the redundant `_dispatch` wrapper. The imports (`escape_for_pango`, `format_markdown`) were already inside `_update()`, now they're at module scope (or can be moved to top-level imports since the handler already imports from utils).
 
 **Update top-level imports:**
-```python
-from utils.escaping import escape_for_pango
-from utils.markdown import format_markdown
-```
-Add to the existing imports in `chat_render_handler.py`. Replace the local `from utils.escaping import escape_for_pango` etc. with top-level imports.
+No new imports needed — Fix 5 (Step 1) already removed the `escape_for_pango` and `format_markdown` inline imports by switching to `set_text`. The `def _update()` wrapper and its `self._dispatch(_update)` call are simply removed, leaving the single `set_text` line.
 
-**Line count:** −5 lines (remove `def _update():`, `_dispatch(_update)`, and dedent)
+**Line count:** −5 lines (remove `def _update():`, `self._dispatch(_update)`, and dedent)
 
 ### 2.4 `ui/handlers/agent_runtime_handler.py` — Fix 3: Throttle at _do_text_delta level
 
