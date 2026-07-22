@@ -1741,6 +1741,7 @@ class AgentRuntimeHandler:
         """Main-thread portion of _on_error."""
         logger.debug("[handler] _do_error: sk=%s msg=%s", session_key, message)
         self._streaming_text.pop(session_key, None)
+        self._last_delta_dispatch.pop(session_key, None)
         # When the runtime passes a raw exception object (not a string),
         # translate it to a user-friendly message for display while keeping
         # the exception stored in _last_error_exception for context enrichment.
