@@ -440,8 +440,8 @@ class ChatRenderHandler:
         to the stored plain text, as that would double-accumulate.
 
         Throttled: UI updates are limited to every 150ms to avoid freezing the
-        main thread with escape_for_pango + set_markup on every delta. The latest
-        text is always stored so the final update is never lost.
+        main thread with set_text on every delta. The latest text is always
+        stored so the final update is never lost.
 
         Safe to call from any thread.
         """
