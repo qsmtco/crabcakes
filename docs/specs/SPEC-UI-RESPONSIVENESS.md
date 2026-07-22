@@ -766,7 +766,7 @@ After implementation, run:
 
 ```bash
 python3 -m pytest tests/test_chat_render_handler.py tests/test_agent_runtime_handler.py -v
-python3 -m pytest tests/test_runtime.py -v
+python3 -m pytest tests/test_agent_runtime.py -v
 python3 -m pytest -q  # full suite (1,200+ tests)
 ```
 
