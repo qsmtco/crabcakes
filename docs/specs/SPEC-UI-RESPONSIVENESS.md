@@ -588,10 +588,12 @@ AgentRuntime._dispatch(on_text_delta, text)
 
 **What:** Replace `set_markup` with `set_text` in `update_streaming`. Add `escape_for_pango` + `format_markdown` to top-level imports (they'll be removed later; kept for back-compat).
 
-**Verification:** Run `python3 -m pytest tests/test_chat_render_handler.py -v`. All tests must pass (test_update_streaming* may need adjustment if they assert on markup content). If tests assert on formatted output, update assertions to match plain text.
+**Verification:** Run `python3 -m pytest tests/test_chat_render_handler.py -v`. Tests must pass.
+- `test_update_streaming_escapes_html_chars` is updated to assert plain-text behavior during streaming (§2.6).
+- All other test assertions pass unchanged.
 
 ```
-Expected: 12/12 passed (or adjusted assertions)
+Expected: All tests pass. The one updated test reflects the new behavior.
 ```
 
 ### Step 2: Fix 2 — Eliminate double idle_add (chat_render_handler.py)
@@ -633,7 +635,7 @@ Expected: All 112+ affected tests pass
 python3 -m pytest -x -q  # stop on first failure
 ```
 
-Expected: 0 failures. All 1,200+ tests pass.
+Expected: 0 unexpected failures. One test (`test_update_streaming_escapes_html_chars`) has its assertion body intentionally changed per §2.6. All other 1,200+ tests pass unchanged.
 
 ### Step 6: Pattern sweep
 
