@@ -187,7 +187,7 @@ class ChatRenderHandler:
         self._on_crabcard_extracted = None
         # Phase 3: Active project name for crabcard parsing (set via set_project_name())
         self._project_name = ""
-        # Streaming throttle: avoid redundant escape+set_markup on every delta
+        # Streaming throttle: avoid redundant set_text on every delta
         self._last_stream_update: dict[str, float] = {}  # session_key → monotonic timestamp
         self._stream_throttle_sec = 0.15  # min 150ms between UI updates
 

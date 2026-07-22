@@ -208,17 +208,49 @@ class TestPhase3Streaming:
         # StreamingBubble dataclass: access .plain_text attribute directly
         assert self.handler._streaming_bubbles["agent:1"].plain_text == "Hello world"  # last delta wins, no double-accumulation
 
-    def test_update_streaming_escapes_html_chars(self):
-        """update_streaming() escapes < > & in the label to prevent markup corruption."""
+    def test_update_streaming_shows_plain_text(self):
+        """During streaming, label shows plain text (no markup escaping).
+        Escaping is applied in end_streaming → build_role_bubble."""
         self.handler.start_streaming("agent:1", self.fake_box, "Agent")
         self._run_all_idle()
-        self.handler.update_streaming("agent:1", "Use <div>")
+        self.handler.update_streaming("agent:1", "<div>hello</div>")
         self._run_all_idle()
         # StreamingBubble dataclass: access .label attribute directly
-        markup = self.handler._streaming_bubbles["agent:1"].label.get_label()
-        # Raw <div> must NOT appear in markup — it should be &lt;div&gt;
-        assert "<div>" not in markup
-        assert "&lt;div&gt;" in markup
+        label_text = self.handler._streaming_bubbles["agent:1"].label.get_label()
+        assert "<div>hello</div>" in label_text  # literal, not escaped
+        assert "&lt;" not in label_text  # no markup escaping during streaming
+
+    def test_end_streaming_escapes_html_in_final_bubble(self):
+        """end_streaming → build_role_bubble escapes < > & in the final bubble.
+        Streaming shows plain text; escaping is applied on completion."""
+        self.handler.start_streaming("agent:1", self.fake_box, "Agent")
+        self._run_all_idle()
+        self.handler.update_streaming("agent:1", "Use <div> & <script>")
+        self._run_all_idle()
+        self.handler.end_streaming("agent:1")
+        self._run_all_idle()
+        # The final bubble is built by build_role_bubble, which calls
+        # escape_for_pango + format_markdown + set_markup. The streaming
+        # bubble (now removed) used set_text (plain text). Assert that the
+        # FINAL bubble has escaped content.
+        #
+        # build_role_bubble returns a Gtk.Box; the label is a child.
+        # Walk the widget tree to find Gtk.Label and check get_label():
+        assert len(self.fake_box._children) >= 1, "Expected at least one final bubble widget"
+        final_widget = self.fake_box._children[-1]
+        # Walk widget tree looking for labels
+        def find_labels(widget):
+            labels = []
+            if hasattr(widget, 'get_label') and callable(widget.get_label):
+                labels.append(widget.get_label())
+            child = getattr(widget, 'get_first_child', lambda: None)()
+            while child is not None:
+                labels.extend(find_labels(child))
+                child = child.get_next_sibling()
+            return labels
+        labels = find_labels(final_widget)
+        assert any('&lt;div&gt;' in l for l in labels), \
+            f"Expected escaped &lt;div&gt; in final bubble labels: {labels}"
 
     def test_is_streaming_true_after_start(self):
         """is_streaming() returns True after start_streaming() is called."""
