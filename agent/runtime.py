@@ -532,6 +532,54 @@ class AgentRuntime:
         logger.info("Created conversation %s for agent %s", session_key, agent_name)
         return session_key
 
+    def _ensure_system_prompt(self, session_key: str) -> None:
+        """Ensure the conversation has a system prompt built.
+
+        Called from _run_loop at the start, before any LLM call.
+        If the conversation already has a system prompt, this is a no-op.
+
+        Thread safety: uses double-checked-locking with an identity check
+        on the conv object. Fast path: check without lock (common case —
+        prompt already built or deferred-build not enabled). Slow path:
+        re-fetch under self._lock with identity check to ensure we only
+        write to the same object we checked (prevents TOCTOU race with
+        clear_conversation or load_conversation replacing the conversation).
+        """
+        # Fast path: check without lock (common case)
+        conv = self._conversations.get(session_key)
+        if conv is None or conv.system_prompt:
+            return
+
+        from agent.context import build_system_prompt
+        from agent.tools import get_all_tools
+
+        tool_names = [t.name for t in get_all_tools() if t.name in (conv.allowed_tools or [])]
+        default_provider_name = self._config.default_provider
+        default_provider_cfg = self._config.providers.get(default_provider_name) if default_provider_name else None
+        if default_provider_cfg and getattr(default_provider_cfg, "max_tokens", None):
+            model_max_for_budget = int(default_provider_cfg.max_tokens)
+        else:
+            model_max_for_budget = 128_000
+        context_mode = getattr(default_provider_cfg, "context_mode", "auto") or "auto"
+
+        # build_system_prompt is pure file I/O — safe outside the lock
+        new_prompt = build_system_prompt(
+            conv.agent_name,
+            conv.project_path,
+            tool_names,
+            agent_role=conv.agent_role or "",
+            model_max_tokens=model_max_for_budget,
+            context_mode=context_mode,
+        )
+
+        # Slow path: acquire lock, re-fetch conv, identity check, write
+        with self._lock:
+            conv_now = self._conversations.get(session_key)
+            if conv_now is conv and not conv_now.system_prompt:
+                conv_now.system_prompt = new_prompt
+                logger.info("System prompt built for %s in background thread (len=%d)",
+                            session_key, len(new_prompt))
+
     def get_conversation(self, session_key: str) -> Any | None:  # Conversation | None
         """Get a conversation by session key."""
         return self._conversations.get(session_key)
