@@ -142,6 +142,7 @@ RETRYABLE_SSL_ERRORS = frozenset({
 RETRYABLE_OSERROR_TYPES: tuple[type[Exception], ...] = (
     ConnectionResetError,
     BrokenPipeError,
+    TimeoutError,  # Python 3.10+: alias for socket.timeout
 )
 
 MAX_SSL_RETRIES = 3
