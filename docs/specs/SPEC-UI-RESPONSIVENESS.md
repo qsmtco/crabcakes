@@ -791,7 +791,7 @@ Expected:
 - `self._dispatch(_update)` — 0 matches
 - `set_markup` in streaming path — 0 matches (only in `end_streaming`'s `build_role_bubble` which is correct)
 - `set_text` in `update_streaming` — 1 match
-- `_defer_prompt` — 0 matches (only `defer_prompt_build` is used)
+- `_defer_prompt` — 0 matches (defensive check: `_defer_prompt` was considered in an earlier draft but never introduced; the final approach uses `defer_prompt_build`)
 
 ### 10.4 Declaration
 
