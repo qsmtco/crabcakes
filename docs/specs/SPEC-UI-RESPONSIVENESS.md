@@ -433,7 +433,47 @@ With:
 
 **Line count:** −4 lines (removes 2 import lines + 2 formatting lines, adds 1 line)
 
-### 2.6 Files NOT changed (already correct)
+### 2.6 Test Impact of Fix 5 (set_text during streaming)
+
+Fix 5 (using `set_text` instead of `set_markup` during streaming) changes what the streaming label contains. This affects existing tests that assert on Pango-escaped markup content in the streaming bubble, because `set_text` stores literal text while `set_markup` stored Pango-escaped text.
+
+**Affected test (identified by Debugger spec audit, BUG #2):**
+
+```python
+# tests/test_chat_render_handler.py:211
+def test_update_streaming_escapes_html_chars(self):
+    """update_streaming() escapes < > & in the label to prevent markup corruption."""
+    self.handler.start_streaming("agent:1", self.fake_box, "Agent")
+    self._run_all_idle()
+    self.handler.update_streaming("agent:1", "Use <div>")
+    self._run_all_idle()
+    markup = self.handler._streaming_bubbles["agent:1"].label.get_label()
+    # Raw <div> must NOT appear in markup — it should be &lt;div&gt;
+    assert "<div>" not in markup
+    assert "&lt;div&gt;" in markup
+```
+
+**Current assertion:** Asserts `"&lt;div&gt;" in markup` — the Pango-escaped form.
+**Post-Fix 5 behavior:** The label contains `"Use <div> ▍"` — literal `<div>`, no escaping.
+
+**Resolution:** Update this test to assert plain-text behavior during streaming:
+
+```python
+def test_update_streaming_shows_plain_text(self):
+    """During streaming, label shows plain text (no markup escaping).
+    Escaping is applied in end_streaming → build_role_bubble."""
+    self.handler.start_streaming("agent:1", self.fake_box, "Agent")
+    self._run_all_idle()
+    self.handler.update_streaming("agent:1", "<div>hello</div>")
+    self._run_all_idle()
+    label = self.handler._streaming_bubbles["agent:1"].label.get_label()
+    assert "<div>hello</div>" in label  # literal, not escaped
+    assert "&lt;" not in label  # no markup escaping during streaming
+```
+
+HTML escaping is still applied in `end_streaming` → `build_role_bubble` for the final formatted bubble.
+
+### 2.7 Files NOT changed (already correct)
 
 - `ui/handlers/feed_handler.py` — Fix 4 (incremental feed card update) is deferred to Phase 2. No changes needed.
 - `agent/tools.py` — No tool logic changes. Correct as-is.
@@ -613,7 +653,7 @@ Expected: 0 matches (Fix 2 removed the only occurrence).
 | 2 | During agent tool execution (5+ tools), tab switches complete in <200ms | Manual: send prompt that triggers 5+ tool calls, switch tabs during execution. |
 | 3 | Initial "send message" click does not freeze UI for >50ms | Manual: click Send, observe no perceptible freeze before streaming starts. |
 | 4 | Streaming text content is correct and complete | Automated: verify final bubble text matches full response (tests in test_streaming.py) |
-| 5 | All existing tests pass | `pytest -q` — 0 failures |
+| 5 | All existing tests pass EXCEPT `test_update_streaming_escapes_html_chars`, which is updated to assert plain-text behavior during streaming (see §2.6) | `pytest -q` — 0 unexpected failures. One test's assertion body is intentionally changed. |
 | 6 | No regressions in final bubble formatting | Manual: response with bold/italic/code blocks → final formatted bubble matches pre-fix |
 | 7 | Gateway streaming agents also benefit from Fixes 2, 3, 5 | Automated: existing test_streaming tests pass. Fix 2/3/5 changes are internal to update_streaming/_do_text_delta. |
 
