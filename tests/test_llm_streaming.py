@@ -173,3 +173,51 @@ def test_runtime_reexport_stream_with_ssl_retry():
     # Re-export test removed in Phase 8 — _stream_with_ssl_retry no longer
     # exists in agent.runtime. The canonical function is agent.llm.streaming.stream_with_ssl_retry.
     pass
+
+
+# ── TimeoutError tests ──────────────────────────────────────────────────────
+
+def test_friendly_error_message_timeout():
+    """TimeoutError produces a user-friendly message, not raw 'read operation timed out'."""
+    from agent.llm.streaming import friendly_error_message
+    exc = TimeoutError("The read operation timed out")
+    msg = friendly_error_message(exc)
+    assert "timed out" in msg.lower()
+    assert "try" in msg.lower() or "again" in msg.lower()
+    assert "read operation timed out" not in msg  # raw message should NOT be shown
+
+
+def test_stream_with_ssl_retry_retries_on_timeout():
+    """TimeoutError during streaming triggers a retry (not an immediate raise)."""
+    import socket
+    from agent.llm.streaming import stream_with_ssl_retry
+
+    call_count = 0
+    def flaky_streamer(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise TimeoutError("The read operation timed out")
+        yield from []  # succeed on retry
+
+    events = list(stream_with_ssl_retry(
+        flaky_streamer,
+        base_url="", api_key="", model="",
+        messages=[], tools=None, timeout=1.0, x_title="",
+    ))
+    assert call_count == 2, f"Expected 2 attempts (1 fail + 1 succeed), got {call_count}"
+
+
+def test_stream_with_ssl_retry_raises_after_timeout_retries_exhausted():
+    """TimeoutError persists across all retries → raises to caller."""
+    from agent.llm.streaming import stream_with_ssl_retry, MAX_SSL_RETRIES
+
+    def always_timeout(**kwargs):
+        raise TimeoutError("The read operation timed out")
+
+    with pytest.raises(TimeoutError):
+        list(stream_with_ssl_retry(
+            always_timeout,
+            base_url="", api_key="", model="",
+            messages=[], tools=None, timeout=1.0, x_title="",
+        ))
