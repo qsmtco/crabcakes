@@ -384,7 +384,11 @@ def stream_with_ssl_retry(
                     streamed_text = True
                 yield ev
             return
-        except (ConnectionResetError, BrokenPipeError) as e:
+        except (ConnectionResetError, BrokenPipeError, TimeoutError) as e:
+            # TimeoutError (Python 3.10+, alias for socket.timeout) fires
+            # during chunked transfer when the socket read exceeds the
+            # timeout between SSE chunks. Retryable: the provider may be
+            # slow, under load, or the connection is stalling.
             if streamed_text or attempt == max_retries:
                 raise
             last_exc = e
