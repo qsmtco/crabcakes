@@ -425,13 +425,32 @@ def test_end_streaming_escapes_html_in_final_bubble(self):
     self._run_all_idle()
     self.handler.end_streaming("agent:1")
     self._run_all_idle()
-    # The final bubble should have escaped the HTML chars.
-    # The exact assertion depends on build_role_bubble's label content
-    # structure. Intent: verify that < > & are escaped in the final
-    # rendered bubble, not during streaming.
+    # The final bubble is built by build_role_bubble, which calls
+    # escape_for_pango + format_markdown + set_markup. The streaming
+    # bubble (now removed) used set_text (plain text). Assert that the
+    # FINAL bubble has escaped content.
+    #
+    # build_role_bubble returns a Gtk.Box; the label is a child.
+    # Walk the widget tree to find the Gtk.Label and check get_label():
+    final_widget = self.fake_box.get_last_child()  # container → bubble
+    # The bubble is a Gtk.Box(orientation=VERTICAL); find its label child
+    labels = []
+    child = final_widget.get_first_child()
+    while child is not None:
+        if hasattr(child, 'get_label'):
+            labels.append(child.get_label())
+        inner = child.get_first_child()
+        while inner is not None:
+            if hasattr(inner, 'get_label'):
+                labels.append(inner.get_label())
+            inner = inner.get_next_sibling()
+        child = child.get_next_sibling()
+    # At least one label should contain the escaped form
+    assert any('&lt;div&gt;' in l for l in labels), \
+        f"Expected escaped &lt;div&gt; in final bubble labels: {labels}"
 ```
 
-Note: the exact assertion may need to be adjusted during implementation based on how `build_role_bubble` exposes its label content. The spec documents the intent: verify escaping happens on final render, not during streaming.
+Note: the widget-tree walk above mirrors the pattern used in existing tests. The implementer should verify `build_role_bubble`'s actual structure (Gtk.Box → Gtk.Label) and adjust the walk if the nesting is different. The key invariant: `end_streaming` must produce a bubble where `<` becomes `&lt;` — verifying that escaping happens on final render, not during streaming.
 
 ### 2.7 Files NOT changed (already correct)
 
