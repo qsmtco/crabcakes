@@ -236,6 +236,10 @@ def friendly_error_message(exc: Exception) -> str:
       - `ConnectionResetError` / `BrokenPipeError` →
         "Connection to the AI provider was reset. Please try sending your
         message again."
+      - `TimeoutError` →
+        "The AI provider took too long to respond (connection timed out
+        after retries). The provider may be slow or overloaded. Please try
+        sending your message again."
       - Anything else → `str(exc)` unchanged. Non-network errors are not
         rewritten because the user (or the agent itself) often needs the
         original message (e.g. validation errors).
@@ -262,6 +266,10 @@ def friendly_error_message(exc: Exception) -> str:
             return f"Secure connection error: {text}. Please try again."
         if isinstance(cand, (ConnectionResetError, BrokenPipeError)):
             return ("Connection to the AI provider was reset. "
+                    "Please try sending your message again.")
+        if isinstance(cand, TimeoutError):
+            return ("The AI provider took too long to respond (connection timed out "
+                    "after retries). The provider may be slow or overloaded. "
                     "Please try sending your message again.")
     return str(exc)
 
