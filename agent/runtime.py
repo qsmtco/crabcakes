@@ -496,12 +496,15 @@ class AgentRuntime:
         else:
             model_max_for_budget = 128_000  # fallback per CB-1
 
-        system_prompt = build_system_prompt(
-            agent_name, project_path, tool_names,
-            agent_role=agent_role,
-            model_max_tokens=model_max_for_budget,
-            context_mode=getattr(default_provider_cfg, "context_mode", "auto") or "auto",
-        )
+        if defer_prompt_build:
+            system_prompt = ""
+        else:
+            system_prompt = build_system_prompt(
+                agent_name, project_path, tool_names,
+                agent_role=agent_role,
+                model_max_tokens=model_max_for_budget,
+                context_mode=getattr(default_provider_cfg, "context_mode", "auto") or "auto",
+            )
         # TODO: P10.8 — mid-session re-escalation. Currently the system prompt
         # is built once here and never reassigned. P10.8 will add a
         # _maybe_rebuild_system_prompt() check in the tool loop that calls
