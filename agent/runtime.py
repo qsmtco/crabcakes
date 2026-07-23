@@ -251,6 +251,34 @@ def _format_chunks_for_llm(chunks: list) -> str:
     return "\n".join(parts)
 
 
+# ── Streaming argument validation ────────────────────────────────────────────
+
+def _validate_streamed_arguments(
+    args_str: str, tool_name: str, session_key: str
+) -> bool:
+    """Validate that accumulated streaming arguments form complete JSON.
+
+    Returns True if the arguments are valid JSON (or empty — empty is
+    allowed, some providers send arguments as a separate frame that may
+    not have arrived). Returns False if the arguments are malformed
+    (truncated stream), in which case the caller should skip the tool call.
+
+    Logs a warning on failure so truncated streams are observable.
+    """
+    if not args_str:
+        return True  # empty is valid — no arguments fragment arrived yet
+    try:
+        json.loads(args_str)
+        return True
+    except json.JSONDecodeError:
+        logger.warning(
+            "[stream] sk=%s skipping tool=%s with incomplete JSON arguments "
+            "(stream truncated): %.200r",
+            session_key, tool_name, args_str,
+        )
+        return False
+
+
 # ── AgentRuntime ──────────────────────────────────────────────────────────────
 
 class AgentRuntime:
