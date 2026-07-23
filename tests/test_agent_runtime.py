@@ -4300,3 +4300,171 @@ class TestLocalAgentDrawerEmissions:
         assert cmd_outputs[0][1] == "ls -la", (
             f"BUG #15: command was lost; got {cmd_outputs[0][1]!r}, expected 'ls -la'"
         )
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Streamed arguments validation — SPEC-TRUNCATED-STREAMING-TOOL-ARGS.md
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestStreamedArgumentsValidation:
+    """Tests for _validate_streamed_arguments and _call_llm_streaming
+    truncation handling. See docs/specs/SPEC-TRUNCATED-STREAMING-TOOL-ARGS.md."""
+
+    # ── Unit tests for _validate_streamed_arguments ──────────────────────────
+
+    def test_validate_good_json(self):
+        from agent.runtime import _validate_streamed_arguments
+        assert _validate_streamed_arguments('{"path": "x.py"}', "read_file", "sk1") is True
+
+    def test_validate_empty_string(self):
+        from agent.runtime import _validate_streamed_arguments
+        assert _validate_streamed_arguments("", "read_file", "sk1") is True
+
+    def test_validate_malformed_json(self):
+        from agent.runtime import _validate_streamed_arguments
+        assert _validate_streamed_arguments('{"command": "git sta', "exec_command", "sk1") is False
+
+    # ── Integration: done-event path skips malformed tool call ───────────────
+
+    def test_done_path_skips_malformed_tool_call(self):
+        """_call_llm_streaming done-event path: malformed args → call skipped."""
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        from agent.llm.streaming import SSEEvent
+        from unittest.mock import MagicMock
+
+        # Done path: one valid + one malformed tool call then done
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = iter([
+            SSEEvent(type="tool_call_delta", data={
+                "index": 0, "name": "read_file", "arguments": '{"path": "ok.py"}'
+            }),
+            SSEEvent(type="tool_call_delta", data={
+                "index": 1, "name": "exec_command", "arguments": '{"command": "git sta'
+            }),
+            SSEEvent(type="done", data={}),
+        ])
+
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+                rt._run_loop(sk, "list files")
+
+        conv = rt.get_conversation(sk)
+        assert conv is not None
+
+        # Verify assistant message contains exactly one tool call (read_file)
+        # The malformed exec_command should be skipped.
+        last_msg = conv.messages[-1]
+        assert last_msg.role == "assistant", f"Expected assistant, got {last_msg.role}"
+        tcs = last_msg.tool_calls
+        assert len(tcs) == 1, (
+            f"Expected 1 tool call (malformed exec_command skipped), got {len(tcs)}"
+        )
+        assert tcs[0].tool_name == "read_file"
+        assert tcs[0].arguments == {"path": "ok.py"}
+        rt.stop()
+
+    def test_done_path_skips_all_malformed(self):
+        """_call_llm_streaming done-event path: all malformed → empty tool_calls."""
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        from agent.llm.streaming import SSEEvent
+        from unittest.mock import MagicMock
+
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = iter([
+            SSEEvent(type="tool_call_delta", data={
+                "index": 0, "name": "exec_command", "arguments": '{"command": "git sta'
+            }),
+            SSEEvent(type="done", data={}),
+        ])
+
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+                rt._run_loop(sk, "run command")
+
+        conv = rt.get_conversation(sk)
+        assert conv is not None
+        last_msg = conv.messages[-1]
+        tcs = last_msg.tool_calls
+        assert len(tcs) == 0, (
+            f"Expected 0 tool calls (malformed skipped), got {len(tcs)}"
+        )
+        rt.stop()
+
+    # ── Integration: fallback path (no done event) skips malformed tool call ─
+
+    def test_fallback_path_skips_malformed_tool_call(self):
+        """_call_llm_streaming fallback (no done): malformed args → skipped."""
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        from agent.llm.streaming import SSEEvent
+        from unittest.mock import MagicMock
+
+        # No done event — falls through to fallback path
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = iter([
+            SSEEvent(type="tool_call_delta", data={
+                "index": 0, "name": "read_file", "arguments": '{"path": "ok.py"}'
+            }),
+            SSEEvent(type="tool_call_delta", data={
+                "index": 1, "name": "exec_command", "arguments": '{"command": "git sta'
+            }),
+            # No done event!
+        ])
+
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+                rt._run_loop(sk, "list files")
+
+        conv = rt.get_conversation(sk)
+        assert conv is not None
+        last_msg = conv.messages[-1]
+        assert last_msg.role == "assistant"
+        tcs = last_msg.tool_calls
+        assert len(tcs) == 1, (
+            f"Expected 1 valid tool call via fallback, got {len(tcs)}"
+        )
+        assert tcs[0].tool_name == "read_file"
+        assert tcs[0].arguments == {"path": "ok.py"}
+        rt.stop()
+
+    def test_fallback_path_skips_all_malformed(self):
+        """_call_llm_streaming fallback (no done): all malformed → empty."""
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        from agent.llm.streaming import SSEEvent
+        from unittest.mock import MagicMock
+
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = iter([
+            SSEEvent(type="tool_call_delta", data={
+                "index": 0, "name": "exec_command", "arguments": '{"command": "git sta'
+            }),
+        ])
+
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+                rt._run_loop(sk, "run command")
+
+        conv = rt.get_conversation(sk)
+        assert conv is not None
+        last_msg = conv.messages[-1]
+        tcs = last_msg.tool_calls
+        assert len(tcs) == 0, (
+            f"Expected 0 tool calls (all malformed), got {len(tcs)}"
+        )
+        rt.stop()
