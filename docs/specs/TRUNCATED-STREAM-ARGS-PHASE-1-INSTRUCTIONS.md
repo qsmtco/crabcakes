@@ -130,7 +130,7 @@ Run (paste the full output):
 python3 -m pytest tests/test_llm_extractors.py -v
 ```
 
-All 14 tests must pass (12 existing, with 1 rewritten + 1 added = 15 total). The rewritten test must NOT raise.
+All 12 tests must pass (11 existing, with 1 rewritten + 1 added = 12 total). The rewritten test must NOT raise.
 
 Run a pattern sweep (paste output):
 

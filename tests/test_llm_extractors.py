@@ -5,10 +5,6 @@ Extracted from agent/runtime.py (Phase B3). Tests the public names
 of _RESPONSE_FORMAT needed.
 """
 
-import json
-
-import pytest
-
 from agent.llm.extractors import (
     extract_tool_calls,
     extract_text_content,
