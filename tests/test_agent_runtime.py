@@ -4419,9 +4419,9 @@ class TestStreamedArgumentsValidation:
         from agent.llm.streaming import SSEEvent
         from unittest.mock import MagicMock
 
-        # No done event — falls through to fallback path
-        mock_provider = MagicMock()
-        mock_provider.stream.return_value = iter([
+        # No done event on first call — falls through to fallback path.
+        # Second call (post-tool-execution) returns a simple text response.
+        tool_stream = iter([
             SSEEvent(type="tool_call_delta", data={
                 "index": 0, "name": "read_file", "arguments": '{"path": "ok.py"}'
             }),
@@ -4430,6 +4430,12 @@ class TestStreamedArgumentsValidation:
             }),
             # No done event!
         ])
+        done_stream = iter([
+            SSEEvent(type="text_delta", data={"content": "Done."}),
+            SSEEvent(type="done", data={}),
+        ])
+        mock_provider = MagicMock()
+        mock_provider.stream.side_effect = [tool_stream, done_stream]
 
         with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
             with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
