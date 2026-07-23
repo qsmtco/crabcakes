@@ -50,7 +50,19 @@ def extract_tool_calls(
                 name = func.get("name", "")
                 args_raw = func.get("arguments", "{}")
                 if isinstance(args_raw, str):
-                    args = json.loads(args_raw)
+                    try:
+                        args = json.loads(args_raw)
+                    except json.JSONDecodeError:
+                        # Defensive: malformed/truncated tool-call arguments
+                        # (e.g. a streaming provider dropped the connection
+                        # mid-arguments without sending [DONE]). Skip this
+                        # tool call rather than crashing the agent turn.
+                        logger.warning(
+                            "[extract] skipping tool call with malformed "
+                            "JSON arguments: tool=%s args_raw=%.200r",
+                            name, args_raw,
+                        )
+                        continue
                 else:
                     args = args_raw or {}
                 calls.append((call_id, name, args))
