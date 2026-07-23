@@ -69,15 +69,21 @@ class TestExtractToolCalls:
         assert calls[0][0].startswith("call_")
         assert calls[1][0].startswith("call_")
 
-    def test_extract_tool_calls_malformed_json_args_raises(self):
-        """Malformed JSON string arguments → json.loads raises (verbatim behavior)."""
+    def test_extract_tool_calls_malformed_json_args_skipped(self):
+        """Malformed JSON string arguments → tool call skipped (not raised).
+
+        Regression: deepseek streaming can drop a connection mid-tool-call
+        without sending [DONE], producing truncated JSON arguments. The
+        extractor must skip the malformed call rather than raise and kill
+        the agent turn. See docs/specs/SPEC-TRUNCATED-STREAMING-TOOL-ARGS.md.
+        """
         response = {
             "choices": [{"message": {"tool_calls": [
                 {"id": "c1", "function": {"name": "x", "arguments": "not-json"}},
             ]}}],
         }
-        with pytest.raises(json.JSONDecodeError):
-            extract_tool_calls(response, response_format="openai")
+        calls = extract_tool_calls(response, response_format="openai")
+        assert calls == []
 
 
 # ======================================================================
