@@ -1659,7 +1659,9 @@ class AgentRuntime:
                 tool_calls = []
                 for idx in sorted(tool_calls_partial.keys()):
                     tc = tool_calls_partial[idx]
-                    if tc["name"]:
+                    if tc["name"] and _validate_streamed_arguments(
+                        tc["arguments"], tc["name"], session_key
+                    ):
                         tool_calls.append({
                             "id": tc["id"] or f"call_{idx}",
                             "function": {
@@ -1680,7 +1682,9 @@ class AgentRuntime:
         tool_calls = []
         for idx in sorted(tool_calls_partial.keys()):
             tc = tool_calls_partial[idx]
-            if tc["name"]:
+            if tc["name"] and _validate_streamed_arguments(
+                tc["arguments"], tc["name"], session_key
+            ):
                 tool_calls.append({
                     "id": tc["id"] or f"call_{idx}",
                     "function": {
