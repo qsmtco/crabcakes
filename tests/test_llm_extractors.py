@@ -85,6 +85,22 @@ class TestExtractToolCalls:
         calls = extract_tool_calls(response, response_format="openai")
         assert calls == []
 
+    def test_extract_tool_calls_mixed_valid_and_malformed_args(self):
+        """One valid + one malformed tool call → only the valid call returned."""
+        response = {
+            "choices": [{"message": {"tool_calls": [
+                {"id": "good", "function": {"name": "read_file",
+                 "arguments": '{"path": "ok.py"}'}},
+                {"id": "bad", "function": {"name": "exec_command",
+                 "arguments": '{"command": "git sta'}},
+            ]}}],
+        }
+        calls = extract_tool_calls(response, response_format="openai")
+        assert len(calls) == 1
+        assert calls[0][0] == "good"
+        assert calls[0][1] == "read_file"
+        assert calls[0][2] == {"path": "ok.py"}
+
 
 # ======================================================================
 # extract_text_content (spec §B.9 cases 26-27)
