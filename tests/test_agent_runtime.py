@@ -4364,11 +4364,10 @@ class TestStreamedArgumentsValidation:
         conv = rt.get_conversation(sk)
         assert conv is not None
 
-        # Verify assistant message contains exactly one tool call (read_file)
-        # The malformed exec_command should be skipped.
-        last_msg = conv.messages[-1]
-        assert last_msg.role == "assistant", f"Expected assistant, got {last_msg.role}"
-        tcs = last_msg.tool_calls
+        # Find the assistant message with tool calls (not the final "Done." message)
+        tool_msgs = [m for m in conv.messages if m.role == "assistant" and m.tool_calls]
+        assert len(tool_msgs) >= 1, "Expected at least one assistant message with tool calls"
+        tcs = tool_msgs[0].tool_calls
         assert len(tcs) == 1, (
             f"Expected 1 tool call (malformed exec_command skipped), got {len(tcs)}"
         )
