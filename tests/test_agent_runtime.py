@@ -4337,9 +4337,11 @@ class TestStreamedArgumentsValidation:
         from agent.llm.streaming import SSEEvent
         from unittest.mock import MagicMock
 
-        # Done path: one valid + one malformed tool call then done
-        mock_provider = MagicMock()
-        mock_provider.stream.return_value = iter([
+        # Done path: one valid + one malformed tool call then done.
+        # Use side_effect with a list so each _call_llm_streaming call gets
+        # a fresh iterator. The second call (post-tool-execution) returns
+        # a simple text response so the loop terminates cleanly.
+        tool_stream = iter([
             SSEEvent(type="tool_call_delta", data={
                 "index": 0, "name": "read_file", "arguments": '{"path": "ok.py"}'
             }),
@@ -4348,6 +4350,12 @@ class TestStreamedArgumentsValidation:
             }),
             SSEEvent(type="done", data={}),
         ])
+        done_stream = iter([
+            SSEEvent(type="text_delta", data={"content": "Done."}),
+            SSEEvent(type="done", data={}),
+        ])
+        mock_provider = MagicMock()
+        mock_provider.stream.side_effect = [tool_stream, done_stream]
 
         with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
             with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
