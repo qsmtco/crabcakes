@@ -4676,7 +4676,8 @@ class TestStreamErrorIntegration:
 
     def test_stream_error_fallback_path(self):
         """_stream_error attached via fallback path (no done event).
-        Verifies on_error callback receives the provider error message."""
+        When there IS text content, the partial text is used as the response
+        and on_error is NOT called (content is non-empty)."""
         from agent.llm.streaming import SSEEvent
         from unittest.mock import MagicMock
 
@@ -4691,7 +4692,8 @@ class TestStreamErrorIntegration:
         rt.create_conversation("Coder", sk, "/tmp")
 
         mock_provider = MagicMock()
-        # No done event — stream ends after error event (fallback path)
+        # No done event — stream ends after text + error event (fallback path)
+        # Content is non-empty, so the error is NOT surfaced via on_error.
         mock_provider.stream.return_value = iter([
             SSEEvent(type="text_delta", data={"content": "Partial text"}),
             SSEEvent(type="error", data={"error": {"code": 503, "message": "Service unavailable"}}),
@@ -4701,7 +4703,46 @@ class TestStreamErrorIntegration:
             with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 rt._run_loop(sk, "hello")
 
-        assert len(error_messages) >= 1, "Expected on_error to be called"
+        # With non-empty content, on_error is NOT called — the partial text
+        # is used as the response. This is correct: the error event adds
+        # _stream_error to the result dict, but _run_loop only checks it
+        # when content is empty.
+        assert len(error_messages) == 0, (
+            f"Expected no on_error call with non-empty content, got: {error_messages}"
+        )
+        conv = rt.get_conversation(sk)
+        assert conv is not None
+        # Verify the partial text made it through
+        assert "Partial text" in conv.messages[-1].content
+        rt.stop()
+
+    def test_stream_error_fallback_empty_content(self):
+        """_stream_error via fallback path with empty content: on_error is called.
+        Only the error event, no text content, no done event."""
+        from agent.llm.streaming import SSEEvent
+        from unittest.mock import MagicMock
+
+        error_messages = []
+
+        def on_error(sk, msg):
+            error_messages.append(msg)
+
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None, on_error=on_error)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        mock_provider = MagicMock()
+        # No done event, no text content — only error event (fallback path, empty content)
+        mock_provider.stream.return_value = iter([
+            SSEEvent(type="error", data={"error": {"code": 503, "message": "Service unavailable"}}),
+        ])
+
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+                rt._run_loop(sk, "hello")
+
+        assert len(error_messages) >= 1, "Expected on_error to be called for empty-content fallback"
         assert "Provider error" in error_messages[0], (
             f"Expected 'Provider error' in on_error from fallback path, got: {error_messages[0]}"
         )
