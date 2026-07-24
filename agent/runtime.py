@@ -1098,6 +1098,21 @@ class AgentRuntime:
                         if _is_empty_content(text_content):
                             logger.warning("[tool-loop] sk=%s LLM returned no content (with tool_calls=%d, choices=%d) — treating as error",
                                            session_key, len(tool_calls_raw), len(response.get("choices") or []))
+
+                            # OpenRouter mid-stream error check: if the SSE stream
+                            # delivered finish_reason="error" with error details,
+                            # surface the actual provider error message instead of
+                            # the generic "no content" placeholder. This happens when
+                            # OpenRouter's free models hit rate limits, content filters,
+                            # or provider errors.
+                            stream_err = response.get("_stream_error")
+                            if stream_err:
+                                err_code = stream_err.get("code", 0)
+                                err_msg = stream_err.get("message", "Unknown provider error")
+                                error_text = f"Provider error (code={err_code}): {err_msg}"
+                            else:
+                                error_text = "Agent returned no content. This may indicate a configuration error or an issue with the LLM provider."
+
                             # Defense in depth: instead of persisting a corrupt empty
                             # assistant message that downstream providers (Cohere,
                             # strict OpenAI tool-loop, Anthropic strict mode) reject
@@ -1123,9 +1138,7 @@ class AgentRuntime:
                             # with another empty response (which would add duplicate
                             # placeholders until max_iterations_enforced trips).
                             try:
-                                self._dispatch(self._on_error, session_key,
-                                               "Agent returned no content. This may indicate a configuration error "
-                                               "or an issue with the LLM provider.")
+                                self._dispatch(self._on_error, session_key, error_text)
                             except Exception as _e:
                                 logger.error("[tool-loop] sk=%s _on_error handler raised %s: %s — continuing with save+return",
                                              session_key, type(_e).__name__, _e)

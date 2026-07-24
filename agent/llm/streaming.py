@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # ── SSE event types ─────────────────────────────────────────────────────────
 
 SSEEvent = namedtuple("SSEEvent", ["type", "data"])
-# Types: 'text_delta', 'tool_call_delta', 'tool_call_done', 'done'
+# Types: 'text_delta', 'tool_call_delta', 'tool_call_done', 'done', 'error', 'usage'
 
 
 # ── SSE parsing ─────────────────────────────────────────────────────────────
