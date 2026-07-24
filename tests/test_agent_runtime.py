@@ -4552,3 +4552,204 @@ class TestStreamedArgumentsValidation:
             f"Expected 0 tool calls (all malformed), got {len(tcs)}"
         )
         rt.stop()
+
+
+# ── Stream Error Event Integration Tests ──────────────────────────────────────
+
+class TestStreamErrorIntegration:
+    """Tests for _call_llm_streaming and _run_loop handling of
+    SSEEvent(type='error', ...) from OpenRouter mid-stream errors.
+
+    Covers: _stream_error attachment, error message surfacing, metadata
+    inclusion, content_filter synthetic error, and code=0 formatting.
+    """
+
+    def test_call_llm_streaming_attaches_stream_error(self):
+        """_call_llm_streaming sets _stream_error on result when error event received."""
+        from agent.llm.streaming import SSEEvent
+        from unittest.mock import MagicMock
+
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = iter([
+            SSEEvent(type="error", data={"error": {"code": 429, "message": "Rate limit exceeded"}}),
+            SSEEvent(type="done", data={}),
+        ])
+
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+                rt._run_loop(sk, "hello")
+
+        # The last assistant message should contain the error placeholder
+        conv = rt.get_conversation(sk)
+        assert conv is not None
+        last_msg = conv.messages[-1]
+        assert last_msg.role == "assistant"
+        assert last_msg.content is not None
+        # The error message should mention the provider error, not the generic text
+        assert "Provider error" in last_msg.content, (
+            f"Expected 'Provider error' in placeholder, got: {last_msg.content}"
+        )
+        assert "429" in last_msg.content, (
+            f"Expected error code 429 in placeholder, got: {last_msg.content}"
+        )
+        assert "Rate limit" in last_msg.content, (
+            f"Expected 'Rate limit' in placeholder, got: {last_msg.content}"
+        )
+        rt.stop()
+
+    def test_stream_error_surfaces_code_0_message(self):
+        """_stream_error with code=0 does not show '(code=0)' in error message."""
+        from agent.llm.streaming import SSEEvent
+        from unittest.mock import MagicMock
+
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = iter([
+            SSEEvent(type="error", data={"error": {"code": 0, "message": "Some non-fatal issue"}}),
+            SSEEvent(type="done", data={}),
+        ])
+
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+                rt._run_loop(sk, "hello")
+
+        conv = rt.get_conversation(sk)
+        assert conv is not None
+        last_msg = conv.messages[-1]
+        # Should NOT contain "(code=0)" — just the message
+        assert "(code=0)" not in last_msg.content, (
+            f"Should not show code=0, got: {last_msg.content}"
+        )
+        # Should still contain the error message
+        assert "non-fatal" in last_msg.content
+        rt.stop()
+
+    def test_stream_error_surfaces_metadata_provider_name(self):
+        """_stream_error with metadata.provider_name includes it in the message."""
+        from agent.llm.streaming import SSEEvent
+        from unittest.mock import MagicMock
+
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = iter([
+            SSEEvent(type="error", data={
+                "error": {
+                    "code": 429,
+                    "message": "Rate limit exceeded",
+                    "metadata": {"provider_name": "nvidia"},
+                }
+            }),
+            SSEEvent(type="done", data={}),
+        ])
+
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+                rt._run_loop(sk, "hello")
+
+        conv = rt.get_conversation(sk)
+        assert conv is not None
+        last_msg = conv.messages[-1]
+        assert "nvidia" in last_msg.content, (
+            f"Expected 'nvidia' provider name in error message, got: {last_msg.content}"
+        )
+        rt.stop()
+
+    def test_stream_error_fallback_path(self):
+        """_stream_error attached via fallback path (no done event)."""
+        from agent.llm.streaming import SSEEvent
+        from unittest.mock import MagicMock
+
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        mock_provider = MagicMock()
+        # No done event — stream ends after error event (fallback path)
+        mock_provider.stream.return_value = iter([
+            SSEEvent(type="text_delta", data={"content": "Partial text"}),
+            SSEEvent(type="error", data={"error": {"code": 503, "message": "Service unavailable"}}),
+        ])
+
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+                rt._run_loop(sk, "hello")
+
+        conv = rt.get_conversation(sk)
+        assert conv is not None
+        last_msg = conv.messages[-1]
+        assert "Provider error" in last_msg.content, (
+            f"Expected 'Provider error' in placeholder from fallback path, got: {last_msg.content}"
+        )
+        assert "503" in last_msg.content
+        rt.stop()
+
+    def test_stream_error_content_filter_surfaces_filtered_message(self):
+        """content_filter finish_reason surfaces 'Content was filtered' not generic message."""
+        from agent.llm.streaming import SSEEvent
+        from unittest.mock import MagicMock
+
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = iter([
+            SSEEvent(type="error", data={
+                "error": {"code": "content_filter", "message": "Content was filtered by the provider (finish_reason=content_filter)."}
+            }),
+            SSEEvent(type="done", data={}),
+        ])
+
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+                rt._run_loop(sk, "hello")
+
+        conv = rt.get_conversation(sk)
+        assert conv is not None
+        last_msg = conv.messages[-1]
+        # The provider error message should contain "filtered"
+        assert "filtered" in last_msg.content.lower(), (
+            f"Expected content_filter message, got: {last_msg.content}"
+        )
+        rt.stop()
+
+    def test_stream_error_missing_on_error_callback(self):
+        """_on_error not set: _run_loop does not crash when error event is received."""
+        from agent.llm.streaming import SSEEvent
+        from unittest.mock import MagicMock
+
+        # AgentRuntime without on_error callback
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = iter([
+            SSEEvent(type="error", data={"error": {"code": 429, "message": "Rate limit"}}),
+            SSEEvent(type="done", data={}),
+        ])
+
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+                # Should not raise
+                rt._run_loop(sk, "hello")
+
+        conv = rt.get_conversation(sk)
+        assert conv is not None
+        rt.stop()
