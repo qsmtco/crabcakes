@@ -158,7 +158,15 @@ class MiniMaxProvider:
                             for out_ev in parse_sse_delta(d):
                                 yield out_ev
                             finish_reason = choice.get("finish_reason")
-                            if finish_reason in ("stop", "tool_calls", "length"):
+                            # OpenRouter sends finish_reason="error" for
+                            # mid-stream errors. handle "content_filter" too.
+                            # See openai_provider.py for details.
+                            if finish_reason in ("stop", "tool_calls", "length", "error", "content_filter"):
+                                # Forward OpenRouter mid-stream error details
+                                if finish_reason == "error":
+                                    error_data = d.get("error", {})
+                                    if error_data:
+                                        yield SSEEvent(type="error", data={"error": error_data})
                                 usage = d.get("usage")
                                 if usage:
                                     yield SSEEvent(type="usage", data={"usage": usage})
@@ -180,7 +188,14 @@ class MiniMaxProvider:
                     for out_ev in parse_sse_delta(d):
                         yield out_ev
                     finish_reason = choice.get("finish_reason")
-                    if finish_reason in ("stop", "tool_calls", "length"):
+                    # OpenRouter sends finish_reason="error" for
+                    # mid-stream errors. handle "content_filter" too.
+                    if finish_reason in ("stop", "tool_calls", "length", "error", "content_filter"):
+                        # Forward OpenRouter mid-stream error details
+                        if finish_reason == "error":
+                            error_data = d.get("error", {})
+                            if error_data:
+                                yield SSEEvent(type="error", data={"error": error_data})
                         usage = d.get("usage")
                         if usage:
                             yield SSEEvent(type="usage", data={"usage": usage})

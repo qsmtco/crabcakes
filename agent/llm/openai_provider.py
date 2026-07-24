@@ -145,7 +145,24 @@ class OpenAIProvider:
                     for out_ev in parse_sse_delta(d):
                         yield out_ev
                     finish_reason = choice.get("finish_reason")
-                    if finish_reason in ("stop", "tool_calls", "length"):
+                    # OpenRouter sends finish_reason="error" for mid-stream
+                    # errors (rate limits, provider failures, content filters).
+                    # Also handle "content_filter" which OpenAI defines but
+                    # our known set was missing. Without these, the stream
+                    # never emits a done event and falls through to the
+                    # fallback path, producing an empty response.
+                    # See docs/specs/SPEC-OPENROUTER-FINISH-REASON-FIX.md .
+                    if finish_reason in ("stop", "tool_calls", "length", "error", "content_filter"):
+                        # OpenRouter mid-stream errors carry the error details
+                        # in the same SSE chunk alongside finish_reason="error":
+                        #   {"error":{"code":429,"message":"Rate limit exceeded"},
+                        #    "choices":[{"finish_reason":"error"}]}
+                        # Yield a dedicated error event so the runtime can
+                        # surface the actual error message to the user.
+                        if finish_reason == "error":
+                            error_data = d.get("error", {})
+                            if error_data:
+                                yield SSEEvent(type="error", data={"error": error_data})
                         usage = d.get("usage")
                         if usage:
                             yield SSEEvent(type="usage", data={"usage": usage})
