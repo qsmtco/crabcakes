@@ -4565,11 +4565,18 @@ class TestStreamErrorIntegration:
     """
 
     def test_call_llm_streaming_attaches_stream_error(self):
-        """_call_llm_streaming sets _stream_error on result when error event received."""
+        """_call_llm_streaming sets _stream_error on result when error event received.
+        Verifies via on_error callback that the provider error message is surfaced
+        (not the generic "no content" placeholder)."""
         from agent.llm.streaming import SSEEvent
         from unittest.mock import MagicMock
 
-        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None)
+        error_messages = []
+
+        def on_error(sk, msg):
+            error_messages.append(msg)
+
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None, on_error=on_error)
         rt.start()
         sk = _uniq()
         rt.create_conversation("Coder", sk, "/tmp")
@@ -4584,30 +4591,29 @@ class TestStreamErrorIntegration:
             with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 rt._run_loop(sk, "hello")
 
-        # The last assistant message should contain the error placeholder
-        conv = rt.get_conversation(sk)
-        assert conv is not None
-        last_msg = conv.messages[-1]
-        assert last_msg.role == "assistant"
-        assert last_msg.content is not None
-        # The error message should mention the provider error, not the generic text
-        assert "Provider error" in last_msg.content, (
-            f"Expected 'Provider error' in placeholder, got: {last_msg.content}"
+        assert len(error_messages) >= 1, "Expected on_error to be called"
+        assert "Provider error" in error_messages[0], (
+            f"Expected 'Provider error' in on_error, got: {error_messages[0]}"
         )
-        assert "429" in last_msg.content, (
-            f"Expected error code 429 in placeholder, got: {last_msg.content}"
+        assert "429" in error_messages[0], (
+            f"Expected error code 429 in on_error, got: {error_messages[0]}"
         )
-        assert "Rate limit" in last_msg.content, (
-            f"Expected 'Rate limit' in placeholder, got: {last_msg.content}"
+        assert "Rate limit" in error_messages[0], (
+            f"Expected 'Rate limit' in on_error, got: {error_messages[0]}"
         )
         rt.stop()
 
     def test_stream_error_surfaces_code_0_message(self):
-        """_stream_error with code=0 does not show '(code=0)' in error message."""
+        """_stream_error with code=0 does not show '(code=0)' in on_error message."""
         from agent.llm.streaming import SSEEvent
         from unittest.mock import MagicMock
 
-        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None)
+        error_messages = []
+
+        def on_error(sk, msg):
+            error_messages.append(msg)
+
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None, on_error=on_error)
         rt.start()
         sk = _uniq()
         rt.create_conversation("Coder", sk, "/tmp")
@@ -4622,23 +4628,26 @@ class TestStreamErrorIntegration:
             with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 rt._run_loop(sk, "hello")
 
-        conv = rt.get_conversation(sk)
-        assert conv is not None
-        last_msg = conv.messages[-1]
+        assert len(error_messages) >= 1, "Expected on_error to be called"
         # Should NOT contain "(code=0)" — just the message
-        assert "(code=0)" not in last_msg.content, (
-            f"Should not show code=0, got: {last_msg.content}"
+        assert "(code=0)" not in error_messages[0], (
+            f"Should not show code=0, got: {error_messages[0]}"
         )
         # Should still contain the error message
-        assert "non-fatal" in last_msg.content
+        assert "non-fatal" in error_messages[0]
         rt.stop()
 
     def test_stream_error_surfaces_metadata_provider_name(self):
-        """_stream_error with metadata.provider_name includes it in the message."""
+        """_stream_error with metadata.provider_name includes it in the on_error message."""
         from agent.llm.streaming import SSEEvent
         from unittest.mock import MagicMock
 
-        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None)
+        error_messages = []
+
+        def on_error(sk, msg):
+            error_messages.append(msg)
+
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None, on_error=on_error)
         rt.start()
         sk = _uniq()
         rt.create_conversation("Coder", sk, "/tmp")
@@ -4659,20 +4668,24 @@ class TestStreamErrorIntegration:
             with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 rt._run_loop(sk, "hello")
 
-        conv = rt.get_conversation(sk)
-        assert conv is not None
-        last_msg = conv.messages[-1]
-        assert "nvidia" in last_msg.content, (
-            f"Expected 'nvidia' provider name in error message, got: {last_msg.content}"
+        assert len(error_messages) >= 1, "Expected on_error to be called"
+        assert "nvidia" in error_messages[0], (
+            f"Expected 'nvidia' provider name in on_error, got: {error_messages[0]}"
         )
         rt.stop()
 
     def test_stream_error_fallback_path(self):
-        """_stream_error attached via fallback path (no done event)."""
+        """_stream_error attached via fallback path (no done event).
+        Verifies on_error callback receives the provider error message."""
         from agent.llm.streaming import SSEEvent
         from unittest.mock import MagicMock
 
-        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None)
+        error_messages = []
+
+        def on_error(sk, msg):
+            error_messages.append(msg)
+
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None, on_error=on_error)
         rt.start()
         sk = _uniq()
         rt.create_conversation("Coder", sk, "/tmp")
@@ -4688,21 +4701,24 @@ class TestStreamErrorIntegration:
             with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 rt._run_loop(sk, "hello")
 
-        conv = rt.get_conversation(sk)
-        assert conv is not None
-        last_msg = conv.messages[-1]
-        assert "Provider error" in last_msg.content, (
-            f"Expected 'Provider error' in placeholder from fallback path, got: {last_msg.content}"
+        assert len(error_messages) >= 1, "Expected on_error to be called"
+        assert "Provider error" in error_messages[0], (
+            f"Expected 'Provider error' in on_error from fallback path, got: {error_messages[0]}"
         )
-        assert "503" in last_msg.content
+        assert "503" in error_messages[0]
         rt.stop()
 
     def test_stream_error_content_filter_surfaces_filtered_message(self):
-        """content_filter finish_reason surfaces 'Content was filtered' not generic message."""
+        """content_filter finish_reason surfaces 'Content was filtered' to on_error callback."""
         from agent.llm.streaming import SSEEvent
         from unittest.mock import MagicMock
 
-        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None)
+        error_messages = []
+
+        def on_error(sk, msg):
+            error_messages.append(msg)
+
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None, on_error=on_error)
         rt.start()
         sk = _uniq()
         rt.create_conversation("Coder", sk, "/tmp")
@@ -4719,12 +4735,9 @@ class TestStreamErrorIntegration:
             with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 rt._run_loop(sk, "hello")
 
-        conv = rt.get_conversation(sk)
-        assert conv is not None
-        last_msg = conv.messages[-1]
-        # The provider error message should contain "filtered"
-        assert "filtered" in last_msg.content.lower(), (
-            f"Expected content_filter message, got: {last_msg.content}"
+        assert len(error_messages) >= 1, "Expected on_error to be called"
+        assert "filtered" in error_messages[0].lower(), (
+            f"Expected content_filter message, got: {error_messages[0]}"
         )
         rt.stop()
 
