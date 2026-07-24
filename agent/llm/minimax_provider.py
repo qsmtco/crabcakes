@@ -60,9 +60,11 @@ def _handle_finish_frame(d: dict) -> Iterator[SSEEvent]:
                 }})
             yield SSEEvent(type="done", data={})
 
-        # BUG #4 fix: yield usage whenever present, regardless of
-        # finish_reason. Some providers emit usage in a frame without
-        # a recognized finish_reason; dropping it loses cost tracking.
+        # BUG #4 fix: yield usage whenever present, even without a
+        # recognized finish_reason. Some providers emit usage in a
+        # frame without finish_reason; dropping it loses cost tracking.
+        # Must be yielded BEFORE done so _call_llm_streaming captures
+        # it in the main loop, not the drain loop.
         usage = d.get("usage")
         if usage:
             yield SSEEvent(type="usage", data={"usage": usage})
