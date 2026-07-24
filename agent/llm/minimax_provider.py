@@ -6,6 +6,7 @@ import json
 import logging
 import urllib.error
 import urllib.request
+from typing import Iterator
 
 from agent.llm.cost import model_id
 from agent.llm.streaming import (
@@ -18,6 +19,40 @@ from agent.llm.streaming import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _handle_finish_frame(d: dict) -> Iterator[SSEEvent]:
+    """Process a parsed SSE data frame at finish_reason termination.
+
+    Shared by both the first-line and subsequent-line paths in
+    MiniMaxProvider.stream(). Yields delta events, then optional
+    error/usage/done events when finish_reason is set.
+    """
+    choice = first_choice(d)
+    if choice:
+        for out_ev in parse_sse_delta(d):
+            yield out_ev
+        finish_reason = choice.get("finish_reason")
+        # OpenRouter sends finish_reason="error" for mid-stream
+        # errors. handle "content_filter" too.
+        if finish_reason in ("stop", "tool_calls", "length", "error", "content_filter"):
+            # Forward OpenRouter mid-stream error details
+            if finish_reason == "error":
+                error_data = d.get("error", {})
+                if error_data:
+                    yield SSEEvent(type="error", data={"error": error_data})
+            elif finish_reason == "content_filter":
+                # Yield a synthetic error so the runtime surfaces the
+                # content-filter reason to the user instead of the
+                # generic "no content" message.
+                yield SSEEvent(type="error", data={"error": {
+                    "code": "content_filter",
+                    "message": "Content was filtered by the provider (finish_reason=content_filter).",
+                }})
+            usage = d.get("usage")
+            if usage:
+                yield SSEEvent(type="usage", data={"usage": usage})
+            yield SSEEvent(type="done", data={})
 
 
 class MiniMaxProvider:
@@ -152,26 +187,9 @@ class MiniMaxProvider:
                         yield SSEEvent(type="done", data={})
                         return
                     if ev.type == "raw":
-                        d = ev.data
-                        choice = first_choice(d)
-                        if choice:
-                            for out_ev in parse_sse_delta(d):
-                                yield out_ev
-                            finish_reason = choice.get("finish_reason")
-                            # OpenRouter sends finish_reason="error" for
-                            # mid-stream errors. handle "content_filter" too.
-                            # See openai_provider.py for details.
-                            if finish_reason in ("stop", "tool_calls", "length", "error", "content_filter"):
-                                # Forward OpenRouter mid-stream error details
-                                if finish_reason == "error":
-                                    error_data = d.get("error", {})
-                                    if error_data:
-                                        yield SSEEvent(type="error", data={"error": error_data})
-                                usage = d.get("usage")
-                                if usage:
-                                    yield SSEEvent(type="usage", data={"usage": usage})
-                                yield SSEEvent(type="done", data={})
-                                return
+                        for out_ev in _handle_finish_frame(ev.data):
+                            yield out_ev
+                        return
 
             for line in sse_lines(resp):
                 ev = parse_sse_line(line)
@@ -182,22 +200,6 @@ class MiniMaxProvider:
                     return
                 if ev.type != "raw":
                     continue
-                d = ev.data
-                choice = first_choice(d)
-                if choice:
-                    for out_ev in parse_sse_delta(d):
-                        yield out_ev
-                    finish_reason = choice.get("finish_reason")
-                    # OpenRouter sends finish_reason="error" for
-                    # mid-stream errors. handle "content_filter" too.
-                    if finish_reason in ("stop", "tool_calls", "length", "error", "content_filter"):
-                        # Forward OpenRouter mid-stream error details
-                        if finish_reason == "error":
-                            error_data = d.get("error", {})
-                            if error_data:
-                                yield SSEEvent(type="error", data={"error": error_data})
-                        usage = d.get("usage")
-                        if usage:
-                            yield SSEEvent(type="usage", data={"usage": usage})
-                        yield SSEEvent(type="done", data={})
-                        return
+                for out_ev in _handle_finish_frame(ev.data):
+                    yield out_ev
+                return
