@@ -140,6 +140,14 @@ class OpenAIProvider:
                 if ev.type != "raw":
                     continue
                 d = ev.data
+                # OpenRouter sends top-level error with empty choices:
+                #   {"error":{"code":429,...},"choices":[]}
+                # This must be caught BEFORE the choice/finish_reason path.
+                top_error = d.get("error")
+                if top_error and isinstance(top_error, dict):
+                    yield SSEEvent(type="error", data={"error": top_error})
+                    yield SSEEvent(type="done", data={})
+                    return
                 choice = first_choice(d)
                 if choice:
                     for out_ev in parse_sse_delta(d):
