@@ -610,14 +610,15 @@ class TestHandleFinishFrame:
         assert types[-1] == "done"
 
     def test_content_filter(self):
-        """finish_reason='content_filter' → error event with string code + done."""
+        """finish_reason='content_filter' → error event with code=400, reason='content_filter' + done."""
         events = self._run({
             "choices": [{"delta": {}, "finish_reason": "content_filter"}],
         })
         types = [ev.type for ev in events]
         assert "error" in types, f"expected error event, got {types}"
         err = events[[ev.type for ev in events].index("error")]
-        assert err.data["error"]["code"] == "content_filter"
+        assert err.data["error"]["code"] == 400, f"expected 400, got {err.data['error']}"
+        assert err.data["error"]["reason"] == "content_filter"
         assert "filtered" in err.data["error"]["message"].lower()
         assert types[-1] == "done"
 
