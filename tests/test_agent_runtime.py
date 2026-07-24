@@ -3793,7 +3793,7 @@ class TestStreamOpenaiEventsFinishReason:
         assert types[-1] == "done"
 
     def test_emits_error_event_for_finish_reason_content_filter(self):
-        """SSEEvent(type='error', ...) yielded with content_filter code when finish_reason='content_filter'."""
+        """SSEEvent(type='error', ...) yielded with code=400, reason='content_filter' when finish_reason='content_filter'."""
         raw = (
             b'data: {"choices":[{"delta":{},"finish_reason":"content_filter"}]}\n\n'
         )
@@ -3802,7 +3802,8 @@ class TestStreamOpenaiEventsFinishReason:
         assert "error" in types, f"expected error event for content_filter, got types={types}"
         error_ev = [ev for ev in events if ev.type == "error"][0]
         err_data = error_ev.data.get("error", {})
-        assert err_data.get("code") == "content_filter", f"expected content_filter code, got {err_data}"
+        assert err_data.get("code") == 400, f"expected code=400, got {err_data}"
+        assert err_data.get("reason") == "content_filter", f"expected reason='content_filter', got {err_data}"
         assert "filtered" in err_data.get("message", "").lower()
 
     # --- [DONE] sentinel regression ---
