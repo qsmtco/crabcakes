@@ -1212,7 +1212,28 @@ class AgentRuntime:
                             finally:
                                 conv.model = original_model
 
-                        # Text-only response — done
+                        # Text-only response — but check for _stream_error first.
+                        # OpenRouter mid-stream error with non-empty partial content:
+                        # the stream was cut short by a provider error but some text
+                        # was already delivered. Surface a warning to the user.
+                        stream_err = response.get("_stream_error")
+                        if stream_err:
+                            err_code = stream_err.get("code", 0)
+                            err_msg = stream_err.get("message", "Unknown provider error")
+                            if err_code == 0:
+                                error_text = f"Provider error: {err_msg}"
+                            else:
+                                error_text = f"Provider error (code={err_code}): {err_msg}"
+                            metadata = stream_err.get("metadata")
+                            if isinstance(metadata, dict) and metadata:
+                                provider_name = metadata.get("provider_name")
+                                if provider_name:
+                                    error_text += f" (underlying provider: {provider_name})"
+                            # Append warning to the partial content so the user sees it
+                            text_content = (text_content or "") + f"\n\n---\n**Warning:** {error_text} (stream was cut short)"
+                            logger.warning("[tool-loop] sk=%s stream error with non-empty content: %s",
+                                           session_key, error_text)
+
                         logger.debug("[tool-loop] sk=%s text-only response, dispatching on_response_complete len=%d",
                                      session_key, len(text_content or ""))
                         conv.add_assistant_message(text_content, [])
