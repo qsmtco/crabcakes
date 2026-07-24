@@ -1685,13 +1685,16 @@ class AgentRuntime:
                                 "arguments": tc["arguments"]
                             }
                         })
-                logger.debug("[stream] sk=%s done: text_len=%d tool_calls=%d usage_captured=%s",
+                logger.debug("[stream] sk=%s done: text_len=%d tool_calls=%d usage_captured=%s error_captured=%s",
                              session_key, len(full_content), len(tool_calls),
-                             bool(captured_usage))
-                return {
+                             bool(captured_usage), bool(captured_error))
+                result = {
                     "choices": [{"message": {"content": full_content, "tool_calls": tool_calls}}],
                     "usage": captured_usage,
                 }
+                if captured_error:
+                    result["_stream_error"] = captured_error
+                return result
 
         # Fallback — stream ended without explicit done event (e.g. provider doesn't send [DONE])
         # STREAM-ID-PRES: same id-preservation logic as the done-event path.
