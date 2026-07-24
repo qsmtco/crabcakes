@@ -1103,8 +1103,8 @@ class AgentRuntime:
                             # delivered finish_reason="error" with error details,
                             # surface the actual provider error message instead of
                             # the generic "no content" placeholder. This happens when
-                            # OpenRouter's free models hit rate limits, content filters,
-                            # or provider errors.
+                            # the provider hits rate limits, content filters,
+                            # or other mid-stream errors.
                             stream_err = response.get("_stream_error")
                             if stream_err:
                                 err_code = stream_err.get("code", 0)
