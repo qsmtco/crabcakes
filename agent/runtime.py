@@ -1739,6 +1739,12 @@ class AgentRuntime:
                 }
                 if captured_error:
                     result["_stream_error"] = captured_error
+                # Drain remaining events after done (defense in depth).
+                # Some providers may send trailing usage frames or duplicate
+                # done events. Drain silently to prevent late error events
+                # from being dropped.
+                for _ev in stream_with_ssl_retry(...):
+                    pass
                 return result
 
         # Fallback — stream ended without explicit done event (e.g. provider doesn't send [DONE])
