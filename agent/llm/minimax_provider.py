@@ -58,16 +58,19 @@ def _handle_finish_frame(d: dict) -> Iterator[SSEEvent]:
                     "reason": "content_filter",
                     "message": "Content was filtered by the provider (finish_reason=content_filter).",
                 }})
+            # BUG #4 fix: yield usage before done even without a recognized
+            # finish_reason. Some providers emit usage in a frame without
+            # finish_reason; dropping it loses cost tracking.
+            usage = d.get("usage")
+            if usage:
+                yield SSEEvent(type="usage", data={"usage": usage})
             yield SSEEvent(type="done", data={})
-
-        # BUG #4 fix: yield usage whenever present, even without a
-        # recognized finish_reason. Some providers emit usage in a
-        # frame without finish_reason; dropping it loses cost tracking.
-        # Must be yielded BEFORE done so _call_llm_streaming captures
-        # it in the main loop, not the drain loop.
-        usage = d.get("usage")
-        if usage:
-            yield SSEEvent(type="usage", data={"usage": usage})
+        else:
+            # BUG #4: still yield usage when finish_reason is not in the
+            # recognized set (or None), so usage frames are not dropped.
+            usage = d.get("usage")
+            if usage:
+                yield SSEEvent(type="usage", data={"usage": usage})
 
 
 class MiniMaxProvider:
