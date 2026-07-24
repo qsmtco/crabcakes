@@ -1109,7 +1109,18 @@ class AgentRuntime:
                             if stream_err:
                                 err_code = stream_err.get("code", 0)
                                 err_msg = stream_err.get("message", "Unknown provider error")
-                                error_text = f"Provider error (code={err_code}): {err_msg}"
+                                if err_code == 0:
+                                    error_text = f"Provider error: {err_msg}"
+                                else:
+                                    error_text = f"Provider error (code={err_code}): {err_msg}"
+                                # OpenRouter errors often include a metadata field
+                                # with the underlying provider name (e.g., nvidia).
+                                # Surface it when available for debugging.
+                                metadata = stream_err.get("metadata")
+                                if isinstance(metadata, dict) and metadata:
+                                    provider_name = metadata.get("provider_name")
+                                    if provider_name:
+                                        error_text += f" (underlying provider: {provider_name})"
                             else:
                                 error_text = "Agent returned no content. This may indicate a configuration error or an issue with the LLM provider."
 
