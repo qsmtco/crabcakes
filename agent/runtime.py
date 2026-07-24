@@ -1711,9 +1711,12 @@ class AgentRuntime:
                         "arguments": tc["arguments"]
                     }
                 })
-        logger.debug("[stream-fallback] sk=%s text_len=%d tool_calls=%d (no done event)",
-                     session_key, len(full_content), len(tool_calls))
-        return {"choices": [{"message": {"content": full_content, "tool_calls": tool_calls}}], "usage": captured_usage}
+        logger.debug("[stream-fallback] sk=%s text_len=%d tool_calls=%d error_captured=%s (no done event)",
+                     session_key, len(full_content), len(tool_calls), bool(captured_error))
+        result = {"choices": [{"message": {"content": full_content, "tool_calls": tool_calls}}], "usage": captured_usage}
+        if captured_error:
+            result["_stream_error"] = captured_error
+        return result
 
     def _check_stuck(self, session_key: str, tool_name: str, args: dict, iteration: int) -> str | None:
         """
