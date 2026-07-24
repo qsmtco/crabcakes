@@ -545,7 +545,8 @@ class TestMiniMaxStream:
         assert "error" in types, f"expected error event for content_filter, got types={types}"
         assert events[-1].type == "done"
         error_ev = [ev for ev in events if ev.type == "error"][0]
-        assert error_ev.data.get("error", {}).get("code") == "content_filter"
+        assert error_ev.data.get("error", {}).get("code") == 400, f"expected 400, got {error_ev.data.get('error', {})}"
+        assert error_ev.data.get("error", {}).get("reason") == "content_filter"
 
 
 class TestHandleFinishFrame:
