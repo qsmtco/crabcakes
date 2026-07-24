@@ -4677,8 +4677,9 @@ class TestStreamErrorIntegration:
 
     def test_stream_error_fallback_path(self):
         """_stream_error attached via fallback path (no done event).
-        When there IS text content, the partial text is used as the response
-        and on_error is NOT called (content is non-empty)."""
+        With BUG #3 fix: on_error IS called even with non-empty content,
+        but the partial text is preserved in the response (not polluted
+        with the warning text)."""
         from agent.llm.streaming import SSEEvent
         from unittest.mock import MagicMock
 
@@ -4694,7 +4695,8 @@ class TestStreamErrorIntegration:
 
         mock_provider = MagicMock()
         # No done event — stream ends after text + error event (fallback path)
-        # Content is non-empty, so the error is NOT surfaced via on_error.
+        # Content is non-empty; on_error IS called (BUG #3 fix) but the partial
+        # text is preserved
         mock_provider.stream.return_value = iter([
             SSEEvent(type="text_delta", data={"content": "Partial text"}),
             SSEEvent(type="error", data={"error": {"code": 503, "message": "Service unavailable"}}),
@@ -4704,17 +4706,20 @@ class TestStreamErrorIntegration:
             with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 rt._run_loop(sk, "hello")
 
-        # With non-empty content, on_error is NOT called — the partial text
-        # is used as the response. This is correct: the error event adds
-        # _stream_error to the result dict, but _run_loop only checks it
-        # when content is empty.
-        assert len(error_messages) == 0, (
-            f"Expected no on_error call with non-empty content, got: {error_messages}"
+        # BUG #3 fix: on_error is called even with non-empty content
+        assert len(error_messages) >= 1, (
+            f"Expected on_error to be called with non-empty content, got: {error_messages}"
+        )
+        assert "503" in error_messages[0], (
+            f"Expected error code 503 in on_error, got: {error_messages[0]}"
         )
         conv = rt.get_conversation(sk)
         assert conv is not None
-        # Verify the partial text made it through
+        # Verify the partial text made it through WITHOUT the warning pollution
         assert "Partial text" in conv.messages[-1].content
+        assert "Warning" not in conv.messages[-1].content, (
+            "BUG #3: warning text should not be appended to conversation content"
+        )
         rt.stop()
 
     def test_stream_error_fallback_empty_content(self):
