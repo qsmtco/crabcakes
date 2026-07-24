@@ -1610,6 +1610,8 @@ class AgentRuntime:
         tool_calls_partial: dict[int, dict] = {}
         # Phase CB-3: usage captured from SSE "usage" event (BUG #3 fix).
         captured_usage: dict = {}
+        # OpenRouter mid-stream error details (finish_reason="error").
+        captured_error: dict = {}
 
         for ev in stream_with_ssl_retry(
             streamer,
@@ -1651,6 +1653,20 @@ class AgentRuntime:
                 usage_data = ev.data.get("usage", {})
                 if isinstance(usage_data, dict) and usage_data:
                     captured_usage = usage_data
+
+            elif ev.type == "error":
+                # OpenRouter mid-stream error (finish_reason="error").
+                # Captures the error details so they can be surfaced
+                # to the user instead of the generic "no content" message.
+                error_data = ev.data.get("error", {})
+                if isinstance(error_data, dict) and error_data:
+                    captured_error = error_data
+                    logger.warning(
+                        "[stream] sk=%s OpenRouter mid-stream error: code=%s message=%s",
+                        session_key,
+                        error_data.get("code", "?"),
+                        error_data.get("message", "")[:200],
+                    )
 
             elif ev.type == "done":
                 # Build final tool_calls list from accumulated partials.
