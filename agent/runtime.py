@@ -270,7 +270,7 @@ def _validate_streamed_arguments(
     try:
         json.loads(args_str)
         return True
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
         logger.warning(
             "[stream] sk=%s skipping tool=%s with incomplete JSON arguments "
             "(stream truncated): %.200r",
