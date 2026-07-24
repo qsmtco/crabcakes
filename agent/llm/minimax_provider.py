@@ -58,7 +58,8 @@ def _handle_finish_frame(d: dict) -> Iterator[SSEEvent]:
                 # content-filter reason to the user instead of the
                 # generic "no content" message.
                 yield SSEEvent(type="error", data={"error": {
-                    "code": "content_filter",
+                    "code": 400,
+                    "reason": "content_filter",
                     "message": "Content was filtered by the provider (finish_reason=content_filter).",
                 }})
             usage = d.get("usage")
