@@ -548,7 +548,125 @@ class TestMiniMaxStream:
         assert error_ev.data.get("error", {}).get("code") == "content_filter"
 
 
-class TestAnthropicStream:
+class TestHandleFinishFrame:
+    """Direct unit tests for _handle_finish_frame (module-level helper in minimax_provider.py).
+
+    Tests the shared helper in isolation without needing SSE streaming or
+    mock responses. Each test constructs a dict as it would arrive from
+    parse_sse_line and inspects the yielded SSEEvent list.
+    """
+
+    def _run(self, d: dict) -> list:
+        from agent.llm.minimax_provider import _handle_finish_frame
+        return list(_handle_finish_frame(d))
+
+    def test_stop(self):
+        """finish_reason='stop' → delta + done, no error."""
+        events = self._run({
+            "choices": [{"delta": {"content": "hi"}, "finish_reason": "stop"}],
+        })
+        types = [ev.type for ev in events]
+        assert "text_delta" in types
+        assert types[-1] == "done"
+        assert "error" not in types
+
+    def test_tool_calls(self):
+        """finish_reason='tool_calls' → delta + done, no error."""
+        events = self._run({
+            "choices": [{"delta": {"tool_calls": []}, "finish_reason": "tool_calls"}],
+        })
+        assert events[-1].type == "done"
+        assert "error" not in [ev.type for ev in events]
+
+    def test_length(self):
+        """finish_reason='length' → delta + done, no error."""
+        events = self._run({
+            "choices": [{"delta": {"content": "partial"}, "finish_reason": "length"}],
+        })
+        assert events[-1].type == "done"
+        assert "error" not in [ev.type for ev in events]
+
+    def test_error_with_data(self):
+        """finish_reason='error' with error dict → error event + done."""
+        events = self._run({
+            "error": {"code": 429, "message": "Rate limit"},
+            "choices": [{"delta": {}, "finish_reason": "error"}],
+        })
+        types = [ev.type for ev in events]
+        assert "error" in types, f"expected error event, got {types}"
+        assert types[-1] == "done"
+        assert types.index("error") < types.index("done")
+        err = events[[ev.type for ev in events].index("error")]
+        assert err.data["error"]["code"] == 429
+
+    def test_error_without_data(self):
+        """finish_reason='error' without error dict → no error event, just done."""
+        events = self._run({
+            "choices": [{"delta": {}, "finish_reason": "error"}],
+        })
+        types = [ev.type for ev in events]
+        assert "error" not in types, f"unexpected error event, got {types}"
+        assert types[-1] == "done"
+
+    def test_content_filter(self):
+        """finish_reason='content_filter' → error event with string code + done."""
+        events = self._run({
+            "choices": [{"delta": {}, "finish_reason": "content_filter"}],
+        })
+        types = [ev.type for ev in events]
+        assert "error" in types, f"expected error event, got {types}"
+        err = events[[ev.type for ev in events].index("error")]
+        assert err.data["error"]["code"] == "content_filter"
+        assert "filtered" in err.data["error"]["message"].lower()
+        assert types[-1] == "done"
+
+    def test_missing_finish_reason(self):
+        """No finish_reason → deltas but no done/error event."""
+        events = self._run({
+            "choices": [{"delta": {"content": "hello"}}],
+        })
+        types = [ev.type for ev in events]
+        assert "done" not in types
+        assert "error" not in types
+
+    def test_empty_choices(self):
+        """Empty choices with no error → no events (no delta, no done)."""
+        events = self._run({"choices": []})
+        assert len(events) == 0, f"expected no events, got {len(events)}"
+
+    def test_top_level_error(self):
+        """Top-level error dict with empty choices → error event + done."""
+        events = self._run({
+            "error": {"code": 429, "message": "Rate limit exceeded"},
+            "choices": [],
+        })
+        types = [ev.type for ev in events]
+        assert "error" in types, f"expected error event, got {types}"
+        assert types[-1] == "done"
+        err = events[[ev.type for ev in events].index("error")]
+        assert err.data["error"]["code"] == 429
+
+    def test_top_level_error_with_choices(self):
+        """Top-level error AND finish_reason='error' → prefer error path (yields once)."""
+        events = self._run({
+            "error": {"code": 429, "message": "Rate limit"},
+            "choices": [{"delta": {}, "finish_reason": "error"}],
+        })
+        types = [ev.type for ev in events]
+        # Should only have one error event (top-level path fires first, returns)
+        error_count = sum(1 for ev in events if ev.type == "error")
+        assert error_count == 1, f"expected 1 error event, got {error_count}"
+        assert types[-1] == "done"
+
+    def test_usage_included(self):
+        """finish_reason='stop' with usage dict → usage event before done."""
+        events = self._run({
+            "choices": [{"delta": {"content": "hi"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+        })
+        types = [ev.type for ev in events]
+        assert "usage" in types, f"expected usage event, got {types}"
+        assert types.index("usage") < types.index("done")
 
     def test_anthropic_stream_text_delta_forwarded(self):
         """Anthropic text_delta events forwarded."""
