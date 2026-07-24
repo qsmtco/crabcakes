@@ -1658,7 +1658,7 @@ class AgentRuntime:
         # OpenRouter mid-stream error details (finish_reason="error").
         captured_error: dict = {}
 
-        for ev in stream_with_ssl_retry(
+        _stream = stream_with_ssl_retry(
             streamer,
             base_url=base_url,
             api_key=api_key,
@@ -1667,7 +1667,9 @@ class AgentRuntime:
             tools=tools,
             timeout=timeout,
             x_title=x_title,
-        ):
+        )
+
+        for ev in _stream:
             if ev.type == "text_delta":
                 text = ev.data.get("content") or ""
                 full_content += text
@@ -1741,9 +1743,9 @@ class AgentRuntime:
                     result["_stream_error"] = captured_error
                 # Drain remaining events after done (defense in depth).
                 # Some providers may send trailing usage frames or duplicate
-                # done events. Drain silently to prevent late error events
-                # from being dropped.
-                for _ev in stream_with_ssl_retry(...):
+                # done events. Drain silently to prevent late events from
+                # being dropped by the early return.
+                for _ in _stream:
                     pass
                 return result
 

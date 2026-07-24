@@ -987,6 +987,12 @@ class AgentRuntimeHandler:
         """
         if self._crh is None:
             return
+        # Skip empty text deltas — OpenRouter sends delta: {content: ""} with
+        # finish_reason:"error". Starting a streaming bubble on empty text
+        # creates a flickering empty box that is immediately replaced by the
+        # error message.
+        if not text:
+            return
         # Always accumulate text — ensures final output is complete
         self._streaming_text[session_key] = self._streaming_text.get(session_key, "") + text
 
