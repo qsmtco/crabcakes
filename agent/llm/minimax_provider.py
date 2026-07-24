@@ -29,10 +29,10 @@ def _handle_finish_frame(d: dict) -> Iterator[SSEEvent]:
     error/usage/done events when finish_reason is set.
 
     Handles both:
-    - Top-level OpenRouter error (empty choices): {"error":{...},"choices":[]}
+    - Top-level provider error (empty choices): {"error":{...},"choices":[]}
     - finish_reason termination: {"choices":[{"finish_reason":"error",...}]}
     """
-    # OpenRouter top-level error with empty choices:
+    # Top-level error with empty choices:
     #   {"error":{"code":429,...},"choices":[]}
     # Must be caught BEFORE the choice/finish_reason path.
     top_error = d.get("error")
