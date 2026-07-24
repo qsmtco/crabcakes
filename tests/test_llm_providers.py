@@ -466,6 +466,87 @@ class TestMiniMaxStream:
 
         assert events[-1].type == "done"
 
+    def test_minimax_stream_finish_reason_error_signals_done(self):
+        """finish_reason='error' produces a done event."""
+        from agent.llm.minimax_provider import MiniMaxProvider
+
+        lines = [
+            b'data: {"choices":[{"delta":{},"finish_reason":"error"}]}',
+        ]
+
+        class FakeResp:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def __iter__(self): return iter(lines)
+
+        with patch("agent.llm.minimax_provider.urlopen_with_ssl_retry", return_value=FakeResp()):
+            provider = MiniMaxProvider()
+            events = list(provider.stream(
+                base_url="https://api.minimax.chat/v1",
+                api_key="test", model="minimax/MiniMax-M3",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=None, timeout=30,
+            ))
+
+        assert events[-1].type == "done"
+
+    def test_minimax_stream_finish_reason_error_with_error_data(self):
+        """finish_reason='error' with error dict yields error event before done."""
+        from agent.llm.minimax_provider import MiniMaxProvider
+
+        lines = [
+            b'data: {"error":{"code":429,"message":"Quota exceeded"},"choices":[{"delta":{},"finish_reason":"error"}]}',
+        ]
+
+        class FakeResp:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def __iter__(self): return iter(lines)
+
+        with patch("agent.llm.minimax_provider.urlopen_with_ssl_retry", return_value=FakeResp()):
+            provider = MiniMaxProvider()
+            events = list(provider.stream(
+                base_url="https://api.minimax.chat/v1",
+                api_key="test", model="minimax/MiniMax-M3",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=None, timeout=30,
+            ))
+
+        types = [ev.type for ev in events]
+        assert "error" in types, f"expected error event, got types={types}"
+        assert events[-1].type == "done"
+        assert types.index("error") < types.index("done")
+        error_ev = [ev for ev in events if ev.type == "error"][0]
+        assert error_ev.data.get("error", {}).get("code") == 429
+
+    def test_minimax_stream_finish_reason_content_filter_signals_done(self):
+        """finish_reason='content_filter' produces a done + error event."""
+        from agent.llm.minimax_provider import MiniMaxProvider
+
+        lines = [
+            b'data: {"choices":[{"delta":{},"finish_reason":"content_filter"}]}',
+        ]
+
+        class FakeResp:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def __iter__(self): return iter(lines)
+
+        with patch("agent.llm.minimax_provider.urlopen_with_ssl_retry", return_value=FakeResp()):
+            provider = MiniMaxProvider()
+            events = list(provider.stream(
+                base_url="https://api.minimax.chat/v1",
+                api_key="test", model="minimax/MiniMax-M3",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=None, timeout=30,
+            ))
+
+        types = [ev.type for ev in events]
+        assert "error" in types, f"expected error event for content_filter, got types={types}"
+        assert events[-1].type == "done"
+        error_ev = [ev for ev in events if ev.type == "error"][0]
+        assert error_ev.data.get("error", {}).get("code") == "content_filter"
+
 
 class TestAnthropicStream:
 
