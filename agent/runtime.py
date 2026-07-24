@@ -1742,11 +1742,18 @@ class AgentRuntime:
                 if captured_error:
                     result["_stream_error"] = captured_error
                 # Drain remaining events after done (defense in depth).
-                # Some providers may send trailing usage frames or duplicate
-                # done events. Drain silently to prevent late events from
-                # being dropped by the early return.
-                for _ in _stream:
-                    pass
+                # Some providers may send trailing usage frames, error events,
+                # or duplicate done events. Drain and capture late error events
+                # so they don't get silently discarded.
+                for ev in _stream:
+                    if ev.type == "error":
+                        error_data = ev.data.get("error", {})
+                        if isinstance(error_data, dict) and error_data and not captured_error:
+                            captured_error = error_data
+                    elif ev.type == "usage":
+                        usage_data = ev.data.get("usage", {})
+                        if isinstance(usage_data, dict) and usage_data:
+                            captured_usage = usage_data
                 return result
 
         # Fallback — stream ended without explicit done event (e.g. provider doesn't send [DONE])

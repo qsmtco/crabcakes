@@ -209,20 +209,25 @@ class MiniMaxProvider:
                             return
 
             for line in sse_lines(resp):
-                ev = parse_sse_line(line)
-                if ev is None:
-                    continue
                 # MiniMax may send base_resp body-level errors mid-stream
                 # (HTTP 200 with error envelope after initial text deltas).
-                if ev.type == "raw":
-                    d = ev.data
-                    base_resp = d.get("base_resp") or {}
+                # Must check BEFORE parse_sse_line — non-SSE body-level error
+                # lines are not valid SSE and parse_sse_line returns None.
+                try:
+                    raw = json.loads(line.decode("utf-8"))
+                    base_resp = raw.get("base_resp") or {}
                     status_code = base_resp.get("status_code", 0)
                     if status_code != 0:
                         status_msg = base_resp.get("status_msg", "unknown error")
                         raise RuntimeError(
                             f"MiniMax API error (status_code={status_code}): {status_msg}"
                         )
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+
+                ev = parse_sse_line(line)
+                if ev is None:
+                    continue
                 if ev.type == "done":
                     yield SSEEvent(type="done", data={})
                     return
