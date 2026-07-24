@@ -163,6 +163,11 @@ class OpenAIProvider:
                             error_data = d.get("error", {})
                             if error_data:
                                 yield SSEEvent(type="error", data={"error": error_data})
+                        elif finish_reason == "content_filter":
+                            yield SSEEvent(type="error", data={"error": {
+                                "code": "content_filter",
+                                "message": "Content was filtered by the provider (finish_reason=content_filter).",
+                            }})
                         usage = d.get("usage")
                         if usage:
                             yield SSEEvent(type="usage", data={"usage": usage})
