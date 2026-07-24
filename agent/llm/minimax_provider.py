@@ -62,10 +62,29 @@ def _handle_finish_frame(d: dict) -> Iterator[SSEEvent]:
                     "reason": "content_filter",
                     "message": "Content was filtered by the provider (finish_reason=content_filter).",
                 }})
+            if finish_reason in ("stop", "tool_calls", "length", "error", "content_filter"):
+                # Forward OpenRouter mid-stream error details
+                if finish_reason == "error":
+                    error_data = d.get("error", {})
+                    if error_data:
+                        yield SSEEvent(type="error", data={"error": error_data})
+                elif finish_reason == "content_filter":
+                    # Yield a synthetic error so the runtime surfaces the
+                    # content-filter reason to the user instead of the
+                    # generic "no content" message.
+                    yield SSEEvent(type="error", data={"error": {
+                        "code": 400,
+                        "reason": "content_filter",
+                        "message": "Content was filtered by the provider (finish_reason=content_filter).",
+                    }})
+                yield SSEEvent(type="done", data={})
+
+            # BUG #4 fix: yield usage whenever present, regardless of
+            # finish_reason. Some providers emit usage in a frame without
+            # a recognized finish_reason; dropping it loses cost tracking.
             usage = d.get("usage")
             if usage:
                 yield SSEEvent(type="usage", data={"usage": usage})
-            yield SSEEvent(type="done", data={})
 
 
 class MiniMaxProvider:
