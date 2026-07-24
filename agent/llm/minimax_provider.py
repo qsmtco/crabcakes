@@ -187,9 +187,13 @@ class MiniMaxProvider:
                         yield SSEEvent(type="done", data={})
                         return
                     if ev.type == "raw":
+                        had_done = False
                         for out_ev in _handle_finish_frame(ev.data):
                             yield out_ev
-                        return
+                            if out_ev.type == "done":
+                                had_done = True
+                        if had_done:
+                            return
 
             for line in sse_lines(resp):
                 ev = parse_sse_line(line)
@@ -200,6 +204,10 @@ class MiniMaxProvider:
                     return
                 if ev.type != "raw":
                     continue
+                had_done = False
                 for out_ev in _handle_finish_frame(ev.data):
                     yield out_ev
-                return
+                    if out_ev.type == "done":
+                        had_done = True
+                if had_done:
+                    return
