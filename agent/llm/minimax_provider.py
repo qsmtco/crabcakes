@@ -27,7 +27,19 @@ def _handle_finish_frame(d: dict) -> Iterator[SSEEvent]:
     Shared by both the first-line and subsequent-line paths in
     MiniMaxProvider.stream(). Yields delta events, then optional
     error/usage/done events when finish_reason is set.
+
+    Handles both:
+    - Top-level OpenRouter error (empty choices): {"error":{...},"choices":[]}
+    - finish_reason termination: {"choices":[{"finish_reason":"error",...}]}
     """
+    # OpenRouter top-level error with empty choices:
+    #   {"error":{"code":429,...},"choices":[]}
+    # Must be caught BEFORE the choice/finish_reason path.
+    top_error = d.get("error")
+    if top_error and isinstance(top_error, dict):
+        yield SSEEvent(type="error", data={"error": top_error})
+        yield SSEEvent(type="done", data={})
+        return
     choice = first_choice(d)
     if choice:
         for out_ev in parse_sse_delta(d):
