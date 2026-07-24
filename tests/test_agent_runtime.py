@@ -3746,6 +3746,65 @@ class TestStreamOpenaiEventsFinishReason:
         assert "done" in types, f"expected done event, got types={types}"
         assert types[-1] == "done"
 
+    # --- finish_reason "error" and "content_filter" ---
+
+    def test_emits_done_on_finish_reason_error(self):
+        """done event emitted when finish_reason='error'."""
+        events = self._run_streamer(self._text_delta_sse("ok", finish_reason="error"))
+        types = [ev.type for ev in events]
+        assert "done" in types, f"expected done event, got types={types}"
+        assert types[-1] == "done"
+
+    def test_emits_error_event_with_error_data(self):
+        """SSEEvent(type='error', ...) yielded before done when finish_reason='error' and error field present."""
+        raw = (
+            b'data: {"error":{"code":429,"message":"Rate limit exceeded"},'
+            b'"choices":[{"delta":{},"finish_reason":"error"}]}\n\n'
+        )
+        events = self._run_streamer(raw)
+        types = [ev.type for ev in events]
+        assert "error" in types, f"expected error event, got types={types}"
+        assert "done" in types, f"expected done event, got types={types}"
+        # error event must precede done event
+        assert types.index("error") < types.index("done"), (
+            f"error event must precede done; got order={types}"
+        )
+        # Verify error data is passed through
+        error_ev = [ev for ev in events if ev.type == "error"][0]
+        err_data = error_ev.data.get("error", {})
+        assert err_data.get("code") == 429
+        assert "Rate limit" in err_data.get("message", "")
+
+    def test_no_error_event_when_error_field_missing(self):
+        """No error event when finish_reason='error' but no error dict in SSE data."""
+        raw = (
+            b'data: {"choices":[{"delta":{},"finish_reason":"error"}]}\n\n'
+        )
+        events = self._run_streamer(raw)
+        types = [ev.type for ev in events]
+        assert "error" not in types, f"unexpected error event, got types={types}"
+        assert "done" in types, f"expected done event, got types={types}"
+
+    def test_emits_done_on_finish_reason_content_filter(self):
+        """done event emitted when finish_reason='content_filter'."""
+        events = self._run_streamer(self._text_delta_sse("", finish_reason="content_filter"))
+        types = [ev.type for ev in events]
+        assert "done" in types, f"expected done event, got types={types}"
+        assert types[-1] == "done"
+
+    def test_emits_error_event_for_finish_reason_content_filter(self):
+        """SSEEvent(type='error', ...) yielded with content_filter code when finish_reason='content_filter'."""
+        raw = (
+            b'data: {"choices":[{"delta":{},"finish_reason":"content_filter"}]}\n\n'
+        )
+        events = self._run_streamer(raw)
+        types = [ev.type for ev in events]
+        assert "error" in types, f"expected error event for content_filter, got types={types}"
+        error_ev = [ev for ev in events if ev.type == "error"][0]
+        err_data = error_ev.data.get("error", {})
+        assert err_data.get("code") == "content_filter", f"expected content_filter code, got {err_data}"
+        assert "filtered" in err_data.get("message", "").lower()
+
     # --- [DONE] sentinel regression ---
 
     def test_handles_done_sentinel(self):
