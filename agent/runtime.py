@@ -1229,10 +1229,18 @@ class AgentRuntime:
                                 provider_name = metadata.get("provider_name")
                                 if provider_name:
                                     error_text += f" (underlying provider: {provider_name})"
-                            # Append warning to the partial content so the user sees it
-                            text_content = (text_content or "") + f"\n\n---\n**Warning:** {error_text} (stream was cut short)"
+                            # BUG #3 fix: dispatch via _on_error instead of appending
+                            # to text_content. Appending the warning to the conversation
+                            # history causes it to be re-sent to the LLM on the next turn,
+                            # polluting the context. Use the same pattern as the empty-content
+                            # error path (see lines ~1145-1155).
                             logger.warning("[tool-loop] sk=%s stream error with non-empty content: %s",
                                            session_key, error_text)
+                            try:
+                                self._dispatch(self._on_error, session_key, error_text)
+                            except Exception as _e:
+                                logger.error("[tool-loop] sk=%s _on_error handler raised %s: %s — continuing",
+                                             session_key, type(_e).__name__, _e)
 
                         logger.debug("[tool-loop] sk=%s text-only response, dispatching on_response_complete len=%d",
                                      session_key, len(text_content or ""))
