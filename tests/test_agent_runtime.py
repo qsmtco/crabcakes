@@ -4325,6 +4325,17 @@ class TestStreamedArgumentsValidation:
         from agent.runtime import _validate_streamed_arguments
         assert _validate_streamed_arguments('{"command": "git sta', "exec_command", "sk1") is False
 
+    def test_validate_non_string_input_returns_false(self):
+        """BUG #2: non-string input (int) does not crash; returns False.
+
+        json.loads raises TypeError on non-string input. The helper's except
+        clause covers both JSONDecodeError and TypeError so a future caller
+        passing a non-string does not crash the agent turn.
+        """
+        from agent.runtime import _validate_streamed_arguments
+        # int input — previously crashed with TypeError
+        assert _validate_streamed_arguments(42, "f", "sk") is False
+
     # ── Integration: done-event path skips malformed tool call ───────────────
 
     def test_done_path_skips_malformed_tool_call(self):
