@@ -48,7 +48,7 @@ def extract_tool_calls(
                 # test for the synthetic-id contract.
                 call_id = tc.get("id") or f"call_{uuid.uuid4().hex[:8]}"
                 name = func.get("name", "")
-                args_raw = func.get("arguments", "{}")
+                args_raw = func.get("arguments") or "{}"
                 if isinstance(args_raw, str):
                     try:
                         args = json.loads(args_raw)

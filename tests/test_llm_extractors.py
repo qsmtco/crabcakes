@@ -97,6 +97,27 @@ class TestExtractToolCalls:
         assert calls[0][1] == "read_file"
         assert calls[0][2] == {"path": "ok.py"}
 
+    def test_extract_tool_calls_empty_string_arguments_defaults_to_empty_dict(self):
+        """BUG #1: empty-but-present arguments string defaults to {} (not dropped).
+
+        Regression: a name-only tool call (zero args, common for Anthropic/MCP
+        tools) used to be silently dropped because func.get("arguments", "{}")
+        only defaults when the key is missing, not when it's an empty string.
+        The streaming code always populates 'arguments' with '' (agent/runtime.py:1637),
+        so the default never fired. Fix: func.get("arguments") or '{}'.
+        See docs/specs/SPEC-TRUNCATED-STREAMING-TOOL-ARGS.md (Phase 3, BUG #1).
+        """
+        response = {
+            "choices": [{"message": {"tool_calls": [
+                {"id": "c0", "function": {"name": "clear_cache", "arguments": ""}},
+            ]}}],
+        }
+        calls = extract_tool_calls(response, response_format="openai")
+        assert len(calls) == 1
+        assert calls[0][0] == "c0"
+        assert calls[0][1] == "clear_cache"
+        assert calls[0][2] == {}
+
 
 # ======================================================================
 # extract_text_content (spec §B.9 cases 26-27)
