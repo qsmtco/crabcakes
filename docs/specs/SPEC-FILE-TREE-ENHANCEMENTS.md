@@ -1212,6 +1212,13 @@ def _get_file_tree_git_status(self) -> dict[str, str]:
     """
     return self._file_tree_handler.refresh_git_status()
 
+def _get_file_tree_sort_mode(self) -> str:
+    """Return saved sort mode from handler. (BUG #36 fix)
+    
+    Called by FileTree._show_tree to restore the user's preferred sort.
+    """
+    return self._file_tree_handler.get_sort_mode()
+
 def _on_file_tree_expand_requested(self, path: str) -> None:
     """Reserved callback for future handler delegation of directory expansion.
     Currently unused — expansion is handled by view's _expand_directory. (BUG #28)"""
