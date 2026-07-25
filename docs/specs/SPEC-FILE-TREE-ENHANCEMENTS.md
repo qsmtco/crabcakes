@@ -1093,6 +1093,10 @@ self._file_tree_handler = FileTreeHandler(project_path="")
 # Wire view callbacks
 self._file_tree.set_on_sort_changed(self._on_file_tree_sort_changed)
 self._file_tree.set_on_search_changed_tree(self._on_file_tree_search_changed)
+# BUG #27: Wire git status callback — handler returns parsed status dict
+self._file_tree.set_on_get_git_status(self._get_file_tree_git_status)
+# BUG #28: Wire expand callback (reserved for future handler delegation)
+self._file_tree.set_on_expand_requested(self._on_file_tree_expand_requested)
 ```
 
 Wiring methods in `LeftPanel`:
