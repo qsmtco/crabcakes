@@ -1359,6 +1359,13 @@ pytest tests/ -k "file_tree" -v
 - [x] **BUG #26:** `parent_full_path` GObject property added to `FileTreeRow`. Set when creating drawer rows in `_toggle_drawer`. `_filter_func` checks drawer rows against `parent_full_path` so they filter with their parent file.
 - [x] **BUG #27:** Git status wired end-to-end: `_on_get_git_status` callback on `FileTree` → handler `refresh_git_status()`. `_show_tree` populates `git_status` and `git_status_display` on each row. `on_project_opened` calls `invalidate_git_status()`.
 - [x] **BUG #28:** `set_on_expand_requested` wired in `left_panel.py` as no-op stub, reserved for future handler delegation of directory scanning.
+- [x] **BUG #29:** `_on_search_changed` dispatcher calls `_on_search_changed_tree_cb(entry.get_text())` directly (view's debounce method), NOT `_on_search_changed_tree` (handler no-op).
+- [x] **BUG #30:** Sort dropdown mode mapping is correct: menu text ("Name ↑") → index → mode string ("name_asc"). Handler `set_sort_mode()` validated against `_VALID_SORT_MODES` whitelist.
+- [x] **BUG #31:** `Gtk.CustomSorter.new(fn)` documented with explicit 6 comparators. Compare function gets `(a, b)` — user_data is None.
+- [x] **BUG #32:** All 6 comparators (`cmp_name_asc`, `cmp_name_desc`, `cmp_modified_desc`, `cmp_modified_asc`, `cmp_size_desc`, `cmp_size_asc`) fully specified — no `...` placeholders.
+- [x] **BUG #33:** Data flow table reference `_on_search_changed_tree_cb` matches actual dispatcher (fixed by BUG #29).
+- [x] **BUG #34:** `_sort_changed_count` generation counter added to sort dropdown handler, drops stale signals during rapid project switching.
+- [x] **BUG #35:** Match count display shows "N of M files" in search entry placeholder after each debounced filter.
 
 ---
 
