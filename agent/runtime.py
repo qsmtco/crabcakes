@@ -1762,6 +1762,12 @@ class AgentRuntime:
                         usage_data = ev.data.get("usage", {})
                         if isinstance(usage_data, dict) and usage_data:
                             captured_usage = usage_data
+                # Write back late-captured values — the drain updates local
+                # variables only; the `result` dict was built before the drain.
+                if captured_error and "_stream_error" not in result:
+                    result["_stream_error"] = captured_error
+                if captured_usage and not result.get("usage"):
+                    result["usage"] = captured_usage
                 return result
 
         # Fallback — stream ended without explicit done event (e.g. provider doesn't send [DONE])
