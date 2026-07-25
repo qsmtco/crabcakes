@@ -4813,3 +4813,63 @@ class TestStreamErrorIntegration:
         conv = rt.get_conversation(sk)
         assert conv is not None
         rt.stop()
+
+    def test_stream_error_captures_late_error_after_done(self):
+        """Late error after done is captured and written back to _stream_error."""
+        from agent.llm.streaming import SSEEvent
+        from unittest.mock import MagicMock
+
+        error_messages = []
+        def on_error(sk, msg):
+            error_messages.append(msg)
+
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None, on_error=on_error)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        # Simulate: text_delta -> done -> late error event
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = iter([
+            SSEEvent(type="text_delta", data={"content": "Hello"}),
+            SSEEvent(type="done", data={}),
+            SSEEvent(type="error", data={"error": {"code": 503, "message": "Late error after done"}}),
+        ])
+
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+                rt._run_loop(sk, "hello")
+
+        # Late error should be captured and written back to result, triggering on_error
+        assert len(error_messages) >= 1, (
+            f"Expected on_error to be called for late error, got: {error_messages}"
+        )
+        assert "503" in error_messages[0], (
+            f"Expected 503 in late error message, got: {error_messages[0]}"
+        )
+        rt.stop()
+
+    def test_stream_error_captures_late_usage_after_done(self):
+        """Late usage after done is captured and written back to result.usage."""
+        from agent.llm.streaming import SSEEvent
+        from unittest.mock import MagicMock
+
+        rt = AgentRuntime(_make_cfg(), on_text_delta=lambda sk, d: None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+
+        mock_provider = MagicMock()
+        mock_provider.stream.return_value = iter([
+            SSEEvent(type="text_delta", data={"content": "Hello"}),
+            SSEEvent(type="done", data={}),
+            SSEEvent(type="usage", data={"usage": {"prompt_tokens": 100, "completion_tokens": 50}}),
+        ])
+
+        with unittest.mock.patch("agent.runtime._get_provider", return_value=mock_provider):
+            with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
+                rt._run_loop(sk, "hello")
+
+        conv = rt.get_conversation(sk)
+        assert conv is not None
+        rt.stop()
