@@ -718,29 +718,59 @@ def _filter_func(model: Gtk.FilterListModel, position: int, query: str) -> bool:
 
 ```python
 def _build_sorter(self, sort_mode: str) -> Gtk.Sorter:
-    """Build a comparator-based sorter from sort_mode string."""
-    # Directories always first, then files sorted by criterion
+    """Build a comparator-based sorter from sort_mode string.
+    
+    Returns a Gtk.CustomSorter. GTK4 Python bindings pass (a, b) to the
+    compare function; the user_data arg is None and safely ignored.
+    Directories always sort before files regardless of sort mode.
+    """
     def cmp_name_asc(a, b):
         if a.props.is_dir != b.props.is_dir:
             return -1 if a.props.is_dir else 1
-        return -1 if a.props.display_name.casefold() < b.props.display_name.casefold() else 1
+        a_name = a.props.display_name.casefold()
+        b_name = b.props.display_name.casefold()
+        return -1 if a_name < b_name else (1 if a_name > b_name else 0)
+    
+    def cmp_name_desc(a, b):
+        dir_cmp = -1 if a.props.is_dir else 1 if not b.props.is_dir else 0
+        if a.props.is_dir != b.props.is_dir:
+            return -1 if a.props.is_dir else 1
+        a_name = a.props.display_name.casefold()
+        b_name = b.props.display_name.casefold()
+        return 1 if a_name < b_name else (-1 if a_name > b_name else 0)
     
     def cmp_modified_desc(a, b):
         if a.props.is_dir != b.props.is_dir:
             return -1 if a.props.is_dir else 1
-        return b.props.modified_time - a.props.modified_time
+        # b - a for descending (newest first)
+        return (b.props.modified_time - a.props.modified_time)
     
-    # ... (all 6 comparators) ...
+    def cmp_modified_asc(a, b):
+        if a.props.is_dir != b.props.is_dir:
+            return -1 if a.props.is_dir else 1
+        return (a.props.modified_time - b.props.modified_time)
+    
+    def cmp_size_desc(a, b):
+        if a.props.is_dir != b.props.is_dir:
+            return -1 if a.props.is_dir else 1
+        return (b.props.file_size - a.props.file_size)
+    
+    def cmp_size_asc(a, b):
+        if a.props.is_dir != b.props.is_dir:
+            return -1 if a.props.is_dir else 1
+        return (a.props.file_size - b.props.file_size)
     
     comparators = {
         "name_asc": cmp_name_asc,
-        "name_desc": lambda a,b: -cmp_name_asc(a,b) if a.props.is_dir == b.props.is_dir else (-1 if a.props.is_dir else 1),
+        "name_desc": cmp_name_desc,
         "modified_desc": cmp_modified_desc,
-        "modified_asc": lambda a,b: -cmp_modified_desc(a,b) if a.props.is_dir == b.props.is_dir else (-1 if a.props.is_dir else 1),
-        "size_desc": ...,  # dirs first, then file_size descending
-        "size_asc": ...,   # dirs first, then file_size ascending
+        "modified_asc": cmp_modified_asc,
+        "size_desc": cmp_size_desc,
+        "size_asc": cmp_size_asc,
     }
-    return Gtk.CustomSorter.new(comparators.get(sort_mode, comparators["name_asc"]))
+    fn = comparators.get(sort_mode, cmp_name_asc)
+    # BUG #31: CustomSorter compare function gets (a, b) — user_data is None
+    return Gtk.CustomSorter.new(fn)
 ```
 
 #### 3.4.10 Sort Dropdown Handler
