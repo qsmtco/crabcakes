@@ -1114,9 +1114,23 @@ def _on_file_tree_search_changed(self, query: str):
     """
     pass  # View manages filter model
 
+def _get_file_tree_git_status(self) -> dict[str, str]:
+    """Return cached git status dict from handler. (BUG #27 fix)
+    
+    Called by FileTree._show_tree when populating root rows.
+    """
+    return self._file_tree_handler.refresh_git_status()
+
+def _on_file_tree_expand_requested(self, path: str) -> None:
+    """Reserved callback for future handler delegation of directory expansion.
+    Currently unused — expansion is handled by view's _expand_directory. (BUG #28)"""
+    pass
+
 def on_project_opened(self, name: str, path: str):
     """Wire handler on project open. Invalidates git status cache."""
     self._file_tree_handler.set_project_path(path)
+    # BUG #27: Invalidate git status so _show_tree picks up fresh data
+    self._file_tree_handler.invalidate_git_status()
 
 def on_project_closed(self):
     """Clear handler state on project close. BUG #9: timeouts handled by view."""
