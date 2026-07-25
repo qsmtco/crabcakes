@@ -665,12 +665,13 @@ def _apply_filter(self, query: str) -> None:
     # and the model accepts new filter objects via set_filter()
     if not query:
         self._filter_model.set_filter(None)
-    else:
-        filter_fn = lambda row, q=query: q.casefold() in row.props.display_name.casefold() \
-                                      or q.casefold() in row.props.full_path.casefold()
-        # BUG #12 fix: use casefold() instead of lower()
-        custom_filter = Gtk.CustomFilter.new(lambda row, user_data: _filter_func(row, query))
-        self._filter_model.set_filter(custom_filter)
+        return
+    # BUG #19: GTK4 CustomFilter callback signature is (model, position, user_data),
+    # NOT (row, user_data). Must call model.get_item(position) to get the row.
+    custom_filter = Gtk.CustomFilter.new(
+        lambda model, position, user_data: _filter_func(model, position, query)
+    )
+    self._filter_model.set_filter(custom_filter)
 
 @staticmethod
 def _filter_func(row: FileTreeRow, query: str) -> bool:
