@@ -423,6 +423,9 @@ In `_build()` (after `_search_entry`):
 self._sort_dropdown = Gtk.DropDown.new_from_strings([
     "Name ↑", "Name ↓", "Modified ↑", "Modified ↓", "Size ↑", "Size ↓"
 ])
+# NOTE: The dropdown label text ("Name ↑") is cosmetic. The mode mapping
+# in _on_sort_dropdown_changed uses the selected INDEX to derive the
+# internal mode string ("name_asc"). See BUG #30.
 self._sort_dropdown.set_selected(0)  # Name ↑ default
 self._sort_dropdown.set_valign(Gtk.Align.CENTER)
 self._sort_dropdown.add_css_class("file-tree-sort-dropdown")
@@ -732,7 +735,6 @@ def _build_sorter(self, sort_mode: str) -> Gtk.Sorter:
         return -1 if a_name < b_name else (1 if a_name > b_name else 0)
     
     def cmp_name_desc(a, b):
-        dir_cmp = -1 if a.props.is_dir else 1 if not b.props.is_dir else 0
         if a.props.is_dir != b.props.is_dir:
             return -1 if a.props.is_dir else 1
         a_name = a.props.display_name.casefold()
