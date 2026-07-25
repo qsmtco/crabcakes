@@ -546,6 +546,18 @@ def _show_tree(self, name, path):
             icon_color_class=icon.color_class,
         )
         self._store.append(row)
+
+    # M6: Initialize sort/filter model chain AFTER store is populated
+    self._init_sort_filter()
+    # BUG #36: Restore saved sort mode from handler, if available
+    if self._on_get_sort_mode:
+        saved_mode = self._on_get_sort_mode()
+        mode_index = ["name_asc", "name_desc", "modified_desc", "modified_asc",
+                      "size_desc", "size_asc"].index(saved_mode) if saved_mode in \
+                     ["name_asc", "name_desc", "modified_desc", "modified_asc",
+                      "size_desc", "size_asc"] else 0
+        self._sort_dropdown.set_selected(mode_index)
+        self._apply_sort(saved_mode)
 ```
 
 #### 3.4.7 `_show_project_picker` — Single Column, Hide Sort
