@@ -1477,6 +1477,9 @@ pytest tests/ -k "file_tree" -v
 | #33 | Medium | §3.4.5, §4 | Data flow table and code both reference `_on_search_changed_tree_cb` — consistent after BUG #29 fix |
 | #34 | Medium | §3.4.10, §3.4.11 | `_sort_changed_count` generation counter in sort dropdown handler drops stale signals on rapid project switch |
 | #35 | Medium | §3.4.11 | Match count display: "N of M files" shown in search entry placeholder after each debounced filter |
+| M6 | Critical | §3.4.6, §3.4.8 | `_init_sort_filter()` called at end of `_show_tree` (after row append); re-apply sorter at end of `_on_directory_loaded` (after child insert). `_current_sort_mode` tracked for re-apply. |
+| #36 | High | §3.4.6, §3.7 | `_on_get_sort_mode` callback wired `LeftPanel → handler.get_sort_mode()`; `_show_tree` sets dropdown index and calls `_apply_sort()` with saved mode after populating store. |
+| #37 | Medium | §3.4.11 | Removed invalid `set_trailing_icon_name("")` call — `Gtk.SearchEntry` has no such method. Match count via `set_placeholder_text()` only. |
 
 ---
 
