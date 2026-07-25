@@ -859,12 +859,12 @@ def _on_search_changed_tree_cb(self, query: str) -> None:
         GLib.source_remove(self._search_timeout_id)
     def _apply():
         self._apply_filter(query)
-        # BUG #35: Update match count display in the search entry trailing label
+        # BUG #35: Update match count display in the search entry.
+        # NOTE: Gtk.SearchEntry does NOT have set_trailing_icon_name() (BUG #37).
+        # Instead, update the placeholder text to show match count.
         if self._filter_model:
             count = self._filter_model.get_n_items()
             total = self._store.get_n_items() if self._store else 0
-            label = f"{count}/{total} matches" if query else ""
-            self._search_entry.set_trailing_icon_name("")  # clear icon
             # Set placeholder to show count
             if query and total > 0:
                 if count == 0:
