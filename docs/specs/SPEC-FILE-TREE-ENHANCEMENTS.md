@@ -452,9 +452,8 @@ Replace the single `_on_search_changed` with a dispatcher that routes to picker 
 def _on_search_changed(self, entry):
     """Called when search entry text changes. Route to picker or tree handler."""
     if self._project_path is not None:
-        # Tree mode — route to handler callback
-        if self._on_search_changed_tree:
-            self._on_search_changed_tree(entry.get_text())
+        # Tree mode — call view's debounced filter directly (BUG #29 fix)
+        self._on_search_changed_tree_cb(entry.get_text())
     else:
         # Picker mode — existing behavior
         query = entry.get_text()
