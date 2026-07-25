@@ -1266,7 +1266,8 @@ pytest tests/ -k "file_tree" -v
 | Git rename line (`R  old -> new`) | Destination path shown with "R" badge | BUG #5: parser handles `->` split |
 | Git error (permission denied) | Empty status dict, no crash | BUG #6: try/except catches all |
 | Binary file (`.so`, `.pyc`) | Generic icon; no diff in drawer (existing) | — |
-| Search matches 0 rows | Empty tree | BUG #12: casefold() works on empty strings |
+| Search matches 0 rows | Empty tree; drawer rows are not independently visible | BUG #12: casefold() works on empty strings; BUG #18: drawer rows pass through filter |
+| Search matches dir name | Dir shown; children not auto-expanded | — |
 | Search matches dir name | Dir shown; children not auto-expanded | — |
 | Rapid search typing | Only last query after 150ms debounce | BUG #9: timeout cancelled on _clear_all_state |
 | `.crabcakes/file_tree_prefs.json` invalid mode | Fallback to "name_asc" | BUG #13: whitelist validation |
@@ -1295,8 +1296,14 @@ pytest tests/ -k "file_tree" -v
 | #11 | High | §3.4.9 | `set_sorter()`/`set_filter()` in-place — no model reconstruction |
 | #12 | Medium | §3.4.9 | `casefold()` instead of `lower()` |
 | #13 | Medium | §3.5 | `_VALID_SORT_MODES` whitelist in `_load_prefs` |
-| #14 | Medium | §3.4.15 | `// 1_000_000_000` integer division; `//= 1024` in format_size |
+| #14 | Medium | §3.4.15 | `mtime_ns // 1_000_000_000` integer division (timestamps only); `format_size` uses float division |
 | #15 | Medium | §3.4.15 | Helper functions are public: `format_size`, `format_mtime`, `git_status_to_display`, `guess_mime` |
+| #16 | High | §3.4.9 | Removed dead `filter_fn` lambda from `_apply_filter` |
+| #17 | High | §3.2 | `status_porcelain` handles copy (`C`) format in addition to rename (`R`) |
+| #18 | High | §3.4.9 | `_filter_func` returns `True` for drawer rows (pass-through) |
+| #19 | High | §3.4.9 | `CustomFilter.new()` callback uses correct GTK4 signature `(model, position, user_data)`; calls `model.get_item(position)` |
+| #20 | — | — | *(skipped — auditor numbering gap)* |
+| #21 | High | §3.4.15 | `format_size` restored to float division (`val /= 1024.0`); integer division was a regression that would show "1 KB" instead of "1.5 KB" |
 
 ---
 
