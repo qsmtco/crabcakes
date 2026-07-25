@@ -777,11 +777,20 @@ def _build_sorter(self, sort_mode: str) -> Gtk.Sorter:
 
 ```python
 def _on_sort_dropdown_changed(self, dropdown, pspec):
-    """Handle sort selection — update sort model in-place and notify handler."""
+    """Handle sort selection — update sort model in-place and notify handler.
+    
+    Uses _sort_changed_count as a generation counter to drop stale signals
+    during rapid project switching (BUG #34).
+    """
+    self._sort_changed_count += 1
+    request_id = self._sort_changed_count
     selected = dropdown.get_selected()
     modes = ["name_asc", "name_desc", "modified_desc", "modified_asc", "size_desc", "size_asc"]
     mode = modes[selected] if 0 <= selected < len(modes) else "name_asc"
     self._apply_sort(mode)
+    # Drop stale callbacks if project switched during sort
+    if request_id != self._sort_changed_count:
+        return
     # Notify handler to persist preference
     if self._on_sort_changed:
         self._on_sort_changed(mode)
