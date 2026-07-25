@@ -937,6 +937,10 @@ def set_on_expand_requested(self, cb):
 def set_on_get_git_status(self, cb):
     """Set callback to fetch git status dict from handler. (BUG #27 fix)"""
     self._on_get_git_status = cb
+
+def set_on_get_sort_mode(self, cb):
+    """Set callback to fetch saved sort mode from handler. (BUG #36 fix)"""
+    self._on_get_sort_mode = cb
 ```
 
 #### 3.4.15 Module-Level Utility Functions (in `file_tree.py`, Pure Python)
