@@ -58,9 +58,8 @@ def _handle_finish_frame(d: dict) -> Iterator[SSEEvent]:
                     "reason": "content_filter",
                     "message": "Content was filtered by the provider (finish_reason=content_filter).",
                 }})
-            # BUG #4 fix: yield usage before done even without a recognized
-            # finish_reason. Some providers emit usage in a frame without
-            # finish_reason; dropping it loses cost tracking.
+            # BUG #4: yield usage even with a recognized finish_reason,
+            # because not every provider sends a separate usage frame.
             usage = d.get("usage")
             if usage:
                 yield SSEEvent(type="usage", data={"usage": usage})
