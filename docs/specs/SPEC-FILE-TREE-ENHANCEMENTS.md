@@ -1420,6 +1420,13 @@ pytest tests/ -k "file_tree" -v
 | #26 | Medium | §3.4.1, §3.4.9 | `parent_full_path` GObject property added to `FileTreeRow`; `_filter_func` checks drawer rows against `parent_full_path` so they filter with their parent |
 | #27 | Medium | §3.4.6, §3.7 | Git status wired into `_show_tree` row construction via `_on_get_git_status` callback → handler.`refresh_git_status()`. `on_project_opened` calls `invalidate_git_status()`. |
 | #28 | Low | §3.4.14, §3.7 | `set_on_expand_requested` is wired in `left_panel.py` as a no-op stub, reserved for future handler delegation of directory scanning |
+| #29 | Critical | §3.4.5 | `_on_search_changed` dispatcher calls `_on_search_changed_tree_cb()` (view's debounce) directly instead of handler callback |
+| #30 | High | §3.4.10 | Sort dropdown mode mapping documented: menu text → index → mode string → whitelist-validated; all paths verified |
+| #31 | High | §3.4.9 | `Gtk.CustomSorter.new(fn)` explicitly documented with 6 full comparator definitions; compare function gets `(a, b)` |
+| #32 | High | §3.4.9 | All 6 comparators fully specified inline — no `...` placeholders or incomplete lambdas |
+| #33 | Medium | §3.4.5, §4 | Data flow table and code both reference `_on_search_changed_tree_cb` — consistent after BUG #29 fix |
+| #34 | Medium | §3.4.10, §3.4.11 | `_sort_changed_count` generation counter in sort dropdown handler drops stale signals on rapid project switch |
+| #35 | Medium | §3.4.11 | Match count display: "N of M files" shown in search entry placeholder after each debounced filter |
 
 ---
 
@@ -1431,7 +1438,7 @@ After implementation, update `docs/ARCHITECTURE.md`:
 2. **§3.5 CSS in styles.py** — Document new `.file-tree-status-*`, `.file-icon-*`, `.file-tree-sort-dropdown` classes
 3. **§3.6 Composition Root** — Document `FileTreeHandler` wiring in LeftPanel
 4. **§X File Tree Architecture (new)** — Describe:
-   - FileTreeRow: 12 → 21 properties
+   - FileTreeRow: 12 → 22 properties
    - ColumnView + SortListModel + FilterListModel chain (in-place mutation pattern)
    - Handler/view split: handler = prefs + git cache; view = widgets + sort/filter models
    - Background thread safety pattern (generation counter + path capture)
