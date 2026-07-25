@@ -1448,4 +1448,4 @@ After implementation, update `docs/ARCHITECTURE.md`:
 
 ---
 
-**End of Spec — 28 bugs fixed, clean for implementation.**
+**End of Spec — 35 bugs fixed, clean for implementation.**
