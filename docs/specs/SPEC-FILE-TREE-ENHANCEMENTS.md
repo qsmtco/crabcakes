@@ -922,6 +922,7 @@ self._on_sort_changed: Callable[[str], None] | None = None
 self._on_search_changed_tree: Callable[[str], None] | None = None
 self._on_expand_requested: Callable[[str], None] | None = None  # BUG #1 fix: reserved for future handler delegation
 self._on_get_git_status: Callable[[], dict[str, str]] | None = None  # BUG #27 fix: get git status from handler
+self._on_get_sort_mode: Callable[[], str] | None = None  # BUG #36 fix: get saved sort mode from handler
 
 def set_on_sort_changed(self, cb):
     self._on_sort_changed = cb
