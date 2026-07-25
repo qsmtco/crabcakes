@@ -271,11 +271,11 @@ You write the spec, the trio writes, audits, and ships the code. No human interv
 
 Three specialized roles, each with its own prompt, its own responsibilities, and **its own LLM**:
 
-| Role | Job | Prompt | What it owns | What it cannot do |
-|------|-----|--------|--------------|-------------------|
-| **Supervisor** | Read the spec, phase the work, delegate each phase, verify independently, write post-mortem | `implementationSupervisor.md` | Phasing, delegation, independent verification, post-mortem, commit/push | Write code, perform the adversarial audit, modify the spec mid-loop |
-| **Builder** | Write code per phase instructions, report back with evidence | `steelFramedCodeWriter.md` | Reading phase instructions, writing code, running tests, reporting COMPLETENESS checklist | Phase the work, audit its own code, decide when the implementation is done |
-| **Auditor** | Adversarial probe on every code-bearing turn — try to break the code before it ships | `adversarialDebugger.md` | 11-section adversarial probe, bug reporting in structured BUG format | Fix code, commit, decide phase completion, talk to the builder directly |
+| Role | Job | What it owns | What it cannot do |
+|------|-----|--------------|-------------------|
+| **Supervisor** | Read the spec, phase the work, delegate each phase, verify independently, write post-mortem | Phasing, delegation, independent verification, post-mortem, commit/push | Write code, perform the adversarial audit, modify the spec mid-loop |
+| **Builder** | Write code per phase instructions, report back with evidence | Reading phase instructions, writing code, running tests, reporting COMPLETENESS checklist | Phase the work, audit its own code, decide when the implementation is done |
+| **Auditor** | Adversarial probe on every code-bearing turn — try to break the code before it ships | 11-section adversarial probe, bug reporting in structured BUG format | Fix code, commit, decide phase completion, talk to the builder directly |
 
 The Builder and the Auditor never communicate directly. All routing goes through the Supervisor. This isn't a convention — it's a **structural guarantee** that prevents collusion and groupthink.
 
@@ -285,7 +285,7 @@ Every agent in the loop is a fully independent entity:
 
 - **Separate LLM.** Each agent can run on a different model from a different provider. GPT-4o writes the code, Claude audits it, MiniMax supervises the whole thing.
 - **Separate context window.** Each agent has its own conversation history. They don't see each other's scratch pad, reasoning chains, or tool outputs. The only thing that crosses between them is what gets typed into the chat.
-- **Separate system prompt.** Each role loads its own instructions — the builder loads `steelFramedCodeWriter.md`, the auditor loads `adversarialDebugger.md`, the supervisor runs on `implementationSupervisor.md`. They never read each other's prompts.
+- **Separate system prompt.** Each role loads its own instructions. They never read each other's prompts.
 - **Communicating via chat.** Agents talk to each other through the same project group chat you see. The supervisor types a delegation message, the builder reads it and responds, the auditor reads the response and posts its probe. **The chat is the only bridge between them** — exactly how human teammates collaborate.
 
 ```
@@ -415,20 +415,6 @@ The adversarial audit is mandatory on every turn that touches code — pre-fligh
 **5. Separation of concerns is structural, not conventional.**
 The builder cannot audit itself. The auditor cannot fix code. The supervisor cannot skip the audit. These aren't suggestions — they're enforced by the loop's delegation contracts. Each `/ask` payload is a contract with required parts; a delivery missing any of them is sent back.
 
-### <img src="icons/emoji/blocks.png" width="80" height="80" alt="blocks" style="vertical-align:middle; margin-top:-0.5em; margin-bottom:-0.5em" /> The Four-Prompt Composition
-
-The loop is powered by four prompts that each own exactly one responsibility. No prompt duplicates another's content. The loop itself is defined by a fifth prompt that orchestrates them:
-
-| Prompt | Loaded by | When | Responsibility |
-|--------|-----------|------|----------------|
-| `steelFramedSpecWriter.md` | Supervisor or Captain | Before the loop starts | Write the spec that specializes ARCHITECTURE.md for one feature |
-| `steelFramedCodeWriter.md` | Builder | Every code-writing delegation | How to write code: read-before-touch, hard-part-first, verify-every-claim, wire-it-or-delete-it |
-| `adversarialDebugger.md` | Auditor | Every code-bearing turn | How to audit: 11 sections from challenge-assumptions to verify-tests-match |
-| `implementationSupervisor.md` | Supervisor | Continuous standing orders | How to phase, delegate, verify, manage context, and write the post-mortem |
-| `implementationLoop.md` | — (meta) | Defines the loop itself | Loop diagram, role boundaries, authority hierarchy, entry/exit conditions, post-mortem format |
-
-**Composable, not monolithic.** Each prompt is a self-contained module with a clear contract. Swap the builder's prompt for a domain-specific one. Swap the auditor for a security-focused probe. The loop's shape stays the same; the prompts are pluggable.
-
 ### <img src="icons/emoji/memo.png" width="80" height="80" alt="memo" style="vertical-align:middle; margin-top:-0.5em; margin-bottom:-0.5em" /> Post-Mortem as Institutional Memory
 
 Every completed loop produces a **structured post-mortem** — not a summary, not a changelog, but an 11-section artifact that survives across loops and across agent pairs.
@@ -476,8 +462,8 @@ If the spec contradicts `ARCHITECTURE.md`, the spec is wrong — fix the spec, d
 Agents delegate to each other through the `/ask` slash command — the only sanctioned mechanism for inter-agent communication in the loop:
 
 ```
-/ask @Builder "Phase 2 — implement the rate limiter. Please write per docs/specs/PHASE-2-INSTRUCTIONS.md"
-/ask @Auditor "Please audit — scope: lib/ratelimit.py:1-85. Load adversarialDebugger.md fresh."
+/ask @Builder "Phase 2 — implement the rate limiter per the phase instructions"
+/ask @Auditor "Please audit — scope: lib/ratelimit.py:1-85"
 ```
 
 **Why a text command, not a tool call?** Because `/ask` routes through the same project chat that humans see. Every delegation, every audit, every bug report is **visible in the feed**. Nothing happens in a black box. You watch the trio work in real time, step in if needed, and let them run autonomously when you don't.
@@ -661,16 +647,10 @@ crabcakes/
 │   ├── image_utils.py               # Image upload
 │   ├── quoting.py                   # Message quoting
 │   └── feed_store.py                # Feed persistence
-├── prompts/
-│   ├── implementationLoop.md          # Loop architecture (the trio)
-│   ├── implementationSupervisor.md    # Supervisor standing orders
-│   ├── adversarialDebugger.md         # Auditor's 11-section probe
-│   ├── steelFramedCodeWriter.md       # Builder's code rules
-│   ├── steelFramedSpecWriter.md       # Spec writing rules
+├── prompts/                           # System prompts & loop definitions
 │   ├── system/                      # System prompt templates
 │   │   ├── coder.md                 # Coder agent instructions
 │   │   ├── debugger.md              # Debugger agent instructions
-│   │   ├── cc-implementation.md       # Build execution prompt
 │   │   ├── collab.md                # A2A collaboration protocol
 │   │   ├── project-onboarding.md    # New project interview
 │   │   ├── project-awareness.md     # Project context injection
