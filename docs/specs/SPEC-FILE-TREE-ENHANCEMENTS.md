@@ -1310,8 +1310,7 @@ pytest tests/ -k "file_tree" -v
 | Git rename line (`R  old -> new`) | Destination path shown with "R" badge | BUG #5: parser handles `->` split |
 | Git error (permission denied) | Empty status dict, no crash | BUG #6: try/except catches all |
 | Binary file (`.so`, `.pyc`) | Generic icon; no diff in drawer (existing) | — |
-| Search matches 0 rows | Empty tree; drawer rows are not independently visible | BUG #12: casefold() works on empty strings; BUG #18: drawer rows pass through filter |
-| Search matches dir name | Dir shown; children not auto-expanded | — |
+| Search matches 0 rows | Empty tree; drawer rows are not independently visible | BUG #12: casefold() works on empty strings; BUG #18, #26: drawer rows pass through filter via parent_full_path |
 | Search matches dir name | Dir shown; children not auto-expanded | — |
 | Rapid search typing | Only last query after 150ms debounce | BUG #9: timeout cancelled on _clear_all_state |
 | `.crabcakes/file_tree_prefs.json` invalid mode | Fallback to "name_asc" | BUG #13: whitelist validation |
