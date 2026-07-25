@@ -836,7 +836,8 @@ New attributes set by wiring code:
 ```python
 self._on_sort_changed: Callable[[str], None] | None = None
 self._on_search_changed_tree: Callable[[str], None] | None = None
-self._on_expand_requested: Callable[[str], None] | None = None  # BUG #1 fix
+self._on_expand_requested: Callable[[str], None] | None = None  # BUG #1 fix: reserved for future handler delegation
+self._on_get_git_status: Callable[[], dict[str, str]] | None = None  # BUG #27 fix: get git status from handler
 
 def set_on_sort_changed(self, cb):
     self._on_sort_changed = cb
@@ -845,7 +846,13 @@ def set_on_search_changed_tree(self, cb):
     self._on_search_changed_tree = cb
 
 def set_on_expand_requested(self, cb):
+    """Set callback for directory expansion. Currently unused — reserved for
+    future handler delegation of background scanning. (BUG #28)"""
     self._on_expand_requested = cb
+
+def set_on_get_git_status(self, cb):
+    """Set callback to fetch git status dict from handler. (BUG #27 fix)"""
+    self._on_get_git_status = cb
 ```
 
 #### 3.4.15 Module-Level Utility Functions (in `file_tree.py`, Pure Python)
