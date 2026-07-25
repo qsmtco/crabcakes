@@ -662,9 +662,15 @@ crabcakes/
 │   ├── quoting.py                   # Message quoting
 │   └── feed_store.py                # Feed persistence
 ├── prompts/
+│   ├── implementationLoop.md          # Loop architecture (the trio)
+│   ├── implementationSupervisor.md    # Supervisor standing orders
+│   ├── adversarialDebugger.md         # Auditor's 11-section probe
+│   ├── steelFramedCodeWriter.md       # Builder's code rules
+│   ├── steelFramedSpecWriter.md       # Spec writing rules
 │   ├── system/                      # System prompt templates
 │   │   ├── coder.md                 # Coder agent instructions
 │   │   ├── debugger.md              # Debugger agent instructions
+│   │   ├── cc-implementation.md       # Build execution prompt
 │   │   ├── collab.md                # A2A collaboration protocol
 │   │   ├── project-onboarding.md    # New project interview
 │   │   ├── project-awareness.md     # Project context injection
