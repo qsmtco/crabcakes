@@ -1413,6 +1413,9 @@ pytest tests/ -k "file_tree" -v
 - [x] **BUG #33:** Data flow table reference `_on_search_changed_tree_cb` matches actual dispatcher (fixed by BUG #29).
 - [x] **BUG #34:** `_sort_changed_count` generation counter added to sort dropdown handler, drops stale signals during rapid project switching.
 - [x] **BUG #35:** Match count display shows "N of M files" in search entry placeholder after each debounced filter.
+- [x] **M6:** `_init_sort_filter()` called at end of `_show_tree` (after row-append loop) and re-apply sorter called at end of `_on_directory_loaded` (after child insertion). Sort/filter models are never `None` when sort/search signals fire.
+- [x] **BUG #36:** Saved sort mode restored on project open: `_on_get_sort_mode` callback reads handler's persistent sort mode; `_sort_dropdown.set_selected()` and `_apply_sort()` called in `_show_tree`.
+- [x] **BUG #37:** Removed invalid `Gtk.SearchEntry.set_trailing_icon_name()` call. Match count shown via `set_placeholder_text()` only.
 
 ---
 
