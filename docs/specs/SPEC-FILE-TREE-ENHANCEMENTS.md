@@ -837,6 +837,7 @@ def __init__(self, ...):
     ...
     self._search_timeout_id = None  # for tree search debounce
     self._sort_changed_count = 0    # BUG #34: generation counter for sort change signals
+    self._current_sort_mode = "name_asc"  # M6: tracks active sort mode for re-apply on subtree expansion
     
 def _clear_all_state(self):
     # BUG #9: Cancel outstanding search timeout before clearing
