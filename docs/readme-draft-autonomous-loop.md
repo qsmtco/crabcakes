@@ -223,6 +223,8 @@ Agents delegate to each other through the `/ask` slash command — the only sanc
 
 **Why a text command, not a tool call?** Because `/ask` routes through the same project chat that humans see. Every delegation, every audit, every bug report is **visible in the feed**. Nothing happens in a black box. You watch the trio work in real time, step in if needed, and let them run autonomously when you don't.
 
+This is the key architectural decision: **the chat is the only bridge between agents.** There's no shared memory, no internal API, no hidden channel. The supervisor types a message, the builder reads it in its own separate session, responds in its own voice, and the auditor reads that response in its own separate session. Each agent reasons independently about what it received — it can't peek at the other's context, tools, or reasoning chain. **They collaborate the same way humans do: by talking to each other.**
+
 **Context management:** The supervisor can reset an agent's conversation context with `/clear` between phases to prevent context bleed — but never mid bug-fix loop, because the builder needs the accumulated bug context to land the fix.
 
 ### <img src="icons/emoji/crosshair.png" width="80" height="80" alt="crosshair" style="vertical-align:middle; margin-top:-0.5em; margin-bottom:-0.5em" /> When to Use the Loop
