@@ -222,7 +222,7 @@ icon_color_class = GObject.Property(type=str, default="file-icon-default")
 parent_full_path = GObject.Property(type=str, default="")
 ```
 
-**Total properties:** 12 → **21**. All bindable by ColumnView factory.
+**Total properties:** 12 → **22**. All bindable by ColumnView factory.
 
 **Update `__init__` to accept new params (all optional, preserving existing callers):**
 ```python
@@ -1381,4 +1381,4 @@ After implementation, update `docs/ARCHITECTURE.md`:
 
 ---
 
-**End of Spec — 15 bugs fixed.**
+**End of Spec — 28 bugs fixed, clean for implementation.**
