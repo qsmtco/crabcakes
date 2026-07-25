@@ -2,7 +2,9 @@
 
 ## <img src="icons/emoji/refresh.png" width="80" height="80" alt="refresh" style="vertical-align:middle; margin-top:-0.5em; margin-bottom:-0.5em" /> Autonomous Coding Loop
 
-**The flagship feature.** Three agents — a Supervisor, a Builder, and an Auditor — work in a structured loop to implement specs autonomously, from phased delegation through adversarial audit to mandatory post-mortem. No human intervention needed inside the loop. You write the spec, the trio writes, audits, and ships the code.
+**The flagship feature.** Three agents — a Supervisor, a Builder, and an Auditor — each with their own LLM, their own context window, and their own system prompt, work in a structured loop to implement specs autonomously. They don't share a brain. They don't share a session. They communicate through the same project chat you do — typing messages to each other like teammates.
+
+You write the spec, the trio writes, audits, and ships the code. No human intervention needed inside the loop.
 
 > Other tools give an agent a task and hope. CrabCakes gives three agents a **protocol** — a phased, audited, verified loop where no single agent's output is trusted without independent confirmation. The builder can't skip tests because the supervisor runs them independently. The supervisor can't skip the audit because the auditor is mandatory. The auditor can't fix code because that's the builder's job. **Separation of concerns, enforced structurally.**
 
@@ -18,22 +20,40 @@ Three specialized roles, each with its own prompt, its own responsibilities, and
 
 The Builder and the Auditor never communicate directly. All routing goes through the Supervisor. This isn't a convention — it's a **structural guarantee** that prevents collusion and groupthink.
 
-### <img src="icons/emoji/network.png" width="80" height="80" alt="network" style="vertical-align:middle; margin-top:-0.5em; margin-bottom:-0.5em" /> Multi-Model Diversity
+### <img src="icons/emoji/network.png" width="80" height="80" alt="network" style="vertical-align:middle; margin-top:-0.5em; margin-bottom:-0.5em" /> Three Separate Brains
 
-**Each agent can run on a different LLM.** This isn't a side effect — it's a deliberate design decision and one of the loop's most important features.
+Every agent in the loop is a fully independent entity:
 
-A single LLM has shared blind spots. If the same model writes the code and audits the code, it will miss the same bugs in both passes — it literally cannot catch its own assumptions. Three different models from three different families bring different training data, different reasoning patterns, and different failure modes. Where GPT-4 might hallucinate an API, Claude might catch it. Where Claude might miss a type confusion, MiniMax might flag it. **Diversity is the defense.**
+- **Separate LLM.** Each agent can run on a different model from a different provider. GPT-4o writes the code, Claude audits it, MiniMax supervises the whole thing.
+- **Separate context window.** Each agent has its own conversation history. They don't see each other's scratch pad, reasoning chains, or tool outputs. The only thing that crosses between them is what gets typed into the chat.
+- **Separate system prompt.** Each role loads its own instructions — the builder loads `steelFramedCodeWriter.md`, the auditor loads `adversarialDebugger.md`, the supervisor runs on `implementationSupervisor.md`. They never read each other's prompts.
+- **Communicating via chat.** Agents talk to each other through the same project group chat you see. The supervisor types a delegation message, the builder reads it and responds, the auditor reads the response and posts its probe. **The chat is the only bridge between them** — exactly how human teammates collaborate.
 
 ```
-  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-  │ Supervisor  │     │   Builder   │     │   Auditor   │
-  │             │     │             │     │             │
-  │  MiniMax M3 │     │  GPT-4o     │     │  Claude 3.5 │
-  │  (reasoning)│     │  (coding)   │     │  (critique) │
-  └─────────────┘     └─────────────┘     └─────────────┘
-       │                   │                   │
-       └───── different model families ────────┘
+  ┌───────────────────┐  chat  ┌───────────────────┐  chat  ┌───────────────────┐
+  │    Supervisor     │ ──→    │      Builder      │ ──→    │      Auditor      │
+  │                   │ ←──    │                   │ ←──    │                   │
+  │  own LLM          │        │  own LLM          │        │  own LLM          │
+  │  own context      │        │  own context      │        │  own context      │
+  │  own system prompt│        │  own system prompt│        │  own system prompt│
+  │                   │        │                   │        │                   │
+  │  e.g. MiniMax M3  │        │  e.g. GPT-4o      │        │  e.g. Claude 3.5  │
+  └───────────────────┘        └───────────────────┘        └───────────────────┘
+
+         ↑ the only connection between them is what they type to each other ↑
 ```
+
+This is what makes the loop fundamentally different from a single agent with multiple "hats" or a multi-turn conversation in one context window:
+
+| | Single agent, multi-turn | **Three agents in the loop** |
+|---|---|---|
+| **Context** | One shared window — everything bleeds together | Three isolated windows — no context bleed |
+| **Model** | One model — same blind spots everywhere | Three different models — different failure modes |
+| **Self-audit** | Can it check its own work? (Hint: no) | Builder literally cannot audit — different agent, different model |
+| **Communication** | Internal — thoughts are shared | External — typed messages, visible in the feed |
+| **Human visibility** | You see one thread | You see every message between every agent |
+
+**Why this matters:** A single LLM has shared blind spots. If the same model writes the code and audits the code, it will miss the same bugs in both passes — it literally cannot catch its own assumptions. Three different models from three different families bring different training data, different reasoning patterns, and different failure modes. Where GPT-4o might hallucinate an API, Claude might catch it. Where Claude might miss a type confusion, MiniMax might flag it. **Diversity is the defense — and separate contexts are what make the diversity real.**
 
 A typical strong configuration:
 
