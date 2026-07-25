@@ -81,6 +81,7 @@ def make_safe_label(
     selectable: bool = True,
     css_class: str | None = None,           # backward compat: single class
     css_classes: list[str] | None = None,   # NEW (Bug #5): multiple classes
+    max_width_chars: int = 120,             # NEW: bound natural width for wrapping
 ) -> "Gtk.Label":
     """Create a Gtk.Label wired with the HIGH-6 activate-link guard.
 
@@ -106,6 +107,9 @@ def make_safe_label(
             apply multiple classes (e.g., ["chat-heading", "chat-heading-2"]).
             GTK4's add_css_class() treats strings as single class names —
             spaces are NOT separators. See Bug #5 in spec-markdown-header-fix.md.
+        max_width_chars: Maximum width in characters for text wrapping.
+            Default 120 (reasonable for chat viewport). Set to 0 for unlimited
+            (use with caution — may cause Pango unbounded-width explosion).
 
     Returns:
         A configured Gtk.Label with the markup applied and the activate-link
@@ -122,6 +126,10 @@ def make_safe_label(
     if wrap:
         label.set_wrap(True)
         label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        # Bound the natural width — prevents Pango unbounded-width explosion
+        # which causes truncation of long messages in the chat viewport.
+        if max_width_chars > 0:
+            label.set_max_width_chars(max_width_chars)
     label.set_can_focus(False)
     label.set_selectable(selectable)
     if css_class:
