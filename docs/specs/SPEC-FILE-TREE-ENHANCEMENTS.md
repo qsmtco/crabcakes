@@ -237,7 +237,8 @@ def __init__(self, display_name: str = "", full_path: str = "",
              modified_time: int = 0, modified_display: str = "—",
              git_status: str = "", git_status_display: str = "",
              mime_type: str = "", icon_name: str = "text-x-generic-symbolic",
-             icon_color_class: str = "file-icon-default"):
+             icon_color_class: str = "file-icon-default",
+             parent_full_path: str = ""):
     super().__init__()
     # ... existing 12 props ...
     self.props.file_size = file_size
@@ -249,6 +250,7 @@ def __init__(self, display_name: str = "", full_path: str = "",
     self.props.mime_type = mime_type
     self.props.icon_name = icon_name
     self.props.icon_color_class = icon_color_class
+    self.props.parent_full_path = parent_full_path
 ```
 
 #### 3.4.2 `FileTreeRowWidget` — Extend for Icon+Color Binding
