@@ -692,7 +692,12 @@ def _init_sort_filter(self) -> None:
     self._selection.set_model(self._filter_model)
 
 def _apply_sort(self, sort_mode: str) -> None:
-    """In-place sorter change (BUG #11 fix — no new model construction)."""
+    """In-place sorter change (BUG #11 fix — no new model construction).
+    
+    Tracks _current_sort_mode so _on_directory_loaded can re-apply
+    the sorter after inserting children (M6).
+    """
+    self._current_sort_mode = sort_mode
     if self._sort_model is None:
         return
     sorter = self._build_sorter(sort_mode)
