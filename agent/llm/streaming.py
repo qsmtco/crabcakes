@@ -85,7 +85,8 @@ def parse_sse_delta(d: dict) -> list[SSEEvent]:
     """
     events: list[SSEEvent] = []
     choice = first_choice(d)
-    delta = choice.get("delta", {}) if isinstance(choice, dict) else {}
+    raw_delta = choice.get("delta")
+    delta = raw_delta if isinstance(raw_delta, dict) else {}
     content = delta.get("content")
     if content is not None:
         events.append(SSEEvent(type="text_delta", data={"content": content}))
