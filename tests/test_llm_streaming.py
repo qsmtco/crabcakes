@@ -87,6 +87,24 @@ def test_parse_sse_delta_tool_call():
     assert events[0].data["id"] == "call_abc123"
 
 
+def test_parse_sse_delta_handles_none_delta():
+    """delta: None → no crash, returns empty events list."""
+    d = {"choices": [{"delta": None, "finish_reason": "stop"}]}
+    events = parse_sse_delta(d)
+    assert events == []
+
+
+def test_parse_sse_delta_handles_missing_choices():
+    """Empty or missing choices → returns empty events list."""
+    d = {}
+    events = parse_sse_delta(d)
+    assert events == []
+
+    d2 = {"choices": []}
+    events = parse_sse_delta(d2)
+    assert events == []
+
+
 # ── Sad-path tests ──────────────────────────────────────────────────────────
 
 def test_parse_sse_line_malformed_json():
