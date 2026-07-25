@@ -664,6 +664,19 @@ def _on_directory_loaded(self, entries, loading_row, row_index, parent_depth,
         )
         self._store.insert(insert_pos, child)
         insert_pos += 1
+
+    # M6: Initialize sort/filter model chain if not yet created
+    # For directory expansion, children are appended to the existing store
+    # which is already wrapped in sort/filter models. The sort/filter models
+    # automatically observe store mutations — no re-initialization needed.
+    # However, for the FIRST directory expansion (where _sort_model might still
+    # be None because _show_tree hasn't created it yet), skip safely.
+    # _init_sort_filter() is called at the end of _show_tree, so by the time
+    # any _on_directory_loaded fires, _sort_model is already initialized.
+    if self._sort_model is not None:
+        # Sort/filter models auto-observe store mutations — just re-apply
+        # the current sorter to ensure children sort correctly.
+        self._apply_sort(self._current_sort_mode)
 ```
 
 #### 3.4.9 Sort/Filter Model Chain — In-Place Mutation (BUG #11 Fix)
