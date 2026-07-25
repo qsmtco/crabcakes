@@ -141,8 +141,8 @@ def status_porcelain(project_path: str) -> dict[str, str]:
                 continue
             status_code = line[:2]
             rest = line[3:]  # skip space separator at index 2
-            # Handle rename format: 'R  old_path -> new_path'
-            if status_code[0] == 'R' or rest.startswith('->'):
+            # Handle rename/copy format: 'R  old_path -> new_path' or 'C  old_path -> new_path'
+            if status_code[0] in ('R', 'C') or rest.startswith('->'):
                 if ' -> ' in rest:
                     # 'old_path -> new_path' — take the right side
                     rest = rest.split(' -> ', 1)[1]
