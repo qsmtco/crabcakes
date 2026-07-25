@@ -805,7 +805,6 @@ def __init__(self, ...):
     ...
     self._search_timeout_id = None  # for tree search debounce
     self._sort_changed_count = 0    # BUG #34: generation counter for sort change signals
-    self._sort_changed_count = 0
     
 def _clear_all_state(self):
     # BUG #9: Cancel outstanding search timeout before clearing
