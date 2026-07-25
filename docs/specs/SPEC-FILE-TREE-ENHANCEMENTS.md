@@ -217,6 +217,9 @@ git_status_display = GObject.Property(type=str, default="")
 mime_type = GObject.Property(type=str, default="")
 icon_name = GObject.Property(type=str, default="text-x-generic-symbolic")
 icon_color_class = GObject.Property(type=str, default="file-icon-default")
+# BUG #26: parent_full_path stores the file_path of the parent file for drawer rows.
+# Set to the file_path when creating a drawer row in _toggle_drawer.
+parent_full_path = GObject.Property(type=str, default="")
 ```
 
 **Total properties:** 12 → **21**. All bindable by ColumnView factory.
@@ -682,18 +685,23 @@ def _filter_func(model: Gtk.FilterListModel, position: int, query: str) -> bool:
     Args follow GTK4 CustomFilter callback contract: (model, position, user_data).
     Must call model.get_item(position) to get the row (BUG #19 fix).
     
-    Drawer rows always pass through (BUG #18 fix).
+    Drawer rows always pass through if their parent file matches (BUG #18, #26 fix).
     """
     if not query:
         return True
     item = model.get_item(position)
-    row = cast(FileTreeRow, item)
-    # BUG #18: Drawer rows must always pass through — they are children of file rows
-    # and shouldn't be independently filtered. If the parent file row matches, the
-    # drawer row should appear. If the parent doesn't match, the drawer row is
-    # already removed by virtue of being under the parent's drawer insertion logic.
-    if row.props.is_drawer:
+    # BUG #24: Guard against None return from get_item (race on concurrent mutation)
+    if item is None:
         return True
+    row = cast(FileTreeRow, item)
+    # BUG #18: Drawer rows must always pass through if their parent matches.
+    # BUG #26: Check parent_full_path against the query — if the parent file
+    # (e.g., "src/main.py") matches, the drawer row ("src/main.py" diff) should appear.
+    if row.props.is_drawer:
+        parent_path = row.props.parent_full_path or row.props.full_path
+        q = query.casefold()
+        return (q in row.props.display_name.casefold() or
+                q in parent_path.casefold())
     q = query.casefold()  # BUG #12 fix
     return q in row.props.display_name.casefold() or q in row.props.full_path.casefold()
 ```
