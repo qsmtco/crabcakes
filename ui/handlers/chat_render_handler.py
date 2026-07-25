@@ -526,6 +526,7 @@ class ChatRenderHandler:
         label.set_xalign(0)
         label.set_wrap(True)
         label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        label.set_max_width_chars(120)
         label.set_can_focus(False)
         label.set_selectable(True)
         label.add_css_class("chat-msg-label")
