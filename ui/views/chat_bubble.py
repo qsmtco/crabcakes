@@ -386,6 +386,7 @@ def _build_code_from_markup(lang: str, code_markup: str, raw_content: str) -> Gt
     code_label.set_can_focus(False)
     code_label.set_wrap(True)
     code_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    code_label.set_max_width_chars(120)  # bound natural width — matches make_safe_label
 
     content.append(code_label)
     outer.append(content)
