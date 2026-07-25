@@ -1347,6 +1347,11 @@ pytest tests/ -k "file_tree" -v
 | #19 | High | §3.4.9 | `CustomFilter.new()` callback uses correct GTK4 signature `(model, position, user_data)`; calls `model.get_item(position)` |
 | #20 | — | — | *(skipped — auditor numbering gap)* |
 | #21 | High | §3.4.15 | `format_size` restored to float division (`val /= 1024.0`); integer division was a regression that would show "1 KB" instead of "1.5 KB" |
+| #24 | High | §3.4.9 | `_filter_func` guards against `model.get_item(position)` returning `None` — returns `True` (pass-through) |
+| #25 | Medium | §3.2 | `status_porcelain` checks both status positions: `status_code[0] in ('R', 'C')` for index column AND `status_code[1] in ('R', 'C')` for worktree column |
+| #26 | Medium | §3.4.1, §3.4.9 | `parent_full_path` GObject property added to `FileTreeRow`; `_filter_func` checks drawer rows against `parent_full_path` so they filter with their parent |
+| #27 | Medium | §3.4.6, §3.7 | Git status wired into `_show_tree` row construction via `_on_get_git_status` callback → handler.`refresh_git_status()`. `on_project_opened` calls `invalidate_git_status()`. |
+| #28 | Low | §3.4.14, §3.7 | `set_on_expand_requested` is wired in `left_panel.py` as a no-op stub, reserved for future handler delegation of directory scanning |
 
 ---
 
