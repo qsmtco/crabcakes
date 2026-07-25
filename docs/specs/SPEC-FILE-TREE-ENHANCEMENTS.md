@@ -674,9 +674,23 @@ def _apply_filter(self, query: str) -> None:
     self._filter_model.set_filter(custom_filter)
 
 @staticmethod
-def _filter_func(row: FileTreeRow, query: str) -> bool:
-    """Filter function — substring match on display_name and full_path."""
+def _filter_func(model: Gtk.FilterListModel, position: int, query: str) -> bool:
+    """Filter function — substring match on display_name and full_path.
+    
+    Args follow GTK4 CustomFilter callback contract: (model, position, user_data).
+    Must call model.get_item(position) to get the row (BUG #19 fix).
+    
+    Drawer rows always pass through (BUG #18 fix).
+    """
     if not query:
+        return True
+    item = model.get_item(position)
+    row = cast(FileTreeRow, item)
+    # BUG #18: Drawer rows must always pass through — they are children of file rows
+    # and shouldn't be independently filtered. If the parent file row matches, the
+    # drawer row should appear. If the parent doesn't match, the drawer row is
+    # already removed by virtue of being under the parent's drawer insertion logic.
+    if row.props.is_drawer:
         return True
     q = query.casefold()  # BUG #12 fix
     return q in row.props.display_name.casefold() or q in row.props.full_path.casefold()
@@ -821,18 +835,23 @@ These are **public** functions (no leading underscore — **BUG #15 fix**).
 
 ```python
 def format_size(bytes_: int) -> str:
-    """Human-readable file size. BUG #14: uses strict formatting (no float division)."""
+    """Human-readable file size. Uses float for display to preserve fractional units.
+    
+    NOTE: Float division (not integer division) is correct here — we need to show
+    "1.5 KB" not "1 KB" for 1500-byte files. BUG #14's integer division fix only
+    applies to mtime_ns (nanosecond timestamps), NOT to file sizes.
+    """
     if bytes_ <= 0:
         return "—"
     units = ["B", "KB", "MB", "GB", "TB"]
+    val = float(bytes_)
     for unit in units:
-        if bytes_ < 1024:
+        if val < 1024:
             if unit == "B":
-                return f"{int(bytes_)} B"
-            # rstrip removes trailing ".0" from e.g. "1.0 KB" → "1 KB"
-            return f"{bytes_:.1f} {unit}".replace(".0 ", " ")
-        bytes_ //= 1024  # integer division — no float precision loss
-    return f"{bytes_:.1f} PB"
+                return f"{int(val)} B"
+            return f"{val:.1f} {unit}".replace(".0 ", " ")
+        val /= 1024.0  # float division — preserves "1.5 KB" etc.
+    return f"{val:.1f} PB"
 
 def format_mtime(mtime_ns: int) -> str:
     """Human-readable relative time from nanosecond timestamp."""
