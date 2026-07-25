@@ -1252,7 +1252,7 @@ pytest tests/ -k "file_tree" -v
 - [x] **BUG #11:** `_init_sort_filter` creates models ONCE. `_apply_sort` uses `sort_model.set_sorter()` in-place. `_apply_filter` uses `filter_model.set_filter()` in-place. No new model construction on each change.
 - [x] **BUG #12:** Search filter uses `str.casefold()` instead of `str.lower()`. No Turkish-i crash.
 - [x] **BUG #13:** `_load_prefs` validates loaded sort_mode against `_VALID_SORT_MODES` whitelist. Invalid values → `"name_asc"` default.
-- [x] **BUG #14:** Uses `mtime_ns // 1_000_000_000` (integer division) instead of `int(mtime_ns / 1e9)`. `format_size` uses integer `//= 1024` instead of `/= 1024`.
+- [x] **BUG #14:** Uses `mtime_ns // 1_000_000_000` (integer division) instead of `int(mtime_ns / 1e9)`. Note: integer division only applies to modification timestamps (nanosecond precision), NOT to file sizes. `format_size` correctly uses float division.
 - [x] **BUG #15:** Helper functions are public (no leading underscore): `format_size`, `format_mtime`, `git_status_to_display`, `guess_mime`.
 
 ---
