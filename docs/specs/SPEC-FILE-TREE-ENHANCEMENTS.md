@@ -513,12 +513,19 @@ def _show_tree(self, name, path):
     self._column_view.append_column(col_modified)
 
     # Populate root entries with 5-tuple from scan_directory
+    # BUG #27: Populate git status from handler via callback if available.
+    # This callback is set by LeftPanel wiring on project open.
+    status_map: dict[str, str] = {}
+    if self._on_get_git_status:
+        status_map = self._on_get_git_status() or {}
     try:
         entries = scan_directory(path)
     except Exception as e:
         entries = [(f"[error: {type(e).__name__}: {e}]", "", False, 0, 0)]
     for entry_name, full_path, is_dir, size_bytes, mtime_ns in entries:
         icon = get_icon_for_path(full_path, is_dir)
+        rel_path = os.path.relpath(full_path, path) if path else full_path
+        raw_status = status_map.get(rel_path, "")
         row = FileTreeRow(
             display_name=entry_name,
             full_path=full_path,
@@ -530,8 +537,8 @@ def _show_tree(self, name, path):
             file_size_display=format_size(size_bytes) if not is_dir else "—",
             modified_time=mtime_ns // 1_000_000_000 if mtime_ns else 0,  # BUG #14 fix: integer division
             modified_display=format_mtime(mtime_ns) if mtime_ns else "—",
-            git_status="",
-            git_status_display="",
+            git_status=raw_status,
+            git_status_display=git_status_to_display(raw_status),
             mime_type=guess_mime(full_path),
             icon_name=icon.icon_name,
             icon_color_class=icon.color_class,
