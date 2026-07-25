@@ -826,6 +826,18 @@ def _on_search_changed_tree_cb(self, query: str) -> None:
         GLib.source_remove(self._search_timeout_id)
     def _apply():
         self._apply_filter(query)
+        # BUG #35: Update match count display in the search entry trailing label
+        if self._filter_model:
+            count = self._filter_model.get_n_items()
+            total = self._store.get_n_items() if self._store else 0
+            label = f"{count}/{total} matches" if query else ""
+            self._search_entry.set_trailing_icon_name("")  # clear icon
+            # Set placeholder to show count
+            if query and total > 0:
+                if count == 0:
+                    self._search_entry.set_placeholder_text("No matches")
+                else:
+                    self._search_entry.set_placeholder_text(f"{count} of {total} files")
         self._search_timeout_id = None
     self._search_timeout_id = GLib.timeout_add(150, _apply)
 ```
