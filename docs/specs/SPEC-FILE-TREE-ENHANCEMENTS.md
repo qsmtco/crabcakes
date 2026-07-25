@@ -1298,6 +1298,16 @@ pytest tests/ -k "file_tree" -v
 - [x] **BUG #13:** `_load_prefs` validates loaded sort_mode against `_VALID_SORT_MODES` whitelist. Invalid values → `"name_asc"` default.
 - [x] **BUG #14:** Uses `mtime_ns // 1_000_000_000` (integer division) instead of `int(mtime_ns / 1e9)`. Note: integer division only applies to modification timestamps (nanosecond precision), NOT to file sizes. `format_size` correctly uses float division.
 - [x] **BUG #15:** Helper functions are public (no leading underscore): `format_size`, `format_mtime`, `git_status_to_display`, `guess_mime`.
+- [x] **BUG #16:** Dead `filter_fn` lambda removed from `_apply_filter`. Unused code eliminated.
+- [x] **BUG #17:** `status_porcelain` handles copy (`C`) format in addition to rename (`R`).
+- [x] **BUG #18:** `_filter_func` skips drawer rows (`if row.props.is_drawer: return True`) — but improved in BUG #26 to check parent_full_path.
+- [x] **BUG #19:** `CustomFilter.new()` callback uses correct GTK4 signature `(model, position, user_data)`. Calls `model.get_item(position)` to get the row.
+- [x] **BUG #21:** `format_size` uses float division (`val /= 1024.0`). Correctly shows "1.5 KB" not "1 KB". Integer division only applies to `format_mtime` (nanosecond timestamps).
+- [x] **BUG #24:** `_filter_func` guards against `model.get_item(position)` returning `None` — returns `True` (pass-through) on `None`.
+- [x] **BUG #25:** `status_porcelain` checks both status code positions: `status_code[0] in ('R', 'C')` for index column, `status_code[1] in ('R', 'C')` for worktree column.
+- [x] **BUG #26:** `parent_full_path` GObject property added to `FileTreeRow`. Set when creating drawer rows in `_toggle_drawer`. `_filter_func` checks drawer rows against `parent_full_path` so they filter with their parent file.
+- [x] **BUG #27:** Git status wired end-to-end: `_on_get_git_status` callback on `FileTree` → handler `refresh_git_status()`. `_show_tree` populates `git_status` and `git_status_display` on each row. `on_project_opened` calls `invalidate_git_status()`.
+- [x] **BUG #28:** `set_on_expand_requested` wired in `left_panel.py` as no-op stub, reserved for future handler delegation of directory scanning.
 
 ---
 
