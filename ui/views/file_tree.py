@@ -678,36 +678,49 @@ class FileTree(Gtk.Box):
 
     def _build_sorter(self, sort_mode: str) -> Gtk.Sorter:
         """Build comparator-based sorter. Directories always sort before files."""
-        def cmp_name_asc(a, b):
+        def cmp_name_asc(a, b, _ud=None):
+            # BUG #4: drawer rows stay at insertion position
+            if a.props.is_drawer or b.props.is_drawer:
+                return 0
             if a.props.is_dir != b.props.is_dir:
                 return -1 if a.props.is_dir else 1
             a_n = a.props.display_name.casefold()
             b_n = b.props.display_name.casefold()
             return -1 if a_n < b_n else (1 if a_n > b_n else 0)
 
-        def cmp_name_desc(a, b):
+        def cmp_name_desc(a, b, _ud=None):
+            if a.props.is_drawer or b.props.is_drawer:
+                return 0
             if a.props.is_dir != b.props.is_dir:
                 return -1 if a.props.is_dir else 1
             a_n = a.props.display_name.casefold()
             b_n = b.props.display_name.casefold()
             return 1 if a_n < b_n else (-1 if a_n > b_n else 0)
 
-        def cmp_modified_desc(a, b):
+        def cmp_modified_desc(a, b, _ud=None):
+            if a.props.is_drawer or b.props.is_drawer:
+                return 0
             if a.props.is_dir != b.props.is_dir:
                 return -1 if a.props.is_dir else 1
             return b.props.modified_time - a.props.modified_time
 
-        def cmp_modified_asc(a, b):
+        def cmp_modified_asc(a, b, _ud=None):
+            if a.props.is_drawer or b.props.is_drawer:
+                return 0
             if a.props.is_dir != b.props.is_dir:
                 return -1 if a.props.is_dir else 1
             return a.props.modified_time - b.props.modified_time
 
-        def cmp_size_desc(a, b):
+        def cmp_size_desc(a, b, _ud=None):
+            if a.props.is_drawer or b.props.is_drawer:
+                return 0
             if a.props.is_dir != b.props.is_dir:
                 return -1 if a.props.is_dir else 1
             return b.props.file_size - a.props.file_size
 
-        def cmp_size_asc(a, b):
+        def cmp_size_asc(a, b, _ud=None):
+            if a.props.is_drawer or b.props.is_drawer:
+                return 0
             if a.props.is_dir != b.props.is_dir:
                 return -1 if a.props.is_dir else 1
             return a.props.file_size - b.props.file_size
