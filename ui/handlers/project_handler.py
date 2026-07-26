@@ -543,6 +543,18 @@ class ProjectHandler:
         """Return the currently active project path, or None."""
         return self._active_project_path
 
+    def get_git_status(self) -> dict[str, str]:
+        """Return parsed git status for the active project path.
+
+        Called by FileTree via the set_on_get_git_status callback to populate
+        the Status column. Returns {} if no project is open or on any error.
+        """
+        from utils.git_ops import status_porcelain
+        path = self._active_project_path
+        if not path:
+            return {}
+        return status_porcelain(path)
+
     # ── Command entry points (Phase 7) ────────────────────────────────────────
 
 
