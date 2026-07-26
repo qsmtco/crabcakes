@@ -102,13 +102,32 @@ class FileTreeRow(GObject.Object):
     history_selected_sha = GObject.Property(type=GObject.TYPE_PYOBJECT, default=None)
     history_loaded = GObject.Property(type=bool, default=False)
 
+    # Phase 1 — file tree metadata
+    file_size = GObject.Property(type=int, default=0)
+    file_size_display = GObject.Property(type=str, default="—")
+    modified_time = GObject.Property(type=int, default=0)
+    modified_display = GObject.Property(type=str, default="—")
+    git_status = GObject.Property(type=str, default="")
+    git_status_display = GObject.Property(type=str, default="")
+    mime_type = GObject.Property(type=str, default="")
+    icon_name = GObject.Property(type=str, default="text-x-generic-symbolic")
+    icon_color_class = GObject.Property(type=str, default="file-icon-default")
+    parent_full_path = GObject.Property(type=str, default="")
+
     def __init__(self, display_name: str = "", full_path: str = "",
                  is_dir: bool = False, is_drawer: bool = False,
                  depth: int = 0, expanded: bool = False,
                  has_children: bool = False,
                  drawer_widget=None, is_open: bool = False,
                  diff_text: str = "", history_selected_sha=None,
-                 history_loaded: bool = False):
+                 history_loaded: bool = False,
+                 file_size: int = 0, file_size_display: str = "—",
+                 modified_time: int = 0, modified_display: str = "—",
+                 git_status: str = "", git_status_display: str = "",
+                 mime_type: str = "",
+                 icon_name: str = "text-x-generic-symbolic",
+                 icon_color_class: str = "file-icon-default",
+                 parent_full_path: str = ""):
         super().__init__()
         self.props.display_name = display_name
         self.props.full_path = full_path
@@ -122,6 +141,16 @@ class FileTreeRow(GObject.Object):
         self.props.diff_text = diff_text
         self.props.history_selected_sha = history_selected_sha
         self.props.history_loaded = history_loaded
+        self.props.file_size = file_size
+        self.props.file_size_display = file_size_display
+        self.props.modified_time = modified_time
+        self.props.modified_display = modified_display
+        self.props.git_status = git_status
+        self.props.git_status_display = git_status_display
+        self.props.mime_type = mime_type
+        self.props.icon_name = icon_name
+        self.props.icon_color_class = icon_color_class
+        self.props.parent_full_path = parent_full_path
 
 
 # ── Phase 1: FileTreeRowWidget — Per-row Gtk.Box ─────────────────────────
