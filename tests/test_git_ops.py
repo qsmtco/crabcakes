@@ -604,7 +604,7 @@ class TestFileLog:
         result = file_log(temp_repo, "hello.txt", count=3.0)
         assert result.success is True
 
-    def test_count_clamping(self, temp_repo):
+    def test_count_clamping_with_line_counts(self, temp_repo):
         """BUG #4: Count is clamped to 1..100. Assert actual line counts."""
         repo = gitpython.Repo(temp_repo)
         repo.config_writer().set_value("user", "name", "Test User").release()
