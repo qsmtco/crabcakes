@@ -369,7 +369,7 @@ def status_porcelain(project_path: str) -> dict[str, str]:
         repo = gitpython.Repo(project_path)
         raw = repo.git.status("--porcelain")
         result: dict[str, str] = {}
-        for line in raw.strip().splitlines():
+        for line in raw.splitlines():
             # Minimum valid porcelain line: 'XY path' (4 chars: 2 status + 1 space + 1 path)
             if len(line) < 4:
                 continue
