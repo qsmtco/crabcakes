@@ -511,7 +511,8 @@ class FileTree(Gtk.Box):
         self._sort_dropdown.set_valign(Gtk.Align.CENTER)
         self._sort_dropdown.add_css_class("file-tree-sort-dropdown")
         self._sort_dropdown.set_visible(False)  # hidden until _show_tree
-        self._sort_dropdown.connect("notify::selected", self._on_sort_dropdown_changed)
+        self._sort_dropdown_handler_id = self._sort_dropdown.connect(
+            "notify::selected", self._on_sort_dropdown_changed)
 
         self._header.append(self._back_btn)
         self._header.append(self._folder_icon)
@@ -744,21 +745,20 @@ class FileTree(Gtk.Box):
             self._filter_model.set_filter(None)
             return
         custom_filter = Gtk.CustomFilter.new(
-            lambda model, position, user_data: FileTree._filter_func(model, position, query)
+            lambda item: FileTree._filter_func(item, query)
         )
         self._filter_model.set_filter(custom_filter)
 
     @staticmethod
-    def _filter_func(model, position: int, query: str) -> bool:
+    def _filter_func(item, query: str) -> bool:
         """Substring match on name + path. casefold() (BUG #12).
         Drawer rows pass through via parent_full_path (BUG #18, #26).
-        Guards against None from get_item (BUG #24).
+        Guards against None (BUG #24). Returns False for None (BUG #5).
         """
         if not query:
             return True
-        item = model.get_item(position)
         if item is None:  # BUG #24: race on concurrent mutation
-            return True
+            return False
         row = cast(FileTreeRow, item)
         q = query.casefold()
         if row.props.is_drawer:
