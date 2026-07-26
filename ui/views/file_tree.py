@@ -2004,16 +2004,37 @@ class FileTree(Gtk.Box):
     # ── Search ────────────────────────────────────────────────────────────
 
     def _on_search_changed(self, entry):
-        """Filter on search-changed. Routes to picker or tree handler."""
+        """Route search to picker or tree handler."""
         if self._project_path is not None:
-            # Tree mode — Phase 3 will wire the debounced filter here.
-            # For Phase 2, no-op until Phase 3 adds the filter model.
-            return
-        # Picker mode — existing behavior
-        query = entry.get_text()
-        if self._project_list_handler:
-            self._project_list_handler.search(query)
-            self._show_project_picker()
+            # Tree mode — debounced filter
+            self._on_search_changed_tree_cb(entry.get_text())
+        else:
+            # Picker mode — existing behavior
+            query = entry.get_text()
+            if self._project_list_handler:
+                self._project_list_handler.search(query)
+                self._show_project_picker()
+
+    def _on_search_changed_tree_cb(self, query: str) -> None:
+        """Debounced tree search. 150ms via GLib.timeout_add (BUG #9)."""
+        if self._search_timeout_id is not None:
+            GLib.source_remove(self._search_timeout_id)
+
+        def _apply():
+            self._apply_filter(query)
+            # BUG #35: update match count in placeholder
+            if self._filter_model and self._store:
+                count = self._filter_model.get_n_items()
+                total = self._store.get_n_items()
+                if query and total > 0:
+                    if count == 0:
+                        self._search_entry.set_placeholder_text("No matches")
+                    else:
+                        self._search_entry.set_placeholder_text(f"{count} of {total} files")
+            self._search_timeout_id = None
+            return GLib.SOURCE_REMOVE
+
+        self._search_timeout_id = GLib.timeout_add(150, _apply)
 
     def _on_back_clicked(self, button):
         """Navigate back to the project picker."""
