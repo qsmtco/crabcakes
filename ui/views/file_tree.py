@@ -614,6 +614,11 @@ class FileTree(Gtk.Box):
         """Set ProjectHandler reference for checkpoint SHA resolution in diff loading."""
         self._project_handler = handler
 
+    def set_on_get_git_status(self, cb):
+        """Set callback to fetch git status dict {rel_path: code} from handler.
+        Returns dict[str, str]. Called by _show_tree when populating root rows."""
+        self._on_get_git_status = cb
+
     def toggle_drawer_for_file(self, file_path: str) -> None:
         """Public method to toggle a file's diff drawer open/closed from outside.
 
