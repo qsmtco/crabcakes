@@ -1069,14 +1069,23 @@ class FileTree(Gtk.Box):
             self._store.append(row)
 
         # Phase 3: Initialize sort/filter model chain and restore saved sort mode (M6)
+        # Reset dropdown to default before restoring (BUG #7 fix)
+        self._sort_dropdown.handler_block(self._sort_dropdown_handler_id)
+        self._sort_dropdown.set_selected(0)
+        self._sort_dropdown.handler_unblock(self._sort_dropdown_handler_id)
         self._init_sort_filter()
+        # Always apply default sort first (P3-1 fix)
+        self._apply_sort("name_asc")
+        # Restore saved mode if handler provides one (block signal to avoid feedback loop — BUG #3)
         if self._on_get_sort_mode:
             saved = self._on_get_sort_mode()
             valid = ["name_asc", "name_desc", "modified_desc", "modified_asc",
                      "size_desc", "size_asc"]
             if saved in valid:
                 idx = valid.index(saved)
+                self._sort_dropdown.handler_block(self._sort_dropdown_handler_id)
                 self._sort_dropdown.set_selected(idx)
+                self._sort_dropdown.handler_unblock(self._sort_dropdown_handler_id)
                 self._apply_sort(saved)
 
     # ── Phase 3: Drawer Row Insertion ──────────────────────────────────
