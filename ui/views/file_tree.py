@@ -1555,7 +1555,7 @@ class FileTree(Gtk.Box):
             try:
                 entries = scan_directory(parent_path)
             except Exception as e:
-                entries = [(f"[error: {type(e).__name__}: {e}]", "", False)]
+                entries = [(f"[error: {type(e).__name__}: {e}]", "", False, 0, 0)]
             # BUG #1: Capture loading_row object identity, not position.
             # Store mutations (sibling expand/collapse) can shift positions.
             _loading_row = loading_row
