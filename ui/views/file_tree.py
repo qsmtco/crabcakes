@@ -54,6 +54,8 @@ def format_mtime(mtime_ns: int) -> str:
     dt = datetime.fromtimestamp(mtime_ns // 1_000_000_000)
     now = datetime.now()
     diff = now - dt
+    if diff.days < 0:  # future timestamp — show absolute date
+        return dt.strftime("%b %d, %Y")
     if diff.days == 0:
         if diff.seconds < 60:
             return "just now"
