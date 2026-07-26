@@ -462,7 +462,6 @@ class FileTree(Gtk.Box):
         self._filter_model: Gtk.FilterListModel | None = None
         self._sort_dropdown = None  # created in _build_header
         self._current_sort_mode = "name_asc"  # tracked for re-apply on subtree expand
-        self._sort_changed_count = 0  # BUG #34: generation counter for sort signals
         self._search_timeout_id = None  # BUG #9: tree search debounce timeout
 
         # Phase 3: Callbacks to handler (Phase 4 wires these)
@@ -771,16 +770,12 @@ class FileTree(Gtk.Box):
     # ── Phase 3: Sort dropdown handler ─────────────────────────────────
 
     def _on_sort_dropdown_changed(self, dropdown, pspec):
-        """Handle sort selection — update sort model + notify handler (BUG #34)."""
-        self._sort_changed_count += 1
-        request_id = self._sort_changed_count
+        """Handle sort selection — update sort model + notify handler."""
         selected = dropdown.get_selected()
         modes = ["name_asc", "name_desc", "modified_desc", "modified_asc",
                  "size_desc", "size_asc"]
         mode = modes[selected] if 0 <= selected < len(modes) else "name_asc"
         self._apply_sort(mode)
-        if request_id != self._sort_changed_count:
-            return  # stale — project switched during sort
         if self._on_sort_changed:
             self._on_sort_changed(mode)
 
