@@ -85,30 +85,27 @@ class TestComparators:
 
     def test_name_asc_sorts(self):
         store = self._make_store(['cherry', 'apple', 'banana'])
-        sorter = FileTree._build_sorter.__func__(None, 'name_asc')
+        sorter = _make_sorter('name_asc')
         self._assert_sorted(store, sorter, ['apple', 'banana', 'cherry'])
 
     def test_name_desc_sorts(self):
         store = self._make_store(['apple', 'banana', 'cherry'])
-        sorter = FileTree._build_sorter.__func__(None, 'name_desc')
+        sorter = _make_sorter('name_desc')
         self._assert_sorted(store, sorter, ['cherry', 'banana', 'apple'])
 
     # -- Dirs sort before files ---
 
     def test_dirs_sort_before_files_name_asc(self):
-        # dirs at index 1 ('b_dir') and index 0 ('a_dir')
         store = self._make_store(['z_dir', 'm_file', 'a_dir', 'x_file'],
                                   dirs={0, 2})
-        sorter = FileTree._build_sorter.__func__(None, 'name_asc')
-        # Directories first, sorted alpha; then files sorted alpha
+        sorter = _make_sorter('name_asc')
         self._assert_sorted(store, sorter,
                             ['a_dir', 'z_dir', 'm_file', 'x_file'])
 
     def test_dirs_sort_before_files_name_desc(self):
         store = self._make_store(['a_dir', 'm_file', 'z_dir', 'x_file'],
                                   dirs={0, 2})
-        sorter = FileTree._build_sorter.__func__(None, 'name_desc')
-        # Directories first (desc), then files (desc)
+        sorter = _make_sorter('name_desc')
         self._assert_sorted(store, sorter,
                             ['z_dir', 'a_dir', 'x_file', 'm_file'])
 
@@ -118,14 +115,14 @@ class TestComparators:
         mtimes = [1_700_000_000_000_000_000, 1_800_000_000_000_000_000,
                   1_500_000_000_000_000_000]
         store = self._make_store(['old', 'new', 'oldest'], mtimes=mtimes)
-        sorter = FileTree._build_sorter.__func__(None, 'modified_desc')
+        sorter = _make_sorter('modified_desc')
         self._assert_sorted(store, sorter, ['new', 'old', 'oldest'])
 
     def test_modified_asc_sorts(self):
         mtimes = [1_700_000_000_000_000_000, 1_800_000_000_000_000_000,
                   1_500_000_000_000_000_000]
         store = self._make_store(['mid', 'new', 'old'], mtimes=mtimes)
-        sorter = FileTree._build_sorter.__func__(None, 'modified_asc')
+        sorter = _make_sorter('modified_asc')
         self._assert_sorted(store, sorter, ['old', 'mid', 'new'])
 
     # -- Size asc/desc ---
@@ -133,13 +130,13 @@ class TestComparators:
     def test_size_desc_sorts(self):
         store = self._make_store(['small', 'large', 'medium'],
                                   sizes=[10, 1000, 100])
-        sorter = FileTree._build_sorter.__func__(None, 'size_desc')
+        sorter = _make_sorter('size_desc')
         self._assert_sorted(store, sorter, ['large', 'medium', 'small'])
 
     def test_size_asc_sorts(self):
         store = self._make_store(['large', 'small', 'medium'],
                                   sizes=[1000, 10, 100])
-        sorter = FileTree._build_sorter.__func__(None, 'size_asc')
+        sorter = _make_sorter('size_asc')
         self._assert_sorted(store, sorter, ['small', 'medium', 'large'])
 
     # -- Dirs respect all sort modes ---
@@ -151,14 +148,14 @@ class TestComparators:
                                           1_800_000_000_000_000_000,
                                           1_500_000_000_000_000_000,
                                           1_600_000_000_000_000_000])
-        sorter = FileTree._build_sorter.__func__(None, 'modified_desc')
+        sorter = _make_sorter('modified_desc')
         self._assert_sorted(store, sorter,
                             ['z_dir', 'a_dir', 'm_file', 'x_file'])
 
     def test_dirs_sort_before_files_size_desc(self):
         store = self._make_store(['z_dir', 'm_file', 'a_dir', 'x_file'],
                                   dirs={0, 2}, sizes=[0, 100, 0, 50])
-        sorter = FileTree._build_sorter.__func__(None, 'size_desc')
+        sorter = _make_sorter('size_desc')
         self._assert_sorted(store, sorter,
                             ['z_dir', 'a_dir', 'm_file', 'x_file'])
 
@@ -181,7 +178,7 @@ class TestDrawerRowSorting:
         store.append(drawer)
         rows.append(drawer)
 
-        sorter = FileTree._build_sorter.__func__(None, 'name_asc')
+        sorter = _make_sorter('name_asc')
         smodel = Gtk.SortListModel.new(store, sorter)
         names = []
         for i in range(smodel.get_n_items()):
@@ -290,7 +287,7 @@ class TestSortFilterChain:
             store.append(FileTreeRow(
                 display_name=name, full_path='/' + name, is_dir=False,
             ))
-        sorter = FileTree._build_sorter.__func__(None, 'name_asc')
+        sorter = _make_sorter('name_asc')
         smodel = Gtk.SortListModel.new(store, sorter)
         cf = Gtk.CustomFilter.new(
             lambda item: FileTree._filter_func(item, 'e')
