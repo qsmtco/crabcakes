@@ -1860,7 +1860,12 @@ class FileTree(Gtk.Box):
     # ── Search ────────────────────────────────────────────────────────────
 
     def _on_search_changed(self, entry):
-        """Filter project cards on search-changed."""
+        """Filter on search-changed. Routes to picker or tree handler."""
+        if self._project_path is not None:
+            # Tree mode — Phase 3 will wire the debounced filter here.
+            # For Phase 2, no-op until Phase 3 adds the filter model.
+            return
+        # Picker mode — existing behavior
         query = entry.get_text()
         if self._project_list_handler:
             self._project_list_handler.search(query)
