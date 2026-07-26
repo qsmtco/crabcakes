@@ -994,6 +994,8 @@ class FileTree(Gtk.Box):
         # Phase 2: search visible in both modes
         self._search_entry.set_visible(True)
         self._search_entry.set_placeholder_text("Search files...")
+        # Phase 3: sort dropdown visible only in tree mode
+        self._sort_dropdown.set_visible(True)
 
         # Phase 2: Remove existing columns, add 4-column layout
         for col in list(self._column_view.get_columns()):
@@ -1050,6 +1052,17 @@ class FileTree(Gtk.Box):
                 icon_color_class=icon.color_class,
             )
             self._store.append(row)
+
+        # Phase 3: Initialize sort/filter model chain and restore saved sort mode (M6)
+        self._init_sort_filter()
+        if self._on_get_sort_mode:
+            saved = self._on_get_sort_mode()
+            valid = ["name_asc", "name_desc", "modified_desc", "modified_asc",
+                     "size_desc", "size_asc"]
+            if saved in valid:
+                idx = valid.index(saved)
+                self._sort_dropdown.set_selected(idx)
+                self._apply_sort(saved)
 
     # ── Phase 3: Drawer Row Insertion ──────────────────────────────────
 
