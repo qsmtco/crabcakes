@@ -457,6 +457,18 @@ class FileTree(Gtk.Box):
         # Phase 2: Git status map for child rows — set in _show_tree, used in _on_directory_loaded
         self._git_status_map: dict[str, str] = {}
 
+        # Phase 3: Sort/filter model chain (lives in view — uses Gtk types)
+        self._sort_model: Gtk.SortListModel | None = None
+        self._filter_model: Gtk.FilterListModel | None = None
+        self._sort_dropdown = None  # created in _build_header
+        self._current_sort_mode = "name_asc"  # tracked for re-apply on subtree expand
+        self._sort_changed_count = 0  # BUG #34: generation counter for sort signals
+        self._search_timeout_id = None  # BUG #9: tree search debounce timeout
+
+        # Phase 3: Callbacks to handler (Phase 4 wires these)
+        self._on_sort_changed = None
+        self._on_get_sort_mode = None
+
         # ── Header ────────────────────────────────────────────────────────
         self._header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         self._header.set_halign(Gtk.Align.FILL)
