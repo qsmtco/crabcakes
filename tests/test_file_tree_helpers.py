@@ -89,6 +89,12 @@ class TestFormatMtime:
         past = int((time.time() - 3 * 86400) * 1_000_000_000)
         assert format_mtime(past) == "3d ago"
 
+    def test_sub_second_epoch_returns_dash(self):
+        """Sub-second-since-epoch timestamps (BUG #5) return em-dash."""
+        assert format_mtime(500_000_000) == "—"
+        assert format_mtime(1) == "—"
+        assert format_mtime(999_999_999) == "—"
+
     def test_weeks_ago(self):
         """7-29 days ago shows 'Xw ago'."""
         past = int((time.time() - 14 * 86400) * 1_000_000_000)

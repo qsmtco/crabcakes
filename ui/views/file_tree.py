@@ -49,7 +49,7 @@ def format_size(bytes_: int) -> str:
 
 def format_mtime(mtime_ns: int) -> str:
     """Relative time from nanosecond timestamp. Integer division (BUG #14)."""
-    if mtime_ns <= 0:
+    if mtime_ns < 1_000_000_000:  # sub-second-since-epoch is invalid (BUG #5)
         return "—"
     from datetime import datetime
     dt = datetime.fromtimestamp(mtime_ns // 1_000_000_000)
@@ -246,7 +246,7 @@ class FileTreeRowWidget(Gtk.Box):
         self._drawer_container.set_visible(False)
 
     def cleanup(self) -> None:
-        """Full cleanup — disconnect signals, detach drawer."""
+        """Detach drawer, clear bound row reference."""
         self.detach_drawer()
         self._bound_row = None
 
@@ -837,7 +837,7 @@ class FileTree(Gtk.Box):
         self._title_lbl.set_hexpand(True)
         # Phase 2: search visible in both modes
         self._search_entry.set_visible(True)
-        self._search_entry.set_placeholder_text("Search files... (Esc to clear)")
+        self._search_entry.set_placeholder_text("Search files...")
 
         # Phase 2: Remove existing columns, add 4-column layout
         for col in list(self._column_view.get_columns()):

@@ -382,7 +382,9 @@ def status_porcelain(project_path: str) -> dict[str, str]:
                 if ' -> ' in rest:
                     # 'old_path -> new_path' — take the right side
                     rest = rest.split(' -> ', 1)[1]
-            result[rest] = status_code
+            # Normalize: strip trailing slash so directory keys match
+            # os.path.relpath() output (BUG #3 — inter-layer consistency)
+            result[rest.rstrip('/')] = status_code
         return result
     except Exception:
         return {}
