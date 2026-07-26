@@ -72,7 +72,7 @@ class TestScanDirectory:
         (tmp_path / "__pycache__").mkdir()
 
         result = scan_directory(str(tmp_path))
-        names = [n for n, _, _ in result]
+        names = [n for n, _, _, _, _ in result]
         assert "__pycache__" not in names
 
     def test_skips_dotfiles(self, tmp_path):
@@ -83,7 +83,7 @@ class TestScanDirectory:
         (tmp_path / ".env").mkdir()
 
         result = scan_directory(str(tmp_path))
-        names = [n for n, _, _ in result]
+        names = [n for n, _, _, _, _ in result]
         assert ".git" not in names
         assert ".hidden" not in names
         assert ".env" not in names
