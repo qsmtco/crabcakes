@@ -503,10 +503,21 @@ class FileTree(Gtk.Box):
         self._search_changed_handler_id = self._search_entry.connect("search-changed", self._on_search_changed)
         self._search_entry.set_visible(False)
 
+        # Phase 3: Sort dropdown — visible only in tree mode
+        self._sort_dropdown = Gtk.DropDown.new_from_strings([
+            "Name ↑", "Name ↓", "Modified ↑", "Modified ↓", "Size ↑", "Size ↓"
+        ])
+        self._sort_dropdown.set_selected(0)
+        self._sort_dropdown.set_valign(Gtk.Align.CENTER)
+        self._sort_dropdown.add_css_class("file-tree-sort-dropdown")
+        self._sort_dropdown.set_visible(False)  # hidden until _show_tree
+        self._sort_dropdown.connect("notify::selected", self._on_sort_dropdown_changed)
+
         self._header.append(self._back_btn)
         self._header.append(self._folder_icon)
         self._header.append(self._title_lbl)
         self._header.append(self._search_entry)
+        self._header.append(self._sort_dropdown)
 
         # Status label for copy confirmation (transient, ~2.5s)
         self._tree_copy_status_label = Gtk.Label()
