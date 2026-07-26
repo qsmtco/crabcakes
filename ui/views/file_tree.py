@@ -864,6 +864,7 @@ class FileTree(Gtk.Box):
         status_map: dict[str, str] = {}
         if self._on_get_git_status:
             status_map = self._on_get_git_status() or {}
+        self._git_status_map = status_map
 
         # Populate root entries
         try:
