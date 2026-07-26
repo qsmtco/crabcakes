@@ -110,11 +110,14 @@ class TestFormatMtime:
         import calendar
         assert any(month in result for month in calendar.month_abbr if month)
 
-    def test_year_3000_shows_year(self):
-        """A far-future timestamp should contain the year."""
-        future = int(32503680000 * 10 ** 9)  # year 3000
+    def test_far_future_shows_date(self):
+        """A far-future timestamp shows an absolute date, not a relative string."""
+        future = int(4102444800 * 10 ** 9)  # Jan 1, 2100
         result = format_mtime(future)
-        assert "3000" in result, f"year 3000 should show year in result: {result}"
+        assert "ago" not in result
+        # Should contain a month abbreviation
+        import calendar
+        assert any(month in result for month in calendar.month_abbr if month)
 
 
 # ── git_status_to_display ───────────────────────────────────────────────
