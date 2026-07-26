@@ -18,6 +18,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from ui.views.file_tree import FileTree, FileTreeRow, format_size, format_mtime
 
 
+def _make_sorter(mode: str) -> Gtk.Sorter:
+    """Helper: create a CustomSorter for the given sort mode.
+
+    _build_sorter is an instance method that doesn't use self, so we
+    pass None as the instance to call it.
+    """
+    return FileTree._build_sorter(None, mode)
+
+
 class TestComparators:
     """Test that the 6 sort comparators actually sort correctly via GTK4.
 

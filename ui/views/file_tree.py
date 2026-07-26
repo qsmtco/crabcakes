@@ -677,7 +677,11 @@ class FileTree(Gtk.Box):
         self._sort_model.set_sorter(sorter)
 
     def _build_sorter(self, sort_mode: str) -> Gtk.Sorter:
-        """Build comparator-based sorter. Directories always sort before files."""
+        """Build comparator-based sorter. Directories always sort before files.
+
+        Note: this method does NOT use self, but must remain an instance method
+        for consistency with the FileTree class pattern.
+        """
         def cmp_name_asc(a, b, _ud=None):
             # BUG #4: drawer rows stay at insertion position
             if a.props.is_drawer or b.props.is_drawer:
