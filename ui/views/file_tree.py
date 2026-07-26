@@ -806,6 +806,8 @@ class FileTree(Gtk.Box):
         # Phase 2: search visible in both modes
         self._search_entry.set_visible(True)
         self._search_entry.set_placeholder_text("Search projects...")
+        # Phase 3: hide sort dropdown in picker mode
+        self._sort_dropdown.set_visible(False)
         # Rebuild title to not expand so search entry gets space
         self._title_lbl.set_hexpand(False)
 
