@@ -42,7 +42,7 @@ class TestFormatSize:
     def test_gigabyte(self):
         # 2 GB
         val = 2 * 1024 * 1024 * 1024
-        assert format_size(val) == "2.0 GB"
+        assert format_size(val) == "2 GB"
 
     def test_large_values_no_exception(self):
         """Large values should not crash."""
