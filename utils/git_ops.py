@@ -354,3 +354,35 @@ def status(project_path: str) -> GitResult:
         return GitResult(success=True, stdout=status_text, error="", sha=None)
     except Exception as e:
         return GitResult(success=False, stdout="", error=_safe_error(e), sha=None)
+
+
+def status_porcelain(project_path: str) -> dict[str, str]:
+    """Returns parsed git status map: {rel_path: status_code}.
+
+    status_code is 2-char porcelain string per `git status --porcelain` format.
+    See git-status(1) for format details.
+
+    Handles rename lines ('R  old -> new') by emitting the destination path.
+    Returns empty dict on any error (caught and suppressed).
+    """
+    try:
+        repo = gitpython.Repo(project_path)
+        raw = repo.git.status("--porcelain")
+        result: dict[str, str] = {}
+        for line in raw.strip().splitlines():
+            # Minimum valid porcelain line: 'XY path' (4 chars: 2 status + 1 space + 1 path)
+            if len(line) < 4:
+                continue
+            status_code = line[:2]
+            rest = line[3:]  # skip space separator at index 2
+            # Handle rename/copy format: 'R  old_path -> new_path' or 'C  old_path -> new_path'
+            # Check BOTH status positions — index column (R_, C_) and worktree column (_R, _C) (BUG #25)
+            if (status_code[0] in ('R', 'C') or
+                (len(status_code) >= 2 and status_code[1] in ('R', 'C'))):
+                if ' -> ' in rest:
+                    # 'old_path -> new_path' — take the right side
+                    rest = rest.split(' -> ', 1)[1]
+            result[rest] = status_code
+        return result
+    except Exception:
+        return {}
