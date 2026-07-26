@@ -641,9 +641,19 @@ class FileTree(Gtk.Box):
         self._title_lbl.set_markup(
             '<span foreground="#6b6b7a" font_desc="Sans 11">Projects</span>'
         )
+        # Phase 2: search visible in both modes
         self._search_entry.set_visible(True)
+        self._search_entry.set_placeholder_text("Search projects...")
         # Rebuild title to not expand so search entry gets space
         self._title_lbl.set_hexpand(False)
+
+        # Phase 2: Reset ColumnView to single Name column for picker mode
+        for col in list(self._column_view.get_columns()):
+            self._column_view.remove_column(col)
+        factory = FileTreeFactory(self)
+        col_name = Gtk.ColumnViewColumn.new("Name", factory)
+        col_name.set_expand(True)
+        self._column_view.append_column(col_name)
 
         # Build card grid
         card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
