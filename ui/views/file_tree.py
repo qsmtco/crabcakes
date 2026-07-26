@@ -583,6 +583,18 @@ class FileTree(Gtk.Box):
         # Clear git status map
         self._git_status_map = {}
 
+        # BUG #9: cancel outstanding search timeout
+        if self._search_timeout_id is not None:
+            try:
+                GLib.source_remove(self._search_timeout_id)
+            except Exception:
+                pass
+            self._search_timeout_id = None
+
+        # Clear sort/filter model references (will be recreated in _init_sort_filter)
+        self._sort_model = None
+        self._filter_model = None
+
         # Invalidate any in-flight async requests
         self._current_request_id += 1
 
