@@ -1418,6 +1418,34 @@ button.settings-remove-btn:hover {
     margin: 0;
     background: alpha(@theme_bg_color, 0.3);
 }
+
+/* ── File tree status badges (Phase 1) ─────────────────────────────────── */
+.file-tree-status-badge { padding: 1px 4px; border-radius: 3px; font-size: 10px; font-weight: 600; min-width: 18px; text-align: center; }
+.file-tree-status-modified { background: #f59e0b; color: #1e1e1e; }
+.file-tree-status-staged { background: #22c55e; color: #1e1e1e; }
+.file-tree-status-untracked { background: #6366f1; color: #fff; }
+.file-tree-status-deleted { background: #ef4444; color: #fff; }
+.file-tree-status-renamed { background: #a855f7; color: #fff; }
+.file-tree-status-ignored { background: #6b7280; color: #fff; }
+.file-tree-size-column { padding-right: 8px; font-size: 12px; color: #a0a0b0; }
+.file-tree-modified-column { padding-right: 8px; font-size: 12px; color: #a0a0b0; }
+.file-icon-python { color: #f0c674; }
+.file-icon-js { color: #e5c07b; }
+.file-icon-ts { color: #61afef; }
+.file-icon-json { color: #e5c07b; }
+.file-icon-yaml { color: #e06c75; }
+.file-icon-md { color: #98c379; }
+.file-icon-rust { color: #e06c75; }
+.file-icon-go { color: #61afef; }
+.file-icon-cpp { color: #61afef; }
+.file-icon-c { color: #61afef; }
+.file-icon-sh { color: #98c379; }
+.file-icon-png, .file-icon-jpg, .file-icon-gif { color: #c678dd; }
+.file-icon-pdf { color: #e06c75; }
+.file-icon-zip, .file-icon-tar, .file-icon-gz { color: #e5c07b; }
+.file-icon-folder { color: #f0c674; }
+.file-icon-default { color: #6b6b7a; }
+.file-tree-sort-dropdown { min-width: 140px; margin-left: 8px; }
 """
 
 
