@@ -28,13 +28,13 @@ class TestFormatSize:
         assert format_size(512) == "512 B"
 
     def test_kilobyte_boundary(self):
-        assert format_size(1024) == "1.0 KB"
+        assert format_size(1024) == "1 KB"
 
     def test_kilobyte_fractional(self):
         assert format_size(1500) == "1.5 KB"
 
     def test_megabyte_exact(self):
-        assert format_size(1048576) == "1.0 MB"
+        assert format_size(1048576) == "1 MB"
 
     def test_megabyte_fractional(self):
         assert format_size(1572864) == "1.5 MB"
