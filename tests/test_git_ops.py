@@ -724,15 +724,20 @@ class TestStatusPorcelainFn:
     def test_too_short_line_skipped(self, temp_repo, monkeypatch):
         """A porcelain line shorter than 4 chars is skipped (BUG #4).
 
-        Use monkeypatch to inject a synthetic too-short line.
+        Monkeypatch Repo so status_porcelain's internal Repo.git.status()
+        returns a synthetic too-short line.
         """
         import git as gitpython
-        repo = gitpython.Repo(temp_repo)
 
         class FakeGit:
             def status(self, *args, **kwargs):
-                return "XY\n"  # 2 chars — no space separator, no path
-        monkeypatch.setattr(repo, "git", FakeGit())
+                return "XY\n"
+
+        class FakeRepo:
+            git = FakeGit()
+            working_dir = temp_repo
+
+        monkeypatch.setattr(gitpython, "Repo", lambda path: FakeRepo())
 
         result = status_porcelain(temp_repo)
         assert result == {}  # too-short line skipped, nothing parsed
@@ -742,15 +747,19 @@ class TestStatusPorcelainFn:
 
         Worktree-column rename (' R') is synthetic — git's default porcelain
         output only emits index-column renames ('R '). But the parser must
-        handle both. We inject a synthetic ' R' line via monkeypatch.
+        handle both. Monkeypatch Repo to inject a synthetic ' R' line.
         """
         import git as gitpython
-        repo = gitpython.Repo(temp_repo)
 
         class FakeGit:
             def status(self, *args, **kwargs):
                 return " R old_name.txt -> new_name.txt\n"
-        monkeypatch.setattr(repo, "git", FakeGit())
+
+        class FakeRepo:
+            git = FakeGit()
+            working_dir = temp_repo
+
+        monkeypatch.setattr(gitpython, "Repo", lambda path: FakeRepo())
 
         result = status_porcelain(temp_repo)
         # Worktree-column rename: destination path is the key
