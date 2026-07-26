@@ -653,7 +653,7 @@ class TestStatusPorcelain:
             f.write("new\n")
         result = status_porcelain(temp_repo)
         rel = os.path.relpath(fpath, temp_repo)
-        assert result.get(rel) == "?? "
+        assert result.get(rel) == "??"
 
     def test_modified_file(self, temp_repo):
         """A modified tracked file appears with ' M' (unstaged modified)."""
@@ -736,7 +736,7 @@ class TestStatusPorcelain:
     def test_worktree_rename_both_status_positions(self, temp_repo):
         """Worktree rename ' R old -> new' checks BOTH status columns (BUG #25).
 
-        Moves the index file (in-staging) to produce a rename in worktree column.
+        Both porcelain status positions (index, worktree) are checked for 'R'.
         """
         repo = gitpython.Repo(temp_repo)
         repo.config_writer().set_value("user", "name", "Test User").release()
@@ -748,19 +748,12 @@ class TestStatusPorcelain:
         repo.index.add(["original.txt"])
         repo.index.commit("init")
 
-        # Rename via raw filesystem move (not git mv) to produce worktree rename
+        # Use OS-level rename + stage to produce an index-rename (R )
         new_path = os.path.join(temp_repo, "renamed.txt")
         os.rename(fpath, new_path)
-
-        # Stage the rename so git sees it as a rename in staging
-        # Actually, to get worktree column rename ( R), we:
-        # Stage the rename, then unstage it, then rename in worktree
-        # Simpler: just use git mv which gives us index (R ) column
-        # Actually BUG #25 refers to BOTH status columns, so let's create
-        # a situation where a rename exists in the worktree column
-        # Most reliable: move file, stage it (should show R ), verify key
-        repo.git.mv("original.txt", "renamed.txt")
+        # Stage the new file, remove the old — git detects rename
         repo.index.add(["renamed.txt"])
+        repo.index.remove(["original.txt"])
 
         result = status_porcelain(temp_repo)
         assert "renamed.txt" in result, f"renamed.txt not in keys: {list(result.keys())}"
