@@ -90,15 +90,19 @@ class TestScanDirectory:
         assert "visible" in names
 
     def test_returns_tuples_with_three_elements(self, tmp_path):
-        """Each result must be (name, full_path, is_dir) — callers unpack all three."""
-        (tmp_path / "myfile.txt").write_text("")
+        """Each result must be (name, full_path, is_dir, size_bytes, mtime_ns) — callers unpack all five."""
+        (tmp_path / "myfile.txt").write_text("hello")
         (tmp_path / "mydir").mkdir()
 
         result = scan_directory(str(tmp_path))
-        for name, full_path, is_dir in result:
+        for item in result:
+            assert len(item) == 5
+            name, full_path, is_dir, size_bytes, mtime_ns = item
             assert isinstance(name, str)
             assert isinstance(full_path, str)
             assert isinstance(is_dir, bool)
+            assert isinstance(size_bytes, int)
+            assert isinstance(mtime_ns, int)
             assert full_path.endswith(name)
 
 
