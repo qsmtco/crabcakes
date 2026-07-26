@@ -14,6 +14,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Gio', '2.0')
 from gi.repository import Gtk, GLib, Gdk, Gio, GObject
 
+import os
 import threading
 import time
 from typing import Optional, cast
@@ -453,6 +454,8 @@ class FileTree(Gtk.Box):
 
         # Phase 2: Git status stub callback — wired by handler in Phase 4
         self._on_get_git_status = None
+        # Phase 2: Git status map for child rows — set in _show_tree, used in _on_directory_loaded
+        self._git_status_map: dict[str, str] = {}
 
         # ── Header ────────────────────────────────────────────────────────
         self._header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -553,6 +556,9 @@ class FileTree(Gtk.Box):
         self._drawer_paths.clear()
         self._loaded_drawers.clear()
         self._last_toggle_per_file.clear()
+
+        # Clear git status map
+        self._git_status_map = {}
 
         # Invalidate any in-flight async requests
         self._current_request_id += 1
