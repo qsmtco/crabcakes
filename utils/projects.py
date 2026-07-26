@@ -5,6 +5,7 @@
 # Legacy load_members/save_members removed.
 
 import os
+import mimetypes
 
 from utils.config import get_projects_dir
 
@@ -30,20 +31,27 @@ def load_projects() -> list[tuple[str, str]]:
     return result
 
 
-def scan_directory(path: str) -> list[tuple[str, str, bool]]:
+def scan_directory(path: str) -> list[tuple[str, str, bool, int, int]]:
     """
-    Return [(name, full_path, is_dir)] for one level, filtered.
+    Return [(name, full_path, is_dir, size_bytes, mtime_ns)] for one level, filtered.
     Skips __pycache__, .git, node_modules, .venv, venv, dotfiles.
+    
+    size_bytes: int (0 for directories, 0 on stat error)
+    mtime_ns: int (nanosecond precision, 0 on stat error)
     """
     if not os.path.isdir(path):
         return []
     skip: set[str] = {'__pycache__', '.git', 'node_modules', '.venv', 'venv'}
-    result: list[tuple[str, str, bool]] = []
+    result: list[tuple[str, str, bool, int, int]] = []
     for name in sorted(os.listdir(path)):
         if name.startswith('.') or name in skip:
             continue
         full: str = os.path.join(path, name)
-        result.append((name, full, os.path.isdir(full)))
+        try:
+            st = os.stat(full)
+            result.append((name, full, os.path.isdir(full), st.st_size, st.st_mtime_ns))
+        except OSError:
+            result.append((name, full, os.path.isdir(full), 0, 0))
     return result
 
 
