@@ -729,8 +729,9 @@ class FileTree(Gtk.Box):
         try:
             entries = scan_directory(path)
         except Exception as e:
-            entries = [(f"[error: {type(e).__name__}: {e}]", "", False)]
-        for entry_name, full_path, is_dir in entries:
+            entries = [(f"[error: {type(e).__name__}: {e}]", "", False, 0, 0)]
+        for entry_name, full_path, is_dir, size_bytes, mtime_ns in entries:
+            icon = get_icon_for_path(full_path, is_dir)
             row = FileTreeRow(
                 display_name=entry_name,
                 full_path=full_path,
@@ -738,6 +739,15 @@ class FileTree(Gtk.Box):
                 depth=0,
                 has_children=is_dir,
                 expanded=False,
+                file_size=0 if is_dir else size_bytes,
+                file_size_display="—" if is_dir else format_size(size_bytes),
+                modified_time=mtime_ns // 1_000_000_000 if mtime_ns else 0,
+                modified_display=format_mtime(mtime_ns) if mtime_ns else "—",
+                git_status="",
+                git_status_display="",
+                mime_type=guess_mime(full_path),
+                icon_name=icon.icon_name,
+                icon_color_class=icon.color_class,
             )
             self._store.append(row)
 
