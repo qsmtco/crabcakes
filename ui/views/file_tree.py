@@ -963,6 +963,7 @@ class FileTree(Gtk.Box):
                 depth=file_row.props.depth,
                 drawer_widget=revealer,
                 is_open=True,
+                parent_full_path=file_path,
             )
             self._store.insert(file_index + 1, drawer_row)
             # BUG #1-R: Store the row object, not the index
