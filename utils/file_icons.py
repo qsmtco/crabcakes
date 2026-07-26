@@ -115,7 +115,7 @@ _EXTENSION_MAP: dict[str, FileIcon] = {
     ".war": FileIcon("application-x-java-archive-symbolic", "file-icon-binary"),
     ".ear": FileIcon("application-x-java-archive-symbolic", "file-icon-binary"),
     # Docker
-    "Dockerfile": FileIcon("text-x-dockerfile-symbolic", "file-icon-docker"),
+    "dockerfile": FileIcon("text-x-dockerfile-symbolic", "file-icon-docker"),
     ".dockerignore": FileIcon("text-x-generic-symbolic", "file-icon-docker"),
     # Git
     ".gitignore": FileIcon("text-x-generic-symbolic", "file-icon-git"),
