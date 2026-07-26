@@ -721,43 +721,38 @@ class TestStatusPorcelainFn:
         result = status_porcelain(temp_repo)
         assert "copy.txt" in result, f"copy.txt not in keys: {list(result.keys())}"
 
-    def test_too_short_line_skipped(self, temp_repo):
-        """A line shorter than 4 chars is skipped (BUG #4)."""
-        # The real status output never has such lines, but we can test
-        # that status_porcelain handles this gracefully via a normal call
-        # on an empty repo — the output will be "" which has 0 lines.
+    def test_too_short_line_skipped(self, temp_repo, monkeypatch):
+        """A porcelain line shorter than 4 chars is skipped (BUG #4).
+
+        Use monkeypatch to inject a synthetic too-short line.
+        """
+        import git as gitpython
         repo = gitpython.Repo(temp_repo)
-        repo.config_writer().set_value("user", "name", "Test User").release()
-        repo.config_writer().set_value("user", "email", "test@test.com").release()
+
+        class FakeGit:
+            def status(self, *args, **kwargs):
+                return "XY\n"  # 2 chars — no space separator, no path
+        monkeypatch.setattr(repo, "git", FakeGit())
 
         result = status_porcelain(temp_repo)
-        assert result == {}  # clean repo — no errors from empty input
+        assert result == {}  # too-short line skipped, nothing parsed
 
-    def test_worktree_rename_both_status_positions(self, temp_repo):
+    def test_worktree_rename_both_status_positions(self, temp_repo, monkeypatch):
         """Worktree rename ' R old -> new' checks BOTH status columns (BUG #25).
 
-        Both porcelain status positions (index, worktree) are checked for 'R'.
+        Worktree-column rename (' R') is synthetic — git's default porcelain
+        output only emits index-column renames ('R '). But the parser must
+        handle both. We inject a synthetic ' R' line via monkeypatch.
         """
+        import git as gitpython
         repo = gitpython.Repo(temp_repo)
-        repo.config_writer().set_value("user", "name", "Test User").release()
-        repo.config_writer().set_value("user", "email", "test@test.com").release()
 
-        fpath = os.path.join(temp_repo, "original.txt")
-        with open(fpath, "w") as f:
-            f.write("content\n")
-        repo.index.add(["original.txt"])
-        repo.index.commit("init")
-
-        # Use OS-level rename + stage to produce an index-rename (R )
-        new_path = os.path.join(temp_repo, "renamed.txt")
-        os.rename(fpath, new_path)
-        # Stage the new file, remove the old — git detects rename
-        repo.index.add(["renamed.txt"])
-        repo.index.remove(["original.txt"])
+        class FakeGit:
+            def status(self, *args, **kwargs):
+                return " R old_name.txt -> new_name.txt\n"
+        monkeypatch.setattr(repo, "git", FakeGit())
 
         result = status_porcelain(temp_repo)
-        assert "renamed.txt" in result, f"renamed.txt not in keys: {list(result.keys())}"
-        code = result["renamed.txt"]
-        # At least one of the two status columns should be R
-        assert code[0] == 'R' or (len(code) >= 2 and code[1] == 'R'), \
-            f"Expected 'R' in either status column, got {code!r}"
+        # Worktree-column rename: destination path is the key
+        assert "new_name.txt" in result, f"worktree rename key wrong: {result}"
+        assert result["new_name.txt"] == " R"
