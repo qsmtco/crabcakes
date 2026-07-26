@@ -1932,6 +1932,9 @@ class FileTree(Gtk.Box):
             self._store.insert(insert_pos, child)
             insert_pos += 1
 
+        # M6: re-apply sorter so new children sort correctly
+        self._apply_sort(self._current_sort_mode)
+
     def _collapse_directory(self, row_index: int) -> None:
         """Collapse a directory row: remove all descendants with greater depth."""
         if row_index < 0 or row_index >= self._store.get_n_items():
