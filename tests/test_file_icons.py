@@ -176,9 +176,11 @@ class TestGetIconForPath:
         assert result == _DEFAULT_FILE
 
     def test_dockerfile(self):
-        result = get_icon_for_path("Dockerfile", False)
-        assert result.icon_name == "text-x-dockerfile-symbolic"
-        assert result.color_class == "file-icon-docker"
+        # Dockerfile (case-insensitive)
+        for name in ["Dockerfile", "dockerfile", "DOCKERFILE"]:
+            result = get_icon_for_path(name, False)
+            assert result.icon_name == "text-x-dockerfile-symbolic"
+            assert result.color_class == "file-icon-docker"
 
     def test_git_files(self):
         for name in [".gitignore", ".gitattributes"]:
