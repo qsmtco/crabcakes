@@ -819,7 +819,35 @@ class FileTree(Gtk.Box):
         self._title_lbl.set_markup(f"<b>{safe_name}</b>")
         self._title_lbl.set_use_markup(True)
         self._title_lbl.set_hexpand(True)
-        self._search_entry.set_visible(False)
+        # Phase 2: search visible in both modes
+        self._search_entry.set_visible(True)
+        self._search_entry.set_placeholder_text("Search files... (Esc to clear)")
+
+        # Phase 2: Remove existing columns, add 4-column layout
+        for col in list(self._column_view.get_columns()):
+            self._column_view.remove_column(col)
+
+        factory_name = FileTreeFactory(self)
+        col_name = Gtk.ColumnViewColumn.new("Name", factory_name)
+        col_name.set_expand(True)
+        self._column_view.append_column(col_name)
+
+        col_status = Gtk.ColumnViewColumn.new("Status", FileTreeStatusFactory())
+        col_status.set_fixed_width(60)
+        self._column_view.append_column(col_status)
+
+        col_size = Gtk.ColumnViewColumn.new("Size", FileTreeSizeFactory())
+        col_size.set_fixed_width(80)
+        self._column_view.append_column(col_size)
+
+        col_modified = Gtk.ColumnViewColumn.new("Modified", FileTreeModifiedFactory())
+        col_modified.set_fixed_width(100)
+        self._column_view.append_column(col_modified)
+
+        # Phase 2: Query git status via stub callback
+        status_map: dict[str, str] = {}
+        if self._on_get_git_status:
+            status_map = self._on_get_git_status() or {}
 
         # Populate root entries
         try:
@@ -828,6 +856,9 @@ class FileTree(Gtk.Box):
             entries = [(f"[error: {type(e).__name__}: {e}]", "", False, 0, 0)]
         for entry_name, full_path, is_dir, size_bytes, mtime_ns in entries:
             icon = get_icon_for_path(full_path, is_dir)
+            # Look up git status from status_map
+            rel_path = os.path.relpath(full_path, path) if path else full_path
+            raw_status = status_map.get(rel_path, "")
             row = FileTreeRow(
                 display_name=entry_name,
                 full_path=full_path,
@@ -839,8 +870,8 @@ class FileTree(Gtk.Box):
                 file_size_display="—" if is_dir else format_size(size_bytes),
                 modified_time=mtime_ns // 1_000_000_000 if mtime_ns else 0,
                 modified_display=format_mtime(mtime_ns) if mtime_ns else "—",
-                git_status="",
-                git_status_display="",
+                git_status=raw_status,
+                git_status_display=git_status_to_display(raw_status),
                 mime_type=guess_mime(full_path),
                 icon_name=icon.icon_name,
                 icon_color_class=icon.color_class,
