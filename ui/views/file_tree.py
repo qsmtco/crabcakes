@@ -213,16 +213,21 @@ class FileTreeRowWidget(Gtk.Box):
         """Set label markup. Display name already includes prefix."""
         self._label.set_markup(escape_for_pango(display_name))
 
-    def set_icon(self, is_dir: bool, is_drawer: bool) -> None:
-        """Set icon based on row type. Drawer rows hide the icon."""
+    def set_icon(self, icon_name: str, is_dir: bool, is_drawer: bool) -> None:
+        """Set icon based on icon_name. Drawer rows hide the icon."""
         if is_drawer:
             self._icon.set_visible(False)
         else:
             self._icon.set_visible(True)
-            if is_dir:
-                self._icon.set_from_icon_name("folder-symbolic")
-            else:
-                self._icon.set_from_icon_name("text-x-generic-symbolic")
+            self._icon.set_from_icon_name(icon_name)
+
+    def set_icon_color(self, color_class: str) -> None:
+        """Remove previous file-icon-* class, add the new one."""
+        for cls in list(self._icon.get_css_classes()):
+            if cls.startswith("file-icon-"):
+                self._icon.remove_css_class(cls)
+        if color_class:
+            self._icon.add_css_class(color_class)
 
     def attach_drawer(self, revealer: Gtk.Revealer) -> None:
         """Attach a drawer revealer to this row's container."""
