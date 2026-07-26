@@ -285,7 +285,8 @@ class FileTreeFactory(Gtk.SignalListItemFactory):
         widget.set_depth(row.props.depth)
         widget.set_expanded(row.props.expanded)
         widget.set_label(row.props.display_name)
-        widget.set_icon(row.props.is_dir, row.props.is_drawer)
+        widget.set_icon(row.props.icon_name, row.props.is_dir, row.props.is_drawer)
+        widget.set_icon_color(row.props.icon_color_class)
 
         # Drawer rows: hide label (no text needed), let drawer_container fill space
         if row.props.is_drawer:
