@@ -332,6 +332,92 @@ class FileTreeFactory(Gtk.SignalListItemFactory):
             self._tree._on_expander_clicked(row, position)
 
 
+# ── Phase 2: Multi-column factories (Status, Size, Modified) ────────────
+
+class FileTreeStatusFactory(Gtk.SignalListItemFactory):
+    """Factory for the Status column — shows git status badge."""
+    def __init__(self):
+        super().__init__()
+        self.connect('setup', self._on_setup)
+        self.connect('bind', self._on_bind)
+        self.connect('unbind', self._on_unbind)
+
+    def _on_setup(self, factory, list_item):
+        label = Gtk.Label()
+        label.set_xalign(0.5)
+        label.add_css_class("file-tree-status-badge")
+        list_item.set_child(label)
+
+    def _on_bind(self, factory, list_item):
+        row = cast(FileTreeRow, list_item.get_item())
+        label: Gtk.Label = list_item.get_child()
+        display = row.props.git_status_display
+        label.set_text(display)
+        # Clear previous status class, add current
+        for cls in list(label.get_css_classes()):
+            if cls.startswith("file-tree-status-"):
+                label.remove_css_class(cls)
+        class_map = {
+            "M": "file-tree-status-modified",
+            "A": "file-tree-status-staged",
+            "?": "file-tree-status-untracked",
+            "D": "file-tree-status-deleted",
+            "R": "file-tree-status-renamed",
+            "!": "file-tree-status-ignored",
+        }
+        if display in class_map:
+            label.add_css_class(class_map[display])
+
+    def _on_unbind(self, factory, list_item):
+        pass
+
+
+class FileTreeSizeFactory(Gtk.SignalListItemFactory):
+    """Factory for the Size column — right-aligned human-readable size."""
+    def __init__(self):
+        super().__init__()
+        self.connect('setup', self._on_setup)
+        self.connect('bind', self._on_bind)
+        self.connect('unbind', self._on_unbind)
+
+    def _on_setup(self, factory, list_item):
+        label = Gtk.Label()
+        label.set_xalign(1.0)
+        label.add_css_class("file-tree-size-column")
+        list_item.set_child(label)
+
+    def _on_bind(self, factory, list_item):
+        row = cast(FileTreeRow, list_item.get_item())
+        label: Gtk.Label = list_item.get_child()
+        label.set_text(row.props.file_size_display)
+
+    def _on_unbind(self, factory, list_item):
+        pass
+
+
+class FileTreeModifiedFactory(Gtk.SignalListItemFactory):
+    """Factory for the Modified column — right-aligned relative time."""
+    def __init__(self):
+        super().__init__()
+        self.connect('setup', self._on_setup)
+        self.connect('bind', self._on_bind)
+        self.connect('unbind', self._on_unbind)
+
+    def _on_setup(self, factory, list_item):
+        label = Gtk.Label()
+        label.set_xalign(1.0)
+        label.add_css_class("file-tree-modified-column")
+        list_item.set_child(label)
+
+    def _on_bind(self, factory, list_item):
+        row = cast(FileTreeRow, list_item.get_item())
+        label: Gtk.Label = list_item.get_child()
+        label.set_text(row.props.modified_display)
+
+    def _on_unbind(self, factory, list_item):
+        pass
+
+
 # ── FileTree — Main widget class ─────────────────────────────────────────
 
 class FileTree(Gtk.Box):
@@ -364,6 +450,9 @@ class FileTree(Gtk.Box):
         self._loaded_drawers: set[str] = set()
         self._last_toggle_per_file: dict[str, float] = {}
         self._current_request_id = 0  # For async guard (BUG #7)
+
+        # Phase 2: Git status stub callback — wired by handler in Phase 4
+        self._on_get_git_status = None
 
         # ── Header ────────────────────────────────────────────────────────
         self._header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
