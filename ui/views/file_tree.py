@@ -648,6 +648,127 @@ class FileTree(Gtk.Box):
         Returns dict[str, str]. Called by _show_tree when populating root rows."""
         self._on_get_git_status = cb
 
+    # ── Phase 3: Sort/Filter Model Chain ──────────────────────────────
+
+    def _init_sort_filter(self) -> None:
+        """Create SortListModel + FilterListModel chain once, repoint selection."""
+        self._sort_model = Gtk.SortListModel.new(self._store, None)
+        self._filter_model = Gtk.FilterListModel.new(self._sort_model, None)
+        self._selection.set_model(self._filter_model)
+
+    def _apply_sort(self, sort_mode: str) -> None:
+        """In-place sorter change. Tracks _current_sort_mode for re-apply (M6)."""
+        self._current_sort_mode = sort_mode
+        if self._sort_model is None:
+            return
+        sorter = self._build_sorter(sort_mode)
+        self._sort_model.set_sorter(sorter)
+
+    def _build_sorter(self, sort_mode: str) -> Gtk.Sorter:
+        """Build comparator-based sorter. Directories always sort before files."""
+        def cmp_name_asc(a, b):
+            if a.props.is_dir != b.props.is_dir:
+                return -1 if a.props.is_dir else 1
+            a_n = a.props.display_name.casefold()
+            b_n = b.props.display_name.casefold()
+            return -1 if a_n < b_n else (1 if a_n > b_n else 0)
+
+        def cmp_name_desc(a, b):
+            if a.props.is_dir != b.props.is_dir:
+                return -1 if a.props.is_dir else 1
+            a_n = a.props.display_name.casefold()
+            b_n = b.props.display_name.casefold()
+            return 1 if a_n < b_n else (-1 if a_n > b_n else 0)
+
+        def cmp_modified_desc(a, b):
+            if a.props.is_dir != b.props.is_dir:
+                return -1 if a.props.is_dir else 1
+            return b.props.modified_time - a.props.modified_time
+
+        def cmp_modified_asc(a, b):
+            if a.props.is_dir != b.props.is_dir:
+                return -1 if a.props.is_dir else 1
+            return a.props.modified_time - b.props.modified_time
+
+        def cmp_size_desc(a, b):
+            if a.props.is_dir != b.props.is_dir:
+                return -1 if a.props.is_dir else 1
+            return b.props.file_size - a.props.file_size
+
+        def cmp_size_asc(a, b):
+            if a.props.is_dir != b.props.is_dir:
+                return -1 if a.props.is_dir else 1
+            return a.props.file_size - b.props.file_size
+
+        comparators = {
+            "name_asc": cmp_name_asc,
+            "name_desc": cmp_name_desc,
+            "modified_desc": cmp_modified_desc,
+            "modified_asc": cmp_modified_asc,
+            "size_desc": cmp_size_desc,
+            "size_asc": cmp_size_asc,
+        }
+        fn = comparators.get(sort_mode, cmp_name_asc)
+        return Gtk.CustomSorter.new(fn)
+
+    def _apply_filter(self, query: str) -> None:
+        """In-place filter change. casefold() for Unicode-safe match (BUG #12)."""
+        if self._filter_model is None:
+            return
+        if not query:
+            self._filter_model.set_filter(None)
+            return
+        custom_filter = Gtk.CustomFilter.new(
+            lambda model, position, user_data: FileTree._filter_func(model, position, query)
+        )
+        self._filter_model.set_filter(custom_filter)
+
+    @staticmethod
+    def _filter_func(model, position: int, query: str) -> bool:
+        """Substring match on name + path. casefold() (BUG #12).
+        Drawer rows pass through via parent_full_path (BUG #18, #26).
+        Guards against None from get_item (BUG #24).
+        """
+        if not query:
+            return True
+        item = model.get_item(position)
+        if item is None:  # BUG #24: race on concurrent mutation
+            return True
+        row = cast(FileTreeRow, item)
+        q = query.casefold()
+        if row.props.is_drawer:
+            # BUG #26: drawer rows filter with their parent file
+            parent = row.props.parent_full_path or row.props.full_path
+            return q in row.props.display_name.casefold() or q in parent.casefold()
+        return (q in row.props.display_name.casefold() or
+                q in row.props.full_path.casefold())
+
+    # ── Phase 3: Sort dropdown handler ─────────────────────────────────
+
+    def _on_sort_dropdown_changed(self, dropdown, pspec):
+        """Handle sort selection — update sort model + notify handler (BUG #34)."""
+        self._sort_changed_count += 1
+        request_id = self._sort_changed_count
+        selected = dropdown.get_selected()
+        modes = ["name_asc", "name_desc", "modified_desc", "modified_asc",
+                 "size_desc", "size_asc"]
+        mode = modes[selected] if 0 <= selected < len(modes) else "name_asc"
+        self._apply_sort(mode)
+        if request_id != self._sort_changed_count:
+            return  # stale — project switched during sort
+        if self._on_sort_changed:
+            self._on_sort_changed(mode)
+
+    # ── Phase 3: Setters for sort-related callbacks ────────────────────
+
+    def set_on_sort_changed(self, cb):
+        """Set callback for sort mode changes. cb(mode_str)."""
+        self._on_sort_changed = cb
+
+    def set_on_get_sort_mode(self, cb):
+        """Set callback to fetch saved sort mode. cb() -> str."""
+        self._on_get_sort_mode = cb
+
     def toggle_drawer_for_file(self, file_path: str) -> None:
         """Public method to toggle a file's diff drawer open/closed from outside.
 
