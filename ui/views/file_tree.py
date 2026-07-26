@@ -1739,6 +1739,8 @@ class FileTree(Gtk.Box):
         insert_pos = row_index + 1
         for entry_name, full_path, is_dir, size_bytes, mtime_ns in entries:
             icon = get_icon_for_path(full_path, is_dir)
+            rel_path = os.path.relpath(full_path, self._project_path) if self._project_path else full_path
+            raw_status = self._git_status_map.get(rel_path, "")
             child = FileTreeRow(
                 display_name=entry_name,
                 full_path=full_path,
@@ -1750,8 +1752,8 @@ class FileTree(Gtk.Box):
                 file_size_display="—" if is_dir else format_size(size_bytes),
                 modified_time=mtime_ns // 1_000_000_000 if mtime_ns else 0,
                 modified_display=format_mtime(mtime_ns) if mtime_ns else "—",
-                git_status="",
-                git_status_display="",
+                git_status=raw_status,
+                git_status_display=git_status_to_display(raw_status),
                 mime_type=guess_mime(full_path),
                 icon_name=icon.icon_name,
                 icon_color_class=icon.color_class,
