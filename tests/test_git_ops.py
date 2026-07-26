@@ -14,7 +14,7 @@ try:
         is_repo, init_repo, get_head_sha, stage_all, commit,
         diff_against, diff_stat_against, diff_file_against,
         diff_file_against_working_tree,
-        checkout_paths, log, file_log, push, status, GitResult,
+        checkout_paths, log, file_log, push, status, status_porcelain, GitResult,
     )
 except ImportError:
     pytest.skip("gitpython not available", allow_module_level=True)
