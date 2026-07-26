@@ -25,6 +25,56 @@ from utils.git_ops import (
 )
 from utils.diff_parser import parse_diff
 from ui.views.diff_card import render_diff_hunks, get_lang_from_path
+from utils.file_icons import get_icon_for_path, guess_mime
+
+
+# ── Module-level helpers ────────────────────────────────────────────────
+
+
+def format_size(bytes_: int) -> str:
+    """Human-readable file size. Float division for fractional KB/MB."""
+    if bytes_ <= 0:
+        return "—"
+    units = ["B", "KB", "MB", "GB", "TB"]
+    val = float(bytes_)
+    for unit in units:
+        if val < 1024:
+            if unit == "B":
+                return f"{int(val)} B"
+            return f"{val:.1f} {unit}".replace(".0 ", " ")
+        val /= 1024.0
+    return f"{val:.1f} PB"
+
+
+def format_mtime(mtime_ns: int) -> str:
+    """Relative time from nanosecond timestamp. Integer division (BUG #14)."""
+    if mtime_ns <= 0:
+        return "—"
+    from datetime import datetime
+    dt = datetime.fromtimestamp(mtime_ns // 1_000_000_000)
+    now = datetime.now()
+    diff = now - dt
+    if diff.days == 0:
+        if diff.seconds < 60:
+            return "just now"
+        if diff.seconds < 3600:
+            return f"{diff.seconds // 60}m ago"
+        return f"{diff.seconds // 3600}h ago"
+    if diff.days == 1:
+        return "yesterday"
+    if diff.days < 7:
+        return f"{diff.days}d ago"
+    if diff.days < 30:
+        return f"{diff.days // 7}w ago"
+    return dt.strftime("%b %d")
+
+
+def git_status_to_display(status_code: str) -> str:
+    """2-char porcelain → single-char badge. Index col has precedence."""
+    if not status_code or len(status_code) < 2:
+        return ""
+    char = status_code[0] if status_code[0] != ' ' else status_code[1]
+    return {'M': 'M', 'A': 'A', 'D': 'D', 'R': 'R', 'C': 'C', '?': '?', '!': '!'}.get(char, "")
 
 
 # ── Phase 1: FileTreeRow — GObject data model for Gio.ListStore ─────────
