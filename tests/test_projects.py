@@ -89,7 +89,7 @@ class TestScanDirectory:
         assert ".env" not in names
         assert "visible" in names
 
-    def test_returns_tuples_with_three_elements(self, tmp_path):
+    def test_returns_tuples_with_five_elements(self, tmp_path):
         """Each result must be (name, full_path, is_dir, size_bytes, mtime_ns) — callers unpack all five."""
         (tmp_path / "myfile.txt").write_text("hello")
         (tmp_path / "mydir").mkdir()
