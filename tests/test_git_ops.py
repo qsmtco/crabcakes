@@ -636,7 +636,7 @@ class TestFileLog:
         assert len(lines) == 1, f"Expected 1 line for count=-5, got {len(lines)}"
 
 
-class TestStatusPorcelain:
+class TestStatusPorcelainFn:
     """status_porcelain: dict[str, str] of {rel_path: 2-char status_code}."""
 
     def test_empty_non_repo_returns_empty(self):
