@@ -1104,17 +1104,17 @@ class FileTree(Gtk.Box):
         col_name.set_expand(True)
         self._column_view.append_column(col_name)
 
-        col_status = Gtk.ColumnViewColumn.new("Status", FileTreeStatusFactory())
-        col_status.set_fixed_width(60)
-        self._column_view.append_column(col_status)
+        self._col_status = Gtk.ColumnViewColumn.new("Status", FileTreeStatusFactory())
+        self._col_status.set_fixed_width(60)
+        self._column_view.append_column(self._col_status)
 
-        col_size = Gtk.ColumnViewColumn.new("Size", FileTreeSizeFactory())
-        col_size.set_fixed_width(80)
-        self._column_view.append_column(col_size)
+        self._col_size = Gtk.ColumnViewColumn.new("Size", FileTreeSizeFactory())
+        self._col_size.set_fixed_width(80)
+        self._column_view.append_column(self._col_size)
 
-        col_modified = Gtk.ColumnViewColumn.new("Modified", FileTreeModifiedFactory())
-        col_modified.set_fixed_width(100)
-        self._column_view.append_column(col_modified)
+        self._col_modified = Gtk.ColumnViewColumn.new("Modified", FileTreeModifiedFactory())
+        self._col_modified.set_fixed_width(100)
+        self._column_view.append_column(self._col_modified)
 
         # Phase 2: Query git status via stub callback
         status_map: dict[str, str] = {}
