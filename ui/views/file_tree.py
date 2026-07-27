@@ -457,8 +457,7 @@ class FileTree(Gtk.Box):
         # Phase 2: Git status map for child rows — set in _show_tree, used in _on_directory_loaded
         self._git_status_map: dict[str, str] = {}
 
-        # Phase 3: Sort/filter model chain (lives in view — uses Gtk types)
-        self._sort_model: Gtk.SortListModel | None = None
+        # Phase 3: Sort/filter state (FilterListModel only — sort is local)
         self._filter_model: Gtk.FilterListModel | None = None
         self._sort_dropdown = None  # created in _build_header
         self._current_sort_mode = "name_asc"  # tracked for re-apply on subtree expand
