@@ -92,6 +92,9 @@ class FileTreeHandler:
         """Save sort mode to per-project prefs file."""
         if not self._prefs_path:
             return
-        os.makedirs(os.path.dirname(self._prefs_path), exist_ok=True)
-        with open(self._prefs_path, "w") as f:
-            json.dump({"sort_mode": self._sort_mode}, f)
+        try:
+            os.makedirs(os.path.dirname(self._prefs_path), exist_ok=True)
+            with open(self._prefs_path, "w") as f:
+                json.dump({"sort_mode": self._sort_mode}, f)
+        except (OSError, IOError):
+            pass  # Non-fatal — prefs are best-effort
