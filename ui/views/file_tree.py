@@ -1452,6 +1452,9 @@ class FileTree(Gtk.Box):
         # BUG #2: Allow lazy reload on next open
         self._loaded_drawers.discard(file_path)
 
+        # DRAWER-WIDTH-FIX: Update column visibility (all drawers closed now)
+        self._update_column_visibility_for_drawers()
+
     def _trigger_diff_load(self, file_path: str, drawer_box: Gtk.Box) -> None:
         """Trigger lazy load of diff content for a file's drawer.
 
