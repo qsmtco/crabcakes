@@ -751,7 +751,7 @@ class FileTree(Gtk.Box):
             self._filter_model.set_filter(None)
             return
         custom_filter = Gtk.CustomFilter.new(
-            lambda item: FileTree._filter_func(item, query)
+            lambda item, q=query: FileTree._filter_func(item, q)
         )
         self._filter_model.set_filter(custom_filter)
 
