@@ -627,8 +627,10 @@ class FileTree(Gtk.Box):
         # Block signal to prevent _on_search_changed from firing while FileTree
         # is still inside the nested notebook (would build cards in wrong parent).
         self._search_entry.handler_block(self._search_changed_handler_id)
-        self._search_entry.set_text("")
-        self._search_entry.handler_unblock(self._search_changed_handler_id)
+        try:
+            self._search_entry.set_text("")
+        finally:
+            self._search_entry.handler_unblock(self._search_changed_handler_id)
         if fire_callback and self._on_navigate_back:
             self._on_navigate_back(project_name)
         self._show_project_picker()
