@@ -359,16 +359,26 @@ def status(project_path: str) -> GitResult:
 def status_porcelain(project_path: str) -> dict[str, str]:
     """Returns parsed git status map: {rel_path: status_code}.
 
+    Uses subprocess (not GitPython) so it works when project_path is a
+    subdirectory of a git repo — git CLI walks up to find .git.
+
     status_code is 2-char porcelain string per `git status --porcelain` format.
     See git-status(1) for format details.
 
     Handles rename lines ('R  old -> new') by emitting the destination path.
     Returns empty dict on any error (caught and suppressed).
     """
+    import subprocess as _subprocess
     try:
-        repo = gitpython.Repo(project_path)
-        raw = repo.git.status("--porcelain")
-        result: dict[str, str] = {}
+        result = _subprocess.run(
+            ['git', 'status', '--porcelain'],
+            cwd=project_path,
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return {}
+        raw = result.stdout
+        status_map: dict[str, str] = {}
         for line in raw.splitlines():
             # Minimum valid porcelain line: 'XY path' (4 chars: 2 status + 1 space + 1 path)
             if len(line) < 4:
@@ -377,6 +387,7 @@ def status_porcelain(project_path: str) -> dict[str, str]:
             rest = line[3:]  # skip space separator at index 2
             # Handle rename/copy format: 'R  old_path -> new_path' or 'C  old_path -> new_path'
             # Check BOTH status positions — index column (R_, C_) and worktree column (_R, _C) (BUG #25)
+            # BUG #13: status_porcelain using subprocess handles subdirs of git repos
             if (status_code[0] in ('R', 'C') or
                 (len(status_code) >= 2 and status_code[1] in ('R', 'C'))):
                 if ' -> ' in rest:
@@ -384,7 +395,8 @@ def status_porcelain(project_path: str) -> dict[str, str]:
                     rest = rest.split(' -> ', 1)[1]
             # Normalize: strip trailing slash so directory keys match
             # os.path.relpath() output (BUG #3 — inter-layer consistency)
-            result[rest.rstrip('/')] = status_code
-        return result
+            rest = rest.rstrip('/')
+            status_map[rest] = status_code
+        return status_map
     except Exception:
         return {}
