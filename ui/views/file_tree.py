@@ -457,6 +457,11 @@ class FileTree(Gtk.Box):
         # Phase 2: Git status map for child rows — set in _show_tree, used in _on_directory_loaded
         self._git_status_map: dict[str, str] = {}
 
+        # Phase 4: Column references for drawer width fix (DRAWER-WIDTH-FIX)
+        self._col_status = None
+        self._col_size = None
+        self._col_modified = None
+
         # Phase 3: Sort/filter state (FilterListModel only — sort is local)
         self._filter_model: Gtk.FilterListModel | None = None
         self._sort_dropdown = None  # created in _build_header
