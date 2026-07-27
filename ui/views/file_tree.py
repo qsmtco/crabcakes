@@ -779,8 +779,10 @@ class FileTree(Gtk.Box):
     def _filter_func(item, query: str) -> bool:
         """Substring match on name + path. casefold() (BUG #12).
         Drawer rows pass through via parent_full_path (BUG #18, #26).
-        Defensive None handling for full_path/parent_full_path (BUG #4).
+        Defensive None handling for query, full_path, parent_full_path.
         """
+        if query is None:
+            return False
         if not query:
             return True
         if item is None:  # BUG #24: race on concurrent mutation
