@@ -4035,7 +4035,8 @@ crabcakes/
 │   │   ├── review_handler.py     # ~523 lines — review session lifecycle (Phase 7)
 │   │   ├── session_handler.py    # ~164 lines — session switching (Phase 7)
 │   │   ├── settings_handler.py   # ~231 lines — settings dialog logic (provider CRUD, test connection)
-│   │   └── auxilium_wizard_handler.py # ~449 lines — Auxilium wizard handler (Tier 1, D7)
+│   │   ├── auxilium_wizard_handler.py # ~449 lines — Auxilium wizard handler (Tier 1, D7)
+│   │   └── file_tree_handler.py  # ~93 lines — FileTree sort prefs + git status cache (no GTK)
 │   └── views/
 │       ├── __init__.py           # 1 line
 │       ├── activity_drawer.py    # ~764 lines — collapsible activity event panel
