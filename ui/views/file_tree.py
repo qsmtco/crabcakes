@@ -590,8 +590,7 @@ class FileTree(Gtk.Box):
                 pass
             self._search_timeout_id = None
 
-        # Clear sort/filter model references (will be recreated in _init_sort_filter)
-        self._sort_model = None
+        # Clear filter model reference (will be recreated in _init_sort_filter)
         self._filter_model = None
 
         # Invalidate any in-flight async requests
