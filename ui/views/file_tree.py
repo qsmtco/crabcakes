@@ -1114,11 +1114,7 @@ class FileTree(Gtk.Box):
                      "size_asc", "size_desc"]
             if saved in valid:
                 idx = valid.index(saved)
-                self._sort_dropdown.handler_block(self._sort_dropdown_handler_id)
-                try:
-                    self._sort_dropdown.set_selected(idx)
-                finally:
-                    self._sort_dropdown.handler_unblock(self._sort_dropdown_handler_id)
+                FileTree._set_dropdown_silently(self._sort_dropdown, self._sort_dropdown_handler_id, idx)
                 self._apply_sort(saved)
 
     # ── Phase 3: Drawer Row Insertion ──────────────────────────────────
