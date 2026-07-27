@@ -128,9 +128,9 @@ class TestFileTreeHandler:
         assert h.get_sort_mode() == "modified_asc"  # loaded from prefs
         assert h._git_status_dirty is True
 
-    def test_set_project_path_empty_resets(self):
+    def test_set_project_path_empty_resets(self, tmp_path):
         """set_project_path('') => resets sort to 'name_asc' and clears prefs_path."""
-        h = FileTreeHandler("/some/path")
+        h = FileTreeHandler(str(tmp_path))
         h.set_sort_mode("size_desc")
         h.set_project_path("")
         assert h.get_sort_mode() == "name_asc"
