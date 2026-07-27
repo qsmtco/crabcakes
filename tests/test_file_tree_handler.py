@@ -148,3 +148,32 @@ class TestFileTreeHandler:
         h.set_sort_mode("name_desc")  # triggers _save_prefs
         assert prefs_dir.exists()
         assert (prefs_dir / "file_tree_prefs.json").exists()
+
+    # ── Phase 4 audit fix tests ────────────────────────────────────────
+
+    @patch("ui.handlers.file_tree_handler.status_porcelain")
+    def test_cache_not_mutated_by_caller(self, mock_status_porcelain):
+        """refresh_git_status returns a copy, not the internal cache (BUG #15)."""
+        mock_status_porcelain.return_value = {"file.py": "M "}
+        h = FileTreeHandler("/fake/repo")
+        r1 = h.refresh_git_status()
+        r1["injected.py"] = "??"
+        r2 = h.refresh_git_status()
+        assert "injected.py" not in r2, "caller mutated internal cache"
+
+    def test_set_sort_mode_unhashable_type(self):
+        """set_sort_mode with unhashable type does not crash (BUG #18)."""
+        h = FileTreeHandler()
+        h.set_sort_mode([])   # should not raise
+        h.set_sort_mode({})   # should not raise
+        assert h.get_sort_mode() == "name_asc"
+
+    @patch("ui.handlers.file_tree_handler.status_porcelain")
+    def test_set_project_path_clears_cache(self, mock_status_porcelain):
+        """set_project_path clears _git_status_cache (BUG #26)."""
+        mock_status_porcelain.return_value = {}
+        h = FileTreeHandler("/old/repo")
+        h.refresh_git_status()
+        h._git_status_cache["stale.py"] = "M "  # simulate stale data
+        h.set_project_path("/new/repo")
+        assert h._git_status_cache == {}, "cache not cleared on project switch"
