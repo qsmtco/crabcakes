@@ -799,8 +799,8 @@ class FileTree(Gtk.Box):
     def _on_sort_dropdown_changed(self, dropdown, pspec):
         """Handle sort selection — update sort model + notify handler."""
         selected = dropdown.get_selected()
-        modes = ["name_asc", "name_desc", "modified_desc", "modified_asc",
-                 "size_desc", "size_asc"]
+        modes = ["name_asc", "name_desc", "modified_asc", "modified_desc",
+                 "size_asc", "size_desc"]
         mode = modes[selected] if 0 <= selected < len(modes) else "name_asc"
         self._apply_sort(mode)
         if self._on_sort_changed:
