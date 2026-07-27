@@ -761,8 +761,6 @@ class FileTree(Gtk.Box):
             return 1
 
         def sort_name(row):
-            if row.props.is_drawer:
-                return _os.path.basename(row.props.parent_full_path or "").casefold()
             return (row.props.display_name or "").casefold()
 
         def cmp(a, b):
