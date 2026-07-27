@@ -212,6 +212,11 @@ class LeftPanel(Gtk.Box):
             return
         self._is_project_view_open = True
 
+        # Wire FileTreeHandler to project path when project opens
+        if self._file_tree._project_path:
+            self._file_tree_handler.set_project_path(self._file_tree._project_path)
+            self._file_tree_handler.invalidate_git_status()
+
         # Reparent FileTree out of Stack "picker" page
         self._file_tree.unparent()
 
