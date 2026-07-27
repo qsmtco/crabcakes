@@ -678,7 +678,7 @@ class FileTree(Gtk.Box):
         sorter = self._build_sorter(sort_mode)
         self._sort_model.set_sorter(sorter)
 
-    @staticmethod
+@staticmethod
     def _build_sorter(sort_mode: str) -> Gtk.Sorter:
         """Build comparator-based sorter that preserves tree hierarchy.
 
@@ -686,29 +686,39 @@ class FileTree(Gtk.Box):
         children stay under their parent directory. Drawer rows sort
         immediately after their parent file (using parent_full_path as key).
         Directories always sort before files within the same depth group.
+        Drawers are in the file group (rank=1) and use their parent's basename
+        as sort key, so they interleave with files rather than clumping at the end.
         """
+
+        import os as _os
 
         def cmp(a, b, _ud=None):
             # Rule 1: Depth groups — NEVER mix depths (children stay under parents)
             if a.props.depth != b.props.depth:
                 return -1 if a.props.depth < b.props.depth else 1
 
-            # Rule 2: Within same depth, dirs before files, drawers after files.
-            # Drawer rows sort adjacent to their parent.
+            # Rule 2: Within same depth, dirs before files/drawers (both rank 1).
+            # Drawers interleave with files using parent basename as sort key.
             def group_rank(row):
                 if row.props.is_dir:
                     return 0
-                if row.props.is_drawer:
-                    return 2
-                return 1
+                return 1  # files and drawers share rank 1
             ga, gb = group_rank(a), group_rank(b)
             if ga != gb:
                 return -1 if ga < gb else 1
 
-            # Rule 3: For drawers, use parent_full_path as the sort name so
-            # the drawer sorts next to its parent file.
-            name_a = a.props.parent_full_path.casefold() if a.props.is_drawer else a.props.display_name.casefold()
-            name_b = b.props.parent_full_path.casefold() if b.props.is_drawer else b.props.display_name.casefold()
+            # Rule 3: For drawers, use basename of parent_full_path so the sort
+            # key matches the parent file's display_name. This ensures the drawer
+            # sorts at the exact same position as its parent (insertion order
+            # places drawer after parent).
+            if a.props.is_drawer:
+                name_a = _os.path.basename(a.props.parent_full_path or "").casefold()
+            else:
+                name_a = (a.props.display_name or "").casefold()
+            if b.props.is_drawer:
+                name_b = _os.path.basename(b.props.parent_full_path or "").casefold()
+            else:
+                name_b = (b.props.display_name or "").casefold()
 
             # Rule 4: Apply the actual sort mode within the group
             if sort_mode in ("name_asc", "name_desc"):
