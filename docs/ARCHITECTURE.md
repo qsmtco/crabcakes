@@ -4047,7 +4047,7 @@ crabcakes/
 │       ├── feed_card.py          # ~616 lines — feed_card widget factory (Phase 5)
 │       ├── feed_tab.py           # ~387 lines — FeedTab (view only)
 │       ├── feedbar.py            # ~124 lines — FeedBar + progress bar (Phase 6)
-│       ├── file_tree.py          # ~439 lines — FileTree (TreeView directory browser)
+│       ├── file_tree.py          # ~2272 lines — FileTree (ColumnView directory browser, 22-property model, sort/filter/search)
 │       ├── left_panel.py         # ~982 lines — LeftPanel (Prompts/Agents/Projects notebook)
 │       ├── main_content.py       # ~942 lines — MainContent (tabs + input + review bar)
 │       ├── review_bar.py         # ~166 lines — ReviewBar widget (Phase 7)
