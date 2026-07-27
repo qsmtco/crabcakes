@@ -1326,6 +1326,9 @@ class FileTree(Gtk.Box):
                 is_open=True,
                 parent_full_path=file_path,
             )
+            # Defensive: enforce invariants the sort comparator relies on
+            assert file_row.props.depth >= 0
+            assert file_path, "drawer parent_full_path must be non-empty"
             self._store.insert(file_index + 1, drawer_row)
             # BUG #1-R: Store the row object, not the index
             self._drawer_paths[file_path] = drawer_row
