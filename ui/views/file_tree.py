@@ -705,7 +705,6 @@ class FileTree(Gtk.Box):
         # ancestor_chain = the list of parent directories from root to this item's parent.
         # This ensures items are ordered by their position in the tree.
         import functools
-        import os as _os
 
         # Sort contiguous sibling groups (items sharing the same parent_full_path)
         sorted_items: list[FileTreeRow] = []
@@ -1960,6 +1959,9 @@ class FileTree(Gtk.Box):
         parent_path = row.props.full_path
         parent_depth = row.props.depth
 
+        # BUG #4: Capture parent row OBJECT, not index (sort may move parent)
+        parent_row_obj = row
+
         # BUG #8: Insert loading spinner row
         loading_row = FileTreeRow(
             display_name="Loading...",
@@ -1978,16 +1980,20 @@ class FileTree(Gtk.Box):
             # Store mutations (sibling expand/collapse) can shift positions.
             _loading_row = loading_row
             GLib.idle_add(lambda: self._on_directory_loaded(
-                entries, _loading_row, row_index, parent_depth, request_id
+                entries, _loading_row, parent_row_obj, parent_depth, request_id
             ))
 
         threading.Thread(target=_do, daemon=True).start()
 
-    def _on_directory_loaded(self, entries, loading_row: FileTreeRow, row_index: int, parent_depth: int, request_id: int) -> None:
+    def _on_directory_loaded(self, entries, loading_row: FileTreeRow, parent_row_obj: FileTreeRow, parent_depth: int, request_id: int) -> None:
         """Handle directory scan result on main thread. Guard against stale requests.
 
         Unconditionally removes the loading spinner row (by object identity)
         before any early return to prevent orphan "Loading..." rows (BUG #1).
+
+        Uses parent_row_obj (object identity) to find the parent's current
+        position, which may have shifted due to sort between the expand request
+        and the background load completing (BUG #4).
         """
         # Unconditionally remove loading spinner row by object identity
         # Walk the store to find it — survives intervening store mutations
@@ -2001,9 +2007,13 @@ class FileTree(Gtk.Box):
         if request_id != self._current_request_id:
             return
 
+        # BUG #4: Re-find parent row by object identity (sort may have moved it)
+        row_index = self._find_row_index(parent_row_obj)
+        if row_index is None:
+            return  # parent was removed (project switch or collapse)
         if row_index < 0 or row_index >= self._store.get_n_items():
             return
-        parent_row: FileTreeRow = self._store.get_item(row_index)
+        parent_row = parent_row_obj
         if not parent_row.props.is_dir or not parent_row.props.expanded:
             # Parent was collapsed; loading row already removed above
             return
