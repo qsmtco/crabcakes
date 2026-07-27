@@ -63,6 +63,7 @@ class FileTreeHandler:
     def set_project_path(self, path: str) -> None:
         """Called when project switches. Invalidates caches, loads prefs."""
         self._project_path = path
+        self._git_status_cache = {}
         self.invalidate_git_status()
         if path:
             self._prefs_path = os.path.join(path, ".crabcakes", "file_tree_prefs.json")
