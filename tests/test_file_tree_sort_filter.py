@@ -9,12 +9,10 @@ work headless).
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Gio', '2.0')
-gi.require_version('Gdk', '4.0')
-from gi.repository import Gtk, Gio, GLib, GObject, Gdk
+from gi.repository import Gtk, Gio, GObject
 
 import os
 import sys
-import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from ui.views.file_tree import FileTree, FileTreeRow, format_size, format_mtime
