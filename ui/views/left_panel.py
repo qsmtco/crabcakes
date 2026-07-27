@@ -103,6 +103,13 @@ class LeftPanel(Gtk.Box):
         self._file_tree = FileTree(on_file_selected=self._on_project_selected)
         self._picker_box.append(self._file_tree)
 
+        # FileTreeHandler — manages sort prefs + git status cache (no GTK)
+        self._file_tree_handler = FileTreeHandler()
+        # Wire view callbacks to handler
+        self._file_tree.set_on_sort_changed(self._file_tree_handler.set_sort_mode)
+        self._file_tree.set_on_get_sort_mode(self._file_tree_handler.get_sort_mode)
+        self._file_tree.set_on_get_git_status(self._file_tree_handler.refresh_git_status)
+
         PAP_notebook.append_page(
             self._projects_stack,
             Gtk.Label(label="Projects")
