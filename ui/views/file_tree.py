@@ -707,57 +707,6 @@ class FileTree(Gtk.Box):
         import functools
         import os as _os
 
-        def make_key(row: FileTreeRow):
-            """Compute a sort key that encodes tree position."""
-            # For root items (depth 0): parent_full_path = ""
-            # For children of /proj/src: parent_full_path = "/proj/src"
-            # For drawers: parent_full_path = the file's full_path
-            parent = row.props.parent_full_path or ""
-
-            # Group rank: dirs=0, files=1, drawers=2
-            if row.props.is_dir:
-                rank = 0
-            elif row.props.is_drawer:
-                rank = 2
-            else:
-                rank = 1
-
-            # Name for sorting within sibling group
-            if row.props.is_drawer:
-                name = _os.path.basename(row.props.parent_full_path or "").casefold()
-            else:
-                name = (row.props.display_name or "").casefold()
-
-            # For directories, we need the dir to sort BEFORE its children.
-            # The dir's own full_path is the parent_full_path of its children.
-            # So the dir's "position key" must sort before its children's
-            # "position key". We achieve this by using the dir's full_path as
-            # a secondary component — it will be a prefix of its children's
-            # parent_full_path, so it sorts before them.
-            #
-            # Key structure: (parent_full_path, rank, sort_value, name)
-            # For a dir /proj/src:   key = ("",      0, ..., "src")
-            # For its child aaa.py:  key = ("/proj/src", 1, ..., "aaa.py")
-            # Since "" < "/proj/src", the dir sorts before its children. ✓
-            #
-            # But we also need: after sorting root group, src's children come
-            # right after src, before tests. This requires that the children's
-            # parent_full_path ("/proj/src") sorts right after src's position.
-            #
-            # We can't achieve "children right after parent" with a single flat
-            # sort key because the parent's siblings interleave. Instead, we
-            # use a recursive walk: sort each level, then recurse into expanded
-            # dirs. But we don't track which dirs are expanded in the sort...
-            #
-            # ALTERNATIVE: The store already maintains correct insertion order
-            # (children inserted right after parent). We only need to sort
-            # WITHIN each sibling group. The groups are already contiguous in
-            # the store because _on_directory_loaded inserts children right
-            # after the parent. So: find contiguous sibling groups and sort
-            # each one. Don't move items between groups.
-
-            return (parent, rank, 0, name)
-
         # Sort contiguous sibling groups (items sharing the same parent_full_path)
         sorted_items: list[FileTreeRow] = []
         i = 0
@@ -836,7 +785,6 @@ class FileTree(Gtk.Box):
 
         return cmp
 
-    @staticmethod
     @staticmethod
     def _set_dropdown_silently(dropdown, handler_id: int, index: int) -> None:
         """Set dropdown selection without firing notify::selected. Exception-safe."""
