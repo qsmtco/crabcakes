@@ -328,7 +328,7 @@ class StyleTable:
                              background="rgba(127,127,127,0.15)"),
             code_block=make("code-block", family="monospace",
                             background="rgba(30,30,30,0.1)"),
-            quote=make("quote", style=Pango.Style.ITALIS,
+            quote=make("quote", style=Pango.Style.ITALIC,
                        foreground="#8b8b9b"),
             terminal=make("terminal", family="monospace",
                           foreground="#e5c07b"),
