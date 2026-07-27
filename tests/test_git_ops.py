@@ -759,3 +759,17 @@ class TestStatusPorcelainFn:
         # Worktree-column rename: destination path is the key
         assert "new_name.txt" in result, f"worktree rename key wrong: {result}"
         assert result["new_name.txt"] == " R"
+
+    def test_subdirectory_of_git_repo(self, tmp_path, monkeypatch):
+        """status_porcelain works when project_path is a subdir of a git repo (BUG #13)."""
+        import subprocess as _subprocess
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        _subprocess.run(['git', 'init', '-q', str(repo_root)], check=True)
+        _subprocess.run(['git', '-C', str(repo_root), 'config', 'user.email', 't@t.com'], check=True)
+        _subprocess.run(['git', '-C', str(repo_root), 'config', 'user.name', 'T'], check=True)
+        subdir = repo_root / "frontend"
+        subdir.mkdir()
+        (subdir / "app.py").write_text("x")
+        result = status_porcelain(str(subdir))
+        assert len(result) > 0, f"subdir returned empty: {result}"
