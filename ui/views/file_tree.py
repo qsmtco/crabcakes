@@ -1364,6 +1364,8 @@ class FileTree(Gtk.Box):
                     # BUG #2: Revealer is None — orphan state. Remove row directly.
                     self._store.remove(i)  # i is the index from the scan above
                     del self._drawer_paths[file_path]
+                # DRAWER-WIDTH-FIX: Update column visibility (all drawers closed now)
+                self._update_column_visibility_for_drawers()
                 return  # Close path done
 
         if file_path not in self._drawer_paths:
