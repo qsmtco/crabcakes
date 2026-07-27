@@ -248,6 +248,9 @@ class LeftPanel(Gtk.Box):
         if not self._is_project_view_open:
             return
 
+        # Reset FileTreeHandler when project closes
+        self._file_tree_handler.set_project_path("")
+
         # 1. Reset FileTree to project picker view BEFORE detaching.
         #    navigate_back clears file-listing state and calls _show_project_picker()
         #    which rebuilds the project card grid. fire_callback=False prevents
