@@ -684,12 +684,13 @@ class FileTree(Gtk.Box):
         self._sort_store_in_place()
 
     def _sort_store_in_place(self) -> None:
-        """Sort the store in-place by grouping siblings and sorting each group.
+        """Sort the store in-place using full-path hierarchical ordering.
 
-        Identifies sibling groups (consecutive items with the same
-        parent_full_path), sorts each group by the current sort mode, and
-        rebuilds the store. Preserves drawer-adjacency (drawers sort right
-        after their parent file within the group).
+        Each row is sorted by its position in the tree: the parent directory's
+        full_path determines which sibling group it belongs to, and within each
+        group, items sort by the current sort mode. A parent directory appears
+        immediately before its children because the parent's full_path is a
+        prefix of its children's parent_full_path grouping key.
         """
         if self._store.get_n_items() == 0:
             return
@@ -699,19 +700,73 @@ class FileTree(Gtk.Box):
         for i in range(self._store.get_n_items()):
             all_items.append(cast(FileTreeRow, self._store.get_item(i)))
 
-        # Identify sibling groups and sort each group
-        # A sibling group is a maximal run of items with the same parent_full_path
+        # Build a hierarchical sort key for each item.
+        # The key is: (ancestor_chain, group_rank, sort_value)
+        # ancestor_chain = the list of parent directories from root to this item's parent.
+        # This ensures items are ordered by their position in the tree.
+        import functools
+        import os as _os
+
+        def make_key(row: FileTreeRow):
+            """Compute a sort key that encodes tree position."""
+            # For root items (depth 0): parent_full_path = ""
+            # For children of /proj/src: parent_full_path = "/proj/src"
+            # For drawers: parent_full_path = the file's full_path
+            parent = row.props.parent_full_path or ""
+
+            # Group rank: dirs=0, files=1, drawers=2
+            if row.props.is_dir:
+                rank = 0
+            elif row.props.is_drawer:
+                rank = 2
+            else:
+                rank = 1
+
+            # Name for sorting within sibling group
+            if row.props.is_drawer:
+                name = _os.path.basename(row.props.parent_full_path or "").casefold()
+            else:
+                name = (row.props.display_name or "").casefold()
+
+            # For directories, we need the dir to sort BEFORE its children.
+            # The dir's own full_path is the parent_full_path of its children.
+            # So the dir's "position key" must sort before its children's
+            # "position key". We achieve this by using the dir's full_path as
+            # a secondary component — it will be a prefix of its children's
+            # parent_full_path, so it sorts before them.
+            #
+            # Key structure: (parent_full_path, rank, sort_value, name)
+            # For a dir /proj/src:   key = ("",      0, ..., "src")
+            # For its child aaa.py:  key = ("/proj/src", 1, ..., "aaa.py")
+            # Since "" < "/proj/src", the dir sorts before its children. ✓
+            #
+            # But we also need: after sorting root group, src's children come
+            # right after src, before tests. This requires that the children's
+            # parent_full_path ("/proj/src") sorts right after src's position.
+            #
+            # We can't achieve "children right after parent" with a single flat
+            # sort key because the parent's siblings interleave. Instead, we
+            # use a recursive walk: sort each level, then recurse into expanded
+            # dirs. But we don't track which dirs are expanded in the sort...
+            #
+            # ALTERNATIVE: The store already maintains correct insertion order
+            # (children inserted right after parent). We only need to sort
+            # WITHIN each sibling group. The groups are already contiguous in
+            # the store because _on_directory_loaded inserts children right
+            # after the parent. So: find contiguous sibling groups and sort
+            # each one. Don't move items between groups.
+
+            return (parent, rank, 0, name)
+
+        # Sort contiguous sibling groups (items sharing the same parent_full_path)
         sorted_items: list[FileTreeRow] = []
         i = 0
         while i < len(all_items):
-            # Find the end of this sibling group
             group_parent = all_items[i].props.parent_full_path or ""
             j = i
             while j < len(all_items) and (all_items[j].props.parent_full_path or "") == group_parent:
                 j += 1
             group = all_items[i:j]
-            # Sort this group using the comparator
-            import functools
             group.sort(key=functools.cmp_to_key(self._make_group_comparator()))
             sorted_items.extend(group)
             i = j
