@@ -155,7 +155,7 @@ crabcakes/
 │       ├── diff_card.py         # Diff card widget factories — build_file_diff_card, build_diff_summary_card (Phase 7)
 │       ├── review_bar.py        # ReviewBar widget — review mode dropdown + action buttons (Phase 7)
 │       ├── file_tree.py        # ~2272 lines — FileTree (ColumnView directory browser, 22-property model, sort/filter/search)
-│       ├── left_panel.py         # ~974 lines — LeftPanel (Prompts/Agents/Projects notebook + right-click copy menu)
+│       ├── left_panel.py         # ~1004 lines — LeftPanel (Prompts/Agents/Projects notebook + right-click copy menu)
 │       ├── main_content.py     # MainContent — chat notebook + input + button bar
 │       ├── session_menu.py     # Right-click session switcher popover
 │       ├── chat_input_toolbar.py # ~480 lines — ChatInputToolbar — find/replace bar + spell check toggle (view only)
@@ -4048,7 +4048,7 @@ crabcakes/
 │       ├── feed_tab.py           # ~387 lines — FeedTab (view only)
 │       ├── feedbar.py            # ~124 lines — FeedBar + progress bar (Phase 6)
 │       ├── file_tree.py          # ~2272 lines — FileTree (ColumnView directory browser, 22-property model, sort/filter/search)
-│       ├── left_panel.py         # ~982 lines — LeftPanel (Prompts/Agents/Projects notebook)
+│       ├── left_panel.py         # ~1004 lines — LeftPanel (Prompts/Agents/Projects notebook)
 │       ├── main_content.py       # ~942 lines — MainContent (tabs + input + review bar)
 │       ├── review_bar.py         # ~166 lines — ReviewBar widget (Phase 7)
 │       ├── session_menu.py       # ~216 lines — session/project switcher popover
