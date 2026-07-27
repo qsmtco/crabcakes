@@ -1397,6 +1397,9 @@ class FileTree(Gtk.Box):
             # BUG #1-R: Store the row object, not the index
             self._drawer_paths[file_path] = drawer_row
 
+            # DRAWER-WIDTH-FIX: Update column visibility (drawer now open)
+            self._update_column_visibility_for_drawers()
+
             # Animate open
             revealer.set_reveal_child(True)
 
