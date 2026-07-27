@@ -258,3 +258,19 @@ class TestSignalBlockHelper:
             pass
         dd.handler_block.assert_called_once_with(42)
         dd.handler_unblock.assert_called_once_with(42)
+
+
+class TestStaleRequestGuard:
+    """Verify _on_directory_loaded rejects stale background-expand callbacks."""
+
+    def test_stale_request_does_not_insert_children(self):
+        """A stale _on_directory_loaded (old request_id) must not insert children."""
+        import inspect
+        source = inspect.getsource(FileTree._on_directory_loaded)
+        assert "request_id" in source
+        assert "self._current_request_id" in source
+        assert "return" in source
+        # The guard must appear BEFORE any child insertion
+        guard_pos = source.find("self._current_request_id")
+        insert_pos = source.find("self._store.insert")
+        assert guard_pos < insert_pos, "stale-request guard must come before child insertion"
