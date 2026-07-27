@@ -1167,6 +1167,13 @@ class FileTree(Gtk.Box):
                 FileTree._set_dropdown_silently(self._sort_dropdown, self._sort_dropdown_handler_id, idx)
                 self._apply_sort(saved)
 
+    def _update_column_visibility_for_drawers(self) -> None:
+        """Hide Status/Size/Modified columns when any drawer is open (drawer width fix)."""
+        any_open = len(self._drawer_paths) > 0
+        for col in (self._col_status, self._col_size, self._col_modified):
+            if col is not None:
+                col.set_visible(not any_open)
+
     # ── Phase 3: Drawer Row Insertion ──────────────────────────────────
 
     def _add_drawer_for_file(self, file_path: str, display_name: str) -> Gtk.Revealer:
