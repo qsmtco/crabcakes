@@ -676,69 +676,70 @@ class FileTree(Gtk.Box):
         sorter = self._build_sorter(sort_mode)
         self._sort_model.set_sorter(sorter)
 
-    def _build_sorter(self, sort_mode: str) -> Gtk.Sorter:
-        """Build comparator-based sorter. Directories always sort before files.
+    @staticmethod
+    def _build_sorter(sort_mode: str) -> Gtk.Sorter:
+        """Build comparator-based sorter that preserves tree hierarchy.
 
-        Note: this method does NOT use self, but must remain an instance method
-        for consistency with the FileTree class pattern.
+        Sort is depth-aware: items only sort within their depth group, so
+        children stay under their parent directory. Drawer rows sort
+        immediately after their parent file (using parent_full_path as key).
+        Directories always sort before files within the same depth group.
         """
-        def cmp_name_asc(a, b, _ud=None):
-            # BUG #4: drawer rows stay at insertion position
-            if a.props.is_drawer or b.props.is_drawer:
-                return 0
-            if a.props.is_dir != b.props.is_dir:
-                return -1 if a.props.is_dir else 1
-            a_n = a.props.display_name.casefold()
-            b_n = b.props.display_name.casefold()
-            return -1 if a_n < b_n else (1 if a_n > b_n else 0)
 
-        def cmp_name_desc(a, b, _ud=None):
-            if a.props.is_drawer or b.props.is_drawer:
-                return 0
-            if a.props.is_dir != b.props.is_dir:
-                return -1 if a.props.is_dir else 1
-            a_n = a.props.display_name.casefold()
-            b_n = b.props.display_name.casefold()
-            return 1 if a_n < b_n else (-1 if a_n > b_n else 0)
+        def cmp(a, b, _ud=None):
+            # Rule 1: Depth groups — NEVER mix depths (children stay under parents)
+            if a.props.depth != b.props.depth:
+                return -1 if a.props.depth < b.props.depth else 1
 
-        def cmp_modified_desc(a, b, _ud=None):
-            if a.props.is_drawer or b.props.is_drawer:
-                return 0
-            if a.props.is_dir != b.props.is_dir:
-                return -1 if a.props.is_dir else 1
-            return b.props.modified_time - a.props.modified_time
+            # Rule 2: Within same depth, dirs before files, drawers after files.
+            # Drawer rows sort adjacent to their parent.
+            def group_rank(row):
+                if row.props.is_dir:
+                    return 0
+                if row.props.is_drawer:
+                    return 2
+                return 1
+            ga, gb = group_rank(a), group_rank(b)
+            if ga != gb:
+                return -1 if ga < gb else 1
 
-        def cmp_modified_asc(a, b, _ud=None):
-            if a.props.is_drawer or b.props.is_drawer:
-                return 0
-            if a.props.is_dir != b.props.is_dir:
-                return -1 if a.props.is_dir else 1
-            return a.props.modified_time - b.props.modified_time
+            # Rule 3: For drawers, use parent_full_path as the sort name so
+            # the drawer sorts next to its parent file.
+            name_a = a.props.parent_full_path.casefold() if a.props.is_drawer else a.props.display_name.casefold()
+            name_b = b.props.parent_full_path.casefold() if b.props.is_drawer else b.props.display_name.casefold()
 
-        def cmp_size_desc(a, b, _ud=None):
-            if a.props.is_drawer or b.props.is_drawer:
+            # Rule 4: Apply the actual sort mode within the group
+            if sort_mode in ("name_asc", "name_desc"):
+                if name_a != name_b:
+                    if sort_mode == "name_asc":
+                        return -1 if name_a < name_b else 1
+                    else:
+                        return 1 if name_a < name_b else -1
                 return 0
-            if a.props.is_dir != b.props.is_dir:
-                return -1 if a.props.is_dir else 1
-            return b.props.file_size - a.props.file_size
 
-        def cmp_size_asc(a, b, _ud=None):
-            if a.props.is_drawer or b.props.is_drawer:
-                return 0
-            if a.props.is_dir != b.props.is_dir:
-                return -1 if a.props.is_dir else 1
-            return a.props.file_size - b.props.file_size
+            if sort_mode in ("modified_asc", "modified_desc"):
+                ta, tb = a.props.modified_time, b.props.modified_time
+                if ta != tb:
+                    if sort_mode == "modified_asc":
+                        return -1 if ta < tb else 1
+                    else:
+                        return 1 if ta < tb else -1
+                # Tie-break by name for stable order
+                return -1 if name_a < name_b else (1 if name_a > name_b else 0)
 
-        comparators = {
-            "name_asc": cmp_name_asc,
-            "name_desc": cmp_name_desc,
-            "modified_desc": cmp_modified_desc,
-            "modified_asc": cmp_modified_asc,
-            "size_desc": cmp_size_desc,
-            "size_asc": cmp_size_asc,
-        }
-        fn = comparators.get(sort_mode, cmp_name_asc)
-        return Gtk.CustomSorter.new(fn)
+            if sort_mode in ("size_asc", "size_desc"):
+                sa, sb = a.props.file_size, b.props.file_size
+                if sa != sb:
+                    if sort_mode == "size_asc":
+                        return -1 if sa < sb else 1
+                    else:
+                        return 1 if sa < sb else -1
+                return -1 if name_a < name_b else (1 if name_a > name_b else 0)
+
+            # Default: name ascending
+            return -1 if name_a < name_b else (1 if name_a > name_b else 0)
+
+        return Gtk.CustomSorter.new(cmp)
 
     def _apply_filter(self, query: str) -> None:
         """In-place filter change. casefold() for Unicode-safe match (BUG #12)."""
@@ -1953,8 +1954,7 @@ class FileTree(Gtk.Box):
             self._store.insert(insert_pos, child)
             insert_pos += 1
 
-        # M6: re-apply sorter so new children sort correctly
-        self._apply_sort(self._current_sort_mode)
+        # SortListModel auto-sorts on store mutation — no need for explicit _apply_sort
 
     def _collapse_directory(self, row_index: int) -> None:
         """Collapse a directory row: remove all descendants with greater depth."""
