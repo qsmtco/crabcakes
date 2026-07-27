@@ -297,3 +297,69 @@ class TestSortFilterChain:
             names.append(fmodel.get_item(i).props.display_name)
         # 'apple' and 'cherry' match 'e', sorted asc → apple, cherry
         assert names == ['apple', 'cherry'], f'got {names}'
+
+
+class TestDepthHierarchy:
+    """BUG #1/#2: Depth-aware sorting preserves tree hierarchy."""
+
+    def test_multiple_drawers_stay_adjacent_to_parents(self):
+        """2+ drawers must each stay adjacent to their parent after sort."""
+        store = Gio.ListStore.new(FileTreeRow.__gtype__)
+        # Scrambled insertion — drawers NOT pre-adjacent
+        store.append(FileTreeRow(display_name='cherry.py', full_path='/cherry.py', is_dir=False, depth=0))
+        store.append(FileTreeRow(display_name='', full_path='', is_drawer=True, depth=0, parent_full_path='/banana.py'))
+        store.append(FileTreeRow(display_name='apple.py', full_path='/apple.py', is_dir=False, depth=0))
+        store.append(FileTreeRow(display_name='', full_path='', is_drawer=True, depth=0, parent_full_path='/apple.py'))
+        store.append(FileTreeRow(display_name='banana.py', full_path='/banana.py', is_dir=False, depth=0))
+        sorter = FileTree._build_sorter('name_asc')
+        smodel = Gtk.SortListModel.new(store, sorter)
+        items = [smodel.get_item(i) for i in range(smodel.get_n_items())]
+        # Each drawer must be immediately after its parent
+        for i, item in enumerate(items):
+            if item.props.is_drawer:
+                parent_path = item.props.parent_full_path
+                assert i > 0, f'drawer at position 0 with no parent above'
+                prev = items[i-1]
+                assert prev.props.full_path == parent_path, \
+                    f'drawer parent {parent_path} not at i-1, found {prev.props.full_path}'
+
+    def test_children_stay_under_parent_after_sort(self):
+        """Children of expanded dirs must not mix with root items after sort."""
+        store = Gio.ListStore.new(FileTreeRow.__gtype__)
+        store.append(FileTreeRow(display_name='mmm_dir', full_path='/mmm_dir', is_dir=True, depth=0))
+        store.append(FileTreeRow(display_name='zzz_child.py', full_path='/mmm_dir/zzz_child.py', is_dir=False, depth=1))
+        store.append(FileTreeRow(display_name='zzz_dir', full_path='/zzz_dir', is_dir=True, depth=0))
+        store.append(FileTreeRow(display_name='aaa_child.py', full_path='/zzz_dir/aaa_child.py', is_dir=False, depth=1))
+        sorter = FileTree._build_sorter('name_asc')
+        smodel = Gtk.SortListModel.new(store, sorter)
+        depths = [smodel.get_item(i).props.depth for i in range(smodel.get_n_items())]
+        # All depth-0 items must come before all depth-1 items
+        d0_count = depths.count(0)
+        assert depths[:d0_count] == [0]*d0_count, f'depth-0 items not grouped: {depths}'
+        assert depths[d0_count:] == [1]*(len(depths)-d0_count), f'depth-1 items not grouped: {depths}'
+
+    def test_set_selected_does_not_trigger_handler_when_blocked(self):
+        """Programmatic set_selected with handler_block must NOT fire the callback."""
+        dropdown = Gtk.DropDown.new_from_strings(['A','B','C'])
+        call_count = [0]
+        handler_id = dropdown.connect('notify::selected', lambda *a: call_count.__setitem__(0, call_count[0]+1))
+        dropdown.handler_block(handler_id)
+        dropdown.set_selected(2)
+        dropdown.handler_unblock(handler_id)
+        assert call_count[0] == 0, f'handler fired {call_count[0]} times during block'
+
+    def test_signal_unblocked_after_exception(self):
+        """handler_unblock must run even if set_selected raises."""
+        dropdown = Gtk.DropDown.new_from_strings(['A','B'])
+        call_count = [0]
+        handler_id = dropdown.connect('notify::selected', lambda *a: call_count.__setitem__(0, call_count[0]+1))
+        dropdown.handler_block(handler_id)
+        try:
+            raise RuntimeError('simulated')
+        except RuntimeError:
+            pass
+        finally:
+            dropdown.handler_unblock(handler_id)
+        # Now a real user action should fire the handler
+        dropdown.set_selected(1)
+        assert call_count[0] == 1, f'handler not unblocked: {call_count[0]}'
