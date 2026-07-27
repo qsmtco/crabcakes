@@ -347,7 +347,13 @@ class TestDepthHierarchy:
         assert depths[d0_count:] == [1]*(len(depths)-d0_count), f'depth-1 items not grouped: {depths}'
 
     def test_set_selected_does_not_trigger_handler_when_blocked(self):
-        """Programmatic set_selected with handler_block must NOT fire the callback."""
+        """Programmatic set_selected with handler_block must NOT fire the callback.
+
+        Skip if no display server (Gtk.DropDown segfaults headless).
+        """
+        display = Gdk.Display.get_default()
+        if display is None:
+            pytest.skip("no display server")
         dropdown = Gtk.DropDown.new_from_strings(['A','B','C'])
         call_count = [0]
         handler_id = dropdown.connect('notify::selected', lambda *a: call_count.__setitem__(0, call_count[0]+1))
@@ -357,7 +363,13 @@ class TestDepthHierarchy:
         assert call_count[0] == 0, f'handler fired {call_count[0]} times during block'
 
     def test_signal_unblocked_after_exception(self):
-        """handler_unblock must run even if set_selected raises."""
+        """handler_unblock must run even if set_selected raises.
+
+        Skip if no display server (Gtk.DropDown segfaults headless).
+        """
+        display = Gdk.Display.get_default()
+        if display is None:
+            pytest.skip("no display server")
         dropdown = Gtk.DropDown.new_from_strings(['A','B'])
         call_count = [0]
         handler_id = dropdown.connect('notify::selected', lambda *a: call_count.__setitem__(0, call_count[0]+1))
