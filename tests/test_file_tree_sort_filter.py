@@ -342,39 +342,27 @@ class TestDepthHierarchy:
         assert depths[d0_count:] == [1]*(len(depths)-d0_count), f'depth-1 items not grouped: {depths}'
 
     def test_set_selected_does_not_trigger_handler_when_blocked(self):
-        """Programmatic set_selected with handler_block must NOT fire the callback.
-
-        Skip if no display server (Gtk.DropDown segfaults headless).
-        """
-        display = Gdk.Display.get_default()
-        if display is None:
-            pytest.skip("no display server")
-        dropdown = Gtk.DropDown.new_from_strings(['A','B','C'])
-        call_count = [0]
-        handler_id = dropdown.connect('notify::selected', lambda *a: call_count.__setitem__(0, call_count[0]+1))
-        dropdown.handler_block(handler_id)
-        dropdown.set_selected(2)
-        dropdown.handler_unblock(handler_id)
-        assert call_count[0] == 0, f'handler fired {call_count[0]} times during block'
+        """handler_block prevents notify::selected from firing."""
+        from unittest.mock import MagicMock
+        dd = MagicMock()
+        FileTree._set_dropdown_silently(dd, 42, 2)
+        dd.handler_block.assert_called_once_with(42)
+        dd.set_selected.assert_called_once_with(2)
+        dd.handler_unblock.assert_called_once_with(42)
 
     def test_signal_unblocked_after_exception(self):
-        """handler_unblock must run even if set_selected raises.
-
-        Skip if no display server (Gtk.DropDown segfaults headless).
-        """
-        display = Gdk.Display.get_default()
-        if display is None:
-            pytest.skip("no display server")
-        dropdown = Gtk.DropDown.new_from_strings(['A','B'])
-        call_count = [0]
-        handler_id = dropdown.connect('notify::selected', lambda *a: call_count.__setitem__(0, call_count[0]+1))
-        dropdown.handler_block(handler_id)
+        """handler_unblock runs even if set_selected raises."""
+        from unittest.mock import MagicMock
+        dd = MagicMock()
+        dd.set_selected.side_effect = RuntimeError('boom')
         try:
-            raise RuntimeError('simulated')
+            FileTree._set_dropdown_silently(dd, 42, 2)
         except RuntimeError:
-            pass
-        finally:
-            dropdown.handler_unblock(handler_id)
-        # Now a real user action should fire the handler
-        dropdown.set_selected(1)
-        assert call_count[0] == 1, f'handler not unblocked: {call_count[0]}'
+            pass  # expected
+        dd.handler_block.assert_called_once_with(42)
+        dd.handler_unblock.assert_called_once_with(42)
+
+    def test_none_query_returns_false(self):
+        """_filter_func returns False when query is None."""
+        row = FileTreeRow(display_name='test.py', full_path='/test.py')
+        assert FileTree._filter_func(row, None) is False
