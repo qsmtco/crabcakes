@@ -678,7 +678,7 @@ class FileTree(Gtk.Box):
         sorter = self._build_sorter(sort_mode)
         self._sort_model.set_sorter(sorter)
 
-@staticmethod
+    @staticmethod
     def _build_sorter(sort_mode: str) -> Gtk.Sorter:
         """Build comparator-based sorter that preserves tree hierarchy.
 
