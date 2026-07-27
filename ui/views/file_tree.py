@@ -763,6 +763,15 @@ class FileTree(Gtk.Box):
 
         return Gtk.CustomSorter.new(cmp)
 
+    @staticmethod
+    def _set_dropdown_silently(dropdown, handler_id: int, index: int) -> None:
+        """Set dropdown selection without firing notify::selected. Exception-safe."""
+        dropdown.handler_block(handler_id)
+        try:
+            dropdown.set_selected(index)
+        finally:
+            dropdown.handler_unblock(handler_id)
+
     def _apply_filter(self, query: str) -> None:
         """In-place filter change. casefold() for Unicode-safe match (BUG #12)."""
         if self._filter_model is None:
