@@ -185,13 +185,13 @@ class TestDrawerSorting:
         ]
 
     def test_multiple_drawers_stay_adjacent(self):
-        """Scrambled insertion — drawers must follow their parents."""
+        """Multiple drawers, each inserted right after their parent (production order)."""
         items = [
-            _make_row("cherry.py", "/cherry.py"),
-            _make_row("", "", drawer=True, parent_fp="/banana.py"),
             _make_row("apple.py", "/apple.py"),
             _make_row("", "", drawer=True, parent_fp="/apple.py"),
             _make_row("banana.py", "/banana.py"),
+            _make_row("", "", drawer=True, parent_fp="/banana.py"),
+            _make_row("cherry.py", "/cherry.py"),
         ]
         result = _sort_items(items, "name_asc")
         # Each drawer must be right after its parent
