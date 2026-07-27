@@ -10,6 +10,7 @@ from gi.repository import Gtk, Gio, GLib, Gdk
 
 from utils.projects import load_members
 from utils.icons import render_agent_icon
+from ui.handlers.file_tree_handler import FileTreeHandler
 from ui.views.file_tree import FileTree
 from ui.views.session_menu import show_session_menu
 
