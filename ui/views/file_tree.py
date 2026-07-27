@@ -2095,6 +2095,22 @@ class FileTree(Gtk.Box):
             else:
                 break
 
+        # DRAWER-WIDTH-FIX: Clean up stale drawer entries that were removed by collapse,
+        # then update column visibility (columns should come back if no drawers remain)
+        stale_paths = []
+        for path, drawer_row in self._drawer_paths.items():
+            alive = False
+            for k in range(self._store.get_n_items()):
+                if self._store.get_item(k) is drawer_row:
+                    alive = True
+                    break
+            if not alive:
+                stale_paths.append(path)
+        for path in stale_paths:
+            del self._drawer_paths[path]
+            self._loaded_drawers.discard(path)
+        self._update_column_visibility_for_drawers()
+
     # ── Row Activation (ColumnView ::activate signal) ─────────────────────
 
     def _on_row_activated(self, column_view: Gtk.ColumnView, position: int) -> None:
