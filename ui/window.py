@@ -421,7 +421,6 @@ class MainWindow(Gtk.ApplicationWindow):
             lambda name: self._project_handler.create_project(name, pm_name="Captain", pm_id="cli")
         )
         left_panel._file_tree.set_project_handler(self._project_handler)
-        left_panel._file_tree.set_on_get_git_status(self._project_handler.get_git_status)
         self._main_content.set_file_tree(self._left_panel._file_tree)
         self._left_panel.set_toggle_agent_callback(self._project_handler.toggle_agent)
 
