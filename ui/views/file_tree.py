@@ -716,8 +716,20 @@ class FileTree(Gtk.Box):
             while j < len(all_items) and (all_items[j].props.parent_full_path or "") == group_parent:
                 j += 1
             group = all_items[i:j]
-            group.sort(key=functools.cmp_to_key(self._make_group_comparator()))
-            sorted_items.extend(group)
+            # Separate drawers from regular items — drawers stay at insertion
+            # position (adjacent to their file).
+            non_drawers = [item for item in group if not item.props.is_drawer]
+            drawers = [item for item in group if item.props.is_drawer]
+            # Sort non-drawer items
+            non_drawers.sort(key=functools.cmp_to_key(self._make_group_comparator()))
+            # Re-insert drawers right after their parent file (matched by full_path)
+            sorted_group: list[FileTreeRow] = []
+            for item in non_drawers:
+                sorted_group.append(item)
+                for d in drawers:
+                    if d.props.full_path == item.props.full_path:
+                        sorted_group.append(d)
+            sorted_items.extend(sorted_group)
             i = j
 
         # Rebuild the store
@@ -1343,13 +1355,13 @@ class FileTree(Gtk.Box):
             # Create drawer row
             drawer_row = FileTreeRow(
                 display_name="",
-                full_path="",
+                full_path=file_path,
                 is_dir=False,
                 is_drawer=True,
                 depth=file_row.props.depth,
                 drawer_widget=revealer,
                 is_open=True,
-                parent_full_path=file_path,
+                parent_full_path=file_row.props.parent_full_path,
             )
             # Defensive: enforce invariants the sort comparator relies on
             assert file_row.props.depth >= 0
