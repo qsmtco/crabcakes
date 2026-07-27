@@ -1103,8 +1103,8 @@ class FileTree(Gtk.Box):
         # Restore saved mode if handler provides one (block signal to avoid feedback loop — BUG #3)
         if self._on_get_sort_mode:
             saved = self._on_get_sort_mode()
-            valid = ["name_asc", "name_desc", "modified_desc", "modified_asc",
-                     "size_desc", "size_asc"]
+            valid = ["name_asc", "name_desc", "modified_asc", "modified_desc",
+                     "size_asc", "size_desc"]
             if saved in valid:
                 idx = valid.index(saved)
                 self._sort_dropdown.handler_block(self._sort_dropdown_handler_id)
