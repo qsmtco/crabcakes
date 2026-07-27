@@ -724,42 +724,36 @@ class TestStatusPorcelainFn:
     def test_too_short_line_skipped(self, temp_repo, monkeypatch):
         """A porcelain line shorter than 4 chars is skipped (BUG #4).
 
-        Monkeypatch Repo so status_porcelain's internal Repo.git.status()
+        Monkeypatch subprocess.run so status_porcelain's internal subprocess
         returns a synthetic too-short line.
         """
-        import git as gitpython
+        import subprocess
 
-        class FakeGit:
-            def status(self, *args, **kwargs):
-                return "XY\n"
+        class FakeResult:
+            returncode = 0
+            stdout = "XY\n"
+            stderr = ""
 
-        class FakeRepo:
-            git = FakeGit()
-            working_dir = temp_repo
-
-        monkeypatch.setattr(gitpython, "Repo", lambda path: FakeRepo())
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: FakeResult())
 
         result = status_porcelain(temp_repo)
         assert result == {}  # too-short line skipped, nothing parsed
 
     def test_worktree_rename_both_status_positions(self, temp_repo, monkeypatch):
-        """Worktree rename ' R old -> new' checks BOTH status columns (BUG #25).
+        """Worktree rename ' R old -> new' checks BOTH status positions (BUG #25).
 
         Worktree-column rename (' R') is synthetic — git's default porcelain
         output only emits index-column renames ('R '). But the parser must
-        handle both. Monkeypatch Repo to inject a synthetic ' R' line.
+        handle both. Monkeypatch subprocess.run to inject a synthetic ' R' line.
         """
-        import git as gitpython
+        import subprocess
 
-        class FakeGit:
-            def status(self, *args, **kwargs):
-                return " R old_name.txt -> new_name.txt\n"
+        class FakeResult:
+            returncode = 0
+            stdout = " R old_name.txt -> new_name.txt\n"
+            stderr = ""
 
-        class FakeRepo:
-            git = FakeGit()
-            working_dir = temp_repo
-
-        monkeypatch.setattr(gitpython, "Repo", lambda path: FakeRepo())
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: FakeResult())
 
         result = status_porcelain(temp_repo)
         # Worktree-column rename: destination path is the key
