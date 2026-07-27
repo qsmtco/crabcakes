@@ -1103,11 +1103,7 @@ class FileTree(Gtk.Box):
 
         # Phase 3: Initialize sort/filter model chain and restore saved sort mode (M6)
         # Reset dropdown to default before restoring (BUG #7 fix)
-        self._sort_dropdown.handler_block(self._sort_dropdown_handler_id)
-        try:
-            self._sort_dropdown.set_selected(0)
-        finally:
-            self._sort_dropdown.handler_unblock(self._sort_dropdown_handler_id)
+        FileTree._set_dropdown_silently(self._sort_dropdown, self._sort_dropdown_handler_id, 0)
         self._init_sort_filter()
         # Always apply default sort first (P3-1 fix)
         self._apply_sort("name_asc")
