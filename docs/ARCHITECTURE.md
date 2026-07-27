@@ -580,18 +580,45 @@ panel.set_toggle_agent_callback(cb)            # wires +/− toggle to ProjectHa
 
 ### 3.8 `ui/views/file_tree.py` — FileTree Widget
 
-**Responsibility:** Expandable directory browser with lazy-loading. Used by the Projects tab.
+**Responsibility:** Expandable directory browser with Gtk.ColumnView, lazy-loading, multi-column layout (Name, Status, Size, Modified). Used by the Projects tab.
 
-**Features:**
-- `Gtk.TreeView` + `Gtk.TreeStore`
-- Clicking expander icons expands/collapses directories; row-activated fires on double-click
-- Double-click on a project directory calls `on_project_opened(name, path)`
-- Subdirectory children are placeholder rows until first expand, then populated via `scan_directory()`
+**Architecture (FileTree Enhancements Phase 1–4):**
+
+The FileTree underwent a phased enhancement transforming it from a simple Gtk.TreeView directory browser into a full-featured file explorer with sort, filter, search, git status badges, and per-project persistence:
+
+**Phase 1–3 — View (widgets + data models):**
+- `FileTreeRow`: GObject with 22 properties (12 original + 9 file metadata + parent_full_path)
+- `ColumnView` + `SortListModel` + `FilterListModel` chain (in-place mutation pattern for sort/filter without rebuilding the store)
+- 4-column layout: Name, Status (git badge), Size (human-readable), Modified (relative time)
+- Sort: 6 modes (`name_asc`, `name_desc`, `modified_asc`, `modified_desc`, `size_asc`, `size_desc`), depth-aware comparator preserving tree hierarchy, drawer-adjacency invariant
+- Search debounce (150ms `GLib.timeout_add`) and timeout lifecycle
+- Background thread safety via generation counter + path capture
+- Factory classes for row widgets, expand/collapse, diff drawer
+
+**Phase 4 — Handler/view split:**
+
+```
+ui/handlers/file_tree_handler.py    (NO GTK)
+├── sort preference persistence     (.crabcakes/file_tree_prefs.json, whitelist-validated)
+└── git status cache                (status_porcelain, dirty flag, refresh/invalidate)
+
+ui/views/file_tree.py               (GTK widgets)
+├── ColumnView + SortListModel + FilterListModel chain
+├── FileTreeRow widget (22 GObject properties)
+├── depth-aware comparator (6 sort modes)
+├── search debounce (150ms)
+└── factory classes (drawer, row widget, expand/collapse)
+```
+
+The handler owns non-UI concerns (preferences I/O, git status caching). The view owns all GTK widgets and model chains. Communication is via callback setters on the view: `set_on_sort_changed`, `set_on_get_sort_mode`, `set_on_get_git_status`.
 
 **Public API:**
 ```python
 tree = FileTree(on_file_selected=cb)  # double-click file selection
 tree.set_on_project_opened(cb)        # double-click on project row fires callback
+tree.set_on_sort_changed(cb)          # sort mode changed: cb(mode_str)
+tree.set_on_get_sort_mode(cb)         # fetch saved sort mode: cb() -> str
+tree.set_on_get_git_status(cb)        # fetch git status: cb() -> dict[str, str]
 ```
 
 ### 3.9 `ui/views/main_content.py` — Main Content Area
