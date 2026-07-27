@@ -732,8 +732,22 @@ class FileTree(Gtk.Box):
             sorted_items.extend(sorted_group)
             i = j
 
+        # Save selection by object identity before splice (BUG #2)
+        selected_row = None
+        if self._selection:
+            pos = self._selection.get_selected()
+            if pos >= 0 and self._filter_model and pos < self._filter_model.get_n_items():
+                selected_row = self._filter_model.get_item(pos)
+
         # Rebuild the store
         self._store.splice(0, self._store.get_n_items(), sorted_items)
+
+        # Restore selection by object identity (BUG #2)
+        if selected_row is not None and self._filter_model:
+            for k in range(self._filter_model.get_n_items()):
+                if self._filter_model.get_item(k) is selected_row:
+                    self._selection.set_selected(k)
+                    break
 
     def _make_group_comparator(self):
         """Return a comparator function for sibling groups based on current sort mode."""
