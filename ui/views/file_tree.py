@@ -712,41 +712,76 @@ class FileTree(Gtk.Box):
             while j < len(all_items) and (all_items[j].props.parent_full_path or "") == group_parent:
                 j += 1
             group = all_items[i:j]
-            # Sort this group in place
-            group.sort(key=self._make_sort_key)
+            # Sort this group using the comparator
+            import functools
+            group.sort(key=functools.cmp_to_key(self._make_group_comparator()))
             sorted_items.extend(group)
             i = j
 
         # Rebuild the store
         self._store.splice(0, self._store.get_n_items(), sorted_items)
 
-    @staticmethod
-    def _make_sort_key(row: FileTreeRow) -> tuple:
-        """Sort key for a single row within its sibling group.
-
-        Returns (group_rank, sort_value, name) where:
-        - group_rank: 0=dir, 1=file, 2=drawer (dirs first, drawers last)
-        - sort_value: modified_time, file_size, or 0 (depending on mode)
-        - name: display_name for tie-breaking
-        """
-        if row.props.is_dir:
-            rank = 0
-        elif row.props.is_drawer:
-            rank = 2
-        else:
-            rank = 1
-        # name for tie-breaking — drawers use parent basename
+    def _make_group_comparator(self):
+        """Return a comparator function for sibling groups based on current sort mode."""
         import os as _os
-        if row.props.is_drawer:
-            name = _os.path.basename(row.props.parent_full_path or "").casefold()
-        else:
-            name = (row.props.display_name or "").casefold()
-        # For descending modes, we can't just negate here because the mode
-        # is tracked on the class. The sort key is mode-independent for the
-        # primary fields; the _sort_store_in_place method handles direction
-        # by reversing where needed. For simplicity, we use a 3-tuple and
-        # let the caller decide direction.
-        return (rank, 0, name)
+        mode = self._current_sort_mode
+
+        def group_rank(row):
+            if row.props.is_dir:
+                return 0
+            if row.props.is_drawer:
+                return 2
+            return 1
+
+        def sort_name(row):
+            if row.props.is_drawer:
+                return _os.path.basename(row.props.parent_full_path or "").casefold()
+            return (row.props.display_name or "").casefold()
+
+        def cmp(a, b):
+            # Rule 1: dirs before files before drawers
+            ga, gb = group_rank(a), group_rank(b)
+            if ga != gb:
+                return -1 if ga < gb else 1
+
+            # Rule 2: file-before-drawer tiebreaker (when names match)
+            na, nb = sort_name(a), sort_name(b)
+            if na == nb:
+                if not a.props.is_drawer and b.props.is_drawer:
+                    return -1
+                if a.props.is_drawer and not b.props.is_drawer:
+                    return 1
+
+            # Rule 3: apply sort mode
+            if mode in ("name_asc", "name_desc"):
+                if na != nb:
+                    if mode == "name_asc":
+                        return -1 if na < nb else 1
+                    else:
+                        return 1 if na < nb else -1
+                return 0
+
+            if mode in ("modified_asc", "modified_desc"):
+                ta, tb = a.props.modified_time, b.props.modified_time
+                if ta != tb:
+                    if mode == "modified_asc":
+                        return -1 if ta < tb else 1
+                    else:
+                        return 1 if ta < tb else -1
+                return -1 if na < nb else (1 if na > nb else 0)
+
+            if mode in ("size_asc", "size_desc"):
+                sa, sb = a.props.file_size, b.props.file_size
+                if sa != sb:
+                    if mode == "size_asc":
+                        return -1 if sa < sb else 1
+                    else:
+                        return 1 if sa < sb else -1
+                return -1 if na < nb else (1 if na > nb else 0)
+
+            return -1 if na < nb else (1 if na > nb else 0)
+
+        return cmp
 
     @staticmethod
     def _build_sorter(sort_mode: str) -> Gtk.Sorter:
