@@ -2078,6 +2078,7 @@ class FileTree(Gtk.Box):
                 depth=parent_depth + 1,
                 has_children=is_dir,
                 expanded=False,
+                parent_full_path=parent_row.props.full_path,
                 file_size=0 if is_dir else size_bytes,
                 file_size_display="—" if is_dir else format_size(size_bytes),
                 modified_time=mtime_ns // 1_000_000_000 if mtime_ns else 0,
