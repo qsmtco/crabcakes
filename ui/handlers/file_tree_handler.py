@@ -37,10 +37,13 @@ class FileTreeHandler:
         Cached until invalidate_git_status() is called.
         """
         if not self._git_status_dirty:
-            return self._git_status_cache
-        self._git_status_cache = status_porcelain(self._project_path)
+            return dict(self._git_status_cache)
+        result = status_porcelain(self._project_path)
+        if not isinstance(result, dict):
+            result = {}
+        self._git_status_cache = result
         self._git_status_dirty = False
-        return self._git_status_cache
+        return dict(self._git_status_cache)
 
     def invalidate_git_status(self) -> None:
         """Mark git status cache as dirty — next refresh will re-run git status."""
@@ -51,7 +54,7 @@ class FileTreeHandler:
 
     def set_sort_mode(self, mode: str) -> None:
         """Set sort mode, save to persistence. Validates against whitelist (BUG #13)."""
-        if mode not in self._VALID_SORT_MODES:
+        if not isinstance(mode, str) or mode not in self._VALID_SORT_MODES:
             return
         if mode != self._sort_mode:
             self._sort_mode = mode
