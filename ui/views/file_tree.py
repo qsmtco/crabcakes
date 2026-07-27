@@ -665,9 +665,14 @@ class FileTree(Gtk.Box):
     # ── Phase 3: Sort/Filter Model Chain ──────────────────────────────
 
     def _init_sort_filter(self) -> None:
-        """Create SortListModel + FilterListModel chain once, repoint selection."""
-        self._sort_model = Gtk.SortListModel.new(self._store, None)
-        self._filter_model = Gtk.FilterListModel.new(self._sort_model, None)
+        """Create FilterListModel for search filtering (no SortListModel).
+
+        The sort is applied locally at insertion time (see _sort_range) rather
+        than via a global SortListModel. A flat SortListModel cannot preserve
+        tree hierarchy — it mixes children from different parents. Local sort
+        keeps children grouped under their parent.
+        """
+        self._filter_model = Gtk.FilterListModel.new(self._store, None)
         self._selection.set_model(self._filter_model)
 
     def _apply_sort(self, sort_mode: str) -> None:
