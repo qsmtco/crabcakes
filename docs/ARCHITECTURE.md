@@ -144,7 +144,8 @@ crabcakes/
 │   │   ├── connection_sync_handler.py  # post-connect wiring (Phase 3a extraction)
 │   │   ├── forward_handler.py     # 17 tests (Phase 3b extraction)
 │   │   ├── settings_handler.py    # Settings dialog logic — provider CRUD, test connection, status
-│   │   └── auxilium_wizard_handler.py # Auxilium first-run wizard handler (Tier 1, D7)
+│   │   ├── auxilium_wizard_handler.py # Auxilium first-run wizard handler (Tier 1, D7)
+│   │   └── file_tree_handler.py   # Sort prefs + git status cache (no GTK) — FileTree enhancements Phase 4
 │   └── views/                 # View widgets
 │       ├── __init__.py
 │       ├── activity_drawer.py  # NEW (SPEC-activity-drawer) — collapsible activity event panel
