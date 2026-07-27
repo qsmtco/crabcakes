@@ -759,7 +759,7 @@ class FileTree(Gtk.Box):
     def _filter_func(item, query: str) -> bool:
         """Substring match on name + path. casefold() (BUG #12).
         Drawer rows pass through via parent_full_path (BUG #18, #26).
-        Guards against None (BUG #24). Returns False for None (BUG #5).
+        Defensive None handling for full_path/parent_full_path (BUG #4).
         """
         if not query:
             return True
@@ -767,12 +767,12 @@ class FileTree(Gtk.Box):
             return False
         row = cast(FileTreeRow, item)
         q = query.casefold()
+        name = (row.props.display_name or "").casefold()
         if row.props.is_drawer:
-            # BUG #26: drawer rows filter with their parent file
-            parent = row.props.parent_full_path or row.props.full_path
-            return q in row.props.display_name.casefold() or q in parent.casefold()
-        return (q in row.props.display_name.casefold() or
-                q in row.props.full_path.casefold())
+            parent = (row.props.parent_full_path or "").casefold()
+            return q in name or q in parent
+        path = (row.props.full_path or "").casefold()
+        return q in name or q in path
 
     # ── Phase 3: Sort dropdown handler ─────────────────────────────────
 
