@@ -154,7 +154,7 @@ crabcakes/
 │       ├── feed_card.py        # ~581 lines — feed_card widget factory (Phase 5)
 │       ├── diff_card.py         # Diff card widget factories — build_file_diff_card, build_diff_summary_card (Phase 7)
 │       ├── review_bar.py        # ReviewBar widget — review mode dropdown + action buttons (Phase 7)
-│       ├── file_tree.py        # FileTree — Gtk.TreeView directory browser
+│       ├── file_tree.py        # ~2272 lines — FileTree (ColumnView directory browser, 22-property model, sort/filter/search)
 │       ├── left_panel.py         # ~974 lines — LeftPanel (Prompts/Agents/Projects notebook + right-click copy menu)
 │       ├── main_content.py     # MainContent — chat notebook + input + button bar
 │       ├── session_menu.py     # Right-click session switcher popover
