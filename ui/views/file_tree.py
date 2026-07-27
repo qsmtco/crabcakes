@@ -2092,7 +2092,8 @@ class FileTree(Gtk.Box):
             self._store.insert(insert_pos, child)
             insert_pos += 1
 
-        # SortListModel auto-sorts on store mutation — no need for explicit _apply_sort
+        # Sort the newly inserted children locally (no global SortListModel)
+        self._sort_store_in_place()
 
     def _collapse_directory(self, row_index: int) -> None:
         """Collapse a directory row: remove all descendants with greater depth."""
