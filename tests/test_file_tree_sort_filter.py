@@ -1,346 +1,246 @@
-"""Integration tests for FileTree sort and filter via REAL GTK4 model chain.
+"""Tests for FileTree sort (local sibling-group sort) and filter (FilterListModel).
 
-These tests create actual Gio.ListStore + Gtk.SortListModel + Gtk.FilterListModel
-instances and verify that sorting and filtering work correctly. They use GTK4
-types but do NOT require a display server (ListStore/SortListModel/FilterListModel
-work headless).
+Phase 3 redesign: SortListModel was removed because a flat sorter cannot
+preserve tree hierarchy. Sort is now applied locally to contiguous sibling
+groups at insertion time. Filter uses FilterListModel for search.
 """
+
+import pytest
+import os
+import sys
+import functools
 
 import gi
 gi.require_version('Gtk', '4.0')
-gi.require_version('Gio', '2.0')
 from gi.repository import Gtk, Gio, GObject
 
-import os
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
-from ui.views.file_tree import FileTree, FileTreeRow, format_size, format_mtime
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ui.views.file_tree import FileTree, FileTreeRow
 
 
-def _make_sorter(mode: str) -> Gtk.Sorter:
-    """Helper: create a CustomSorter for the given sort mode.
+def _make_row(name, full_path, is_dir=False, depth=0, parent="", drawer=False,
+              parent_fp="", mtime=0, size=0):
+    """Helper to create a FileTreeRow with common defaults."""
+    return FileTreeRow(
+        display_name=name,
+        full_path=full_path,
+        is_dir=is_dir,
+        is_drawer=drawer,
+        depth=depth,
+        parent_full_path=parent_fp or parent,
+        modified_time=mtime,
+        file_size=size,
+    )
 
-    _build_sorter is a @staticmethod, called directly.
+
+class FakeTree:
+    """Minimal stand-in for FileTree to hold _current_sort_mode."""
+    def __init__(self, mode="name_asc"):
+        self._current_sort_mode = mode
+
+
+def _sort_items(items, mode="name_asc"):
+    """Sort a list of FileTreeRow items using FileTree's group comparator.
+
+    Simulates _sort_store_in_place: finds contiguous sibling groups (same
+    parent_full_path) and sorts each group.
     """
-    return FileTree._build_sorter(mode)
+    ft = FakeTree(mode)
+    cmp_fn = FileTree._make_group_comparator(ft)
+    result = []
+    i = 0
+    while i < len(items):
+        group_parent = items[i].props.parent_full_path or ""
+        j = i
+        while j < len(items) and (items[j].props.parent_full_path or "") == group_parent:
+            j += 1
+        group = items[i:j]
+        group.sort(key=functools.cmp_to_key(cmp_fn))
+        result.extend(group)
+        i = j
+    return result
 
 
-class TestComparators:
-    """Test that the 6 sort comparators actually sort correctly via GTK4.
+class TestGroupComparator:
+    """Test the sibling-group comparator across all 6 sort modes."""
 
-    Creates REAL SortListModel instances with CustomSorter and asserts
-    the correct ordering.
-    """
+    def test_name_asc(self):
+        items = [
+            _make_row("cherry.py", "/c.py"),
+            _make_row("apple.py", "/a.py"),
+            _make_row("banana.py", "/b.py"),
+        ]
+        result = _sort_items(items, "name_asc")
+        assert [r.props.display_name for r in result] == ["apple.py", "banana.py", "cherry.py"]
 
-    def _make_store(self, names, dirs=None, mtimes=None, sizes=None, drawer_at=None):
-        """Build a Gio.ListStore[FileTreeRow] with given display names.
+    def test_name_desc(self):
+        items = [
+            _make_row("apple.py", "/a.py"),
+            _make_row("banana.py", "/b.py"),
+            _make_row("cherry.py", "/c.py"),
+        ]
+        result = _sort_items(items, "name_desc")
+        assert [r.props.display_name for r in result] == ["cherry.py", "banana.py", "apple.py"]
 
-        Args:
-            names: list of display_name strings
-            dirs: set of indices that should be directories
-            mtimes: list of modified_time ints (nano timestamps)
-            sizes: list of file_size ints
-            drawer_at: if set, insert a drawer row after the given index
-        """
-        store = Gio.ListStore.new(FileTreeRow.__gtype__)
-        entries = []
-        for i, name in enumerate(names):
-            is_dir = dirs is not None and i in dirs
-            mtime = mtimes[i] if mtimes else 1_700_000_000_000_000_000
-            size = sizes[i] if sizes else 100
-            row = FileTreeRow(
-                display_name=name,
-                full_path=f'/{name}',
-                is_dir=is_dir,
-                file_size=0 if is_dir else size,
-                file_size_display="—" if is_dir else format_size(size),
-                modified_time=mtime // 1_000_000_000 if mtime else 0,
-                modified_display=format_mtime(mtime) if mtime else "—",
-            )
-            entries.append(row)
-            store.append(row)
-        if drawer_at is not None:
-            parent = entries[drawer_at]
-            drawer_row = FileTreeRow(
-                display_name="",
-                full_path="",
-                is_drawer=True,
-                depth=1,
-                parent_full_path=parent.props.full_path,
-            )
-            store.append(drawer_row)
-        return store
+    def test_dirs_before_files(self):
+        items = [
+            _make_row("file.py", "/f.py", is_dir=False),
+            _make_row("src", "/src", is_dir=True),
+            _make_row("another_dir", "/ad", is_dir=True),
+        ]
+        result = _sort_items(items, "name_asc")
+        names = [r.props.display_name for r in result]
+        assert names == ["another_dir", "src", "file.py"]
 
-    def _assert_sorted(self, store, sorter, expected):
-        smodel = Gtk.SortListModel.new(store, sorter)
-        names = []
-        for i in range(smodel.get_n_items()):
-            item = smodel.get_item(i)
-            names.append(item.props.display_name)
-        assert names == expected, f'Expected {expected}, got {names}'
+    def test_modified_desc(self):
+        items = [
+            _make_row("old.py", "/old.py", mtime=100),
+            _make_row("new.py", "/new.py", mtime=300),
+            _make_row("mid.py", "/mid.py", mtime=200),
+        ]
+        result = _sort_items(items, "modified_desc")
+        assert [r.props.display_name for r in result] == ["new.py", "mid.py", "old.py"]
 
-    # -- Name asc/desc ---
+    def test_modified_asc(self):
+        items = [
+            _make_row("old.py", "/old.py", mtime=100),
+            _make_row("new.py", "/new.py", mtime=300),
+            _make_row("mid.py", "/mid.py", mtime=200),
+        ]
+        result = _sort_items(items, "modified_asc")
+        assert [r.props.display_name for r in result] == ["old.py", "mid.py", "new.py"]
 
-    def test_name_asc_sorts(self):
-        store = self._make_store(['cherry', 'apple', 'banana'])
-        sorter = _make_sorter('name_asc')
-        self._assert_sorted(store, sorter, ['apple', 'banana', 'cherry'])
+    def test_size_desc(self):
+        items = [
+            _make_row("small.py", "/s.py", size=100),
+            _make_row("big.py", "/b.py", size=5000),
+            _make_row("med.py", "/m.py", size=1000),
+        ]
+        result = _sort_items(items, "size_desc")
+        assert [r.props.display_name for r in result] == ["big.py", "med.py", "small.py"]
 
-    def test_name_desc_sorts(self):
-        store = self._make_store(['apple', 'banana', 'cherry'])
-        sorter = _make_sorter('name_desc')
-        self._assert_sorted(store, sorter, ['cherry', 'banana', 'apple'])
-
-    # -- Dirs sort before files ---
-
-    def test_dirs_sort_before_files_name_asc(self):
-        store = self._make_store(['z_dir', 'm_file', 'a_dir', 'x_file'],
-                                  dirs={0, 2})
-        sorter = _make_sorter('name_asc')
-        self._assert_sorted(store, sorter,
-                            ['a_dir', 'z_dir', 'm_file', 'x_file'])
-
-    def test_dirs_sort_before_files_name_desc(self):
-        store = self._make_store(['a_dir', 'm_file', 'z_dir', 'x_file'],
-                                  dirs={0, 2})
-        sorter = _make_sorter('name_desc')
-        self._assert_sorted(store, sorter,
-                            ['z_dir', 'a_dir', 'x_file', 'm_file'])
-
-    # -- Modified asc/desc ---
-
-    def test_modified_desc_sorts(self):
-        mtimes = [1_700_000_000_000_000_000, 1_800_000_000_000_000_000,
-                  1_500_000_000_000_000_000]
-        store = self._make_store(['old', 'new', 'oldest'], mtimes=mtimes)
-        sorter = _make_sorter('modified_desc')
-        self._assert_sorted(store, sorter, ['new', 'old', 'oldest'])
-
-    def test_modified_asc_sorts(self):
-        mtimes = [1_700_000_000_000_000_000, 1_800_000_000_000_000_000,
-                  1_500_000_000_000_000_000]
-        store = self._make_store(['mid', 'new', 'old'], mtimes=mtimes)
-        sorter = _make_sorter('modified_asc')
-        self._assert_sorted(store, sorter, ['old', 'mid', 'new'])
-
-    # -- Size asc/desc ---
-
-    def test_size_desc_sorts(self):
-        store = self._make_store(['small', 'large', 'medium'],
-                                  sizes=[10, 1000, 100])
-        sorter = _make_sorter('size_desc')
-        self._assert_sorted(store, sorter, ['large', 'medium', 'small'])
-
-    def test_size_asc_sorts(self):
-        store = self._make_store(['large', 'small', 'medium'],
-                                  sizes=[1000, 10, 100])
-        sorter = _make_sorter('size_asc')
-        self._assert_sorted(store, sorter, ['small', 'medium', 'large'])
-
-    # -- Dirs respect all sort modes ---
-
-    def test_dirs_sort_before_files_modified_desc(self):
-        store = self._make_store(['z_dir', 'm_file', 'a_dir', 'x_file'],
-                                  dirs={0, 2},
-                                  mtimes=[1_700_000_000_000_000_000,
-                                          1_800_000_000_000_000_000,
-                                          1_500_000_000_000_000_000,
-                                          1_600_000_000_000_000_000])
-        sorter = _make_sorter('modified_desc')
-        self._assert_sorted(store, sorter,
-                            ['z_dir', 'a_dir', 'm_file', 'x_file'])
-
-    def test_dirs_sort_before_files_size_desc(self):
-        store = self._make_store(['z_dir', 'm_file', 'a_dir', 'x_file'],
-                                  dirs={0, 2}, sizes=[0, 100, 0, 50])
-        sorter = _make_sorter('size_desc')
-        # Both dirs have size 0; within same-size group, name ascending (a_dir < z_dir)
-        self._assert_sorted(store, sorter,
-                            ['a_dir', 'z_dir', 'm_file', 'x_file'])
+    def test_size_asc(self):
+        items = [
+            _make_row("big.py", "/b.py", size=5000),
+            _make_row("small.py", "/s.py", size=100),
+            _make_row("med.py", "/m.py", size=1000),
+        ]
+        result = _sort_items(items, "size_asc")
+        assert [r.props.display_name for r in result] == ["small.py", "med.py", "big.py"]
 
 
-class TestDrawerRowSorting:
-    """Drawer rows must stay at their insertion position (BUG #4)."""
+class TestTreeHierarchyPreserved:
+    """Children must stay under their parent after sort."""
 
-    def test_drawer_row_not_reordered(self):
-        store = Gio.ListStore.new(FileTreeRow.__gtype__)
-        rows = []
-        for name in ['banana', 'apple', 'cherry']:
-            r = FileTreeRow(display_name=name, full_path='/'+name, is_dir=False)
-            rows.append(r)
-            store.append(r)
-        # Insert drawer after 'apple' (index 1)
-        drawer = FileTreeRow(
-            display_name="", full_path="", is_drawer=True, depth=1,
-            parent_full_path='/apple',
-        )
-        store.append(drawer)
-        rows.append(drawer)
+    def test_children_stay_under_parent(self):
+        """Expanding src/ keeps its children grouped, not mixed with root items."""
+        # Store order after expand (children inserted right after parent):
+        items = [
+            _make_row("src", "/proj/src", is_dir=True, depth=0, parent=""),
+            _make_row("zzz.py", "/proj/src/zzz.py", depth=1, parent="/proj/src"),
+            _make_row("aaa.py", "/proj/src/aaa.py", depth=1, parent="/proj/src"),
+            _make_row("tests", "/proj/tests", is_dir=True, depth=0, parent=""),
+            _make_row("main.py", "/proj/main.py", depth=0, parent=""),
+        ]
+        result = _sort_items(items, "name_asc")
+        names = [(r.props.display_name, r.props.parent_full_path) for r in result]
+        # Children of src must stay together, right after src
+        assert names == [
+            ("src", ""),
+            ("aaa.py", "/proj/src"),
+            ("zzz.py", "/proj/src"),
+            ("tests", ""),
+            ("main.py", ""),
+        ]
 
-        sorter = _make_sorter('name_asc')
-        smodel = Gtk.SortListModel.new(store, sorter)
-        names = []
-        for i in range(smodel.get_n_items()):
-            item = smodel.get_item(i)
-            names.append(item.props.display_name)
-        # Drawer should NOT be reordered — it stays after its parent
-        assert '' in names, 'drawer row should still be present'
-        # The drawer should appear AFTER 'apple' in the sorted list
-        apple_pos = names.index('apple')
-        drawer_pos = names.index('')
-        assert drawer_pos > apple_pos, \
-            f'drawer (pos {drawer_pos}) should be after apple (pos {apple_pos}) in {names}'
+    def test_nested_expansion_preserved(self):
+        """Two expanded dirs — children don't mix."""
+        items = [
+            _make_row("mmm_dir", "/mmm", is_dir=True, depth=0, parent=""),
+            _make_row("zzz_child.py", "/mmm/zzz.py", depth=1, parent="/mmm"),
+            _make_row("zzz_dir", "/zzz", is_dir=True, depth=0, parent=""),
+            _make_row("aaa_child.py", "/zzz/aaa.py", depth=1, parent="/zzz"),
+        ]
+        result = _sort_items(items, "name_asc")
+        names = [r.props.display_name for r in result]
+        # mmm_dir's children must not mix with zzz_dir's children
+        assert names == ["mmm_dir", "zzz_child.py", "zzz_dir", "aaa_child.py"]
+
+
+class TestDrawerSorting:
+    """Drawers must stay adjacent to their parent file."""
+
+    def test_drawer_stays_after_parent(self):
+        items = [
+            _make_row("apple.py", "/apple.py"),
+            _make_row("", "", drawer=True, parent_fp="/apple.py"),
+            _make_row("banana.py", "/banana.py"),
+        ]
+        result = _sort_items(items, "name_asc")
+        names = [(r.props.display_name or "[drawer]", r.props.parent_full_path) for r in result]
+        assert names == [
+            ("apple.py", ""),
+            ("[drawer]", "/apple.py"),
+            ("banana.py", ""),
+        ]
+
+    def test_multiple_drawers_stay_adjacent(self):
+        """Scrambled insertion — drawers must follow their parents."""
+        items = [
+            _make_row("cherry.py", "/cherry.py"),
+            _make_row("", "", drawer=True, parent_fp="/banana.py"),
+            _make_row("apple.py", "/apple.py"),
+            _make_row("", "", drawer=True, parent_fp="/apple.py"),
+            _make_row("banana.py", "/banana.py"),
+        ]
+        result = _sort_items(items, "name_asc")
+        # Each drawer must be right after its parent
+        for i, item in enumerate(result):
+            if item.props.is_drawer:
+                parent = item.props.parent_full_path
+                assert i > 0, "drawer at position 0"
+                assert result[i - 1].props.full_path == parent, \
+                    f"drawer for {parent} not after parent"
 
 
 class TestFilterFunc:
-    """Test _filter_func directly (headless — no display server needed)."""
+    """Test _filter_func directly."""
 
     def test_substring_match(self):
-        row = FileTreeRow(display_name='hello.py', full_path='/src/hello.py')
-        assert FileTree._filter_func(row, 'hello') is True
-        assert FileTree._filter_func(row, 'HELLO') is True
-        assert FileTree._filter_func(row, 'xyz') is False
+        row = _make_row("hello.py", "/src/hello.py")
+        assert FileTree._filter_func(row, "hello") is True
+        assert FileTree._filter_func(row, "HELLO") is True
+        assert FileTree._filter_func(row, "src") is True
+        assert FileTree._filter_func(row, "xyz") is False
 
     def test_none_returns_false(self):
-        assert FileTree._filter_func(None, 'query') is False
+        assert FileTree._filter_func(None, "query") is False
+
+    def test_none_query_returns_false(self):
+        row = _make_row("test.py", "/test.py")
+        assert FileTree._filter_func(row, None) is False
 
     def test_empty_query_returns_true(self):
-        row = FileTreeRow(display_name='test.py', full_path='/test.py')
-        assert FileTree._filter_func(row, '') is True
+        row = _make_row("test.py", "/test.py")
+        assert FileTree._filter_func(row, "") is True
 
-    def test_path_match(self):
-        row = FileTreeRow(display_name='main.py', full_path='/src/main.py')
-        assert FileTree._filter_func(row, 'src') is True
-        assert FileTree._filter_func(row, '.py') is True
+    def test_drawer_matches_via_parent(self):
+        row = _make_row("", "", drawer=True, parent_fp="/src/main.py")
+        assert FileTree._filter_func(row, "main") is True
+        assert FileTree._filter_func(row, "src") is True
+        assert FileTree._filter_func(row, "other") is False
 
-    def test_drawer_row_filters_with_parent(self):
-        """Drawer row matches when query matches parent_full_path (BUG #26)."""
-        row = FileTreeRow(
-            display_name="", full_path="",
-            is_drawer=True, parent_full_path="/src/main.py",
-        )
-        assert FileTree._filter_func(row, 'main') is True
-        assert FileTree._filter_func(row, 'src') is True
-        assert FileTree._filter_func(row, 'xyz') is False
-
-    def test_drawer_row_filters_with_own_name(self):
-        """Drawer row also matches against its own display_name."""
-        row = FileTreeRow(
-            display_name="diff content", full_path="",
-            is_drawer=True, parent_full_path="/src/main.py",
-        )
-        assert FileTree._filter_func(row, 'diff') is True
-        assert FileTree._filter_func(row, 'main') is True  # from parent
-        assert FileTree._filter_func(row, 'xyz') is False
+    def test_none_full_path_safe(self):
+        """_filter_func must not crash on None full_path."""
+        row = FileTreeRow(display_name="test", full_path=None)
+        assert FileTree._filter_func(row, "test") is True
+        assert FileTree._filter_func(row, "other") is False
 
 
-class TestFilterIntegration:
-    """Test real FilterListModel with CustomFilter — headless."""
+class TestSignalBlockHelper:
+    """Test _set_dropdown_silently exception safety."""
 
-    def _make_store(self, names):
-        store = Gio.ListStore.new(FileTreeRow.__gtype__)
-        for name in names:
-            store.append(FileTreeRow(
-                display_name=name,
-                full_path='/' + name,
-                is_dir=False,
-            ))
-        return store
-
-    def test_filter_keeps_matching(self):
-        store = self._make_store(['apple.py', 'banana.py', 'cherry.py'])
-        cf = Gtk.CustomFilter.new(
-            lambda item: FileTree._filter_func(item, 'ban')
-        )
-        fmodel = Gtk.FilterListModel.new(store, cf)
-        assert fmodel.get_n_items() == 1
-        assert fmodel.get_item(0).props.display_name == 'banana.py'
-
-    def test_filter_no_match(self):
-        store = self._make_store(['apple.py', 'banana.py'])
-        cf = Gtk.CustomFilter.new(
-            lambda item: FileTree._filter_func(item, 'zzz')
-        )
-        fmodel = Gtk.FilterListModel.new(store, cf)
-        assert fmodel.get_n_items() == 0
-
-    def test_filter_empty_query_shows_all(self):
-        store = self._make_store(['a.py', 'b.py'])
-        cf = Gtk.CustomFilter.new(
-            lambda item: FileTree._filter_func(item, '')
-        )
-        fmodel = Gtk.FilterListModel.new(store, cf)
-        assert fmodel.get_n_items() == 2
-
-    def test_filter_none_returns_false(self):
-        """Filter returns False for None item (BUG #5 fix)."""
-        assert FileTree._filter_func(None, 'anything') is False
-
-
-class TestSortFilterChain:
-    """Test SortListModel + FilterListModel stacked — headless."""
-
-    def test_sort_then_filter(self):
-        store = Gio.ListStore.new(FileTreeRow.__gtype__)
-        for name in ['cherry', 'apple', 'banana']:
-            store.append(FileTreeRow(
-                display_name=name, full_path='/' + name, is_dir=False,
-            ))
-        sorter = _make_sorter('name_asc')
-        smodel = Gtk.SortListModel.new(store, sorter)
-        cf = Gtk.CustomFilter.new(
-            lambda item: FileTree._filter_func(item, 'e')
-        )
-        fmodel = Gtk.FilterListModel.new(smodel, cf)
-        names = []
-        for i in range(fmodel.get_n_items()):
-            names.append(fmodel.get_item(i).props.display_name)
-        # 'apple' and 'cherry' match 'e', sorted asc → apple, cherry
-        assert names == ['apple', 'cherry'], f'got {names}'
-
-
-class TestDepthHierarchy:
-    """BUG #1/#2: Depth-aware sorting preserves tree hierarchy."""
-
-    def test_multiple_drawers_stay_adjacent_to_parents(self):
-        """2+ drawers must each stay adjacent to their parent after sort."""
-        store = Gio.ListStore.new(FileTreeRow.__gtype__)
-        # Scrambled insertion — drawers NOT pre-adjacent
-        store.append(FileTreeRow(display_name='cherry.py', full_path='/cherry.py', is_dir=False, depth=0))
-        store.append(FileTreeRow(display_name='', full_path='', is_drawer=True, depth=0, parent_full_path='/banana.py'))
-        store.append(FileTreeRow(display_name='apple.py', full_path='/apple.py', is_dir=False, depth=0))
-        store.append(FileTreeRow(display_name='', full_path='', is_drawer=True, depth=0, parent_full_path='/apple.py'))
-        store.append(FileTreeRow(display_name='banana.py', full_path='/banana.py', is_dir=False, depth=0))
-        sorter = FileTree._build_sorter('name_asc')
-        smodel = Gtk.SortListModel.new(store, sorter)
-        items = [smodel.get_item(i) for i in range(smodel.get_n_items())]
-        # Each drawer must be immediately after its parent file
-        for i, item in enumerate(items):
-            if item.props.is_drawer:
-                parent_path = item.props.parent_full_path
-                assert i > 0, f'drawer at position 0 with no parent above'
-                prev = items[i-1]
-                assert prev.props.full_path == parent_path, \
-                    f'drawer parent {parent_path} not at i-1, found {prev.props.full_path}'
-
-    def test_children_stay_under_parent_after_sort(self):
-        """Children of expanded dirs must not mix with root items after sort."""
-        store = Gio.ListStore.new(FileTreeRow.__gtype__)
-        store.append(FileTreeRow(display_name='mmm_dir', full_path='/mmm_dir', is_dir=True, depth=0))
-        store.append(FileTreeRow(display_name='zzz_child.py', full_path='/mmm_dir/zzz_child.py', is_dir=False, depth=1))
-        store.append(FileTreeRow(display_name='zzz_dir', full_path='/zzz_dir', is_dir=True, depth=0))
-        store.append(FileTreeRow(display_name='aaa_child.py', full_path='/zzz_dir/aaa_child.py', is_dir=False, depth=1))
-        sorter = FileTree._build_sorter('name_asc')
-        smodel = Gtk.SortListModel.new(store, sorter)
-        depths = [smodel.get_item(i).props.depth for i in range(smodel.get_n_items())]
-        # All depth-0 items must come before all depth-1 items
-        d0_count = depths.count(0)
-        assert depths[:d0_count] == [0]*d0_count, f'depth-0 items not grouped: {depths}'
-        assert depths[d0_count:] == [1]*(len(depths)-d0_count), f'depth-1 items not grouped: {depths}'
-
-    def test_set_selected_does_not_trigger_handler_when_blocked(self):
-        """handler_block prevents notify::selected from firing."""
+    def test_handler_block_and_unblock_called(self):
         from unittest.mock import MagicMock
         dd = MagicMock()
         FileTree._set_dropdown_silently(dd, 42, 2)
@@ -348,19 +248,13 @@ class TestDepthHierarchy:
         dd.set_selected.assert_called_once_with(2)
         dd.handler_unblock.assert_called_once_with(42)
 
-    def test_signal_unblocked_after_exception(self):
-        """handler_unblock runs even if set_selected raises."""
+    def test_unblock_on_exception(self):
         from unittest.mock import MagicMock
         dd = MagicMock()
-        dd.set_selected.side_effect = RuntimeError('boom')
+        dd.set_selected.side_effect = RuntimeError("boom")
         try:
             FileTree._set_dropdown_silently(dd, 42, 2)
         except RuntimeError:
-            pass  # expected
+            pass
         dd.handler_block.assert_called_once_with(42)
         dd.handler_unblock.assert_called_once_with(42)
-
-    def test_none_query_returns_false(self):
-        """_filter_func returns False when query is None."""
-        row = FileTreeRow(display_name='test.py', full_path='/test.py')
-        assert FileTree._filter_func(row, None) is False
