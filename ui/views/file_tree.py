@@ -583,6 +583,7 @@ class FileTree(Gtk.Box):
         self._drawer_paths.clear()
         self._loaded_drawers.clear()
         self._last_toggle_per_file.clear()
+        self._update_column_visibility_for_drawers()
 
         # Clear git status map
         self._git_status_map = {}
