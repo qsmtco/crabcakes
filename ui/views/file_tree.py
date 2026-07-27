@@ -720,6 +720,16 @@ class FileTree(Gtk.Box):
             else:
                 name_b = (b.props.display_name or "").casefold()
 
+            # Rule 3a: Tiebreaker — when names match and one is a drawer,
+            # the file sorts before the drawer (parent before child drawer).
+            # This handles scrambled insertion order where a drawer row
+            # was inserted before its parent file in the store.
+            if name_a == name_b:
+                if not a.props.is_drawer and b.props.is_drawer:
+                    return -1  # file before its drawer
+                if a.props.is_drawer and not b.props.is_drawer:
+                    return 1   # drawer after its file
+
             # Rule 4: Apply the actual sort mode within the group
             if sort_mode in ("name_asc", "name_desc"):
                 if name_a != name_b:

@@ -317,21 +317,14 @@ class TestDepthHierarchy:
         sorter = FileTree._build_sorter('name_asc')
         smodel = Gtk.SortListModel.new(store, sorter)
         items = [smodel.get_item(i) for i in range(smodel.get_n_items())]
-        # Each drawer must appear AFTER its parent file (not necessarily immediately,
-        # since drawers sort after all files within the same depth group).
-        # build index map: parent_full_path -> position
-        drawer_parents = {}
+        # Each drawer must be immediately after its parent file
         for i, item in enumerate(items):
             if item.props.is_drawer:
-                drawer_parents[item.props.parent_full_path] = i
-        for parent_path, drawer_pos in drawer_parents.items():
-            # Find parent position
-            parent_pos = next((j for j, item in enumerate(items)
-                               if not item.props.is_drawer and not item.props.is_dir
-                               and item.props.full_path == parent_path), None)
-            assert parent_pos is not None, f'parent {parent_path} not found'
-            assert drawer_pos > parent_pos, \
-                f'drawer for {parent_path} at {drawer_pos} before parent at {parent_pos}'
+                parent_path = item.props.parent_full_path
+                assert i > 0, f'drawer at position 0 with no parent above'
+                prev = items[i-1]
+                assert prev.props.full_path == parent_path, \
+                    f'drawer parent {parent_path} not at i-1, found {prev.props.full_path}'
 
     def test_children_stay_under_parent_after_sort(self):
         """Children of expanded dirs must not mix with root items after sort."""
