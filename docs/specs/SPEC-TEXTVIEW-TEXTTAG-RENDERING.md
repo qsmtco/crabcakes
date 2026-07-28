@@ -773,12 +773,30 @@ TEST_CASES = {
     # Add more from test_markdown.py patterns as needed
 }
 
+# Per-case expected tag sets — explicit, not substring-guessed (BUG #29)
+EXPECTED_TAGS = {
+    "bold":          {"bold"},
+    "italic":        {"italic"},
+    "code_inline":   {"code-inline"},
+    "plain":         set(),
+    "code_block":    {"code-block"},
+    "quote":         {"quote"},
+    "heading":       {"heading-2"},
+    "strikethrough": {"strike"},
+    "link":          {"link"},
+    "mixed":         {"bold", "code-inline", "italic"},
+    "empty":         set(),
+    "only_whitespace": set(),
+}
+
+# Python 3.7+ dict ordering is guaranteed; parametrize order matches insertion order (BUG #31)
 @pytest.mark.parametrize("name,text", list(TEST_CASES.items()))
 def test_visual_parity(name, text):
     """Each TEST_CASES entry renders without exception AND expected tags present.
 
-    This is NOT a tautological assertion. It is a meaningful check that the
-    new path produces the expected formatting tags for known content.
+    Expected tag sets are defined in EXPECTED_TAGS dict (BUG #29 — not
+    substring-guessed, because *italic*, > quote, ## heading, ~~strike~~,
+    and [link]() do not contain ** or backtick but do produce format tags).
     """
     buffer = Gtk.TextBuffer()
     segments = parse_message(text)
@@ -790,17 +808,17 @@ def test_visual_parity(name, text):
     )
     assert len(rendered_text) > 0 or not text.strip()
 
-    # Check expected tags based on content analysis (BUG #23: inline, no helpers)
     attrs = _text_attrs_from_buffer(buffer)
     tag_names = {n for _, _, n in attrs}
-
-    if "**" in text:
-        assert "bold" in tag_names, f"{name}: input has ** but no bold tag"
-    if "`" in text:
-        assert "code-inline" in tag_names or "code-block" in tag_names, \
-            f"{name}: input has backtick but no code tag"
-    if text.strip() and "**" not in text and "`" not in text:
-        assert tag_names == set(), f"{name}: plain text but got tags {tag_names}"
+    expected = EXPECTED_TAGS[name]
+    # Assert every expected tag is present (subset check — renderer may
+    # add extra tags like monospace family, that's fine)
+    assert expected <= tag_names, \
+        f"{name}: expected {expected}, got {tag_names}"
+    # For plain/empty/whitespace cases, assert NO formatting tags
+    if expected == set():
+        assert tag_names == set(), \
+            f"{name}: expected no tags, got {tag_names}"
 
 **Fallback:** If `Gdk.Display` is not available (headless/CI), this test logs WARNING and soft-passes — the structural parser+renderer tests in Phase 1/2 already verify correctness at the segment level.
 
