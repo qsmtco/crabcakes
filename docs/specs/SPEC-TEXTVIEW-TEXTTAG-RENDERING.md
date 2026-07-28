@@ -860,3 +860,6 @@ Estimated: +80 lines to document.
 - [x] **BUG #20** (remove speculative fallback caveat) — "if set_property doesn't accept GEnum" fallback text removed; Phase 0b confirmed `set_property` accepts Pango enums
 - [x] **BUG #21** (§3 streaming diagram → incremental insert) — §3 diagram uses `buffer.insert(end_iter, delta_text)` (O(1) incremental), NOT `buffer.insert(accumulated)` (O(n²))
 - [x] **BUG #22** (StreamingBubble cursor field added) — `cursor: object = None` field added to StreamingBubble dataclass
+- [x] **BUG #23** (fixture_has_* helpers undefined) — inlined content-based classification directly in `test_visual_parity`
+- [x] **BUG #24** (Pango.Style.ITALIS typo) — already fixed in Revision 2; confirmed `ITALIC` is correct member
+- [x] **BUG #25** (follow-link signal absent in GTK4) — replaced with `GestureClick` + `iter_at_location()` + `has_tag()` + `getattr(tag, 'href', None)` pattern. `follow-link` signal confirmed absent from `Gtk.TextView`. `set_data()` confirmed unsupported in PyGObject; Python attribute (`tag.href = uri`) confirmed working. 8 references replaced (1 table row, 1 link-handling paragraph, 1 unchanged note, 1 data-flow diagram, 1 probe item, 1 Phase 3 list item, 1 edge-case row, 1 ARCH note).
