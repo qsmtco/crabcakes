@@ -380,7 +380,7 @@ def _apply_syntax_highlighting(
 >
 > If the state machine approach is >100 lines, replace with a regex: `re.finditer(r'<span foreground="(#[\da-fA-F]+)">(.*?)</span>', markup)` — simpler but note that `html.escape()` inside `highlight()` means `&amp;` etc. must be decoded.
 
-**Link handling:** The `follow-link` signal on `Gtk.TextView` gates navigation through the existing `utils/gtk_safe_link.py:on_activate_link()`. The renderer attaches the link `TextTag` and the `TextView` (consumer of the buffer) connects `follow-link`. This reuses `utils/gtk_safe_link.py` verbatim (§3.14b.1).
+**Link handling:** A `Gtk.GestureClick` controller attached to the `TextView` gates navigation through the existing `utils/gtk_safe_link.py:on_activate_link()`. On click release, the handler calls `text_view.get_iter_at_location(x, y)` to find the clicked position, then checks `iter.has_tag(link_tag)` where `link_tag` is the `StyleTable.link` TextTag. The URL is stored as a Python attribute on the TextTag (`link_tag.href = uri` in `render_segments`, retrieved via `getattr(tag, 'href', None)` in the click handler). This reuses `utils/gtk_safe_link.py` verbatim (§3.14b.1).
 
 **Imports:**
 ```python
@@ -502,7 +502,7 @@ Add `mistune>=3.0,<4.0` to `[project] dependencies`. Moved to Phase 0 (BUG #5 fi
 
 ### UNCHANGED: `utils/gtk_safe_link.py`, `utils/syntax_highlight.py`
 
-Kept verbatim. `gtk_safe_link.py`'s guard is wired into `Gtk.TextView.follow-link` signal handler. `syntax_highlight.py`'s `highlight()` is consumed by the `_apply_syntax_highlighting` adapter in `chat/renderer.py` — zero code changes in either file.
+Kept verbatim. `gtk_safe_link.py`'s guard is wired into a `Gtk.GestureClick` handler on the `Gtk.TextView` (not a `follow-link` signal — that signal does not exist in GTK4). `syntax_highlight.py`'s `highlight()` is consumed by the `_apply_syntax_highlighting` adapter in `chat/renderer.py` — zero code changes in either file.
 
 ### UNCHANGED: `ui/views/diff_card.py`, `ui/views/feed_card.py`
 
@@ -552,7 +552,10 @@ End of streaming:
 ### Link click:
 ```
 User clicks link in Gtk.TextView
-  → TextView emits "follow-link" signal
+  → GestureClick handler fires on release
+  → text_view.get_iter_at_location(x, y) finds clicked position
+  → iter.has_tag(link_tag) determines if click landed on a link
+  → getattr(link_tag, 'href', None) retrieves URL
   → handler = on_activate_link(uri) from utils/gtk_safe_link.py (§3.14b.1)
   → HIGH-6 gate: allowed scheme → open in browser; blocked → block
 ```
