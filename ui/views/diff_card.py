@@ -131,11 +131,11 @@ def _build_diff_line(line_widget_box: Gtk.Box, line: DiffLine, lang: str | None)
     if lang and line.type != "context":
         try:
             highlighted = highlight(line.content, lang)
-            content_lbl = Gtk.Label(label=escape_for_pango(highlighted))
+            content_lbl = Gtk.Label(label=xml_escape_text(highlighted))
         except Exception:
-            content_lbl = Gtk.Label(label=escape_for_pango(line.content))
+            content_lbl = Gtk.Label(label=xml_escape_text(line.content))
     else:
-        content_lbl = Gtk.Label(label=escape_for_pango(line.content))
+        content_lbl = Gtk.Label(label=xml_escape_text(line.content))
 
     content_lbl.set_halign(Gtk.Align.START)
     content_lbl.set_valign(Gtk.Align.CENTER)
