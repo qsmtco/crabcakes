@@ -861,7 +861,7 @@ After implementation, update:
 | §3.14b.1 (gtk_safe_link.py) | Add note: guard now wired via `GestureClick` + `getattr(tag, 'href', None)` on `Gtk.TextView` (same function `on_activate_link`, different mechanism — `Gtk.TextView.follow-link` signal does not exist in GTK4) |
 | §3.14g (block_parser.py) | Delete section: "DELETED — subsumed by `chat/parser.py`" |
 | §3.14h (syntax_highlight.py) | Update: `highlight()` output consumed by `chat/renderer.py` `_apply_syntax_highlighting` adapter (no code change to syntax_highlight.py itself) |
-| §3.14c–3.14i (chat_bubble pipeline) | Update: 7 call sites → 1 `Gtk.TextView` per bubble; pipeline is `parse_message()` + `render_segments()` |
+| §3.14c–3.14i (chat_bubble pipeline) | Update: 8 methods + `_build_image_block` → 1 `Gtk.TextView` per bubble; pipeline is `parse_message()` + `render_segments()` |
 | §3.14d (chat_render_handler.py) | Update: streaming uses parse-on-end, plain TextBuffer during stream, incremental insert |
 | §3.14k (NEW) | `chat/` package: `chat/parser.py` (parse_message), `chat/renderer.py` (render_segments, StyleTable), `chat/segments.py` (Segment data model) |
 | §11 (file inventory) | Add `chat/` files; update `utils/` line counts; mark `utils/markdown.py` + `utils/block_parser.py` deleted |
