@@ -661,7 +661,7 @@ Files: `chat/renderer.py`, `tests/test_chat_renderer.py`, `ui/views/chat_bubble.
 
 Files: `ui/views/chat_bubble.py` (all 8 methods), `ui/handlers/chat_render_handler.py`, `models/streaming.py`, `utils/escaping.py`, `utils/markdown.py` (DELETE), `utils/block_parser.py` (DELETE), 8 non-chat `escape_for_pango` sites
 
-- All 7 `_build_*_segment` methods migrated plus `_build_image_block` (chat_bubble.py:396) — Image → Image segment via renderer (TextChildAnchor with Gtk.Image):
+- All 8 methods migrated (7 `_build_*_segment` + `_build_image_block` at chat_bubble.py:396) — Image → Image segment via renderer (TextChildAnchor with Gtk.Image):
   - `_build_text_segment` — TextTag with inline formatting from `InlineNode` tuple
   - `_build_quote_segment` — BlockQuote → recursive `render_segments` on child blocks
   - `_build_terminal_segment` — TerminalBlock via TextTag + TextChildAnchor for header
