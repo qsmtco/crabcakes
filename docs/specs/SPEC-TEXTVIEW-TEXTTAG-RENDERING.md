@@ -427,7 +427,7 @@ class StreamingBubble:
 
 **Phase 1 (under feature flag):** Migrate one _build_*_segment method. Use `render_segments()` on a shared TextBuffer instead of `escape_for_pango()` + `format_markdown()`.
 
-**Phase 3 (flag ON):** All 7 call sites replaced. The bubble becomes:
+**Phase 3 (flag ON):** All 8 call sites replaced. The bubble becomes:
 
 ```
 build_role_bubble(role, text, ...) -> Gtk.Widget
@@ -578,7 +578,7 @@ User clicks link in Gtk.TextView
 | `tests/test_textview_parity.py` | NEW | +100 | Medium |
 | `tests/test_streaming_textview.py` | NEW | +80 | Low |
 | `pyproject.toml` | MODIFIED | +1 | Low |
-| `ui/views/chat_bubble.py` | MODIFIED | ~−200 net | High (7 call sites) |
+| `ui/views/chat_bubble.py` | MODIFIED | ~−200 net | High (8 call sites) |
 | `ui/handlers/chat_render_handler.py` | MODIFIED | ~+100 net | High (streaming path) |
 | `models/streaming.py` | MODIFIED | ~2 fields changed | Medium (StreamingBubble schema) |
 | `utils/escaping.py` | MODIFIED | ~−242 (delete escape_for_pango) | Low |
