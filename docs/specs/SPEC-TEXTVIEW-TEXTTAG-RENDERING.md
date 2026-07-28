@@ -151,7 +151,7 @@ Key properties:
 | `utils/syntax_highlight.py` — UNCHANGED; `highlight()` consumed via adapter in renderer | GtkSourceView migration |
 | `ui/views/chat_bubble.py` — 7 paired call sites → 1 call to `render_segments()` | Event cards (file_read, edit, tool_call, task) — stay on `xml_template` |
 | `ui/handlers/chat_render_handler.py` — streaming path uses new pipeline (parse-on-end) | |
-| `utils/gtk_safe_link.py` — keep; link gating moves into renderer via `TextView.follow-link` | |
+| `utils/gtk_safe_link.py` — keep; link gating moves into renderer via `Gtk.GestureClick` + `iter_at_location()` + TextTag Python attribute | |
 | `models/streaming.py` — MODIFIED: replace `label` with `text_view` + `buffer`; add `cursor` field | |
 | **Phase 3:** 8 out-of-scope `escape_for_pango()` call sites in non-chat views — migrate to `xml_escape_text()` | |
 
