@@ -673,7 +673,7 @@ Files: `ui/views/chat_bubble.py` (all 7 methods), `ui/handlers/chat_render_handl
   - `update_streaming()` → `buffer.insert(end_iter, delta_text)` (incremental O(1); plain text, no parse)
   - Cursor (`Gtk.Label` with `▍`) packed into container; updated via `cursor.set_text("▍")`
   - `end_streaming()` → removes streaming bubble + cursor → `parse_message(full_text)` → `render_segments()` → replace with final bubble
-- HIGH-6: `TextView.follow-link` → `on_activate_link()` from `utils/gtk_safe_link.py` (§3.14b.1)
+- HIGH-6: `GestureClick` click-release handler → `getattr(link_tag, 'href', None)` → `on_activate_link()` from `utils/gtk_safe_link.py` (§3.14b.1)
 - Delete `escape_for_pango()` from `escaping.py` (keep `xml_escape_text()` + `xml_template()`)
 - Delete whole `utils/markdown.py` (338 lines)
 - Delete whole `utils/block_parser.py` (310 lines)
@@ -815,7 +815,7 @@ After implementation, update:
 | §2 (directory structure) | Add `chat/` package; remove `utils/block_parser.py` |
 | §3.14a (escaping.py) | Replace `escape_for_pango()` with only `xml_escape_text()` + `xml_template()`. **Preserve void-tag defense rationale** as historical note: "The void-tag escaping was required because Gtk.Label.set_markup() parsed markup strings. The new pipeline (chat/parser.py + chat/renderer.py) uses Gtk.TextView with programmatic TextTags — there is no markup parse step, so void-tag escaping is structurally unnecessary." |
 | §3.14b (markdown.py) | Delete section; replace with §3.14b header: "DELETED — replaced by `chat/parser.py` (see §3.14k)" |
-| §3.14b.1 (gtk_safe_link.py) | Add note: guard now wired to `Gtk.TextView.follow-link` signal (same function `on_activate_link`, different signal `follow-link` vs `activate-link`) |
+| §3.14b.1 (gtk_safe_link.py) | Add note: guard now wired via `GestureClick` + `getattr(tag, 'href', None)` on `Gtk.TextView` (same function `on_activate_link`, different mechanism — `Gtk.TextView.follow-link` signal does not exist in GTK4) |
 | §3.14g (block_parser.py) | Delete section: "DELETED — subsumed by `chat/parser.py`" |
 | §3.14h (syntax_highlight.py) | Update: `highlight()` output consumed by `chat/renderer.py` `_apply_syntax_highlighting` adapter (no code change to syntax_highlight.py itself) |
 | §3.14c–3.14i (chat_bubble pipeline) | Update: 7 call sites → 1 `Gtk.TextView` per bubble; pipeline is `parse_message()` + `render_segments()` |
