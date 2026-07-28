@@ -795,7 +795,7 @@ def test_visual_parity(fixture_name):
 | `<script>alert(1)</script>` | Parsed as plain TextSeg — no HTML processing (mistune escapes) |
 | 150 KB input | Truncated at 100 KB with truncation marker; segments from truncated text |
 | Streaming: partial bold (`**star` | Throttled; plain text in streaming view; final text re-parsed on end_streaming (BUG #4 opt A) |
-| Link with javascript: scheme | `follow-link` signal → `on_activate_link()` returns True → blocked |
+| Link with javascript: scheme | `GestureClick` handler → `iter.has_tag(link_tag)` → `getattr(link_tag, 'href', None)` → `on_activate_link()` returns True → blocked |
 | Unknown tag in LLM output | Parsed as plain text — no GMarkup parse needed |
 | Tab characters | Mistune passes through; TextTag renders as spaces |
 | Unicode emoji | Passed through verbatim; Pango renders emoji glyphs |
