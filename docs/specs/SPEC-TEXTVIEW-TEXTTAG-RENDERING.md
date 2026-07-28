@@ -622,7 +622,10 @@ Duration: 1 session per spike.
     - `tag.set_property("weight", Pango.Weight.BOLD)` — Phase 0b confirms this works, accepts Pango enums
     - `tag.set_property("background", "rgba(127,127,127,0.15)")` — Phase 0b confirms RGBA string works
     - `buffer.insert_with_tags(iter, text, tag1, tag2)` — Phase 0b confirms varargs works
-    - `Gtk.TextView.follow-link` signal — Phase 0b confirms signal exists
+    - `Gtk.GestureClick` instantiation and connection to `Gtk.TextView`
+    - `text_view.get_iter_at_location(x, y)` returns valid `Gtk.TextIter`
+    - `iter.has_tag(link_tag)` on the TextTag — Phase 0b confirms this works
+    - Python attribute access on TextTag: `tag.href = uri` / `getattr(tag, 'href', None)` — Phase 0b confirms this works (see BUG #25 resolution for probe output)
     - Edge cases: does `rgba()` with alpha < 0.1 round-trip? Does `scale=Pango.Scale.XX_LARGE` work or need a float?
 - Deliverable: `_probe_gtk_tags.py` + pass/fail report. **Phase 1 gated on Phase 0b passing** (or documenting workarounds).
 
