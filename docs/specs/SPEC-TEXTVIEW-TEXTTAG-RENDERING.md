@@ -448,12 +448,13 @@ Changes:
 - `_build_table_segment` — delegates to renderer (TextChildAnchor for table grid)
 - `_build_code_from_markup` — uses `_apply_syntax_highlighting()` adapter (BUG #2b)
 - `_build_terminal_segment` — delegates to renderer (TextChildAnchor for terminal header)
+- `_build_image_block` (chat_bubble.py:396) — Image block → Image segment via renderer (TextChildAnchor with Gtk.Image)
 - `_make_table_cell` — deleted (TextTag handles inline formatting)
 - Phase 3: import `highlight` from `utils.syntax_highlight` stays (used by `_apply_syntax_highlighting` adapter); import `extract_blocks` from `utils.block_parser` DELETED
 - Phase 3: import `escape_for_pango` and `format_markdown` from `utils.escaping`/`utils.markdown` DELETED
 - Phase 3: `build_streaming_bubble()` returns `(container, text_view, buffer, cursor)` instead of `(container, label)` — schema matches updated `StreamingBubble` dataclass
 
-~200 lines removed from _build_*_segment methods.
+~200 lines removed from _build_*_segment methods and _build_image_block.
 
 ### MODIFIED: `ui/handlers/chat_render_handler.py`
 
