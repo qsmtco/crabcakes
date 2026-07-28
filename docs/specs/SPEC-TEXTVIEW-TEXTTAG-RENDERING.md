@@ -1,6 +1,6 @@
 # SPEC: Migrate Chat Rendering from Pango Markup to Gtk.TextView + TextTag (REVISED)
 
-**Date:** 2026-07-22 (Revision 3)
+**Date:** 2026-07-27 (Revision 4)
 **Author:** Coder
 **Status:** Draft — for implementation
 **Implements:** `docs/proposals/PROPOSAL-textview-texttag-rendering.md`
@@ -852,7 +852,7 @@ Estimated: +80 lines to document.
 - [x] SUP-4 (fuzz alphabet expanded) — includes `&%{}!?"'`
 - [x] SUP-5 (Phase 0b display requirement) — $DISPLAY, manual probe
 - [x] **BUG #15** (tag.props.items() → tag-name+ranges comparison) — `_text_attrs_from_buffer` rewritten to use `tag.get_property("name")`; no `.props.items()` call
-- [x] **BUG #16** (TextTagTable iteration → get_size/get_nth_tag) — correct `for i in range(tag_table.get_size()): tag = tag_table.get_nth_tag(i)` pattern
+- [x] **BUG #16-redux** (TextTagTable iteration → foreach callback) — `tag_table.foreach(collect)` pattern, proven working by supervisor probe (see revision-4 instructions)
 - [x] **BUG #17** (call-site line numbers corrected) — verified via `grep -n`; lines 197, 606, 637, 703, 757, 783, 804; image block at 338
 - [x] **BUG #18** (drop streaming_cursor from StyleTable) — `streaming_cursor` field removed from `StyleTable` dataclass and `create()`
 - [x] **BUG #19** (parity assertion meaningful, not tautological) — `assert len(rendered) >= 0` replaced with per-fixture tag-name assertions + negative tests
