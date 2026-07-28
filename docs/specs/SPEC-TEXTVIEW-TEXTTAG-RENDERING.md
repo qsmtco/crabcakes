@@ -713,22 +713,20 @@ Not scoped into this spec. Opportunistic after Phase 3.
 
 ### Visual parity test algorithm (Issue 5 / BUG #15 / BUG #16 / BUG #19 resolution)
 
-Two buffers are "equivalent" if the same set of tag names covers the same `(start_offset, end_offset)` ranges. This sidesteps the `Gtk.TextTag.props` introspection quagmire (BUG #15: `tag.props.items()` does not exist) and uses the correct `TextTagTable` iteration API (BUG #16: `TextTagTable` is not iterable — must use `get_size()` + `get_nth_tag()`).
+Two buffers are "equivalent" if the same set of tag names covers the same `(start_offset, end_offset)` ranges. This sidesteps the `Gtk.TextTag.props` introspection quagmire (BUG #15: `tag.props.items()` does not exist) and uses the correct `TextTagTable` iteration API (BUG #16-redux: `TextTagTable` is not iterable and `get_nth_tag()` does not exist — must use `foreach()` callback).
 
 ```python
 def _text_attrs_from_buffer(buffer: Gtk.TextBuffer) -> list[tuple]:
     """Extract (start_offset, end_offset, tag_name) tuples from TextBuffer.
 
     Uses the correct GTK4 Python API:
-    - tag_table.get_size() + tag_table.get_nth_tag(i) — NOT iteration
-    - tag_name comparison — NOT tag.props.items() which does not exist
+    - tag_table.foreach(callback) — NOT get_nth_tag() which does not exist
+    - tag_name from tag.get_property("name") — NOT tag.props.items() which does not exist
     """
     attrs = []
-    tag_table = buffer.get_tag_table()
-    size = tag_table.get_size()
-    for i in range(size):
-        tag = tag_table.get_nth_tag(i)
-        # Walk the buffer for this tag's applied ranges
+
+    def collect(tag: Gtk.TextTag) -> None:
+        """Callback invoked by tag_table.foreach() for each TextTag."""
         start = buffer.get_start_iter()
         while start.forward_to_tag_toggle(tag):
             end = start.copy()
@@ -738,6 +736,9 @@ def _text_attrs_from_buffer(buffer: Gtk.TextBuffer) -> list[tuple]:
                 end.get_offset(),
                 tag.get_property("name"),  # Gtk.TextTag.name property
             ))
+
+    tag_table = buffer.get_tag_table()
+    tag_table.foreach(collect)
     return sorted(attrs)
 
 def test_visual_parity(fixture_name):
