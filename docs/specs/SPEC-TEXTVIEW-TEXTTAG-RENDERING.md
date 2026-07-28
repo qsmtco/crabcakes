@@ -248,7 +248,7 @@ parse_message(text: str, max_len: int = 100 * 1024) -> list[Segment]
 - Max input: 100 KB (preserved from existing ReDoS cap in `format_markdown`, moved verbatim)
 - Truncation marker: `"[... input truncated at 100 KB ...]"`
 - **Failure mode (BUG #14 fix):** On any exception, log a warning and return `[TextSeg(text=original_raw_input)]` — the raw text as a single unformatted segment. NEVER silent empty bubble.
-- **Maps all `extract_blocks()` block types** (BUG #2 — subsumption): Block types produced by `utils/block_parser.py` (text, code, quote, terminal, heading, task, table) map directly to the matching `Segment` types. `Image` blocks (handled today via `CodeBlock(lang="image")`) get the explicit `Image` segment type.
+- **Maps all `extract_blocks()` block types** (BUG #2 — subsumption): Block types produced by `utils/block_parser.py` (text, code, quote, terminal, heading, task, table) map directly to the matching `Segment` types. Image blocks: `extract_blocks` emits `{"type": "code", "lang": "image", "content": file_path}` (NOT a distinct image type — see BUG #28). When mistune encounters a fenced code block with `lang="image"`, the parser emits `Image(src=content)`.
 
 **Behavioral mapping from `extract_blocks` (BUG #2/SUP-3 resolution):**
 
@@ -261,7 +261,7 @@ parse_message(text: str, max_len: int = 100 * 1024) -> list[Segment]
 | `{"type": "heading", "content": ..., "level": N}` | `Heading(level=N, text=...)` | Inline formatting parsed by mistune |
 | `{"type": "task", "content": ..., "checked": bool}` | `TaskItem(checked=bool, text=...)` | `[x]` / `[ ]` stripped; `checked` is boolean |
 | `{"type": "table", "headers": [...], "rows": [[...], ...]}` | `Table(headers=..., rows=...)` | Structured data — no inline formatting on cells |
-| (image block via CodeBlock lang="image") | `Image(src=file_path)` | Explicit segment type |
+| `{"type": "code", "lang": "image", "content": file_path}` | `Image(src=file_path)` | `extract_blocks` does NOT emit a distinct image type (BUG #28). It emits a code block with `lang="image"`. `chat_bubble.py:211` detects `lang == "image"` and reclassifies. The new parser must emit `Image` directly when mistune produces a code fence with `lang="image"`. |
 
 **Imports** (SUBJECT TO PROBE):
 ```python
