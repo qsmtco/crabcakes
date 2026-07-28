@@ -715,7 +715,8 @@ Not scoped into this spec. Opportunistic after Phase 3.
 | S11 | Syntax highlighting preserved for code blocks | `_apply_syntax_highlighting` adapter → foreground TextTags on code block text |
 | S12 | Parse failure falls back to raw text (never empty) | `test_parse_malformed_input_falls_back_to_raw_text` — mock mistune to raise, assert `[TextSeg(text=original_input)]` |
 | S13 | Fenced code block with `javascript:` URI is not linked | `test_fenced_code_javascript_uri_not_linkable` — CodeBlock content never wrapped in link TextTag |
-| S14 | StreamingBubble schema updated (label→text_view+buffer; cursor added) | `models/streaming.py` has correct fields; tests import `StreamingBubble` and access `.text_view`, `.cursor` |
+| S14 | StreamingBubble schema updated (label→text_view+buffer; cursor added) | `models/streaming.py` has correct fields; tests import `StreamingBubble` and access `.text_view`, `.buffer`, `.cursor` |
+| S15 | Link click on javascript: URI is blocked | `test_link_click_blocked_javascript_uri` — simulate `GestureClick` release at link location, assert `on_activate_link()` returned `True` and no browser opens |
 
 ### Visual parity test algorithm (Issue 5 / BUG #15 / BUG #16 / BUG #19 resolution)
 
