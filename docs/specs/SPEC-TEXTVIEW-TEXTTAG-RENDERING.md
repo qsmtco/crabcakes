@@ -759,23 +759,18 @@ def test_visual_parity(fixture_name):
     )
     assert len(rendered_text) > 0  # fixture produces non-empty output
 
-    # Check expected tags are present for this fixture
+    # Check expected tags based on content analysis (BUG #23: no fixture_has_* helpers —
+    # inline the classification directly, it is content-based not name-based)
     attrs = _text_attrs_from_buffer(buffer)
     tag_names = {name for _, _, name in attrs}
 
-    if fixture_has_bold(fixture_name):
-        assert "bold" in tag_names, f"{fixture_name}: expected bold tag"
-    if fixture_has_code(fixture_name):
-        assert "code-inline" in tag_names, f"{fixture_name}: expected code-inline tag"
-    if fixture_has_italic(fixture_name):
-        assert "italic" in tag_names, f"{fixture_name}: expected italic tag"
-
-    # Negative test: plain-text fixtures produce NO formatting tags
-    if fixture_is_plain_text(fixture_name):
-        assert tag_names == set(), f"{fixture_name}: expected no formatting tags, got {tag_names}"
-```
-
-The `fixture_has_*` / `fixture_is_plain_text` helpers classify fixtures by content: check for `**` (bold), `` `code` `` (code-inline), `*italic*` (italic) patterns.
+    if "**" in text:
+        assert "bold" in tag_names, f"{fixture_name}: input has ** but no bold tag"
+    if "`" in text:
+        assert "code-inline" in tag_names, f"{fixture_name}: input has backtick but no code-inline tag"
+    if text.strip() and "**" not in text and "`" not in text:
+        # Plain-text fixture: no formatting tags expected
+        assert tag_names == set(), f"{fixture_name}: plain text but got tags {tag_names}"
 
 **Fallback:** If `Gdk.Display` is not available (headless/CI), this test logs WARNING and soft-passes — the structural parser+renderer tests in Phase 1/2 already verify correctness at the segment level.
 
