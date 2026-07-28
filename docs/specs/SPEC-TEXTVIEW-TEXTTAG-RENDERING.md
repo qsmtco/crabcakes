@@ -720,42 +720,66 @@ Not scoped into this spec. Opportunistic after Phase 3.
 
 ### Visual parity test algorithm (Issue 5 / BUG #15 / BUG #16 / BUG #19 resolution)
 
-Two buffers are "equivalent" if the same set of tag names covers the same `(start_offset, end_offset)` ranges. This sidesteps the `Gtk.TextTag.props` introspection quagmire (BUG #15: `tag.props.items()` does not exist) and uses the correct `TextTagTable` iteration API (BUG #16-redux: `TextTagTable` is not iterable and `get_nth_tag()` does not exist — must use `foreach()` callback).
+Two buffers are "equivalent" if the same set of tag names covers the same `(start_offset, end_offset)` ranges. This sidesteps the `Gtk.TextTag.props` introspection quagmire (BUG #15: `tag.props.items()` does not exist) and uses `TextTagTable.foreach()` (BUG #16-redux: `get_nth_tag()` does not exist) with a char-by-char `has_tag()` walk (BUG #27: `forward_to_tag_toggle` silently drops tags applied at offset 0).
 
 ```python
 def _text_attrs_from_buffer(buffer: Gtk.TextBuffer) -> list[tuple]:
-    """Extract (start_offset, end_offset, tag_name) tuples from TextBuffer.
+    """Extract (start_offset, end_offset, tag_name) tuples via char-by-char walk.
 
-    Uses the correct GTK4 Python API:
-    - tag_table.foreach(callback) — NOT get_nth_tag() which does not exist
-    - tag_name from tag.get_property("name") — NOT tag.props.items() which does not exist
+    Uses foreach() to iterate tags (get_nth_tag() does not exist).
+    Uses has_tag() char-by-char per tag because forward_to_tag_toggle
+    silently drops tags applied at offset 0 (BUG #27 — from inside a
+    tagged region, forward_to_tag_toggle jumps to the tag-OFF boundary,
+    skipping the tag-ON start). Char-by-char is O(n) per tag, acceptable
+    for the parity test where buffer sizes are bounded.
     """
     attrs = []
+    tag_table = buffer.get_tag_table()
+    char_count = buffer.get_char_count()
 
     def collect(tag: Gtk.TextTag) -> None:
         """Callback invoked by tag_table.foreach() for each TextTag."""
-        start = buffer.get_start_iter()
-        while start.forward_to_tag_toggle(tag):
-            end = start.copy()
-            end.forward_to_tag_toggle(tag)
-            attrs.append((
-                start.get_offset(),
-                end.get_offset(),
-                tag.get_property("name"),  # Gtk.TextTag.name property
-            ))
+        in_tag = False
+        range_start = 0
+        for i in range(char_count):
+            it = buffer.get_iter_at_offset(i)
+            has = it.has_tag(tag)
+            if has and not in_tag:
+                range_start = i
+                in_tag = True
+            elif not has and in_tag:
+                attrs.append((range_start, i, tag.get_property("name")))
+                in_tag = False
+        if in_tag:
+            attrs.append((range_start, char_count, tag.get_property("name")))
 
-    tag_table = buffer.get_tag_table()
     tag_table.foreach(collect)
     return sorted(attrs)
 
-def test_visual_parity(fixture_name):
-    """Each fixture renders without exception AND expected tag names are present.
+# tests/test_textview_parity.py
+TEST_CASES = {
+    "bold": "**bold text**",
+    "italic": "*italic*",
+    "code_inline": "`code`",
+    "plain": "just plain text",
+    "code_block": "```python\nprint('hi')\n```",
+    "quote": "> quoted text",
+    "heading": "## heading 2",
+    "strikethrough": "~~struck~~",
+    "link": "[click](http://example.com)",
+    "mixed": "**bold** and `code` and *italic*",
+    "empty": "",
+    "only_whitespace": "   ",
+    # Add more from test_markdown.py patterns as needed
+}
+
+@pytest.mark.parametrize("name,text", list(TEST_CASES.items()))
+def test_visual_parity(name, text):
+    """Each TEST_CASES entry renders without exception AND expected tags present.
 
     This is NOT a tautological assertion. It is a meaningful check that the
-    new path produces the expected formatting tags for known fixture content.
+    new path produces the expected formatting tags for known content.
     """
-    text = load_fixture(fixture_name)
-
     buffer = Gtk.TextBuffer()
     segments = parse_message(text)
     styles = StyleTable.create(buffer.get_tag_table())
@@ -764,20 +788,19 @@ def test_visual_parity(fixture_name):
     rendered_text = buffer.get_text(
         buffer.get_start_iter(), buffer.get_end_iter(), False
     )
-    assert len(rendered_text) > 0  # fixture produces non-empty output
+    assert len(rendered_text) > 0 or not text.strip()
 
-    # Check expected tags based on content analysis (BUG #23: no fixture_has_* helpers —
-    # inline the classification directly, it is content-based not name-based)
+    # Check expected tags based on content analysis (BUG #23: inline, no helpers)
     attrs = _text_attrs_from_buffer(buffer)
-    tag_names = {name for _, _, name in attrs}
+    tag_names = {n for _, _, n in attrs}
 
     if "**" in text:
-        assert "bold" in tag_names, f"{fixture_name}: input has ** but no bold tag"
+        assert "bold" in tag_names, f"{name}: input has ** but no bold tag"
     if "`" in text:
-        assert "code-inline" in tag_names, f"{fixture_name}: input has backtick but no code-inline tag"
+        assert "code-inline" in tag_names or "code-block" in tag_names, \
+            f"{name}: input has backtick but no code tag"
     if text.strip() and "**" not in text and "`" not in text:
-        # Plain-text fixture: no formatting tags expected
-        assert tag_names == set(), f"{fixture_name}: plain text but got tags {tag_names}"
+        assert tag_names == set(), f"{name}: plain text but got tags {tag_names}"
 
 **Fallback:** If `Gdk.Display` is not available (headless/CI), this test logs WARNING and soft-passes — the structural parser+renderer tests in Phase 1/2 already verify correctness at the segment level.
 
