@@ -167,7 +167,7 @@ Package marker. Exports: `parse_message`, `render_segments`, all `Segment` types
 
 ### NEW: `chat/segments.py`
 
-Data model for parsed segments. No GTK imports. Standardized field ordering: text-bearing fields first, then optional inline/block children with `= ()` defaults. `Image` included for completeness (handled today via `CodeBlock(lang="image")` — maps to same TextChildAnchor pattern).
+Data model for parsed segments. No GTK imports. Standardized field ordering: text-bearing fields first, then optional inline/block children with `= ()` defaults. `Image` included for completeness. Today `extract_blocks` emits `{"type": "code", "lang": "image", "content": file_path}` (not a distinct type — see BUG #28) and `chat_bubble.py:211` reclassifies it. In the new pipeline, `parse_message` emits `Image(src=file_path)` directly when mistune produces a code fence with `lang="image"`.
 
 ```python
 from __future__ import annotations
