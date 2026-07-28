@@ -171,7 +171,7 @@ Data model for parsed segments. No GTK imports. Standardized field ordering: tex
 
 ```python
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal, Union
 
 @dataclass(frozen=True)
