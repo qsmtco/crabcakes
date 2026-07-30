@@ -923,7 +923,7 @@ The `utils/gtk_containers.py` module is a new file that should be added to the d
 |-----|----------|-----|
 | BUG #1 | CRITICAL | Group A rewritten as single `FakeGtkBoxNoContains` test reproducing the real bug class |
 | BUG #2 | CRITICAL | §3.4 added — `FakeChatBox` must implement `get_first_child()`/`get_next_sibling()` |
-| BUG #3 | HIGH | Stale assertion in `test_start_streaming_twice_idempotent` fixed (`== 2` → `== 1`, comment updated) |
+| BUG #3 | HIGH → OVERTURNED | ~~Stale assertion `== 2` → `== 1`~~ — **REVISION 2026-07-28:** Debugger Phase 2 audit proved the count is 2 (end_streaming render=True appends final_bubble). Assertion value stays `== 2`; only the comment is corrected. |
 | BUG #4 | HIGH | Test 4 regex anchor narrowed to `assert "try:" in src and "_logger.exception" in src` |
 | BUG #5 | MEDIUM | `_dispatch` wrapper now has `except (KeyboardInterrupt, SystemExit): raise` with comment |
 | BUG #6 | MEDIUM | §3.6 Deferred Scope added — 3 other `_dispatch` sites listed |

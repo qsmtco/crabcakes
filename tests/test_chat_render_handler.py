@@ -197,7 +197,7 @@ class TestPhase3Streaming:
         self.handler.start_streaming("agent:1", self.fake_box, "Agent")
         self._run_all_idle()
         assert self.handler.is_streaming("agent:1") is True
-        assert len(self.fake_box._children) == 1  # old bubble removed by _finalize via is_in_container, new bubble appended
+        assert len(self.fake_box._children) == 2  # end_streaming(render=True default) removes old streaming bubble + appends final_bubble, then second start_streaming appends new streaming bubble = 2 children
 
     def test_update_streaming_uses_delta_as_full_text(self):
         """update_streaming() uses delta_text as the complete accumulated text."""
