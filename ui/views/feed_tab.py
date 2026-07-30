@@ -192,7 +192,7 @@ class FeedTab(Gtk.Box):
         for card_id in list(self._cards_by_id.keys()):
             widget = self._cards_by_id[card_id]
             self._clear_widget_state_recursive(widget)
-            if widget in self._card_container:
+            if is_in_container(widget, self._card_container):
                 self._card_container.remove(widget)
         self._cards_by_id.clear()
         # Show the empty state widget
