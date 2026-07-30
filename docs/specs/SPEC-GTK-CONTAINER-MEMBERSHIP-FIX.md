@@ -503,9 +503,33 @@ New comment (same value, corrected explanation):
 
 #### 3.5.1 Test Fakes
 
-Before any test classes, define a `FakeGtkBoxNoContains` that reproduces the real bug:
+> **SPEC REVISION 2026-07-28:** The original `FakeGtkBoxNoContains.get_next_sibling(self, child)` took a `child` argument — WRONG. Production `is_in_container` calls `child.get_next_sibling()` with **no arguments** (GTK4 `Gtk.Widget.get_next_sibling()` takes no args). The original `FakeChildWidget` was bare `pass`, so the sibling walk would `AttributeError` on any multi-child test. Corrected below: `FakeChildWidget` now holds a back-reference to its container and implements the no-arg `get_next_sibling()`.
+
+Define a `FakeGtkBoxNoContains` that reproduces the real bug, and a `FakeChildWidget` that correctly models GTK4's sibling-chain semantics:
 
 ```python
+class FakeChildWidget:
+    """Minimal widget stand-in with identity-based comparison.
+
+    Models GTK4's sibling chain: each widget holds a back-reference to its
+    parent container and implements the no-arg get_next_sibling() by looking
+    up its position in the container's child list.
+    """
+    def __init__(self):
+        self._parent_container = None
+
+    def get_next_sibling(self):
+        """Return the next sibling after self, or None (mirrors Gtk.Widget)."""
+        if self._parent_container is None:
+            return None
+        children = self._parent_container._children
+        try:
+            idx = children.index(self)
+        except ValueError:
+            return None
+        return children[idx + 1] if idx + 1 < len(children) else None
+
+
 class FakeGtkBoxNoContains:
     """
     Reproduces the real GTK bug: no ``__contains__``, no ``__iter__``.
@@ -517,28 +541,15 @@ class FakeGtkBoxNoContains:
         self._children = []
 
     def append(self, widget):
+        widget._parent_container = self
         self._children.append(widget)
 
     def remove(self, widget):
+        widget._parent_container = None
         self._children.remove(widget)
 
     def get_first_child(self):
         return self._children[0] if self._children else None
-
-    def get_next_sibling(self, child):
-        try:
-            idx = self._children.index(child)
-        except ValueError:
-            return None
-        return self._children[idx + 1] if idx + 1 < len(self._children) else None
-```
-
-Also define a `FakeChildWidget` for tests that need a widget identity object:
-
-```python
-class FakeChildWidget:
-    """Minimal widget stand-in with identity-based comparison."""
-    pass
 ```
 
 #### 3.5.2 Group A: Document the bug class (1 test)
