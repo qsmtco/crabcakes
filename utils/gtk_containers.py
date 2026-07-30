@@ -4,6 +4,12 @@ Utility functions for GTK container operations.
 All functions in this module are pure GTK utilities — they depend only on
 ``gi.repository.Gtk`` and the Python standard library. No dependency on
 ``ui/``, ``agent/``, ``gateway/``, or ``models/``.
+
+.. note::
+
+   In GTK4 the ``Gtk.Container`` class was removed. All widgets inherit
+   container operations directly from ``Gtk.Widget`` (``get_first_child``,
+   ``get_next_sibling``, ``append``, ``remove``, etc.).
 """
 
 import gi
@@ -11,7 +17,7 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
 
 
-def is_in_container(widget: Gtk.Widget | None, container: Gtk.Container | None) -> bool:
+def is_in_container(widget: Gtk.Widget | None, container: Gtk.Widget | None) -> bool:
     """
     Check if *widget* is a direct child of *container* using sibling walk.
 
@@ -22,11 +28,15 @@ def is_in_container(widget: Gtk.Widget | None, container: Gtk.Container | None) 
 
     Args:
         widget: The widget to find (or None).
-        container: The container to search (or None).
+        container: The container widget to search (or None).
 
     Returns:
         True if *widget* is a direct child of *container*, False otherwise
         (including when either argument is None or the container is empty).
+
+    Note:
+        In GTK4, ``Gtk.Container`` was removed. All widgets are their own
+        containers. This function accepts any ``Gtk.Widget`` as the container.
     """
     if widget is None or container is None:
         return False
