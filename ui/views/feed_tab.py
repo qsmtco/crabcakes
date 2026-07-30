@@ -249,7 +249,7 @@ class FeedTab(Gtk.Box):
         if self._card_container is None:
             return
         # Remove empty state widget if present
-        if self._empty_widget is not None and self._empty_widget in self._card_container:
+        if self._empty_widget is not None and is_in_container(self._empty_widget, self._card_container):
             self._card_container.remove(self._empty_widget)
             self._empty_widget = None
         # insert_child_after(child, None) prepends in GTK4
