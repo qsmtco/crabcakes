@@ -36,6 +36,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from ui.views.chat_bubble import build_role_bubble, process_segments, _clear_crabcards_registry
 
+_logger = logging.getLogger(__name__)
+
 
 class _ReentrancySet:
     """
