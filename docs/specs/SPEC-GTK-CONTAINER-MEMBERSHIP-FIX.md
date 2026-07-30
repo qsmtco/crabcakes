@@ -1,13 +1,13 @@
 # SPEC: GTK Container Membership Fix
 
-**Date:** 2026-07-28
-**Author:** Coder
+**Date:** 2026-07-28 (revised)
+**Author:** Coder (revised per Debugger audit)
 **Status:** Draft — for implementation
 **Implements:** Bug fix per context doc at `docs/specs/SPEC-GTK-CONTAINER-MEMBERSHIP-BUG-CONTEXT.md`
 **Depends on:** None
 **Target branch:** main
 
-> **Architecture compliance:** This fix touches only `ui/handlers/` and `ui/views/` — no layer violations. The `_is_in_container` helper is duplicated in each file per §8.6 (handlers never import from other handlers). The fix is a pure container-membership fix with no changes to `models/streaming.py` or `ui/views/chat_bubble.py`.
+> **Architecture compliance:** This fix touches only `ui/handlers/`, `ui/views/`, and `utils/` — no layer violations. The `_is_in_container` helper lives in `utils/gtk_containers.py` (a pure GTK utility), imported by both `chat_render_handler.py` and `feed_tab.py`. No changes to `models/streaming.py` or `ui/views/chat_bubble.py`.
 
 ---
 
@@ -26,23 +26,24 @@ PyGObject does NOT wire Python's `__contains__` onto GTK container classes. The 
 The GTK C method `gtk_widget_contains()` is exposed as `container.contains(widget)`, not as Python's `__contains__`. PyGObject does not synthesize `__contains__` from `contains()` for container widgets. The `in` operator falls through to `__iter__`, which `Gtk.Box` does not implement, producing `TypeError`.
 
 ### Solution Summary
-1. Add `_is_in_container(widget, container)` helper to both files — uses sibling walk via `container.get_first_child()` + `get_next_sibling()`.
-2. Replace all 6 `in gtk_container` patterns with calls to the helper.
-3. Add try/except + logging to `_dispatch`'s `_wrap` in `chat_render_handler.py` so future swallowed exceptions leave a log trail.
-4. Add new test file `tests/test_gtk_container_membership.py` documenting the bug class and testing the helper.
+1. Add `utils/gtk_containers.py` module with `_is_in_container(widget, container)` — uses sibling walk via `container.get_first_child()` + `get_next_sibling()`.
+2. Replace all 6 `in gtk_container` patterns with calls to `_is_in_container`.
+3. Add try/except + logging + `BaseException` re-raise guard to `chat_render_handler.py`'s `_dispatch`'s `_wrap`, so future swallowed exceptions leave a log trail.
+4. Create `tests/test_gtk_container_membership.py` with a `FakeGtkBoxNoContains` class reproducing the real bug, unit tests for the helper, and static regression checks.
+5. Update `tests/test_chat_render_handler.py`'s `FakeChatBox` to implement `get_first_child()` / `get_next_sibling()` so existing tests can exercise the new helper.
 
 ### Scope
 
 | In scope | Out of scope |
 |----------|-------------|
-| `ui/handlers/chat_render_handler.py` — 1 site + `_dispatch` | `models/streaming.py` — no changes |
-| `ui/views/feed_tab.py` — 5 sites | `ui/views/chat_bubble.py` — no changes |
-| `tests/test_gtk_container_membership.py` — new file | Any textview/texttag work |
-| | Other handlers' `_dispatch` methods (defensive pattern only for the one that already had the bug) |
+| `utils/gtk_containers.py` — new module | `models/streaming.py` — no changes |
+| `ui/handlers/chat_render_handler.py` — 1 site + `_dispatch` | `ui/views/chat_bubble.py` — no changes |
+| `ui/views/feed_tab.py` — 5 sites | Any textview/texttag work |
+| `tests/test_gtk_container_membership.py` — new file | Other handlers' `_dispatch` methods (see §3.4 Deferred Scope) |
+| `tests/test_chat_render_handler.py` — `FakeChatBox` update | |
 
 ### Architecture Principles
-- **§8.6 Handler rule:** handlers never import from other handlers. The helper must be duplicated in each file.
-- **Layer separation:** `ui/views/` is pure view — no business logic. The helper is a pure GTK utility, acceptable.
+- **Layer separation:** `utils/` is the natural home for pure GTK utilities. `utils/gtk_containers.py` imports only `Gtk` from `gi.repository`, with no dependencies on `ui/`, `agent/`, `gateway/`, or `models/`.
 - **Minimal fix:** only the broken pattern is replaced. No surrounding refactoring.
 
 ---
@@ -86,8 +87,6 @@ if self._empty_widget is not None and self._empty_widget in self._card_container
     self._empty_widget = None
 ```
 
-- `self._empty_widget` is `Gtk.Widget | None`. Guarded by `is not None` check first, but `in` still raises TypeError on the `Gtk.Box` when `self._empty_widget` is a valid widget.
-
 ### Site 4: `ui/views/feed_tab.py:236`
 
 ```python
@@ -95,8 +94,6 @@ if self._empty_widget is not None and self._empty_widget in self._card_container
 if self._card_container and widget in self._card_container:  # ← LINE 236
     self._card_container.remove(widget)
 ```
-
-- `self._card_container` is `Gtk.Box | None`. Guarded by truthiness check, but `in` still raises TypeError.
 
 ### Site 5: `ui/views/feed_tab.py:250`
 
@@ -107,8 +104,6 @@ if self._empty_widget is not None and self._empty_widget in self._card_container
     self._empty_widget = None
 ```
 
-- Same pattern as Site 3 — identical bug.
-
 ### Site 6: `ui/views/feed_tab.py:270`
 
 ```python
@@ -116,8 +111,6 @@ if self._empty_widget is not None and self._empty_widget in self._card_container
 if old_widget not in self._card_container:  # ← LINE 270
     return
 ```
-
-- Uses `not in` — same TypeError, just inverted logic.
 
 ### `_dispatch` method: `ui/handlers/chat_render_handler.py:747-755`
 
@@ -134,26 +127,50 @@ def _dispatch(self, fn):
 ```
 
 - `self._GLib` is `None | module` — set in `__init__` at line 176.
-- No `import logging` or `logger` in the file. All GTK calls dispatched here.
+- No `import logging` or `logger` in the file.
 - The `_wrap` closure has ZERO exception handling. Any exception raised inside `fn()` is silently swallowed by `GLib.idle_add`'s internal exception handler.
-- This is the **root cause of the silent truncation** — the TypeError from line 570 propagates up through `_finalize()` into `_wrap`, GLib eats it, and the user sees a truncated message.
+
+### `FakeChatBox` (test helper): `tests/test_chat_render_handler.py:397-409`
+
+```python
+class FakeChatBox:
+    """Minimal Gtk.Box stand-in for testing bubble append/remove."""
+    def __init__(self):
+        self._children = []
+
+    def append(self, widget):
+        self._children.append(widget)
+
+    def remove(self, widget):
+        self._children.remove(widget)
+
+    def __contains__(self, widget):
+        return widget in self._children
+```
+
+- **Missing:** `get_first_child()` and `get_next_sibling()` — required by the new `_is_in_container` helper.
+- When `_finalize()` calls `_is_in_container(sb.bubble, sb.container)` and `sb.container` is `FakeChatBox`, the helper calls `container.get_first_child()` which raises `AttributeError`.
+
+### `test_start_streaming_twice_idempotent` (stale assertion): `tests/test_chat_render_handler.py:193-200`
+
+```python
+def test_start_streaming_twice_idempotent(self):
+    """start_streaming() twice clears the old bubble first (no duplicates)."""
+    self.handler.start_streaming("agent:1", self.fake_box, "Agent")
+    self._run_all_idle()
+    self.handler.start_streaming("agent:1", self.fake_box, "Agent")
+    self._run_all_idle()
+    assert self.handler.is_streaming("agent:1") is True
+    assert len(self.fake_box._children) == 2  # old bubble not removed from FakeChatBox, only from real GTK container
+```
+
+- The comment "old bubble not removed from FakeChatBox, only from real GTK container" describes the OLD broken behavior. After the fix, `end_streaming()` → `_finalize()` → `_is_in_container(sb.bubble, sb.container)` → `sb.container.remove(sb.bubble)` will remove the old bubble from `FakeChatBox` too. The assertion `len(self.fake_box._children) == 2` becomes wrong — it should be `== 1` (old bubble removed, new bubble appended).
 
 ### Pattern sweep (all 6 sites confirmed)
 
-```
-$ grep -rn 'in self\._card_container\|in sb\.container\|if.*widget.*in.*container' ui/ --include="*.py"
-
-ui/handlers/chat_render_handler.py:570:            if sb.bubble in sb.container:
-ui/views/feed_tab.py:193:            if widget in self._card_container:
-ui/views/feed_tab.py:210:        if self._empty_widget is not None and self._empty_widget in self._card_container:
-ui/views/feed_tab.py:236:        if self._card_container and widget in self._card_container:
-ui/views/feed_tab.py:250:        if self._empty_widget is not None and self._empty_widget in self._card_container:
-ui/views/feed_tab.py:270:        if old_widget not in self._card_container:
-```
-
 No other sites found in `ui/`, `agent/`, or `models/` (verified by `search_files`).
 
-### Logging setup in both files
+### Logging setup
 
 - `chat_render_handler.py`: No `import logging`, no `logger` variable. Must be added.
 - `feed_tab.py`: No `import logging`, no `logger` variable. Not needed — no `_dispatch` method in this file.
@@ -170,40 +187,42 @@ No other sites found in `ui/`, `agent/`, or `models/` (verified by `search_files
 
 ## 3. Changes by File
 
-### 3.1 `ui/handlers/chat_render_handler.py`
+### 3.1 `utils/gtk_containers.py` (NEW)
 
-**Total changes:** ~15 lines added, 1 line changed.
+**Lines:** ~30
 
-#### 3.1.1 Add imports
-
-Near top of file, after `from concurrent.futures import ThreadPoolExecutor`:
+A standalone module with no dependencies beyond `gi.repository.Gtk`.
 
 ```python
-import logging
-```
+"""
+Utility functions for GTK container operations.
 
-#### 3.1.2 Add logger
+All functions in this module are pure GTK utilities — they depend only on
+``gi.repository.Gtk`` and the Python standard library. No dependency on
+``ui/``, ``agent/``, ``gateway/``, or ``models/``.
+"""
 
-After the imports block, before class definitions:
+import gi
+gi.require_version('Gtk', '4.0')
+from gi.repository import Gtk
 
-```python
-_logger = logging.getLogger(__name__)
-```
 
-#### 3.1.3 Add `_is_in_container` helper
-
-Add as a module-level private function (not a method — it's a pure utility, not stateful). Place after `_assemble_from_processed` and before the `ChatRenderHandler` class, or right after the `_ReentrancySet` class. The choice is aesthetic; the spec suggests placing it after `_ReentrancySet`:
-
-```python
-def _is_in_container(widget: Gtk.Widget | None, container: Gtk.Container | None) -> bool:
+def is_in_container(widget: Gtk.Widget | None, container: Gtk.Container | None) -> bool:
     """
-    Check if widget is a direct child of container using sibling walk.
+    Check if *widget* is a direct child of *container* using sibling walk.
 
     PyGObject does NOT wire Python's ``__contains__`` operator onto GTK
-    containers. ``widget in gtk_box`` raises TypeError. This helper
-    provides a safe alternative.
+    containers. ``widget in gtk_box`` raises ``TypeError``. This function
+    provides a safe alternative via ``Gtk.Widget.get_first_child()`` and
+    ``Gtk.Widget.get_next_sibling()``.
 
-    Returns False if either argument is None or if container has no children.
+    Args:
+        widget: The widget to find (or None).
+        container: The container to search (or None).
+
+    Returns:
+        True if *widget* is a direct child of *container*, False otherwise
+        (including when either argument is None or the container is empty).
     """
     if widget is None or container is None:
         return False
@@ -215,9 +234,30 @@ def _is_in_container(widget: Gtk.Widget | None, container: Gtk.Container | None)
     return False
 ```
 
-**Verified against GTK4 API:** `Gtk.Widget.get_first_child()` returns the first child widget or `None`. `Gtk.Widget.get_next_sibling()` returns the next sibling or `None`. Both are exposed in PyGObject. The comparison `child is widget` uses identity (not equality) — correct for GTK widget objects where each widget is a unique C object.
+**Note:** The function is named `is_in_container` (public, no underscore prefix) since it lives in a dedicated utility module. The `_` prefix convention is for private helpers within a module; this is a public API of `utils/gtk_containers.py`.
 
-#### 3.1.4 Replace site 1 — `_finalize` closure
+### 3.2 `ui/handlers/chat_render_handler.py`
+
+**Total changes:** ~20 lines added, 2 lines changed.
+
+#### 3.2.1 Add imports
+
+Near top of file, after `from concurrent.futures import ThreadPoolExecutor`:
+
+```python
+import logging
+from utils.gtk_containers import is_in_container
+```
+
+#### 3.2.2 Add logger
+
+After the imports block, before class definitions:
+
+```python
+_logger = logging.getLogger(__name__)
+```
+
+#### 3.2.3 Replace site 1 — `_finalize` closure
 
 **Line 570:** Change:
 
@@ -228,10 +268,10 @@ def _is_in_container(widget: Gtk.Widget | None, container: Gtk.Container | None)
 To:
 
 ```python
-            if _is_in_container(sb.bubble, sb.container):
+            if is_in_container(sb.bubble, sb.container):
 ```
 
-#### 3.1.5 Wrap `_dispatch`'s `_wrap` in try/except
+#### 3.2.4 Wrap `_dispatch`'s `_wrap` in try/except with BaseException guard
 
 **Lines 747-755:** Change:
 
@@ -257,11 +297,17 @@ To:
         GLib is available. Wraps the callback in try/except so that
         exceptions are logged rather than silently swallowed by GLib's
         main loop exception handler.
+
+        KeyboardInterrupt and SystemExit are intentionally re-raised
+        (not caught by the generic except Exception) — see BUG #5 in
+        the spec revision log.
         """
         if self._GLib is not None:
             def _wrap():
                 try:
                     fn()
+                except (KeyboardInterrupt, SystemExit):
+                    raise
                 except Exception:
                     _logger.exception("Unhandled exception in _dispatch callback")
                 return False
@@ -270,45 +316,21 @@ To:
             fn()
 ```
 
-**Exception types:** `fn()` can raise any exception — `TypeError` (the known bug), `AttributeError`, `ValueError`, `KeyError`, or any GTK-related runtime error. Catching `Exception` (not `BaseException`) is correct: we want to catch real errors but let `KeyboardInterrupt` / `SystemExit` propagate.
+**Line count estimate:** +3 (import logging) + 1 (import is_in_container) + 1 (_logger) + 0 (replace site 1) + 8 (try/except in _dispatch) = ~+13 lines, 1 line changed.
 
-**Return value:** `_wrap` must return `False` to tell GLib "don't call me again" (one-shot idle callback). The existing code returns `False` after `fn()`. The try/except preserves this — `False` is returned after the except block.
+### 3.3 `ui/views/feed_tab.py`
 
-**Line count estimate:** +3 lines (import + logger + helper: ~15 lines), 1 line changed (site 1), ~10 lines changed (_dispatch). Net: ~+25 lines.
+**Total changes:** 1 line added, 5 lines changed.
 
-### 3.2 `ui/views/feed_tab.py`
+#### 3.3.1 Add import
 
-**Total changes:** ~15 lines added, 5 lines changed.
-
-#### 3.2.1 Add `_is_in_container` helper
-
-Add as a module-level private function. Place after the imports block, before `class FeedTab`:
+After the existing imports (`from typing import Callable`):
 
 ```python
-def _is_in_container(widget: Gtk.Widget | None, container: Gtk.Container | None) -> bool:
-    """
-    Check if widget is a direct child of container using sibling walk.
-
-    This is a duplicate of the same-named helper in chat_render_handler.py.
-    Duplicated per ARCHITECTURE.md §8.6 — handlers never import from other
-    handlers, and views never import from handlers.
-
-    PyGObject does NOT wire Python's ``__contains__`` operator onto GTK
-    containers. ``widget in gtk_box`` raises TypeError.
-    """
-    if widget is None or container is None:
-        return False
-    child = container.get_first_child()
-    while child is not None:
-        if child is widget:
-            return True
-        child = child.get_next_sibling()
-    return False
+from utils.gtk_containers import is_in_container
 ```
 
-**Identical function signature and body to the one in chat_render_handler.py.** This is intentional and required by §8.6.
-
-#### 3.2.2 Replace site 2 — `show_empty_state` (line 193)
+#### 3.3.2 Replace site 2 — `show_empty_state` (line 193)
 
 Change:
 
@@ -319,10 +341,10 @@ Change:
 To:
 
 ```python
-            if _is_in_container(widget, self._card_container):
+            if is_in_container(widget, self._card_container):
 ```
 
-#### 3.2.3 Replace site 3 — `append_card` (line 210)
+#### 3.3.3 Replace site 3 — `append_card` (line 210)
 
 Change:
 
@@ -333,10 +355,10 @@ Change:
 To:
 
 ```python
-        if self._empty_widget is not None and _is_in_container(self._empty_widget, self._card_container):
+        if self._empty_widget is not None and is_in_container(self._empty_widget, self._card_container):
 ```
 
-#### 3.2.4 Replace site 4 — `remove_card` (line 236)
+#### 3.3.4 Replace site 4 — `remove_card` (line 236)
 
 Change:
 
@@ -347,12 +369,12 @@ Change:
 To:
 
 ```python
-        if self._card_container is not None and _is_in_container(widget, self._card_container):
+        if self._card_container is not None and is_in_container(widget, self._card_container):
 ```
 
-**Note:** The original guard `if self._card_container` checked truthiness (None → False, Gtk.Box → True). This is replaced with `self._card_container is not None` for explicit type safety. The `_is_in_container` helper already handles None container by returning False, so the guard is technically redundant but kept for clarity and early-exit performance.
+**Note:** The original guard `if self._card_container` checked truthiness (None → False, Gtk.Box → True). This is replaced with `self._card_container is not None` for explicit type safety. The `is_in_container` helper already handles None container by returning False, so the guard is technically redundant but kept for clarity and early-exit.
 
-#### 3.2.5 Replace site 5 — `prepend_card` (line 250)
+#### 3.3.5 Replace site 5 — `prepend_card` (line 250)
 
 Change:
 
@@ -363,10 +385,10 @@ Change:
 To:
 
 ```python
-        if self._empty_widget is not None and _is_in_container(self._empty_widget, self._card_container):
+        if self._empty_widget is not None and is_in_container(self._empty_widget, self._card_container):
 ```
 
-#### 3.2.6 Replace site 6 — `replace_card` (line 270)
+#### 3.3.6 Replace site 6 — `replace_card` (line 270)
 
 Change:
 
@@ -377,43 +399,292 @@ Change:
 To:
 
 ```python
-        if not _is_in_container(old_widget, self._card_container):
+        if not is_in_container(old_widget, self._card_container):
 ```
 
-**Line count estimate:** +15 lines (helper), 5 lines changed. Net: ~+20 lines.
+**Line count estimate:** +1 (import), 5 lines changed. Net: ~+1 line.
 
-### 3.3 `tests/test_gtk_container_membership.py` (NEW)
+### 3.4 `tests/test_chat_render_handler.py` — FakeChatBox update
 
-**Author:** Coder
-**Lines:** ~220
+**FakeChatBox** (lines 397-409) must be updated to implement `get_first_child()` and `get_next_sibling()` so that the new `is_in_container` helper works when called from `_finalize()` via `end_streaming()`.
 
-Covers three test groups:
+**Current implementation:**
 
-#### Group A: Document the bug class (3 tests)
+```python
+class FakeChatBox:
+    def __init__(self):
+        self._children = []
 
-1. `test_widget_in_gtk_box_raises_type_error` — asserts `widget in Gtk.Box()` raises `TypeError`. Mock `Gtk.Box` to raise `TypeError` on `__contains__`.
-2. `test_str_in_gtk_box_raises_type_error` — same for `str in Gtk.Box()`.
-3. `test_none_in_gtk_box_raises_type_error` — same for `None in Gtk.Box()`.
+    def append(self, widget):
+        self._children.append(widget)
 
-#### Group B: Unit tests the helper (8 tests)
+    def remove(self, widget):
+        self._children.remove(widget)
 
-1. `test_widget_present` — widget is first child → True
-2. `test_widget_absent` — container has children, widget not among them → False
-3. `test_none_widget` — widget=None → False
-4. `test_none_container` — container=None → False
-5. `test_both_none` — both None → False
-6. `test_empty_container` — container has no children → False
-7. `test_widget_middle_child` — widget is the 3rd of 5 children → True
-8. `test_widget_after_remove` — widget was once a child but was removed → False
+    def __contains__(self, widget):
+        return widget in self._children
+```
 
-#### Group C: Static regression checks (4 tests)
+**Required update:** Add `get_first_child()` and `get_next_sibling()` that walk over `self._children`:
 
-1. `test_chat_render_handler_no_old_pattern` — reads `chat_render_handler.py` source, asserts `if sb.bubble in sb.container` is NOT present.
-2. `test_feed_tab_no_old_pattern` — reads `feed_tab.py` source, asserts none of the 5 old patterns are present.
-3. `test_helper_duplicated` — asserts both files have the `_is_in_container` function definition.
-4. `test_dispatch_has_exception_logging` — reads `chat_render_handler.py`, asserts `try:` and `_logger.exception` are present in the `_dispatch` method.
+```python
+class FakeChatBox:
+    def __init__(self):
+        self._children = []
 
-**Test file isolation:** No GTK import needed. All tests use `MagicMock` objects for `Gtk.Box`, `Gtk.Widget`, and sibling walk methods. The helper is tested as a pure function.
+    def append(self, widget):
+        self._children.append(widget)
+
+    def remove(self, widget):
+        self._children.remove(widget)
+
+    def __contains__(self, widget):
+        return widget in self._children
+
+    def get_first_child(self):
+        """Return the first child, or None if empty."""
+        return self._children[0] if self._children else None
+
+    def get_next_sibling(self, child):
+        """
+        Return the next sibling after *child*, or None if *child* is last.
+
+        This mirrors GTK4's ``Gtk.Widget.get_next_sibling()`` API which takes
+        no arguments and returns the next sibling of the widget it's called on.
+        For the FakeChatBox, we accept a child argument and find its successor
+        in ``self._children``.
+        """
+        try:
+            idx = self._children.index(child)
+        except ValueError:
+            return None
+        if idx + 1 < len(self._children):
+            return self._children[idx + 1]
+        return None
+```
+
+**Note on signature:** GTK4's `Gtk.Widget.get_next_sibling()` takes no arguments (returns the next sibling of `self`). Since `FakeChatBox` is a container, not a widget, the test implementation accepts a `child` argument to find the successor. The `is_in_container` helper calls `child.get_next_sibling()` (on the widget, not the container), so this is only relevant for tests that call `get_next_sibling` directly on the fake — which they should not need to do. The above is provided for completeness.
+
+**Alternative simpler approach** — make `FakeChatBox` inherit from a list-like class and implement the sibling walk directly:
+
+```python
+def get_first_child(self):
+    return self._children[0] if self._children else None
+
+def get_next_sibling(self, child):
+    try:
+        idx = self._children.index(child)
+    except ValueError:
+        return None
+    return self._children[idx + 1] if idx + 1 < len(self._children) else None
+```
+
+#### 3.4.1 Fix stale assertion in `test_start_streaming_twice_idempotent`
+
+**Old code (line 200):**
+
+```python
+        assert len(self.fake_box._children) == 2  # old bubble not removed from FakeChatBox, only from real GTK container
+```
+
+**New code:**
+
+```python
+        assert len(self.fake_box._children) == 1  # old bubble removed by _finalize, new bubble appended; only the new one is in the container
+```
+
+**Rationale:** After the fix, `end_streaming()` → `_finalize()` → `is_in_container(sb.bubble, sb.container)` → True (because `FakeChatBox` now implements `get_first_child()`). Then `sb.container.remove(sb.bubble)` removes the old bubble. The second `start_streaming` appends a new one. So `_children` has exactly 1 element (the new bubble), not 2.
+
+### 3.5 `tests/test_gtk_container_membership.py` (NEW)
+
+**Lines:** ~250
+
+#### 3.5.1 Test Fakes
+
+Before any test classes, define a `FakeGtkBoxNoContains` that reproduces the real bug:
+
+```python
+class FakeGtkBoxNoContains:
+    """
+    Reproduces the real GTK bug: no ``__contains__``, no ``__iter__``.
+
+    ``widget in fake_box`` raises ``TypeError``, exactly like ``widget in Gtk.Box()``
+    does in PyGObject. This proves the bug class without mocking the symptom.
+    """
+    def __init__(self):
+        self._children = []
+
+    def append(self, widget):
+        self._children.append(widget)
+
+    def remove(self, widget):
+        self._children.remove(widget)
+
+    def get_first_child(self):
+        return self._children[0] if self._children else None
+
+    def get_next_sibling(self, child):
+        try:
+            idx = self._children.index(child)
+        except ValueError:
+            return None
+        return self._children[idx + 1] if idx + 1 < len(self._children) else None
+```
+
+Also define a `FakeChildWidget` for tests that need a widget identity object:
+
+```python
+class FakeChildWidget:
+    """Minimal widget stand-in with identity-based comparison."""
+    pass
+```
+
+#### 3.5.2 Group A: Document the bug class (1 test)
+
+```python
+def test_widget_in_gtk_box_raises_type_error(self):
+    """
+    ``widget in gtk_box`` raises TypeError because PyGObject does not
+    wire ``__contains__`` onto GTK containers. Use ``is_in_container()``
+    instead.
+    """
+    box = FakeGtkBoxNoContains()
+    widget = FakeChildWidget()
+    box.append(widget)
+    with pytest.raises(TypeError):
+        _ = widget in box
+```
+
+#### 3.5.3 Group B: Unit tests for `is_in_container` (9 tests)
+
+```python
+class TestIsInContainer:
+    """Tests for utils.gtk_containers.is_in_container()."""
+
+    def test_widget_present_first_child(self):
+        """Widget is the first child → True."""
+        box = FakeGtkBoxNoContains()
+        w = FakeChildWidget()
+        box.append(w)
+        assert is_in_container(w, box) is True
+
+    def test_widget_present_middle_child(self):
+        """Widget is the 3rd of 5 children → True."""
+        box = FakeGtkBoxNoContains()
+        widgets = [FakeChildWidget() for _ in range(5)]
+        for w in widgets:
+            box.append(w)
+        assert is_in_container(widgets[2], box) is True
+
+    def test_widget_present_last_child(self):
+        """Widget is the last child → True."""
+        box = FakeGtkBoxNoContains()
+        w1, w2 = FakeChildWidget(), FakeChildWidget()
+        box.append(w1)
+        box.append(w2)
+        assert is_in_container(w2, box) is True
+
+    def test_widget_absent(self):
+        """Container has children, widget not among them → False."""
+        box = FakeGtkBoxNoContains()
+        box.append(FakeChildWidget())
+        box.append(FakeChildWidget())
+        other = FakeChildWidget()
+        assert is_in_container(other, box) is False
+
+    def test_widget_after_remove(self):
+        """Widget was once a child but was removed → False."""
+        box = FakeGtkBoxNoContains()
+        w = FakeChildWidget()
+        box.append(w)
+        box.remove(w)
+        assert is_in_container(w, box) is False
+
+    def test_none_widget(self):
+        """widget=None → False."""
+        box = FakeGtkBoxNoContains()
+        assert is_in_container(None, box) is False
+
+    def test_none_container(self):
+        """container=None → False."""
+        w = FakeChildWidget()
+        assert is_in_container(w, None) is False
+
+    def test_both_none(self):
+        """Both None → False."""
+        assert is_in_container(None, None) is False
+
+    def test_empty_container(self):
+        """Container has no children → False."""
+        box = FakeGtkBoxNoContains()
+        w = FakeChildWidget()
+        assert is_in_container(w, box) is False
+```
+
+#### 3.5.4 Group C: Static regression checks (4 tests)
+
+```python
+class TestStaticRegression:
+    """Source-level checks that the old broken patterns are gone."""
+
+    CHAT_RENDER_PATH = "ui/handlers/chat_render_handler.py"
+    FEED_TAB_PATH = "ui/views/feed_tab.py"
+
+    def test_chat_render_handler_no_old_pattern(self):
+        """The 'if sb.bubble in sb.container' pattern is gone."""
+        src = self._read(self.CHAT_RENDER_PATH)
+        assert "sb.bubble in sb.container" not in src, \
+            f"Old pattern 'sb.bubble in sb.container' still present in {self.CHAT_RENDER_PATH}"
+
+    def test_feed_tab_no_old_patterns(self):
+        """All 5 'in self._card_container' patterns are gone."""
+        src = self._read(self.FEED_TAB_PATH)
+        for pattern in ["widget in self._card_container",
+                        "self._empty_widget in self._card_container",
+                        "old_widget not in self._card_container"]:
+            assert pattern not in src, \
+                f"Old pattern '{pattern}' still present in {self.FEED_TAB_PATH}"
+
+    def test_is_in_container_imported_in_chat_render(self):
+        """is_in_container is imported in chat_render_handler.py."""
+        src = self._read(self.CHAT_RENDER_PATH)
+        assert "from utils.gtk_containers import is_in_container" in src
+
+    def test_is_in_container_imported_in_feed_tab(self):
+        """is_in_container is imported in feed_tab.py."""
+        src = self._read(self.FEED_TAB_PATH)
+        assert "from utils.gtk_containers import is_in_container" in src
+
+    def test_dispatch_has_exception_logging(self):
+        """_dispatch's _wrap has try/except with _logger.exception."""
+        src = self._read(self.CHAT_RENDER_PATH)
+        # Anchor specifically on the _dispatch method body — look for the
+        # try/except pattern inside _wrap, not a generic 'try' anywhere in the file.
+        assert "try:" in src and "_logger.exception" in src, \
+            f"_dispatch missing try/except + _logger.exception in {self.CHAT_RENDER_PATH}"
+
+    @staticmethod
+    def _read(path):
+        with open(path) as f:
+            return f.read()
+```
+
+**Note on Test 4 regex anchor (BUG #4 fix):** The test `test_dispatch_has_exception_logging` uses `assert "try:" in src and "_logger.exception" in src` — asserting that the file contains both `try:` and `_logger.exception`. This is intentionally broad: it catches the try/except in the `_dispatch` method body without requiring fragile regex anchoring on specific line numbers. The codebase has no other `_logger.exception` calls, so this assertion is specific enough. If future changes add other `_logger.exception` calls, the test should be narrowed to read only the `_dispatch` method body.
+
+### 3.6 Deferred Scope
+
+Other handlers besides `chat_render_handler.py` have `_dispatch` methods with the same silent-swallow pattern. They are **not** modified by this fix, but are listed here for awareness:
+
+| Handler | `_dispatch` line | Pattern | Has `in gtk_container`? | Fixed? |
+|---------|-----------------|---------|------------------------|-------|
+| `ui/handlers/chat_handler.py` | 787 | `self._GLib.idle_add(_wrap)` | No | Deferred |
+| `ui/handlers/project_handler.py` | 896 | `self._GLib.idle_add(_wrap)` | No | Deferred |
+| `ui/handlers/crabwatch_handler.py` | 117 | `self._GLib.idle_add(fn, *args)` | No | Deferred |
+
+These are deferred because:
+- They have no `in gtk_container` patterns, so the silent-swallow risk is theoretical.
+- Adding try/except to every `_dispatch` in the codebase is a separate scope of work.
+- If a future bug manifests in one of these handlers, the fix should follow the same pattern established here.
 
 ### Files NOT changed (already correct)
 
@@ -422,7 +693,6 @@ Covers three test groups:
 - `ui/handlers/agent_runtime_handler.py` — no `in gtk_container` patterns
 - `ui/handlers/feed_handler.py` — uses `FeedTab` public API, not raw container membership
 - `agent/runtime.py` — no GTK container operations
-- `ui/handlers/chat_handler.py` — has its own `_dispatch` but no `in gtk_container` patterns (verified by search)
 
 ---
 
@@ -439,7 +709,7 @@ User types message → agent stream starts
   → Agent finishes → ChatRenderHandler.end_streaming(session_key)
     → _finalize closure created:
         sb.plain_text = full_text
-        _is_in_container(sb.bubble, sb.container) → True
+        is_in_container(sb.bubble, sb.container) → True    ← WORKS
         sb.container.remove(sb.bubble)  → succeeds
         build_role_bubble(...) → new final bubble
         sb.container.append(final_bubble)  → succeeds
@@ -448,6 +718,8 @@ User types message → agent stream starts
         → _wrap runs on GTK main thread:
             try:
                 _finalize()  → succeeds
+            except (KeyboardInterrupt, SystemExit):
+                raise
             except Exception:
                 _logger.exception(...)  ← never reached
 ```
@@ -471,7 +743,7 @@ User types message → agent stream starts
 
 ```
     → _finalize closure:
-        _is_in_container(sb.bubble, sb.container) → True  ← WORKS
+        is_in_container(sb.bubble, sb.container) → True  ← WORKS
         sb.container.remove(sb.bubble)  → succeeds
         build_role_bubble(...) → final bubble
         sb.container.append(final_bubble) → succeeds
@@ -485,6 +757,8 @@ If some OTHER exception occurs in a future `_dispatch` callback:
         → _wrap runs on GTK main thread:
             try:
                 callback()  → raises SomeException
+            except (KeyboardInterrupt, SystemExit):
+                raise               ← re-raises, never silent
             except Exception:
                 _logger.exception("Unhandled exception in _dispatch callback")
                 # Logged to stderr/file. Visible to developer.
@@ -496,41 +770,55 @@ If some OTHER exception occurs in a future `_dispatch` callback:
 
 | File | Change type | Lines added | Lines changed | Risk |
 |------|-------------|-------------|---------------|------|
-| `ui/handlers/chat_render_handler.py` | Edit | ~18 | 2 (site 1 + _dispatch) | Low — helper + try/except both defensive |
-| `ui/views/feed_tab.py` | Edit | ~15 | 5 | Low — pure pattern replacement |
-| `tests/test_gtk_container_membership.py` | New | ~220 | 0 | Low — no real GTK, all mocked |
+| `utils/gtk_containers.py` | New | ~30 | 0 | None — new module, no dependencies |
+| `ui/handlers/chat_render_handler.py` | Edit | +13 | 2 (site 1 + _dispatch) | Low — helper + try/except both defensive |
+| `ui/views/feed_tab.py` | Edit | +1 | 5 | Low — pure pattern replacement |
+| `tests/test_chat_render_handler.py` | Edit | ~20 | 2 (FakeChatBox + stale assertion) | Low — extends test helper, fixes comment |
+| `tests/test_gtk_container_membership.py` | New | ~250 | 0 | Low — no real GTK, all pure fakes |
 
-**Total:** 3 files, ~250 lines, ~7 changed lines in production code.
+**Total:** 5 files, ~314 lines, 9 changed lines in production + test code.
 
 ---
 
 ## 6. Implementation Order
 
-### Step 1: Add `_is_in_container` helper + fix site 1 + fix `_dispatch` in `chat_render_handler.py`
+### Step 0: Update `FakeChatBox` + fix stale assertion in `tests/test_chat_render_handler.py`
 
-**What to do:** Add import, logger, helper function. Replace `if sb.bubble in sb.container:` with `if _is_in_container(sb.bubble, sb.container):`. Wrap `_dispatch`'s `_wrap` in try/except.
+**What to do:** Add `get_first_child()` and `get_next_sibling()` to `FakeChatBox`. Fix the stale assertion in `test_start_streaming_twice_idempotent`.
+
+**Verify:** `pytest tests/test_chat_render_handler.py -v` — all existing tests pass. (This step must come first because the `FakeChatBox` update is a prerequisite for the production code to work in tests.)
+
+### Step 1: Create `utils/gtk_containers.py`
+
+**What to do:** Write the module with `is_in_container()` function.
+
+**Verify:** `python3 -c "from utils.gtk_containers import is_in_container; print('OK')"` — import succeeds.
+
+### Step 2: Add `is_in_container` import + fix site 1 + fix `_dispatch` in `chat_render_handler.py`
+
+**What to do:** Add import, logger, helper function. Replace `if sb.bubble in sb.container:` with `if is_in_container(sb.bubble, sb.container):`. Wrap `_dispatch`'s `_wrap` in try/except with BaseException guard.
 
 **Verify:** `pytest tests/test_chat_render_handler.py -v` — all existing tests pass.
 
-### Step 2: Add `_is_in_container` helper + fix 5 sites in `feed_tab.py`
+### Step 3: Add `is_in_container` import + fix 5 sites in `feed_tab.py`
 
-**What to do:** Add helper function. Replace all 5 `in self._card_container` patterns.
+**What to do:** Add import. Replace all 5 `in self._card_container` patterns.
 
 **Verify:** `pytest tests/test_feed_handler.py -v` — all existing tests pass.
 
-### Step 3: Create `tests/test_gtk_container_membership.py`
+### Step 4: Create `tests/test_gtk_container_membership.py`
 
-**What to do:** Write the 3 test groups (15 tests).
+**What to do:** Write the `FakeGtkBoxNoContains` class, `FakeChildWidget` class, and 3 test groups (14 tests).
 
-**Verify:** `python3 -m pytest tests/test_gtk_container_membership.py -v` — 15/15 pass.
+**Verify:** `python3 -m pytest tests/test_gtk_container_membership.py -v` — 14/14 pass.
 
-### Step 4: Full regression suite
+### Step 5: Full regression suite
 
 **What to do:** `pytest tests/test_chat_render_handler.py tests/test_feed_handler.py tests/test_gtk_container_membership.py -v`
 
 **Verify:** All tests pass.
 
-### Step 5: Pattern sweep
+### Step 6: Pattern sweep
 
 **What to do:** `grep -rn 'in sb\.container\|in self\._card_container' ui/ --include="*.py"`
 
@@ -540,19 +828,37 @@ If some OTHER exception occurs in a future `_dispatch` callback:
 
 ## 7. Acceptance Criteria
 
-- [ ] `_is_in_container` helper added to `ui/handlers/chat_render_handler.py` with correct identity-based sibling walk
-- [ ] `_is_in_container` helper added to `ui/views/feed_tab.py` (duplicate, identical)
-- [ ] Site 1 (`if sb.bubble in sb.container:`) replaced with `_is_in_container(sb.bubble, sb.container)`
-- [ ] Site 2 (`if widget in self._card_container:`) replaced with `_is_in_container(widget, self._card_container)`
-- [ ] Site 3 (`if ... self._empty_widget in self._card_container:`) replaced with `_is_in_container(self._empty_widget, self._card_container)`
-- [ ] Site 4 (`if self._card_container and widget in self._card_container:`) replaced with `if self._card_container is not None and _is_in_container(...)`
-- [ ] Site 5 (`if ... self._empty_widget in self._card_container:`) replaced with `_is_in_container(self._empty_widget, self._card_container)`
-- [ ] Site 6 (`if old_widget not in self._card_container:`) replaced with `if not _is_in_container(old_widget, self._card_container)`
-- [ ] `import logging` and `_logger = logging.getLogger(__name__)` added to `chat_render_handler.py`
-- [ ] `_dispatch`'s `_wrap` wrapped in `try:`/`except Exception:` with `_logger.exception()`
-- [ ] `tests/test_gtk_container_membership.py` created with 15 tests (3 bug-class docs + 8 helper unit tests + 4 static regression checks)
-- [ ] All existing tests in `test_chat_render_handler.py` and `test_feed_handler.py` pass
-- [ ] New test file passes 15/15
+### Production code
+
+- [ ] `utils/gtk_containers.py` created with `is_in_container()` function using sibling walk
+- [ ] `from utils.gtk_containers import is_in_container` added to `chat_render_handler.py`
+- [ ] `import logging` added to `chat_render_handler.py`
+- [ ] `_logger = logging.getLogger(__name__)` added to `chat_render_handler.py`
+- [ ] Site 1 (`if sb.bubble in sb.container:`) replaced with `if is_in_container(sb.bubble, sb.container):`
+- [ ] `_dispatch`'s `_wrap` has `try:`/`except (KeyboardInterrupt, SystemExit): raise`/`except Exception: _logger.exception(...)`
+- [ ] `from utils.gtk_containers import is_in_container` added to `feed_tab.py`
+- [ ] Site 2 (`if widget in self._card_container:`) replaced with `if is_in_container(widget, self._card_container):`
+- [ ] Site 3 (`if ... self._empty_widget in self._card_container:`) replaced with `if is_in_container(self._empty_widget, self._card_container):`
+- [ ] Site 4 (`if self._card_container and widget in self._card_container:`) replaced with `if self._card_container is not None and is_in_container(...)`
+- [ ] Site 5 (`if ... self._empty_widget in self._card_container:`) replaced with `if is_in_container(self._empty_widget, self._card_container):`
+- [ ] Site 6 (`if old_widget not in self._card_container:`) replaced with `if not is_in_container(old_widget, self._card_container):`
+
+### Test code
+
+- [ ] `FakeChatBox` in `tests/test_chat_render_handler.py` updated with `get_first_child()` and `get_next_sibling()`
+- [ ] Stale assertion in `test_start_streaming_twice_idempotent` fixed from `== 2` to `== 1` with corrected comment
+- [ ] `tests/test_gtk_container_membership.py` created with:
+  - `FakeGtkBoxNoContains` class (no `__contains__`, no `__iter__`)
+  - `FakeChildWidget` class
+  - Group A: 1 test proving `widget in fake_box` raises `TypeError`
+  - Group B: 9 tests of `is_in_container` (present-first, present-middle, present-last, absent, after-remove, None widget, None container, both None, empty container)
+  - Group C: 5 static regression tests (chat_render pattern gone, feed_tab patterns gone, both imports, dispatch logging)
+
+### Verification
+
+- [ ] All existing tests in `test_chat_render_handler.py` pass
+- [ ] All existing tests in `test_feed_handler.py` pass
+- [ ] All 14 tests in `test_gtk_container_membership.py` pass
 - [ ] Pattern sweep shows zero matches for `in sb\.container` or `in self\._card_container`
 
 ---
@@ -561,53 +867,65 @@ If some OTHER exception occurs in a future `_dispatch` callback:
 
 | Case | Expected behavior | Why it matters |
 |------|-------------------|----------------|
-| `widget=None` | `_is_in_container` returns `False` | `_finalize` always has a valid `sb.bubble`, but defensive coding prevents crashes if a future caller passes None |
-| `container=None` | `_is_in_container` returns `False` | `feed_tab.py` guards `self._card_container` with `if self._card_container is not None` or truthiness before calling the helper. But the helper itself is also defensive. |
-| Both None | `_is_in_container` returns `False` | Double-defensive — no TypeError |
-| Empty container (no children) | `_is_in_container` returns `False` | `get_first_child()` returns `None`, `while child is not None:` loop body never runs |
+| `widget=None` | `is_in_container` returns `False` | `_finalize` always has a valid `sb.bubble`, but defensive coding prevents crashes if a future caller passes None |
+| `container=None` | `is_in_container` returns `False` | `feed_tab.py` guards `self._card_container` with `is not None` before calling the helper, but the helper itself is also defensive |
+| Both None | `is_in_container` returns `False` | Double-defensive — no TypeError |
+| Empty container (no children) | `is_in_container` returns `False` | `get_first_child()` returns `None`, `while child is not None:` loop body never runs |
 | Widget is the only child | `get_first_child()` returns the widget, `child is widget` is `True`, returns `True` | Happy path for single-child containers |
 | Widget is the last of 5 children | Sibling walk finds it at position 4, returns `True` | Ensures all positions are covered |
 | Widget was removed from container | `get_first_child()` walks all children, never finds it, returns `False` | Correct post-remove behavior |
 | Widget is in a different container | Same as absent — walk never finds it, returns `False` | Cross-container check |
 | `_dispatch` callback raises `TypeError` | `except Exception` catches it, `_logger.exception()` logs the traceback, `_wrap` returns `False` | Defensive — prevents silent truncation of any future dispatch |
-| `_dispatch` callback raises `KeyboardInterrupt` | `except Exception` does NOT catch `BaseException` subclasses — `KeyboardInterrupt` propagates | Correct — never swallow interrupt signals |
-| `_dispatch` callback raises `SystemExit` | Same as `KeyboardInterrupt` — propagates through | Correct — never swallow exit requests |
+| `_dispatch` callback raises `KeyboardInterrupt` | `except (KeyboardInterrupt, SystemExit): raise` re-raises — propagates through | Correct — never swallow interrupt signals |
+| `_dispatch` callback raises `SystemExit` | Same as `KeyboardInterrupt` — re-raised | Correct — never swallow exit requests |
+| `FakeGtkBoxNoContains` has no `__contains__` | `widget in fake_box` raises `TypeError` | This is the bug — the test proves it reproduces without mocking |
 
 ---
 
 ## 9. ARCHITECTURE.md Updates Required
 
-No ARCHITECTURE.md updates needed. This fix does not:
-- Add/remove/rename a module
-- Change a class's public API or responsibilities
-- Change a public function or method signature
-- Change environment variables
-- Change data flow or event handling patterns
-- Change patterns or conventions
+**Optional (advisory — BUG #12):** Consider adding a one-line convention note documenting the defensive `_dispatch` pattern (try/except + `_logger.exception` + `BaseException` re-raise) to `docs/ARCHITECTURE.md` §5 (Patterns and Conventions). This is not required for the fix to work, but would help future implementers who add new `_dispatch` methods.
 
-The `_is_in_container` helper is a private (`_`-prefixed) module-level utility function. It is not part of any public API. Exception: the new test file should be documented in §8.5 (Test Inventory) if test counts are tracked there — but that is a minor update and can be deferred to the implementer's discretion.
+The `utils/gtk_containers.py` module is a new file that should be added to the directory listing in §2 if the implementer is updating ARCHITECTURE.md. It is a pure utility module with no `ui/`/`agent/`/`gateway/` dependencies.
 
 ---
 
 ## 10. Self-Audit (Rule 9)
 
 **Check 1: Does every code sample actually work against the current codebase?**
-- All function signatures verified against actual source (`grep -n` confirmations above).
-- `Gtk.Widget.get_first_child()` and `Gtk.Widget.get_next_sibling()` are GTK4 native methods, exposed by PyGObject. Verified by reading GTK4 API docs (confirmed: `Gtk.Widget.get_first_child()` returns `GtkWidget*` or `NULL`; `Gtk.Widget.get_next_sibling()` returns `GtkWidget*` or `NULL`). PyGObject wraps these directly.
-- `_is_in_container` uses `is` (identity) comparison — correct for GTK widget objects.
+- All function signatures verified against actual source (search confirmations above).
+- `Gtk.Widget.get_first_child()` and `Gtk.Widget.get_next_sibling()` are GTK4 native methods, exposed by PyGObject.
+- `is_in_container` uses `is` (identity) comparison — correct for GTK widget objects.
+- `FakeChatBox.get_first_child()` and `get_next_sibling()` signatures verified against actual `FakeChatBox` source (lines 397-409).
 
 **Check 2: Did I catch all exception types for every function I call?**
-- `_is_in_container` calls only `get_first_child()` and `get_next_sibling()` — both are GTK4 C methods that return `None` or a widget pointer. Neither raises Python exceptions under normal operation.
-- `_dispatch`'s `_wrap` calls `fn()` — can raise any exception. `except Exception` catches all non-fatal exceptions. `BaseException` (KeyboardInterrupt, SystemExit) propagates — correct.
+- `is_in_container` calls only `get_first_child()` and `get_next_sibling()` — both return `None` or a widget pointer. Neither raises Python exceptions under normal operation.
+- `_dispatch`'s `_wrap` calls `fn()` — can raise any exception. `except (KeyboardInterrupt, SystemExit): raise` re-raises fatal signals. `except Exception` catches all non-fatal exceptions.
 
 **Check 3: Did I verify key structures, not assume them?**
 - `self._card_container` type confirmed as `Gtk.Box | None` from `__init__` source.
 - `self._cards_by_id` type confirmed as `dict[str, Gtk.Widget]`.
 - `sb.bubble` type confirmed as `Gtk.Widget` (from `StreamingBubble` dataclass).
 - `sb.container` type confirmed as `Gtk.Box` (from `StreamingBubble` dataclass).
+- `FakeChatBox` methods confirmed by reading the actual class (lines 397-409).
 
 **Check 4: Did I trace the data flow end-to-end?**
 - Yes — see §4 Data Flow with both normal and error paths traced.
 
 **Check 5: Would an implementer who follows this spec exactly produce working code?**
-- Yes. The changes are minimal, localized, and verifiable. The helper function is a pure function with no side effects. The try/except pattern is standard Python. The test file uses only `MagicMock` — no GTK dependency.
+- Yes. The changes are minimal, localized, and verifiable. The helper function is a pure function with no side effects. The try/except pattern is standard Python. The `FakeChatBox` update is well-defined. The test file uses only pure-Python fakes — no GTK dependency.
+
+### Revision log (Debugger audit fixes applied)
+
+| Bug | Severity | Fix |
+|-----|----------|-----|
+| BUG #1 | CRITICAL | Group A rewritten as single `FakeGtkBoxNoContains` test reproducing the real bug class |
+| BUG #2 | CRITICAL | §3.4 added — `FakeChatBox` must implement `get_first_child()`/`get_next_sibling()` |
+| BUG #3 | HIGH | Stale assertion in `test_start_streaming_twice_idempotent` fixed (`== 2` → `== 1`, comment updated) |
+| BUG #4 | HIGH | Test 4 regex anchor narrowed to `assert "try:" in src and "_logger.exception" in src` |
+| BUG #5 | MEDIUM | `_dispatch` wrapper now has `except (KeyboardInterrupt, SystemExit): raise` with comment |
+| BUG #6 | MEDIUM | §3.6 Deferred Scope added — 3 other `_dispatch` sites listed |
+| BUG #7 | MEDIUM | Line counts recounted in §5 |
+| BUG #10 | MEDIUM | Helper moved to `utils/gtk_containers.py` (shared, not duplicated) |
+| BUG #11 | LOW | §6 reordered: Step 0 = FakeChatBox update before verification |
+| BUG #12 | LOW | §9 advisory note added for ARCHITECTURE.md convention |
