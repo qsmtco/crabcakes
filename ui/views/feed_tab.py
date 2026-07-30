@@ -15,6 +15,8 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
 from typing import Callable
 
+from utils.gtk_containers import is_in_container
+
 
 class FeedTab(Gtk.Box):
     """
