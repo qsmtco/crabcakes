@@ -176,10 +176,27 @@ class TestStaticRegression:
         assert "from utils.gtk_containers import is_in_container" in src
 
     def test_dispatch_has_exception_logging(self):
-        """_dispatch's _wrap has try/except with _logger.exception."""
+        """_dispatch's _wrap has try/except with _logger.exception.
+
+        Scoped to the _wrap function body specifically — a coarse 'try:' check
+        would be too weak (chat_render_handler.py has 5 unrelated try: blocks).
+        This extracts the _wrap body and verifies the exception-logging pattern
+        co-occurs there.
+        """
         src = self._read(self.CHAT_RENDER_PATH)
-        assert "try:" in src and "_logger.exception" in src, \
-            f"_dispatch missing try/except + _logger.exception in {self.CHAT_RENDER_PATH}"
+        # Extract the _wrap function body specifically
+        assert "def _wrap():" in src, "_wrap function not found in _dispatch"
+        wrap_start = src.find("def _wrap():")
+        wrap_end = src.find("self._GLib.idle_add(_wrap)", wrap_start)
+        assert wrap_end != -1, "_wrap function body end marker not found"
+        wrap_body = src[wrap_start:wrap_end]
+        assert "try:" in wrap_body, "try: block missing from _wrap"
+        assert "except (KeyboardInterrupt, SystemExit):" in wrap_body, \
+            "KeyboardInterrupt/SystemExit re-raise missing from _wrap"
+        assert "except Exception:" in wrap_body, \
+            "except Exception clause missing from _wrap"
+        assert "_logger.exception" in wrap_body, \
+            "_logger.exception call missing from _wrap"
 
     @staticmethod
     def _read(path):
