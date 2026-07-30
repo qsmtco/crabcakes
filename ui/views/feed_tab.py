@@ -269,7 +269,7 @@ class FeedTab(Gtk.Box):
         old_widget = self._cards_by_id[card_id]
         if self._card_container is None:
             return
-        if old_widget not in self._card_container:
+        if not is_in_container(old_widget, self._card_container):
             return
 
         # Find the position of old_widget, then insert new_widget at the same spot
