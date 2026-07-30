@@ -22,11 +22,14 @@
 #   render_sync(role, text, session_key=None) -> Gtk.Widget
 #       Synchronous version — only call from the main thread.
 
+import logging
+
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
 
 from utils.escaping import escape_for_pango, xml_template
+from utils.gtk_containers import is_in_container
 from utils.markdown import format_markdown
 from utils.gtk_safe_link import make_safe_label  # HIGH-6: activate-link guard
 from concurrent.futures import ThreadPoolExecutor
