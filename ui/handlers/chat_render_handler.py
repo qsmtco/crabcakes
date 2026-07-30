@@ -572,7 +572,7 @@ class ChatRenderHandler:
             full_text = sb.plain_text
 
             # Remove streaming bubble widget
-            if sb.bubble in sb.container:
+            if is_in_container(sb.bubble, sb.container):
                 sb.container.remove(sb.bubble)
 
             # Resolve display name for header. Priority:
