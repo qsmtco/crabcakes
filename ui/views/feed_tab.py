@@ -235,7 +235,7 @@ class FeedTab(Gtk.Box):
         # documented GTK4 API and is safe to call on widgets that never
         # had the flags set.
         self._clear_widget_state_recursive(widget)
-        if self._card_container and widget in self._card_container:
+        if self._card_container is not None and is_in_container(widget, self._card_container):
             self._card_container.remove(widget)
         del self._cards_by_id[card_id]      
 
