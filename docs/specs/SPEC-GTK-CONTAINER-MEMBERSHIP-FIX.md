@@ -164,7 +164,7 @@ def test_start_streaming_twice_idempotent(self):
     assert len(self.fake_box._children) == 2  # old bubble not removed from FakeChatBox, only from real GTK container
 ```
 
-- The comment "old bubble not removed from FakeChatBox, only from real GTK container" describes the OLD broken behavior. After the fix, `end_streaming()` → `_finalize()` → `_is_in_container(sb.bubble, sb.container)` → `sb.container.remove(sb.bubble)` will remove the old bubble from `FakeChatBox` too. The assertion `len(self.fake_box._children) == 2` becomes wrong — it should be `== 1` (old bubble removed, new bubble appended).
+- The comment "old bubble not removed from FakeChatBox, only from real GTK container" describes behavior that is misleading. The count remains 2 after the fix, but for a different reason than the comment implied: `end_streaming` (called by the second `start_streaming` on a duplicate key, with default `render=True`) removes the old streaming bubble AND appends a `final_bubble`, then `start_streaming` appends the new streaming bubble. So `_children` = `[final_bubble, new_streaming_bubble]` = 2. **The assertion value stays `== 2`; only the comment is updated** to correctly explain the two-children reality. (Original spec draft proposed `== 1` — that was wrong; corrected in REVISION 2026-07-28 after Debugger Phase 2 audit.)
 
 ### Pattern sweep (all 6 sites confirmed)
 
@@ -479,21 +479,23 @@ def get_next_sibling(self, child):
     return self._children[idx + 1] if idx + 1 < len(self._children) else None
 ```
 
-#### 3.4.1 Fix stale assertion in `test_start_streaming_twice_idempotent`
+#### 3.4.1 Update comment in `test_start_streaming_twice_idempotent` (assertion value stays `== 2`)
 
-**Old code (line 200):**
+> **SPEC REVISION 2026-07-28:** The original draft of this spec (BUG #3) claimed the assertion should change `== 2` → `== 1`. That was wrong. The Debugger audit (Phase 2) traced the production path and proved the count remains 2. The spec's original rationale ignored that `start_streaming` calls `end_streaming(session_key)` with the default `render=True`, which appends a `final_bubble`. This section is corrected below.
 
+**Code (line 200) — assertion value UNCHANGED, comment UPDATED:**
+
+Old comment:
 ```python
         assert len(self.fake_box._children) == 2  # old bubble not removed from FakeChatBox, only from real GTK container
 ```
 
-**New code:**
-
+New comment (same value, corrected explanation):
 ```python
-        assert len(self.fake_box._children) == 1  # old bubble removed by _finalize, new bubble appended; only the new one is in the container
+        assert len(self.fake_box._children) == 2  # end_streaming(render=True default) removes old streaming bubble + appends final_bubble, then second start_streaming appends new streaming bubble = 2 children
 ```
 
-**Rationale:** After the fix, `end_streaming()` → `_finalize()` → `is_in_container(sb.bubble, sb.container)` → True (because `FakeChatBox` now implements `get_first_child()`). Then `sb.container.remove(sb.bubble)` removes the old bubble. The second `start_streaming` appends a new one. So `_children` has exactly 1 element (the new bubble), not 2.
+**Rationale (corrected):** In `test_start_streaming_twice_idempotent`, the second `start_streaming` call detects the existing `session_key` and calls `self.end_streaming(session_key)` (chat_render_handler.py:386) with **no `render` argument**, so `render=True` (the default). `_finalize` then: (1) removes the old streaming bubble via `is_in_container` → `container.remove`, and (2) because `render` is True, appends a `final_bubble`. Then control returns to `start_streaming`, which appends the new streaming bubble. Net: `[final_bubble, new_streaming_bubble]` = **2 children**. The value `== 2` was correct all along; only the *comment's explanation* was wrong (it attributed the count to the bug rather than to the render=True final-bubble append).
 
 ### 3.5 `tests/test_gtk_container_membership.py` (NEW)
 
@@ -846,7 +848,7 @@ If some OTHER exception occurs in a future `_dispatch` callback:
 ### Test code
 
 - [ ] `FakeChatBox` in `tests/test_chat_render_handler.py` updated with `get_first_child()` and `get_next_sibling()`
-- [ ] Stale assertion in `test_start_streaming_twice_idempotent` fixed from `== 2` to `== 1` with corrected comment
+- [ ] Comment in `test_start_streaming_twice_idempotent` updated to correctly explain the 2-children reality (assertion value stays `== 2`; REVISION 2026-07-28 — original spec's `== 1` was wrong)
 - [ ] `tests/test_gtk_container_membership.py` created with:
   - `FakeGtkBoxNoContains` class (no `__contains__`, no `__iter__`)
   - `FakeChildWidget` class
