@@ -750,10 +750,24 @@ class ChatRenderHandler:
         return box
 
     def _dispatch(self, fn):
-        """Call fn on the GTK main thread."""
+        """Call fn on the GTK main thread.
+
+        Uses GLib.idle_add to dispatch to the GTK main thread when
+        GLib is available. Wraps the callback in try/except so that
+        exceptions are logged rather than silently swallowed by GLib's
+        main loop exception handler.
+
+        KeyboardInterrupt and SystemExit are intentionally re-raised
+        (not caught by the generic except Exception).
+        """
         if self._GLib is not None:
             def _wrap():
-                fn()
+                try:
+                    fn()
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except Exception:
+                    _logger.exception("Unhandled exception in _dispatch callback")
                 return False
             self._GLib.idle_add(_wrap)
         else:
