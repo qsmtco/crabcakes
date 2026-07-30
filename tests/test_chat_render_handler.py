@@ -197,7 +197,7 @@ class TestPhase3Streaming:
         self.handler.start_streaming("agent:1", self.fake_box, "Agent")
         self._run_all_idle()
         assert self.handler.is_streaming("agent:1") is True
-        assert len(self.fake_box._children) == 2  # old bubble not removed from FakeChatBox, only from real GTK container
+        assert len(self.fake_box._children) == 1  # old bubble removed by _finalize via is_in_container, new bubble appended
 
     def test_update_streaming_uses_delta_as_full_text(self):
         """update_streaming() uses delta_text as the complete accumulated text."""
@@ -407,3 +407,16 @@ class FakeChatBox:
 
     def __contains__(self, widget):
         return widget in self._children
+
+    def get_first_child(self):
+        """Return the first child, or None if empty (mirrors Gtk.Widget)."""
+        return self._children[0] if self._children else None
+
+    def get_next_sibling(self):
+        """
+        FakeChatBox is a container stand-in, not a widget, so it has no
+        siblings. Returns None — mirrors Gtk.Widget.get_next_sibling() on a
+        root-level container. (The sibling walk in is_in_container calls
+        get_next_sibling on each CHILD widget, not on the container.)
+        """
+        return None
