@@ -33,12 +33,13 @@ _PANGO_KNOWN_TAGS: frozenset[str] = frozenset({
     "b", "i", "u", "s", "tt", "big", "small",
     # Span tag (generic container with attributes)
     "span",
-    # Anchor tag
-    "a",
     # Sub/superscript
     "sub", "sup",
     # Overline
     "o",
+    # NOTE: "a" (anchor) is NOT included — Pango 1.52 does not support <a>
+    # in markup. escape_for_pango escapes <a> to &lt;a&gt; so it never
+    # reaches format_markdown or Gtk.Label.set_markup.
 })
 
 # Void elements — HTML elements with no closing tag. Kept for reference /
