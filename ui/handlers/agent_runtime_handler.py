@@ -981,7 +981,7 @@ class AgentRuntimeHandler:
         else:
             self._do_text_delta(session_key, text, gen)
 
-    def _do_text_delta(self, session_key: str, text: str, delta_gen: int = 0) -> None:
+    def _do_text_delta(self, session_key: str, text: str, delta_gen: int | None = None) -> None:
         """Main-thread portion of _on_text_delta.
 
         AgentRuntime sends incremental SSE chunks. ChatRenderHandler expects
