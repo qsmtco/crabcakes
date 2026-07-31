@@ -534,3 +534,25 @@ class TestFencedVsInlineBacktickRegression:
         # Should not raise / emit "Failed to set text" Gtk-WARNING
         label = Gtk.Label()
         label.set_markup(result)
+
+
+def test_format_markdown_no_anchor_tags_emitted():
+    """Regression: format_markdown must never emit <a> tags (Pango rejects them).
+
+    Pango.parse_markup raises 'Unknown tag a' on any <a> element, causing
+    Gtk.Label.set_markup to reject the entire message. This test guards
+    against reintroducing <a href> in any link-rendering path.
+    """
+    from utils.escaping import escape_for_pango
+    # Inputs that trigger all 3 link paths (markdown link, angle-link, auto-link)
+    inputs = [
+        "[click](https://example.com)",
+        "see <https://example.com> here",
+        "bare http://example.com url",
+        "filename.md looking like a host",
+        "mixed [a](http://x.com) and bare http://y.com",
+    ]
+    for inp in inputs:
+        result = format_markdown(escape_for_pango(inp))
+        assert '<a ' not in result, f"format_markdown emitted <a> for {inp!r}: {result!r}"
+        assert '<a>' not in result, f"format_markdown emitted <a> for {inp!r}: {result!r}"
