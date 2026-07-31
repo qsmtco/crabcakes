@@ -243,6 +243,12 @@ def format_markdown(text: str) -> str:
         label = m.group(1)
         url = m.group(2)
         safe_url = urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=-_.~")
+        # Resolve code-span placeholders in the label BEFORE storing.
+        # Step 1 may have replaced `code` with \x00CODE{N}\x00. If we store
+        # the placeholder in anchor_html, Step 5 (code restoration) won't
+        # find it (it was consumed from `protected`), and the null bytes
+        # reach Pango, which uses C-string semantics and truncates at \x00.
+        label = _CODE_PLACEHOLDER_RE.sub(_resolve_code_in_label, label)
         # Produce <u> underlined text, then immediately protect it with a placeholder
         # Pango does NOT support <a href> in markup (raises Unknown tag 'a').
         # Render link text as underlined (non-clickable). HIGH-6 validation
