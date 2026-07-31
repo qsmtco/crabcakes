@@ -328,10 +328,10 @@ class TestAngleBracketAutoLink:
     """
 
     def test_angle_bracket_basic(self):
-        """<https://example.com> renders as clickable link."""
+        """<https://example.com> renders as underlined link text."""
         from utils.escaping import escape_for_pango
         result = format_markdown(escape_for_pango("see <https://example.com>"))
-        assert 'href="https://example.com"' in result
+        assert '<u>https://example.com</u>' in result
         assert "&gt\"" not in result  # no truncated entity in href
         assert "&gt<" not in result   # no truncated entity before tag
 
@@ -339,7 +339,7 @@ class TestAngleBracketAutoLink:
         """Standalone <https://example.com> works."""
         from utils.escaping import escape_for_pango
         result = format_markdown(escape_for_pango("<https://example.com>"))
-        assert 'href="https://example.com"' in result
+        assert '<u>https://example.com</u>' in result
 
     def test_angle_bracket_with_query_params(self):
         """<https://test.com?a=1&b=2> preserves full query string."""
@@ -353,7 +353,7 @@ class TestAngleBracketAutoLink:
         """go to <https://example.com>. works (period after bracket)."""
         from utils.escaping import escape_for_pango
         result = format_markdown(escape_for_pango("go to <https://example.com>."))
-        assert 'href="https://example.com"' in result
+        assert '<u>https://example.com</u>' in result
 
     def test_angle_bracket_embedded_in_sentence(self):
         """see <https://example.com> out works."""
