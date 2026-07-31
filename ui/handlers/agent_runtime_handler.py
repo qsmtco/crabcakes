@@ -1002,8 +1002,10 @@ class AgentRuntimeHandler:
         # incremented the counter), drop it. This prevents stale idle callbacks
         # from starting a new streaming bubble after completion has rendered
         # the final bubble.
+        # delta_gen=None means a 2-arg caller (backward-compat) — treat as
+        # current generation (never stale).
         current_gen = self._delta_generation.get(session_key, 0)
-        if delta_gen < current_gen:
+        if delta_gen is not None and delta_gen < current_gen:
             logger.debug(
                 "_do_text_delta: dropping stale delta (gen %d < current %d) for %s",
                 delta_gen, current_gen, session_key,
