@@ -71,8 +71,9 @@ class TestEscapeForPango:
     def test_span_tag_preserved(self):
         assert escape_for_pango('<span foreground="red">text</span>') == '<span foreground="red">text</span>'
 
-    def test_anchor_tag_preserved(self):
-        assert escape_for_pango('<a href="https://x.com">link</a>') == '<a href="https://x.com">link</a>'
+    def test_anchor_tag_escaped(self):
+        """Pango 1.52 does not support <a>; escape_for_pango escapes it."""
+        assert escape_for_pango('<a href="https://x.com">link</a>') == '&lt;a href=&quot;https://x.com&quot;&gt;link&lt;/a&gt;'
 
     def test_nested_tags_preserved(self):
         assert escape_for_pango("<b><i>bold italic</i></b>") == "<b><i>bold italic</i></b>"
