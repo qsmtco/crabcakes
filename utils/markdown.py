@@ -12,7 +12,7 @@
 #   *italic*   -> <i>italic</i>
 #   `code`     -> <tt>code</tt>
 #   ~~strike~~ -> <s>strike</s>
-#   [text](url)-> <a href="url"><u>text</u></a>
+#   [text](url)-> <u>text</u> (underlined, non-clickable)
 #   bare URL   -> clickable link (auto-detect)
 #   - item     -> bullet conversion at line start
 #
@@ -90,11 +90,11 @@ def format_markdown(text: str) -> str:
     Order of operations:
       1. Protect inline code spans (backtick-delimited, GFM multi-backtick)
       2. Apply markdown -> Pango conversions (bold, italic, strike)
-      3. Convert markdown links [text](url) -> <a href="url"><u>text</u></a>
-         THEN immediately replace those <a> tags with placeholders
-      4. Auto-link bare URLs (now safe — <a> tags are placeholders)
+      3. Convert markdown links [text](url) -> <u>text</u> (underlined)
+         THEN immediately replace those underlined spans with placeholders
+      4. Auto-link bare URLs -> <u>url</u> (underlined)
       5. Restore inline code spans (with <tt> wrapper)
-      6. Restore <a> anchor tags
+      6. Restore <u> link text
       7. Return Pango Markup
 
     Args:
@@ -220,14 +220,14 @@ def format_markdown(text: str) -> str:
     # Inline bullets at line start: "- " -> bullet (also match at position 0)
     protected = re.sub(r'(?m)^-( )', r'•\1', protected)
 
-    # ── Step 3: Markdown links -> <a> tags, then immediately protect those <a> tags
+    # ── Step 3: Markdown links -> <u> underlined text, then immediately protect
     anchor_spans: list[str] = []
 
     def _link_replace_and_protect(m):
         label = m.group(1)
         url = m.group(2)
         safe_url = urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=-_.~")
-        # Produce <a> tag, then immediately protect it with a placeholder
+        # Produce <u> underlined text, then immediately protect it with a placeholder
         # Pango does NOT support <a href> in markup (raises Unknown tag 'a').
         # Render link text as underlined (non-clickable). HIGH-6 validation
         # is preserved: non-allowlisted schemes still get the warning prefix.
@@ -248,7 +248,7 @@ def format_markdown(text: str) -> str:
     # of the URL, and _strip_trailing_punct would then strip the trailing
     # semicolon from &gt;, producing the invalid entity &gt (Gtk warning).
     # We pre-process here: extract the URL between the escaped brackets,
-    # build an <a> tag, and protect it with the same \x00ANCHOR{N}\x00
+    # build <u> underlined text, and protect it with the same \x00ANCHOR{N}\x00
     # placeholder that Step 3 uses for markdown links — so Step 6 restores
     # both kinds together.
     def _angle_link_replace(m):
@@ -327,7 +327,7 @@ def format_markdown(text: str) -> str:
 
     protected = _CODE_PLACEHOLDER_RE.sub(_restore_code, protected)
 
-    # ── Step 6: Restore <a> anchor tags ──────────────────────────────────────
+    # ── Step 6: Restore <u> link text ─────────────────────────────────────────
     def _restore_anchor(m):
         idx = int(m.group(1))
         if idx < len(anchor_spans):

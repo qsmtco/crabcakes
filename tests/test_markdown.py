@@ -93,8 +93,8 @@ class TestLinks:
 
     def test_link_url_encoded(self):
         result = format_markdown("[search](https://example.com?q=hello world)")
-        # URL should be encoded (spaces become %20)
-        assert "hello%20world" in result
+        # URL-encoded content is no longer emitted (no <a href>), just the label
+        assert '<u>search</u>' in result
 
     def test_auto_link_bare_url(self):
         result = format_markdown("check https://example.com for info")
