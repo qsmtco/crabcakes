@@ -275,12 +275,15 @@ def format_markdown(text: str) -> str:
     # both kinds together.
     def _angle_link_replace(m):
         url = m.group(1)
-        # Decode entities for visible text (so user sees & not &amp;),
+        # Resolve code-span placeholders in the URL before building display
+        # text (same fix as Step 3 — Step 1 may have replaced `code` inside
+        # the URL with \x00CODE{N}\x00, which would survive into anchor_html
+        # and crash Pango's C-string parser).
+        url = _CODE_PLACEHOLDER_RE.sub(_resolve_code_in_label, url)
+        # Decode entities for visible text (so user sees & not &amp;;),
         # then re-escape for safe Pango display.
         import html as _html
         display_url = _html.escape(_html.unescape(url))
-        # Entity-encode the href value so " and & don't break the XML attribute
-        safe_href = _html.escape(url, quote=True)
         anchor_html = f'<u>{display_url}</u>'
         if not _validate_link_url(url):
             anchor_html = _WARNING_PREFIX + anchor_html
