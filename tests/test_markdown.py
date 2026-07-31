@@ -556,3 +556,32 @@ def test_format_markdown_no_anchor_tags_emitted():
         result = format_markdown(escape_for_pango(inp))
         assert '<a ' not in result, f"format_markdown emitted <a> for {inp!r}: {result!r}"
         assert '<a>' not in result, f"format_markdown emitted <a> for {inp!r}: {result!r}"
+
+
+def test_markdown_link_with_code_span_label():
+    """Regression (Phase 2): [`code`](url) must produce valid Pango markup.
+
+    Step 3 must resolve code-span placeholders in link labels before
+    storing anchor_html, otherwise null bytes reach Pango's C-string parser.
+    """
+    result = format_markdown(escape_for_pango("[`context.md`](https://example.com)"))
+    assert '\x00' not in result, f"Null byte in output: {result!r}"
+    assert 'context.md' in result
+    assert '<u>' in result
+
+
+def test_angle_link_with_code_span_in_url():
+    """Regression (Step 3a fix): <https://`evil`.com> must not produce null bytes.
+
+    Step 3a must resolve code-span placeholders in angle-link URLs,
+    same as Step 3 does for markdown link labels.
+    """
+    result = format_markdown(escape_for_pango("see <https://`evil`.com> here"))
+    assert '\x00' not in result, f"Null byte in output: {result!r}"
+
+
+def test_multiple_code_span_labels_in_links():
+    """Multiple [`code`](url) links in one message all resolve correctly."""
+    result = format_markdown(escape_for_pango("see [`a.py`](url1) and [`b.py`](url2)"))
+    assert '\x00' not in result
+    assert 'a.py' in result and 'b.py' in result
