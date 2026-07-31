@@ -437,26 +437,26 @@ class TestAutoLinkBareHostname:
     """
 
     def test_bare_hostname_links(self):
-        """httpbin.org/help → <a href="httpbin.org/help"> link."""
+        """httpbin.org/help → <u>httpbin.org/help</u>."""
         result = format_markdown("visit httpbin.org/help for info")
-        assert '<a href="httpbin.org/help">' in result, f"Got: {result!r}"
+        assert '<u>httpbin.org/help</u>' in result, f"Got: {result!r}"
 
     def test_bare_hostname_simple(self):
-        """example.com → <a href="example.com">."""
+        """example.com → <u>example.com</u>."""
         result = format_markdown("see example.com today")
-        assert '<a href="example.com">' in result, f"Got: {result!r}"
+        assert '<u>example.com</u>' in result, f"Got: {result!r}"
 
     def test_bare_hostname_strips_trailing_period(self):
         """Period after bare hostname is stripped from URL."""
         result = format_markdown("see example.com.")
-        assert '<a href="example.com">' in result, f"Got: {result!r}"
-        # And the period is NOT in the href value
-        assert 'example.com.' not in result.split('"')[1] if '"' in result else True
+        assert '<u>example.com</u>' in result, f"Got: {result!r}"
+        # And the period is NOT in the underlined text
+        assert '<u>example.com.</u>' not in result
 
     def test_scheme_url_still_works(self):
         """No regression: explicit-scheme URLs still auto-link."""
         result = format_markdown("see https://x.com")
-        assert '<a href="https://x.com">' in result
+        assert '<u>https://x.com</u>' in result
 
 
 class TestFencedVsInlineBacktickRegression:
