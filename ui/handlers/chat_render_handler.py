@@ -475,8 +475,7 @@ class ChatRenderHandler:
         # main thread (caller dispatched via GLib.idle_add), so no _dispatch needed.
         sb.label.set_text(sb.plain_text + " ▍")
         # DEBUG-TRUNCATION: trace streaming label content
-        import sys as _dbg_sys
-        print(f"[DBG-STREAM] sk={session_key!r} plain_text_len={len(sb.plain_text)} label_text_len={len(sb.label.get_text())}", file=_dbg_sys.stderr)
+                sys.stderr.write(ff"[DBG-STREAM] sk={session_key!r} plain_text_len={len(sb.plain_text)} label_text_len={len(sb.label.get_text())}" + "\n")
 
     def _render_plain_text(self, role: str, text: str, on_forward_click=None, agent_name: str = None):
         """
@@ -574,10 +573,9 @@ class ChatRenderHandler:
             # Use tracked plain text directly (cursor already absent after pop)
             full_text = sb.plain_text
             # DEBUG-TRUNCATION: trace what enters _finalize
-            import sys as _dbg_sys
-            print(f"\n[DBG-FINALIZE] full_text length={len(full_text)}", file=_dbg_sys.stderr)
-            print(f"[DBG-FINALIZE] full_text repr (first 200)={full_text[:200]!r}", file=_dbg_sys.stderr)
-            print(f"[DBG-FINALIZE] render={render}", file=_dbg_sys.stderr)
+                        sys.stderr.write(ff"\n[DBG-FINALIZE] full_text length={len(full_text)}" + "\n")
+            sys.stderr.write(ff"[DBG-FINALIZE] full_text repr (first 200)={full_text[:200]!r}" + "\n")
+            sys.stderr.write(ff"[DBG-FINALIZE] render={render}" + "\n")
 
             # Remove streaming bubble widget
             if is_in_container(sb.bubble, sb.container):
@@ -604,14 +602,14 @@ class ChatRenderHandler:
             if render:
                 # Build and append final bubble
                 # DEBUG-TRUNCATION: trace build_role_bubble input/output
-                print(f"[DBG-FINALIZE] calling build_role_bubble with role={sb.role!r} text_len={len(full_text)}", file=_dbg_sys.stderr)
+                sys.stderr.write(ff"[DBG-FINALIZE] calling build_role_bubble with role={sb.role!r} text_len={len(full_text)}" + "\n")
                 final_bubble = build_role_bubble(
                     sb.role, full_text,
                     on_forward_click=self._on_forward_message,
                     session_key=session_key,
                     agent_name=resolved_name,
                 )
-                print(f"[DBG-FINALIZE] build_role_bubble returned type={type(final_bubble).__name__}", file=_dbg_sys.stderr)
+                sys.stderr.write(ff"[DBG-FINALIZE] build_role_bubble returned type={type(final_bubble).__name__}" + "\n")
                 sb.container.append(final_bubble)
                 if self._main_content is not None:
                     self._main_content.scroll_chat_to_bottom()

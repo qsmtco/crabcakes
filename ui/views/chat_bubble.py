@@ -317,18 +317,17 @@ def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool =
     processed = process_segments(text)
 
     # DEBUG-TRUNCATION: trace segments
-    import sys as _dbg_sys
-    print(f"[DBG-BUBBLE] input text length={len(text)}", file=_dbg_sys.stderr)
-    print(f"[DBG-BUBBLE] segments count={len(processed)}", file=_dbg_sys.stderr)
+        sys.stderr.write(ff"[DBG-BUBBLE] input text length={len(text)}" + "\n")
+    sys.stderr.write(ff"[DBG-BUBBLE] segments count={len(processed)}" + "\n")
     for i, s in enumerate(processed):
         st = s.get('type','?')
         if st == 'text':
             m = s.get('markup','')
-            print(f"[DBG-BUBBLE] seg[{i}] text markup_len={len(m)}: {m[:120]!r}", file=_dbg_sys.stderr)
+            sys.stderr.write(ff"[DBG-BUBBLE] seg[{i}] text markup_len={len(m)}: {m[:120]!r}" + "\n")
         elif st == 'code':
-            print(f"[DBG-BUBBLE] seg[{i}] code lang={s.get('lang')!r} raw_len={len(s.get('raw_content',''))}", file=_dbg_sys.stderr)
+            sys.stderr.write(ff"[DBG-BUBBLE] seg[{i}] code lang={s.get('lang')!r} raw_len={len(s.get('raw_content',''))}" + "\n")
         else:
-            print(f"[DBG-BUBBLE] seg[{i}] {st}", file=_dbg_sys.stderr)
+            sys.stderr.write(ff"[DBG-BUBBLE] seg[{i}] {st}" + "\n")
 
     # ── Assemble GTK widgets from processed segments ──────────────────
     for pseg in processed:
