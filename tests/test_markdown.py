@@ -240,17 +240,17 @@ class TestMarkdownWarnButRender:
     def test_http_link_no_warning(self):
         result = format_markdown("[example](http://example.com)")
         assert "\u26a0" not in result
-        assert '<a href="http://example.com">' in result
+        assert '<u>example</u>' in result
 
     def test_https_link_no_warning(self):
         result = format_markdown("[example](https://example.com)")
         assert "\u26a0" not in result
-        assert '<a href="https://example.com">' in result
+        assert '<u>example</u>' in result
 
     def test_mailto_no_warning(self):
         result = format_markdown("[email me](mailto:x@y.com)")
         assert "\u26a0" not in result
-        assert '<a href="mailto:x@y.com">' in result
+        assert '<u>email me</u>' in result
 
     def test_file_link_with_warning(self):
         """file:// links must be rendered WITH red warning prefix."""
@@ -260,32 +260,32 @@ class TestMarkdownWarnButRender:
             f"Got: {result!r}"
         )
         # Link must still be rendered (warn-but-render, not block)
-        assert '<a href="file:///etc/passwd">' in result
+        assert '<u>passwd</u>' in result
 
     def test_smb_link_with_warning(self):
         result = format_markdown("[share](smb://server/share)")
         assert "\u26a0" in result
-        assert '<a href="smb://server/share">' in result
+        assert '<u>share</u>' in result
 
     def test_javascript_link_with_warning(self):
         result = format_markdown("[click](javascript:alert(1))")
         assert "\u26a0" in result, "javascript: links must have warning prefix"
-        assert '<a href="javascript:alert(1)">' in result
+        assert '<u>click</u>' in result
 
     def test_data_uri_with_warning(self):
         result = format_markdown("[data](data:text/html,<script>alert(1)</script>)")
         assert "\u26a0" in result
-        assert '<a href="data:text/html,%3Cscript%3Ealert(1)%3C/script%3E">' in result
+        assert '<u>data</u>' in result
 
     def test_ssh_link_with_warning(self):
         result = format_markdown("[ssh](ssh://user@host)")
         assert "\u26a0" in result
-        assert '<a href="ssh://user@host">' in result
+        assert '<u>ssh</u>' in result
 
     def test_custom_scheme_with_warning(self):
         result = format_markdown("[app](myapp://action)")
         assert "\u26a0" in result
-        assert '<a href="myapp://action">' in result
+        assert '<u>app</u>' in result
 
     def test_auto_link_http_no_warning(self):
         """Bare http:// URLs must not have warning prefix."""
@@ -304,8 +304,8 @@ class TestMarkdownWarnButRender:
         result = format_markdown("[x](file:///etc/passwd)")
         # Pango markup for red bold WARNING SIGN
         assert '<span foreground="red" weight="bold">\u26a0</span>' in result
-        # Link must still be clickable
-        assert '<a href="file:///etc/passwd">' in result
+        # Link text must still be underlined
+        assert '<u>x</u>' in result
 
     def test_multiple_links_mixed_schemes(self):
         """Mixed allowlisted and non-allowlisted links in one text."""
@@ -314,8 +314,8 @@ class TestMarkdownWarnButRender:
         )
         # https has no warning
         assert result.count("\u26a0") == 1, "Only file:// should have warning"
-        assert '<a href="https://example.com">' in result
-        assert '<a href="file:///etc/passwd">' in result
+        assert '<u>safe</u>' in result
+        assert '<u>danger</u>' in result
 
 
 class TestAngleBracketAutoLink:
