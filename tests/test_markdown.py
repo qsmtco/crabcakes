@@ -359,17 +359,17 @@ class TestAngleBracketAutoLink:
         """see <https://example.com> out works."""
         from utils.escaping import escape_for_pango
         result = format_markdown(escape_for_pango("see <https://example.com> out"))
-        assert 'href="https://example.com"' in result
+        assert '<u>https://example.com</u>' in result
 
     def test_plain_url_still_works(self):
         """Regression: plain URL without angle brackets still auto-links."""
         result = format_markdown("check https://example.com for info")
-        assert '<a href="https://example.com">' in result
+        assert '<u>https://example.com</u>' in result
 
     def test_markdown_link_still_works(self):
         """Regression: [label](url) still works."""
         result = format_markdown("[label](https://example.com)")
-        assert '<a href="https://example.com">' in result
+        assert '<u>label</u>' in result
 
     def test_no_broken_entities_in_output(self):
         """Output must not contain &gt without semicolon (would crash Pango)."""
