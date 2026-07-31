@@ -228,7 +228,11 @@ def format_markdown(text: str) -> str:
         url = m.group(2)
         safe_url = urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=-_.~")
         # Produce <a> tag, then immediately protect it with a placeholder
-        anchor_html = f'<a href="{safe_url}"><u>{label}</u></a>'
+        # Pango does NOT support <a href> in markup (raises Unknown tag 'a').
+        # Render link text as underlined (non-clickable). HIGH-6 validation
+        # is preserved: non-allowlisted schemes still get the warning prefix.
+        # Clickable links require Pango AttrType.LINK (future spec).
+        anchor_html = f'<u>{label}</u>'
         # HIGH-6: prepend red warning prefix for non-allowlisted schemes
         if not _validate_link_url(url):
             anchor_html = _WARNING_PREFIX + anchor_html
