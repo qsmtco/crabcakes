@@ -476,7 +476,7 @@ class ChatRenderHandler:
         sb.label.set_text(sb.plain_text + " ▍")
         # DEBUG-TRUNCATION: trace streaming label content
         import sys as _dbg_sys
-        print(f"[DBG-STREAM] sk={session_key!r} plain_text_len={len(sb.plain_text)} label_text_len={len(sb.label.get_text())}", file=_dbg_sys)
+        print(f"[DBG-STREAM] sk={session_key!r} plain_text_len={len(sb.plain_text)} label_text_len={len(sb.label.get_text())}", file=_dbg_sys.stderr)
 
     def _render_plain_text(self, role: str, text: str, on_forward_click=None, agent_name: str = None):
         """
@@ -604,14 +604,14 @@ class ChatRenderHandler:
             if render:
                 # Build and append final bubble
                 # DEBUG-TRUNCATION: trace build_role_bubble input/output
-                print(f"[DBG-FINALIZE] calling build_role_bubble with role={sb.role!r} text_len={len(full_text)}", file=_dbg_sys)
+                print(f"[DBG-FINALIZE] calling build_role_bubble with role={sb.role!r} text_len={len(full_text)}", file=_dbg_sys.stderr)
                 final_bubble = build_role_bubble(
                     sb.role, full_text,
                     on_forward_click=self._on_forward_message,
                     session_key=session_key,
                     agent_name=resolved_name,
                 )
-                print(f"[DBG-FINALIZE] build_role_bubble returned type={type(final_bubble).__name__}", file=_dbg_sys)
+                print(f"[DBG-FINALIZE] build_role_bubble returned type={type(final_bubble).__name__}", file=_dbg_sys.stderr)
                 sb.container.append(final_bubble)
                 if self._main_content is not None:
                     self._main_content.scroll_chat_to_bottom()
