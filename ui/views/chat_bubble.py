@@ -316,19 +316,6 @@ def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool =
     raw_text = text  # keep original for copy button
     processed = process_segments(text)
 
-    # DEBUG-TRUNCATION: trace segments
-        sys.stderr.write(ff"[DBG-BUBBLE] input text length={len(text)}" + "\n")
-    sys.stderr.write(ff"[DBG-BUBBLE] segments count={len(processed)}" + "\n")
-    for i, s in enumerate(processed):
-        st = s.get('type','?')
-        if st == 'text':
-            m = s.get('markup','')
-            sys.stderr.write(ff"[DBG-BUBBLE] seg[{i}] text markup_len={len(m)}: {m[:120]!r}" + "\n")
-        elif st == 'code':
-            sys.stderr.write(ff"[DBG-BUBBLE] seg[{i}] code lang={s.get('lang')!r} raw_len={len(s.get('raw_content',''))}" + "\n")
-        else:
-            sys.stderr.write(ff"[DBG-BUBBLE] seg[{i}] {st}" + "\n")
-
     # ── Assemble GTK widgets from processed segments ──────────────────
     for pseg in processed:
         seg_type = pseg.get("type", "text")
