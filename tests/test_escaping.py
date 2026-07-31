@@ -121,9 +121,11 @@ class TestEscapeForPango:
         result = escape_for_pango('<span foreground="blue">blue text</span>')
         assert 'foreground="blue"' in result
 
-    def test_link_tag_with_url(self):
+    def test_link_tag_escaped(self):
+        """Pango 1.52 does not support <a>; the whole tag is escaped."""
         result = escape_for_pango('<a href="http://example.com"><u>link</u></a>')
-        assert 'href="http://example.com"' in result
+        assert '&lt;a' in result  # escaped, not preserved
+        assert '<a href' not in result  # not a real tag
 
     def test_only_tag_characters(self):
         result = escape_for_pango("<<>>")
