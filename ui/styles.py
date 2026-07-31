@@ -1420,7 +1420,7 @@ button.settings-remove-btn:hover {
 }
 
 /* ── File tree status badges (Phase 1) ─────────────────────────────────── */
-.file-tree-status-badge { padding: 1px 4px; border-radius: 3px; font-size: 10px; font-weight: 600; min-width: 18px; text-align: center; }
+.file-tree-status-badge { padding: 1px 4px; border-radius: 3px; font-size: 10px; font-weight: 600; min-width: 18px; }
 .file-tree-status-modified { background: #f59e0b; color: #1e1e1e; }
 .file-tree-status-staged { background: #22c55e; color: #1e1e1e; }
 .file-tree-status-untracked { background: #6366f1; color: #fff; }
