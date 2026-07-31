@@ -259,7 +259,7 @@ def format_markdown(text: str) -> str:
         display_url = _html.escape(_html.unescape(url))
         # Entity-encode the href value so " and & don't break the XML attribute
         safe_href = _html.escape(url, quote=True)
-        anchor_html = f'<a href="{safe_href}"><u>{display_url}</u></a>'
+        anchor_html = f'<u>{display_url}</u>'
         if not _validate_link_url(url):
             anchor_html = _WARNING_PREFIX + anchor_html
         anchor_spans.append(anchor_html)
@@ -301,7 +301,7 @@ def format_markdown(text: str) -> str:
             return m.group(0)
         url = _strip_trailing_punct(url)
         safe_url = urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=-_.~")
-        anchor_html = f'<a href="{safe_url}"><u>{url}</u></a>'
+        anchor_html = f'<u>{url}</u>'
         # HIGH-6: prepend red warning prefix for non-allowlisted schemes
         if not _validate_link_url(url):
             anchor_html = _WARNING_PREFIX + anchor_html
