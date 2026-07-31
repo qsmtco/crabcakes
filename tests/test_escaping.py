@@ -201,9 +201,11 @@ class TestOrphanTagSweep:
     def test_valid_tag_pair_preserved(self):
         assert escape_for_pango('<b>bold</b>') == '<b>bold</b>'
 
-    def test_valid_a_tag_pair_preserved(self):
+    def test_a_tag_pair_escaped(self):
+        """Even a valid-looking <a> pair is escaped — Pango doesn't support <a>."""
         result = escape_for_pango('<a href="https://x.com">link</a>')
-        assert '<a href="https://x.com">link</a>' == result
+        assert '<a ' not in result
+        assert '&lt;a' in result
 
     def test_nested_valid_tags_preserved(self):
         assert escape_for_pango('<b><i>nested</i></b>') == '<b><i>nested</i></b>'
