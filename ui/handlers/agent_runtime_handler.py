@@ -104,6 +104,10 @@ class AgentRuntimeHandler:
         # BUG #2: Track sessions that have ended (cancel/error/complete) to prevent
         # orphan tool_start bubbles from stale idle_add dispatches.
         self._ended_sessions: set[str] = set()
+        # RACE-FIX: per-session generation counter. Incremented on each
+        # _on_response_complete. Deltas capture the generation at dispatch
+        # time; stale deltas (old generation) are dropped in _do_text_delta.
+        self._delta_generation: dict[str, int] = {}
         # BUG #14: track sessions that have started a tool-only turn (no text delta)
         # so _ended_sessions can be cleared on the first tool_start of a new turn
         # while preserving stale-call suppression for previous-turn dispatches.
@@ -971,12 +975,13 @@ class AgentRuntimeHandler:
         AgentRuntime text delta callback.
         → Start or update a streaming bubble in the UI.
         """
+        gen = self._delta_generation.get(session_key, 0)
         if self._GLib is not None:
-            self._GLib.idle_add(self._do_text_delta, session_key, text)
+            self._GLib.idle_add(self._do_text_delta, session_key, text, gen)
         else:
-            self._do_text_delta(session_key, text)
+            self._do_text_delta(session_key, text, gen)
 
-    def _do_text_delta(self, session_key: str, text: str) -> None:
+    def _do_text_delta(self, session_key: str, text: str, delta_gen: int = 0) -> None:
         """Main-thread portion of _on_text_delta.
 
         AgentRuntime sends incremental SSE chunks. ChatRenderHandler expects
@@ -992,6 +997,17 @@ class AgentRuntimeHandler:
         # creates a flickering empty box that is immediately replaced by the
         # error message.
         if not text:
+            return
+        # RACE-FIX: If this delta's generation is stale (completion already
+        # incremented the counter), drop it. This prevents stale idle callbacks
+        # from starting a new streaming bubble after completion has rendered
+        # the final bubble.
+        current_gen = self._delta_generation.get(session_key, 0)
+        if delta_gen < current_gen:
+            logger.debug(
+                "_do_text_delta: dropping stale delta (gen %d < current %d) for %s",
+                delta_gen, current_gen, session_key,
+            )
             return
         # Always accumulate text — ensures final output is complete
         self._streaming_text[session_key] = self._streaming_text.get(session_key, "") + text
@@ -1398,6 +1414,9 @@ class AgentRuntimeHandler:
         AgentRuntime response complete callback.
         → End streaming and render the final text bubble.
         """
+        # RACE-FIX: Increment generation so stale _do_text_delta callbacks
+        # (queued before completion but not yet executed) know they're outdated.
+        self._delta_generation[session_key] = self._delta_generation.get(session_key, 0) + 1
         if self._GLib is not None:
             self._GLib.idle_add(self._do_response_complete, session_key, text)
         else:
