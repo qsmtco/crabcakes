@@ -223,6 +223,22 @@ def format_markdown(text: str) -> str:
     # ── Step 3: Markdown links -> <u> underlined text, then immediately protect
     anchor_spans: list[str] = []
 
+    def _resolve_code_in_label(m):
+        """Resolve a \\x00CODE{N}\\x00 placeholder to <tt>code</tt> for use inside anchor_html.
+
+        Used in Step 3 to resolve code-span placeholders that appear in
+        markdown link labels (e.g. [`code`](url)). Without this, the null
+        bytes survive into anchor_html and Pango's C-string parser
+        truncates the markup at \\x00.
+        """
+        idx = int(m.group(1))
+        if idx < len(code_spans):
+            content = code_spans[idx]
+            if '&' in content:
+                return f'<tt>{content}</tt>'
+            return f'<tt>{html.escape(content)}</tt>'
+        return m.group(0)
+
     def _link_replace_and_protect(m):
         label = m.group(1)
         url = m.group(2)
