@@ -602,7 +602,6 @@ class ChatRenderHandler:
                     agent_name=resolved_name,
                 )
                 sb.container.append(final_bubble)
-                print(f"[DBG] _finalize DONE bubble appended", flush=True)
                 if self._main_content is not None:
                     self._main_content.scroll_chat_to_bottom()
 
@@ -768,8 +767,6 @@ class ChatRenderHandler:
                 except (KeyboardInterrupt, SystemExit):
                     raise
                 except Exception:
-                    print(f"[DBG] _dispatch EXCEPTION in callback", flush=True)
-                    import traceback; traceback.print_exc()
                     _logger.exception("Unhandled exception in _dispatch callback")
                 return False
             self._GLib.idle_add(_wrap)
