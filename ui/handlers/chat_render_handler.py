@@ -474,8 +474,6 @@ class ChatRenderHandler:
         # applied in end_streaming → build_role_bubble. We are already on the
         # main thread (caller dispatched via GLib.idle_add), so no _dispatch needed.
         sb.label.set_text(sb.plain_text + " ▍")
-        # DEBUG-TRUNCATION: trace streaming label content
-                sys.stderr.write(ff"[DBG-STREAM] sk={session_key!r} plain_text_len={len(sb.plain_text)} label_text_len={len(sb.label.get_text())}" + "\n")
 
     def _render_plain_text(self, role: str, text: str, on_forward_click=None, agent_name: str = None):
         """
