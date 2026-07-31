@@ -769,6 +769,8 @@ class ChatRenderHandler:
                 except (KeyboardInterrupt, SystemExit):
                     raise
                 except Exception:
+                    print(f"[DBG] _dispatch EXCEPTION in callback", flush=True)
+                    import traceback; traceback.print_exc()
                     _logger.exception("Unhandled exception in _dispatch callback")
                 return False
             self._GLib.idle_add(_wrap)
