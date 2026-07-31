@@ -88,8 +88,8 @@ class TestStrikethrough:
 class TestLinks:
     def test_link_basic(self):
         result = format_markdown("[click here](https://example.com)")
-        assert '<a href="https://example.com">' in result
         assert "<u>click here</u>" in result
+        assert '<a ' not in result
 
     def test_link_url_encoded(self):
         result = format_markdown("[search](https://example.com?q=hello world)")
@@ -98,15 +98,15 @@ class TestLinks:
 
     def test_auto_link_bare_url(self):
         result = format_markdown("check https://example.com for info")
-        assert '<a href="https://example.com">' in result
-        assert "https://example.com" in result  # visible text
+        assert '<u>https://example.com</u>' in result
+        assert '<a ' not in result
 
     def test_auto_link_strips_trailing_punct(self):
         result = format_markdown("see https://example.com. it works")
-        # Trailing period should be stripped from URL
-        assert '<a href="https://example.com">' in result
-        # Period NOT in the href value
-        assert '<a href="https://example.com.">' not in result
+        # Trailing period should be stripped from underlined URL
+        assert '<u>https://example.com</u>' in result
+        # Period NOT in the underlined URL
+        assert '<u>https://example.com.</u>' not in result
 
 
 class TestMixed:
