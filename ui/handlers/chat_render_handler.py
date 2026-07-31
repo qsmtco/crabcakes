@@ -570,7 +570,6 @@ class ChatRenderHandler:
         def _finalize():
             # Use tracked plain text directly (cursor already absent after pop)
             full_text = sb.plain_text
-            print(f"[DBG] _finalize START text_len={len(full_text)} render={render}", flush=True)
 
             # Remove streaming bubble widget
             if is_in_container(sb.bubble, sb.container):
