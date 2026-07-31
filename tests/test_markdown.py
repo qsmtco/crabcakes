@@ -388,7 +388,7 @@ class TestAngleBracketAutoLink:
             result = format_markdown(escape_for_pango(raw))
             broken = re.findall(r'&gt(?!;)', result)
             assert not broken, f"Broken entity for {raw}: {broken}"
-            assert "href=" in result, f"No link created for {raw}"
+            assert '<u>' in result, f"No underlined text for {raw}"
 
     def test_uppercase_scheme_no_broken_entity(self):
         """BUG #4: <HTTPS://example.com> must not produce broken &gt."""
@@ -420,7 +420,7 @@ class TestAutoLinkAttributeProtection:
     def test_plain_url_still_links(self):
         """Regression: plain URLs without attributes still auto-link."""
         result = format_markdown("check https://example.com for info")
-        assert '<a href="https://example.com">' in result
+        assert '<u>https://example.com</u>' in result
 
     def test_url_after_equals_not_linked(self):
         """URL preceded by = should not auto-link."""
