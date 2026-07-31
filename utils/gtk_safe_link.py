@@ -117,7 +117,14 @@ def make_safe_label(
     from gi.repository import Gtk, Pango  # noqa: F401
 
     label = Gtk.Label()
+    # DEBUG-TRUNCATION: trace what reaches set_markup
+    import sys as _dbg_sys
+    print(f"[DBG-LABEL] set_markup called, markup_len={len(markup)}", file=_dbg_sys)
+    print(f"[DBG-LABEL] markup (first 200)={markup[:200]!r}", file=_dbg_sys)
     label.set_markup(markup)
+    # Verify what GTK actually stored
+    actual = label.get_text()
+    print(f"[DBG-LABEL] after set_markup, get_text() len={len(actual)}: {actual[:100]!r}", file=_dbg_sys)
     label.set_xalign(xalign)
     if wrap:
         label.set_wrap(True)
