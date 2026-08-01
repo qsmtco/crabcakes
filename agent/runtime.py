@@ -1555,18 +1555,17 @@ class AgentRuntime:
                                 "[LLM returned no content — provider error or malformed response]",
                                 [],
                             )
-                            # BUG #2 fix: _on_error is a user-registered callback and may
-                            # throw (e.g. UI broken, dispatcher bug). If it raises, we still
-                            # need to: (a) persist the placeholder via _auto_save, and
-                            # (b) return so the caller's loop exits instead of iterating
-                            # with another empty response (which would add duplicate
-                            # placeholders until max_iterations_enforced trips).
-                            try:
-                                self._dispatch(self._on_error, session_key, error_text, _turn_token=turn_token)
-                            except Exception as _e:
-                                logger.error("[tool-loop] sk=%s _on_error handler raised %s: %s — continuing with save+return",
-                                             session_key, type(_e).__name__, _e)
-                            self._auto_save(session_key, conv)
+                            # Route through _terminate_turn (Phase 2b Edit D.2):
+                            # the dispatch is subsumed by _terminate_turn's internal
+                            # _dispatch (which already catches handler exceptions),
+                            # and _terminate_turn handles the _auto_save for us.
+                            self._terminate_turn(TurnResult(
+                                status=TurnStatus.FAILED,
+                                session_key=session_key,
+                                turn_token=turn_token,
+                                error=error_text,
+                                metadata={"reason": "empty_content", "iteration": iteration},
+                            ))
                             return
 
                         # ── KB fallback chain ────────────────────────────────────
