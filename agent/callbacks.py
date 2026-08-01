@@ -47,8 +47,11 @@ class OnTextDelta(Protocol):
         text: The chunk text (may be empty).
         _turn_token: Identity object set by the runtime at ``send_message``
             time. Used by the handler to reject stale cross-turn events.
-            Always provided; receivers should accept it positionally or
-            via **kwargs.
+            May be provided by the runtime's ``_dispatch`` helper on some
+            (not all) dispatch paths; receivers must tolerate omission (the
+            signature default is ``None``). Because the parameter is after
+            ``*``, it is keyword-only — pass it as a keyword argument or
+            accept it via ``**kwargs``.
     """
 
     def __call__(
@@ -256,4 +259,10 @@ class OnEnforcementStatus(Protocol):
 # Maps runtime attribute name → callable (or None if not registered).
 # Used as a structural type for code that wants to pass all 9 callbacks
 # as a single dict (e.g. test fixtures, dependency-injection setups).
+#
+# This is a LOOSE helper type, NOT the callback contract. It does not
+# reference the On* Protocols above and does not enforce per-key typing —
+# a dict with a typo'd key (e.g. "on_text_dleta") type-checks against
+# this alias. The authoritative contract is the individual On* Protocol
+# classes; use them directly when you want per-callback type safety.
 AgentRuntimeCallbacks = dict[str, Callable | None]
