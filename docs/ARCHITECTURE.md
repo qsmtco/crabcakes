@@ -1601,6 +1601,19 @@ def get_valid_callers() -> frozenset[str]     # §caller-validation — single s
 # Layer rule: utils/* cannot import from agent/*, so utils/providers_store.py
 # DUPLICATES this set as a module-level constant — enforced by
 # TestValidCallersDuplicationInvariant regression test.
+
+# Turn state machine (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION):
+TurnStatus          # Enum: RUNNING, STREAMING, COMPLETED, FAILED, CANCELLED
+TurnResult          # Dataclass: status, session_key, turn_token, text, error, metadata
+
+# Public accessors (added in SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION):
+rt.get_turn_state(session_key) -> TurnStatus | None      # active turn's status
+rt.get_last_turn_result(session_key) -> TurnResult | None # active turn's terminal result
+
+# Removed (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.3):
+# _call_openai, _call_minimax, _call_anthropic — use OpenAIProvider/MiniMaxProvider/AnthropicProvider directly
+# _stream_openai_events, _stream_minimax_events, _stream_anthropic_events — use Provider.stream() directly
+# _PROVIDER_STREAMERS — dead since Phase B6; use _get_provider(caller_key).stream
 ```
 
 **Tool loop:** Append user message → build API messages → call LLM → if tool calls: execute each tool → append results → call LLM again → if text: append assistant message → fire callbacks → check cost/step limits.
@@ -1613,7 +1626,7 @@ def get_valid_callers() -> frozenset[str]     # §caller-validation — single s
 
 **Context mode (P10):** `create_conversation()` reads `context_mode` from `ProviderConfig` (default `"auto"`) and passes it to `build_system_prompt()`. The mode is resolved once at conversation creation time via `resolve_context_mode()` and fixed for the session. `TODO: P10.8 — mid-session re-escalation` marker for future turn-count/token-estimate-based mode switching.
 
-**Streaming:** SSE for supported providers. `on_text_delta` fires incrementally. `on_tool_call_start` fires when complete call is received. The provider-assigned tool_call `id` (e.g. `call_function_3679004591_1`) is preserved end-to-end through the streaming path — captured from the first SSE delta in `_stream_openai_events`/`_stream_minimax_events` (from the `content_block_start` event in `_stream_anthropic_events` for Anthropic), held in the accumulator's first-write-wins slot in `_call_llm_streaming`, and surfaced on the final assembled tool_call so the round-trip `tool_call_id` matches on the next LLM turn. Without this, providers reject the tool result with `status_code=2013: invalid params, tool call result does not follow tool call` (regression fixed by `STREAM-ID-PRES`, see `docs/specs/SPEC-STREAMING-TOOL-CALL-ID-PRESERVATION.md`).
+**Streaming:** SSE for supported providers. `on_text_delta` fires incrementally. `on_tool_call_start` fires when complete call is received. The provider-assigned tool_call `id` (e.g. `call_function_3679004591_1`) is preserved end-to-end through the streaming path — captured from the first SSE delta in `OpenAIProvider("openai").stream` / `MiniMaxProvider().stream` (from the `content_block_start` event in `AnthropicProvider().stream` for Anthropic), held in the accumulator's first-write-wins slot in `_call_llm_streaming`, and surfaced on the final assembled tool_call so the round-trip `tool_call_id` matches on the next LLM turn. Without this, providers reject the tool result with `status_code=2013: invalid params, tool call result does not follow tool call` (regression fixed by `STREAM-ID-PRES`, see `docs/specs/SPEC-STREAMING-TOOL-CALL-ID-PRESERVATION.md`).
 
 **Cost tracking:** Provider-specific pricing tables. Fires `on_token_usage(session_key, tokens, cost)` after each LLM call. Stops loop if `cost_limit` exceeded.
 
