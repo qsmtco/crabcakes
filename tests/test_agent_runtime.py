@@ -232,7 +232,7 @@ class TestToolLoop:
         rt.create_conversation("Coder", sk, "/tmp")
 
         # mock(session_key, messages, tools) — NO self
-        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: _resp("Hello, human.")):
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools, **kwargs: _resp("Hello, human.")):
             rt._run_loop(sk, "say hello")
 
         conv = rt.get_conversation(sk)
@@ -271,7 +271,7 @@ class TestToolLoop:
         complete = []
         rt._on_response_complete = lambda sk2, t: complete.append(t)
 
-        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: _resp("The result is 42.")):
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools, **kwargs: _resp("The result is 42.")):
             rt._run_loop(sk, "what is 6 * 7?")
 
         assert complete == ["The result is 42."], f"Got: {complete}"
@@ -363,7 +363,7 @@ class TestToolLoop:
 
         # Response has no choices key at all
         bad_response = {"choices": [], "usage": {"prompt_tokens": 50, "completion_tokens": 0}}
-        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: bad_response):
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools, **kwargs: bad_response):
             rt._run_loop(sk, "do something")
 
         assert errors, f"Expected _on_error to fire for no-choices response; got: {errors}"
@@ -397,7 +397,7 @@ class TestToolLoop:
 
         # Same whitespace string — but now we EXPECT the placeholder path to fire
         # because strict providers reject whitespace-only assistant content.
-        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: _resp(" \n\n ")):
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools, **kwargs: _resp(" \n\n ")):
             rt._run_loop(sk, "pad this")
 
         # _on_error fires because whitespace-only content is treated as empty
@@ -503,7 +503,7 @@ class TestToolLoop:
             _resp(tool_calls=[{"id": "call_ls", "function": {"name": "list_files", "arguments": '{"path": "."}'}}]),
             _resp("Files listed."),
         ]
-        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: responses.pop(0)):
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools, **kwargs: responses.pop(0)):
             rt._run_loop(sk, "list files")
 
         assert len(results) >= 1, f"Expected tool result, got: {results}"
@@ -626,7 +626,7 @@ class TestToolLoop:
         results = []
         rt._on_tool_call_result = lambda sk2, n, r, success=True: results.append((n, r))
 
-        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: tc_response):
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools, **kwargs: tc_response):
             with caplog.at_level(logging.WARNING, logger="agent.runtime"):
                 rt._run_loop(sk, "list files")
 
@@ -1031,7 +1031,7 @@ class TestRunLoopTrimsContext:
         rt._on_token_breakdown = lambda session_key, bd: captured.append(bd)
 
         # Mock _call_llm to return a text-only response (no tool calls → loop exits)
-        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: _resp("Done.")):
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools, **kwargs: _resp("Done.")):
             rt._run_loop(sk, "trigger the loop")
 
         # Post-conditions
@@ -1112,7 +1112,7 @@ class TestCostLimit:
         errors = []
         rt._on_error = lambda sk2, msg: errors.append(msg)
 
-        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: _resp("Done.")):
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools, **kwargs: _resp("Done.")):
             rt._run_loop(sk, "hello")
 
         assert len(errors) >= 1
@@ -1141,7 +1141,7 @@ class TestApproval:
             }]),
             _resp("Done."),
         ]
-        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: responses.pop(0)):
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools, **kwargs: responses.pop(0)):
             rt._run_loop(sk, "run ls")
 
         exec_results = [(n, r) for n, r in results if n == "exec_command"]
@@ -1166,7 +1166,7 @@ class TestApproval:
             }]),
             _resp("Done."),
         ]
-        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: responses.pop(0)):
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools, **kwargs: responses.pop(0)):
             rt._run_loop(sk, "run ls")
 
         assert approved[0], "Approval callback should have fired"
@@ -1188,7 +1188,7 @@ class TestApproval:
             }]),
             _resp("Done."),
         ]
-        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: responses.pop(0)):
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools, **kwargs: responses.pop(0)):
             rt._run_loop(sk, "run ls")
 
         exec_results = [(n, r) for n, r in results if n == "exec_command"]
@@ -2409,7 +2409,7 @@ class TestEmptyChoicesResponse:
         # but still no choices)
         empty_response = {"usage": {}}
 
-        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools: empty_response):
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools, **kwargs: empty_response):
             rt._run_loop(sk, "hello")
 
         assert len(errors) == 1, f"Expected 1 error, got: {errors}"
