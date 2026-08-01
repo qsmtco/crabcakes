@@ -1959,7 +1959,7 @@ class AgentRuntime:
 
 ### 3.21q.5a `agent/kb_server.py` — KB HTTP Server (KB Provider Phase 1)
 
-**Responsibility:** Lightweight HTTP server on `localhost:18790` that wraps `kb_lookup()` and responds to `/v1/chat/completions` requests. Returns responses in OpenAI Chat Completions format so `_call_openai()` in the runtime can parse them without modification. When no KB chunks match, returns the `[KB_OUT_OF_SCOPE]` sentinel string.
+**Responsibility:** Lightweight HTTP server on `localhost:18790` that wraps `kb_lookup()` and responds to `/v1/chat/completions` requests. Returns responses in OpenAI Chat Completions format so the runtime's OpenAI-compatible provider call can parse them without modification. When no KB chunks match, returns the `[KB_OUT_OF_SCOPE]` sentinel string.
 
 **Public API:**
 ```python
@@ -3973,7 +3973,7 @@ As of PHASE-10, the API caller for a provider is resolved via `provider_cfg.call
 
 **Why the model string is still slashed:** the API caller functions receive the model string verbatim. OpenRouter expects `vendor/model` (e.g. `openrouter/owl-alpha`); Anthropic expects a bare model name (e.g. `claude-3-5-sonnet`); OpenAI expects a bare model name. The slash in the model string is the API's contract, not a caller identifier. The runtime's `_resolve_agent_model` handler (P4) preserves the model string exactly as configured when `default_model` contains a slash.
 
-**Streamer resolution:** the streaming path (`_call_llm_streaming` callers) uses the same `_resolve_caller_key` helper to look up the streamer function in `_PROVIDER_STREAMERS`. The streamer keys mirror the caller keys (`openai`, `minimax`, `anthropic`, `openrouter`, `zai`). Providers with `supports_streaming=False` (e.g. `local-kb`) always use the blocking path, even when `on_text_delta` is registered. **Tool-call id handling:** OpenAI/MiniMax/OpenRouter/ZAI all surface the provider-assigned id in the first SSE `tool_call_delta`; the streamer forwards it to the accumulator's first-write-wins slot. Anthropic's protocol differs — the id arrives in the `content_block_start` event (not in `content_block_delta`) — so `_stream_anthropic_events` yields a `tool_call_delta` carrying only the id at block-start, then the name/argument deltas follow. In all cases, the final assembled `tool_call` round-trips the provider's id back to the API on the next LLM turn.
+**Streamer resolution:** the streaming path (`_call_llm_streaming` callers) uses the same `_resolve_caller_key` helper to look up the streamer via `get_provider(caller_key).stream`. Providers with `supports_streaming=False` (e.g. `local-kb`) always use the blocking path, even when `on_text_delta` is registered. **Tool-call id handling:** OpenAI/MiniMax/OpenRouter/ZAI all surface the provider-assigned id in the first SSE `tool_call_delta`; the streamer forwards it to the accumulator's first-write-wins slot. Anthropic's protocol differs — the id arrives in the `content_block_start` event (not in `content_block_delta`) — so `AnthropicProvider().stream` yields a `tool_call_delta` carrying only the id at block-start, then the name/argument deltas follow. In all cases, the final assembled `tool_call` round-trips the provider's id back to the API on the next LLM turn.
 
 **Test Connection:** the Settings dialog's "Test" button calls `test_connection(base_url, api_key, model, caller=provider.caller)`. The `caller` kwarg (added in PHASE-10) overrides the legacy model-prefix derivation so the test uses the same caller the runtime would use at message-send time.
 
