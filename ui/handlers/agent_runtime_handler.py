@@ -1451,7 +1451,7 @@ class AgentRuntimeHandler:
         else:
             self._do_response_complete(session_key, text, token)
 
-    def _do_response_complete(self, session_key: str, text: str) -> None:
+    def _do_response_complete(self, session_key: str, text: str, complete_token: object = None) -> None:
         """Main-thread portion of _on_response_complete.
 
         Phase B: Prevent duplicate bubbles.
@@ -1470,6 +1470,14 @@ class AgentRuntimeHandler:
         build_role_bubble's header condition (chat_bubble.py:284) is satisfied.
         Without this, local agent bubbles render the body but no name/dot/timestamp.
         """
+        # RACE-FIX v4: Reject stale completions from a previous turn.
+        # complete_token=None means a legacy caller (no token) — allow through.
+        if complete_token is not None:
+            current_token = self._turn_tokens.get(session_key)
+            if complete_token is not current_token:
+                logger.debug("_do_response_complete: stale completion (token mismatch) for %s, skipping", session_key)
+                return
+
         # RACE-FIX v4: Mark session ended + completed BEFORE any rendering
         # work or early returns. This ensures:
         # 1. Stale deltas see the flag (regardless of idle ordering)
