@@ -107,11 +107,21 @@ class OnTextDelta(Protocol):
     Args:
         session_key: Conversation session key (e.g. "special:coder").
         text: The chunk text (may be empty).
-        turn_token: Identity object set by the runtime at send_message time.
+        _turn_token: Identity object set by the runtime at send_message time.
             Used by the handler to reject stale cross-turn events. Always
             provided; receivers should accept it positionally or via **kwargs.
+
+    Note: The keyword is `_turn_token` (leading underscore) to match the
+    production callback contract. The runtime's `_dispatch()` helper passes
+    callbacks with `_turn_token=...` (see `agent/runtime.py` lines 995, 1078,
+    1184, 1356, 1448, 1791). The leading underscore signals "internal use
+    only; receivers may ignore it" without making it positional. The
+    audit (BUG #7) flagged a previous draft that used `turn_token` (no
+    underscore) — that broke `create_autospec` validation against the
+    real callback signatures. Protocols MUST use the exact keyword the
+    runtime uses in production.
     """
-    def __call__(self, session_key: str, text: str, *, turn_token: object | None = None) -> None: ...
+    def __call__(self, session_key: str, text: str, *, _turn_token: object | None = None) -> None: ...
 
 
 class OnToolCallStart(Protocol):
@@ -122,11 +132,11 @@ class OnToolCallStart(Protocol):
         session_key: Conversation session key.
         name: Tool name (e.g. "read_file", "exec_command").
         args: Tool arguments dict.
-        turn_token: See OnTextDelta.
+        _turn_token: See OnTextDelta.
     """
     def __call__(
         self, session_key: str, name: str, args: dict[str, Any],
-        *, turn_token: object | None = None,
+        *, _turn_token: object | None = None,
     ) -> None: ...
 
 
@@ -138,11 +148,11 @@ class OnToolCallResult(Protocol):
         name: Tool name.
         result: Either a ToolResult dataclass or a string (legacy callers).
         success: True if the tool succeeded; False if it failed or was denied.
-        turn_token: See OnTextDelta.
+        _turn_token: See OnTextDelta.
     """
     def __call__(
         self, session_key: str, name: str, result: Any, success: bool = True,
-        *, turn_token: object | None = None,
+        *, _turn_token: object | None = None,
     ) -> None: ...
 
 
@@ -154,11 +164,11 @@ class OnToolCallApprovalNeeded(Protocol):
         session_key: Conversation session key.
         tool_name: Tool name (always "exec_command" or a write tool).
         args: Tool arguments dict (for exec, contains "command").
-        turn_token: See OnTextDelta.
+        _turn_token: See OnTextDelta.
     """
     def __call__(
         self, session_key: str, tool_name: str, args: dict[str, Any],
-        *, turn_token: object | None = None,
+        *, _turn_token: object | None = None,
     ) -> None: ...
 
 
@@ -170,11 +180,11 @@ class OnResponseComplete(Protocol):
         session_key: Conversation session key.
         text: Final assistant message text (cumulative; may be empty for
             tool-only turns or empty-content errors).
-        turn_token: See OnTextDelta.
+        _turn_token: See OnTextDelta.
     """
     def __call__(
         self, session_key: str, text: str,
-        *, turn_token: object | None = None,
+        *, _turn_token: object | None = None,
     ) -> None: ...
 
 
@@ -186,11 +196,11 @@ class OnTokenUsage(Protocol):
         session_key: Conversation session key.
         total_tokens: Total tokens (prompt + completion) for this call.
         cost: USD cost for this call.
-        turn_token: See OnTextDelta.
+        _turn_token: See OnTextDelta.
     """
     def __call__(
         self, session_key: str, total_tokens: int, cost: float,
-        *, turn_token: object | None = None,
+        *, _turn_token: object | None = None,
     ) -> None: ...
 
 
@@ -204,11 +214,11 @@ class OnTokenBreakdown(Protocol):
             total_used_tokens, model_max_tokens, remaining_tokens,
             usage_percent, trimmed_this_turn, messages_remaining,
             messages_removed_this_turn, compaction_event (optional).
-        turn_token: See OnTextDelta.
+        _turn_token: See OnTextDelta.
     """
     def __call__(
         self, session_key: str, breakdown: dict,
-        *, turn_token: object | None = None,
+        *, _turn_token: object | None = None,
     ) -> None: ...
 
 
@@ -219,11 +229,11 @@ class OnError(Protocol):
     Args:
         session_key: Conversation session key.
         message: Either a string (user-friendly) or a BaseException (raw).
-        turn_token: See OnTextDelta.
+        _turn_token: See OnTextDelta.
     """
     def __call__(
         self, session_key: str, message: str | BaseException,
-        *, turn_token: object | None = None,
+        *, _turn_token: object | None = None,
     ) -> None: ...
 
 
@@ -235,11 +245,11 @@ class OnEnforcementStatus(Protocol):
         session_key: Conversation session key.
         tool_name: Tool that triggered the check (e.g. "write_file").
         status: Dict with keys: tier, file, passed, detail.
-        turn_token: See OnTextDelta.
+        _turn_token: See OnTextDelta.
     """
     def __call__(
         self, session_key: str, tool_name: str, status: dict,
-        *, turn_token: object | None = None,
+        *, _turn_token: object | None = None,
     ) -> None: ...
 
 
