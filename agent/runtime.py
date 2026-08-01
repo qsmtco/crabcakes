@@ -985,7 +985,22 @@ class AgentRuntime:
         t.start()
 
     def cancel(self, session_key: str) -> None:
-        """Cancel an in-progress conversation."""
+        """Cancel an in-progress conversation.
+
+        Signals the running thread and dispatches a user-facing cancellation
+        message. Uses the active turn token from ``_turn_tokens[session_key]``
+        (not the runtime's global ``_turn_token`` which may be stale). The
+        background thread's ``_run_loop`` will call ``_terminate_turn(CANCELLED)``
+        from its cancellation check; the dispatch here is the UX path so the
+        user sees the message immediately. ``_terminate_turn``'s dedup ensures
+        only one terminal transition is recorded.
+
+        Audit fix (BUG #13): the previous version dispatched with
+        ``_turn_token=self._turn_token`` (the runtime's global, possibly
+        stale) which would cause the handler to receive a token for the
+        wrong turn and silently drop the message. The fix reads the
+        session-scoped active token under ``_state_lock``.
+        """
         with self._lock:
             # Mark as cancelled so _run_loop's check will catch it
             self._cancelled.add(session_key)
@@ -996,10 +1011,22 @@ class AgentRuntime:
                     ev = self._pending_approvals[sk]["event"]
                     self._pending_approvals[sk]["result"] = None
                     ev.set()
-            self._dispatch(self._on_error, session_key, "Cancelled by user", _turn_token=self._turn_token)
-            logger.info("Cancelled session %s", session_key)
-        # §E: Clean up stuck-detection history when conversation ends
+            logger.info("Cancelled session %s (UX dispatch follows)", session_key)
+        # §E: Clean up stuck-detection history when conversation ends.
+        # _terminate_turn will also call _cleanup_tool_history (idempotent),
+        # but doing it here ensures cleanup even if the background thread
+        # is wedged.
         self._cleanup_tool_history(session_key)
+        # Dispatch the user-facing cancellation message using the ACTIVE
+        # token for this session (BUG #13: not the runtime's global token).
+        # Done OUTSIDE _lock so a slow handler doesn't block other state
+        # mutations on the same session.
+        with self._state_lock:
+            active_tk = self._turn_tokens.get(session_key, self._turn_token)
+        self._dispatch(
+            self._on_error, session_key, "Cancelled by user",
+            _turn_token=active_tk,
+        )
 
     # ── Tool loop ─────────────────────────────────────────────────────────────
 
@@ -1226,7 +1253,13 @@ class AgentRuntime:
                     return
                 conv = self._conversations.get(session_key)
                 if conv is None:
-                    self._dispatch(self._on_error, session_key, "No conversation found", _turn_token=turn_token)
+                    self._terminate_turn(TurnResult(
+                        status=TurnStatus.FAILED,
+                        session_key=session_key,
+                        turn_token=turn_token,
+                        error="No conversation found",
+                        metadata={"reason": "no_conversation"},
+                    ))
                     return
 
             # BUG #13 — Deferred prompt build. If create_conversation was called
@@ -1236,7 +1269,13 @@ class AgentRuntime:
             try:
                 self._ensure_system_prompt(session_key)
             except Exception as e:
-                self._dispatch(self._on_error, session_key, e, _turn_token=turn_token)
+                self._terminate_turn(TurnResult(
+                    status=TurnStatus.FAILED,
+                    session_key=session_key,
+                    turn_token=turn_token,
+                    error=e,
+                    metadata={"reason": "prompt_build_failed", "exception_type": type(e).__name__},
+                ))
                 return
 
             # BUG #21: Fire a turn-start signal BEFORE any LLM call or tool processing.
@@ -1268,13 +1307,25 @@ class AgentRuntime:
                     # Check immediate cancel signal first
                     if self._cancel_requested:
                         self._cancel_requested = False
-                        self._dispatch(self._on_error, session_key, "Cancelled", _turn_token=turn_token)
+                        self._terminate_turn(TurnResult(
+                            status=TurnStatus.CANCELLED,
+                            session_key=session_key,
+                            turn_token=turn_token,
+                            error="Cancelled",
+                            metadata={"reason": "shutdown", "iteration": iteration},
+                        ))
                         return
                     # Check cancellation before each iteration
                     with self._lock:
                         if session_key in self._cancelled:
                             self._cancelled.discard(session_key)
-                            self._dispatch(self._on_error, session_key, "Cancelled", _turn_token=turn_token)
+                            self._terminate_turn(TurnResult(
+                                status=TurnStatus.CANCELLED,
+                                session_key=session_key,
+                                turn_token=turn_token,
+                                error="Cancelled",
+                                metadata={"reason": "user", "iteration": iteration},
+                            ))
                             return
                     iteration += 1
                     logger.debug("[tool-loop] sk=%s iteration=%d/%d", session_key, iteration, max_iter)
@@ -2249,26 +2300,35 @@ class AgentRuntime:
         # Phase CB-3: also clean up pending stuck messages
         self._pending_stuck_messages.pop(session_key, None)
 
-    def _check_and_stop_on_limit(self, session_key: str, conv: Any) -> bool:
-        """
-        Check cost and step limits. Returns True if stopped.
-        """
-        stopped = False
-        reason = None
+    def _check_and_stop_on_limit(
+        self, session_key: str, conv: Any,
+    ) -> tuple[str, str] | None:
+        """Check cost and step limits. Pure predicate — no side effects.
 
+        Returns:
+            ``None`` if the turn should continue.
+            ``(stopped_reason, error_message)`` if a limit is exceeded, where
+            ``stopped_reason`` is ``"cost_limit"`` or ``"step_limit"``.
+
+        Audit fixes (BUG #6, #11): the previous version dispatched
+        ``on_error`` (with an undefined ``turn_token`` — NameError on any
+        path that actually hit a limit), called ``_auto_save``, and added
+        an assistant message placeholder. All side effects removed; the
+        caller (``_run_loop``) builds the ``TurnResult`` and routes
+        through ``_terminate_turn``.
+        """
         if self._config.cost_limit is not None and conv.total_cost > self._config.cost_limit:
-            stopped = True
-            reason = f"Cost limit exceeded: ${conv.total_cost:.4f} > ${self._config.cost_limit:.4f}"
-        elif self._config.step_limit is not None and conv.step_count > self._config.step_limit:
-            stopped = True
-            reason = f"Step limit exceeded: {conv.step_count} > {self._config.step_limit}"
-
-        if stopped:
-            conv.add_assistant_message(f"[stopped: {reason}]", [])
-            self._dispatch(self._on_error, session_key, reason, _turn_token=turn_token)
-            self._auto_save(session_key, conv)
-
-        return stopped
+            reason = (
+                f"Cost limit exceeded: ${conv.total_cost:.4f} "
+                f"> ${self._config.cost_limit:.4f}"
+            )
+            return ("cost_limit", reason)
+        if self._config.step_limit is not None and conv.step_count > self._config.step_limit:
+            reason = (
+                f"Step limit exceeded: {conv.step_count} > {self._config.step_limit}"
+            )
+            return ("step_limit", reason)
+        return None
 
     def _auto_save(self, session_key: str, conv: Any) -> None:
         """Save conversation if auto_save is enabled."""
