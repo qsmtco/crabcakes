@@ -570,7 +570,6 @@ class ChatRenderHandler:
         def _finalize():
             # Use tracked plain text directly (cursor already absent after pop)
             full_text = sb.plain_text
-            print(f"[DBG-FIN] finalize text_len={len(full_text)} render={render}")
 
             # Remove streaming bubble widget
             if is_in_container(sb.bubble, sb.container):
@@ -596,7 +595,6 @@ class ChatRenderHandler:
 
             if render:
                 # Build and append final bubble
-                print(f"[DBG-FIN] building bubble role={sb.role}")
                 final_bubble = build_role_bubble(
                     sb.role, full_text,
                     on_forward_click=self._on_forward_message,
@@ -604,7 +602,6 @@ class ChatRenderHandler:
                     agent_name=resolved_name,
                 )
                 sb.container.append(final_bubble)
-                print(f"[DBG-FIN] bubble appended ok")
                 if self._main_content is not None:
                     self._main_content.scroll_chat_to_bottom()
 
