@@ -2484,11 +2484,11 @@ class TestEmptyResponseFallbackBubble:
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  Streaming regression tests for _stream_anthropic_events (W2/W3/W4)
+#  Streaming regression tests for AnthropicProvider().stream (W2/W3/W4)
 # ═══════════════════════════════════════════════════════════════════
 
 class TestStreamAnthropicEvents:
-    """Regression tests for _stream_anthropic_events.
+    """Regression tests for AnthropicProvider().stream.
 
     Locks in the W2 (tool conversion), W3 (message conversion), and W4
     (no stream_options in Anthropic payload) fixes from
@@ -2499,7 +2499,7 @@ class TestStreamAnthropicEvents:
         """Anthropic API does not support stream_options — must not be in payload."""
         import json
         from unittest.mock import patch, MagicMock
-        from agent.runtime import _stream_anthropic_events
+        from agent.llm.anthropic_provider import AnthropicProvider
 
         captured_requests = []
 
@@ -2518,7 +2518,7 @@ class TestStreamAnthropicEvents:
                 b'data: {"type": "message_stop"}\n\n'
             ])):
                 # Provide minimal args
-                list(_stream_anthropic_events(
+                list(AnthropicProvider().stream(
                     base_url="https://api.anthropic.com",
                     api_key="test-key",
                     model="claude-3-5-sonnet-20241022",
@@ -2542,7 +2542,7 @@ class TestStreamAnthropicEvents:
         """
         import json
         from unittest.mock import patch, MagicMock
-        from agent.runtime import _stream_anthropic_events
+        from agent.llm.anthropic_provider import AnthropicProvider
 
         captured_requests = []
 
@@ -2600,7 +2600,7 @@ class TestStreamAnthropicEvents:
         """Tools must be converted to Anthropic format, not passed raw."""
         import json
         from unittest.mock import patch, MagicMock
-        from agent.runtime import _stream_anthropic_events
+        from agent.llm.anthropic_provider import AnthropicProvider
 
         captured_requests = []
 
@@ -2652,19 +2652,19 @@ class TestSystemPromptPlacement:
     """Regression tests for Phase 1 audit findings.
 
     Locks in fixes for:
-    - BUG #1: _call_anthropic was sending the system prompt TWICE
+    - BUG #1: AnthropicProvider().call was sending the system prompt TWICE
               (payload['system'] AND as first user message via helper)
-    - BUG #2: _stream_anthropic_events was sending the system prompt
+    - BUG #2: AnthropicProvider().stream was sending the system prompt
               as a USER message (wrong role, loses Anthropic system priority)
     - BUG #3: _convert_tools_for_anthropic raised KeyError on missing parameters
     """
 
     def test_non_streaming_system_not_duplicated_as_user(self):
-        """_call_anthropic must put system prompt ONLY in payload['system'],
+        """AnthropicProvider().call must put system prompt ONLY in payload['system'],
         NOT also as the first user message in payload['messages'].
         """
         from unittest.mock import patch, MagicMock
-        from agent.runtime import _call_anthropic
+        from agent.llm.anthropic_provider import AnthropicProvider
 
         captured = []
 
@@ -2678,7 +2678,7 @@ class TestSystemPromptPlacement:
             return resp
 
         with patch("agent.llm.anthropic_provider.urlopen_with_ssl_retry", side_effect=fake_urlopen):
-            _call_anthropic(
+            AnthropicProvider().call(
                 base_url="https://api.anthropic.com",
                 api_key="test",
                 model="claude-3-5-sonnet-20241022",
@@ -2708,11 +2708,11 @@ class TestSystemPromptPlacement:
         assert payload["messages"][0]["content"] == "Hello"
 
     def test_streaming_system_goes_to_payload_system_not_user(self):
-        """_stream_anthropic_events must put system prompt in payload['system'],
+        """AnthropicProvider().stream must put system prompt in payload['system'],
         NOT as a user-role message (Anthropic system has higher priority).
         """
         from unittest.mock import patch, MagicMock
-        from agent.runtime import _stream_anthropic_events
+        from agent.llm.anthropic_provider import AnthropicProvider
 
         captured = []
 
