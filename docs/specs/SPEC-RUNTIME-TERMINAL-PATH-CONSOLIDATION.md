@@ -2252,14 +2252,46 @@ Each step has a verification gate before moving on. The implementer MUST run the
 
 ### Step 2: Add `TurnStatus` + `TurnResult` + `_terminate_turn` to `agent/runtime.py`
 
-1. Apply Edit A (add enum + dataclass + imports).
-2. Apply Edit B (add `_turn_state` + `_turn_results` to `__init__`).
-3. Apply Edit C (add `_terminate_turn` method).
-4. Apply Edit E (add `get_last_turn_result` + `get_turn_state` accessors).
-5. Verify: `python3 -m py_compile agent/runtime.py && echo COMPILE_OK`
-6. Verify: `python3 -c "from agent.runtime import TurnStatus, TurnResult; print(TurnStatus.COMPLETED)"`
-7. Verify: `grep -n "_terminate_turn\|TurnStatus\|TurnResult" agent/runtime.py | head -20` shows the additions.
-8. Run the new tests: `python3 -m pytest tests/test_agent_runtime.py -q -k "turn_status or turn_result or terminate_turn"` → 9/9 pass (groups 1+2).
+> **AUDIT FIX (BUG #3, #4).** Step 2 is split into 2a (state machine
+> scaffolding) and 2b (terminal paths). State machine scaffolding must
+> be in place before any `_terminate_turn` callsite is added.
+
+**Step 2a — State machine scaffolding:**
+1. Apply Edit A (add `TurnStatus` enum + `TurnResult` dataclass + imports).
+2. Apply Edit B (add `_state_lock`, `_turn_tokens`, `_turn_state[(sk, tk)]`,
+   `_turn_results[(sk, tk)]` to `__init__`).
+3. Apply Edit C (add `_terminate_turn` method, returns `TurnResult | None`).
+4. Apply Edit E (add `get_last_turn_result` + `get_turn_state` accessors,
+   both reading under `_state_lock`).
+5. Apply Edit F (initialize `RUNNING` and register `_turn_tokens[sk] = tk`
+   at the very top of `_run_loop`, BEFORE the `if conv is None` and
+   prompt-build-failure checks — see BUG #2 fix).
+6. Verify: `python3 -m py_compile agent/runtime.py && echo COMPILE_OK`
+7. Verify: `python3 -c "from agent.runtime import TurnStatus, TurnResult; print(TurnStatus.COMPLETED)"`
+8. Verify: `grep -n "_terminate_turn\|TurnStatus\|TurnResult\|_state_lock" agent/runtime.py | head -30` shows the additions.
+9. Run the new state-machine tests: `python3 -m pytest tests/test_agent_runtime.py -q -k "turn_status or turn_result or terminate_turn or rejects_stale_token or persistence_uses_separate_session_keys or cancelled_with_persist_metadata_saves"` → 11/11 pass (groups 1+2).
+
+**Step 2b — Terminal path routing:**
+1. Apply Edit G (transition to `STREAMING` before first LLM call, under
+   `_state_lock` and keying by `(sk, tk)`).
+2. Apply Edit D.1 (cancellation paths — both `_cancel_requested` and
+   `_cancelled` checks).
+3. Apply Edit D.2 (empty content error).
+4. Apply Edit D.3 (mid-stream error with content — MUST include the
+   explicit `return` after `_terminate_turn` per BUG #5).
+5. Apply Edit D.4 (text-only success — uses the new pure-predicate
+   `_check_and_stop_on_limit`).
+6. Apply Edit D.5 (max iterations).
+7. Apply Edit D.6 (top-level exception).
+8. Apply Edit D.7 (cancel() method — uses `_turn_tokens[sk]` for
+   the dispatch token, per BUG #13).
+9. Apply Edit Q (refactor `_check_and_stop_on_limit` to a pure
+   predicate — required by D.4 and the post-tool-execution check).
+10. Apply Edit R (limit placeholder + `_terminate_turn` in the
+    post-tool-execution branch).
+11. Verify: `python3 -m py_compile agent/runtime.py && echo COMPILE_OK`
+12. Run new state transition tests: `python3 -m pytest tests/test_agent_runtime.py -q -k "run_loop_starts_in_running or run_loop_transitions_to_streaming or run_loop_terminates_with_failed or run_loop_terminates_with_cancelled or run_loop_terminates_with_failed_on_no_conversation or run_loop_terminates_with_failed_on_prompt_build_failure or run_loop_terminates_with_failed_on_stream_error_with_content or run_loop_terminates_with_failed_on_cost_limit or run_loop_terminates_with_failed_on_step_limit or send_message_rotates_turn_token"` → 10/10 pass (groups 3+3a+3b+3c+6).
+13. Run existing TestToolLoop + TestApproval + TestLocalAgentDrawerEmissions: `python3 -m pytest tests/test_agent_runtime.py -q -k "TestToolLoop or TestApproval or TestLocalAgentDrawerEmissions"` → all currently-passing tests still pass; the 3-4 previously-failing tests (`_turn_token` + 3-arg lambdas) still fail (we fix them in Step 5).
 
 ### Step 3: Refactor `_run_loop` to use `_terminate_turn`
 
@@ -2278,14 +2310,31 @@ Each step has a verification gate before moving on. The implementer MUST run the
 
 ### Step 4: Remove provider alias debt
 
-1. Apply Edit I (delete `_call_*` aliases).
+> **AUDIT FIX (BUG #1, #8).** The previous draft of this step asserted
+> that Edits I, J, K alone would leave the repo with zero external
+> consumers. The audit proved this false (12+ external consumers in
+> `tests/` and `scripts/`). The corrected plan migrates the consumers
+> in the same step.
+
+1. Apply Edit I (delete `_call_*` aliases; migrate `_PROVIDER_CALLERS`
+   values to direct provider lookups per Edit K).
 2. Apply Edit J (delete `_stream_*_events` aliases + `_PROVIDER_STREAMERS`).
-3. Apply Edit K (remove from `__all__`).
-4. Run Edit L (grep sweep for production usage).
-5. Run Edit M (grep sweep for test usage; if matches, delete the dead test mocks).
-6. Verify: `python3 -m py_compile agent/runtime.py && echo COMPILE_OK`
-7. Run alias removal tests: `python3 -m pytest tests/test_agent_runtime.py -q -k "test_runtime_no_longer_exposes_call_provider_aliases or test_runtime_no_longer_exposes_stream_provider_aliases"` → 2/2 pass.
-8. Run full test_agent_runtime.py: `python3 -m pytest tests/test_agent_runtime.py -q` → all green except the 3 pre-existing contract drift failures (Step 5 fixes them).
+3. Apply Edit K (update `__all__` + `_PROVIDER_CALLERS` + `_RESPONSE_FORMAT`
+   derivation — see §2.3 Edit K).
+4. Apply Edit P (update docstring/comment references in
+   `agent/llm/streaming.py` and `utils/provider_test.py` — 3 sites).
+5. Apply Edit N (migrate `scripts/audit_streaming_scenarios.py` and
+   `scripts/audit_attack_scenarios.py` — 14 sites).
+6. Apply Edit O (migrate `tests/test_agent_runtime.py` `_stream_*_events`
+   and `_call_*` imports — 9 test methods).
+7. Run Edit L (grep sweep for production usage). Expected: 0 matches
+   outside `tests/generate_synthetic_conversations.py` (a name collision
+   in a local function — not a runtime import).
+8. Run Edit M (grep sweep for `_call_*` aliases). Expected: 0 matches
+   outside `tests/generate_synthetic_conversations.py`.
+9. Verify: `python3 -m py_compile agent/runtime.py && echo COMPILE_OK`
+10. Run alias removal tests: `python3 -m pytest tests/test_agent_runtime.py -q -k "test_runtime_no_longer_exposes_call_provider_aliases or test_runtime_no_longer_exposes_stream_provider_aliases"` → 2/2 pass.
+11. Run full test_agent_runtime.py: `python3 -m pytest tests/test_agent_runtime.py -q` → all green except the 3 pre-existing contract drift failures (Step 5 fixes them).
 
 ### Step 5: Fix test mocks with `create_autospec`
 
