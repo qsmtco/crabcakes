@@ -1820,7 +1820,6 @@ class AgentRuntimeHandler:
             agent_def_dl = self._agents.get(session_key)
             agent_name_dl = agent_def_dl.display_name if agent_def_dl else "Agent"
             self._on_drawer_lifecycle(session_key, agent_name_dl, "end")
-        # BUG #2: Mark this session as ended (error path) — prevents stale tool_start bubbles.
-        self._ended_sessions.add(session_key)
+        # _ended_sessions is set at the TOP of _do_error (line 1778) for race-safety.
         # BUG #14: clear started-turn tracking so next turn's tool_start can proceed.
         self._started_turn_sessions.discard(session_key)
