@@ -1812,8 +1812,14 @@ class AgentRuntimeHandler:
             status["detail"],
         )
 
-    def _do_error(self, session_key: str, message: str) -> None:
+    def _do_error(self, session_key: str, message: str, error_token: object = None) -> None:
         """Main-thread portion of _on_error."""
+        # RACE-FIX v4: Reject stale errors from a previous turn.
+        if error_token is not None:
+            current_token = self._turn_tokens.get(session_key)
+            if error_token is not current_token:
+                logger.debug("_do_error: stale error (token mismatch) for %s, skipping", session_key)
+                return
         # RACE-FIX v4: Mark session ended + completed (same as _do_response_complete).
         self._ended_sessions.add(session_key)
         if session_key in self._session_completed:
