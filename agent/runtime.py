@@ -416,20 +416,25 @@ class AgentRuntime:
         """Set per-instance approval callback (MED-1). Takes precedence over global."""
         self._approval_callback = cb
 
-    def _dispatch(self, callback: Callable | None, *args: Any, **kwargs: Any) -> None:
-        """Dispatch a callback thread-safely via GLib.idle_add or directly."""
+    def _dispatch(self, callback: Callable | None, *args: Any, _turn_token: object = None, **kwargs: Any) -> None:
+        """Dispatch a callback thread-safely via GLib.idle_add or directly.
+
+        If _turn_token is provided, it is passed as a keyword argument to the
+        callback. Callbacks that don't accept it will receive it via **kwargs
+        (if they have **kwargs) or ignore it (the handler's _on_* methods all
+        accept it explicitly).
+        """
         if callback is None:
             return
-        # RACE-FIX v4b: capture the turn token NOW (background thread, stable).
-        # The handler's _on_* callbacks will read this from the closure, not
-        # from a mutable dict that could change before the idle callback runs.
-        token = self._turn_token
+        # Capture token in local var for closure (already an argument, but
+        # explicit for readability).
+        token = _turn_token
         def inner():
             try:
-                callback(*args, **kwargs, _turn_token=token)
-            except TypeError:
-                # Callback doesn't accept _turn_token kwarg — call without it
-                callback(*args, **kwargs)
+                if token is not None:
+                    callback(*args, **kwargs, _turn_token=token)
+                else:
+                    callback(*args, **kwargs)
             except Exception:
                 logger.exception("Callback %s raised", callback)
         if self._GLib is not None:
