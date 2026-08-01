@@ -3702,13 +3702,13 @@ class TestStreamOpenaiEventsFinishReason:
 
     def _run_streamer(self, raw_sse: bytes):
         from agent import runtime as rt_module
-        from agent.runtime import _stream_openai_events
+        from agent.llm.openai_provider import OpenAIProvider
 
         with unittest.mock.patch(
             "agent.llm.openai_provider.urlopen_with_ssl_retry",
             lambda req, timeout: self._fake_urlopen(raw_sse),
         ):
-            return list(_stream_openai_events(
+            return list(OpenAIProvider("openai").stream(
                 base_url="https://api.openai.com/v1",
                 api_key="***",
                 model="openai/gpt-4o",
