@@ -626,7 +626,12 @@ class TestToolLoop:
         results = []
         rt._on_tool_call_result = lambda sk2, n, r, success=True: results.append((n, r))
 
-        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools, **kwargs: tc_response):
+        # Two responses: first a tool call (empty content), then a text
+        # response so the loop terminates. Without the second response,
+        # the loop hits max iterations and the last message is
+        # "[max tool iterations reached]" instead of the placeholder.
+        responses = [tc_response, _resp("Files listed successfully.")]
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk, msgs, tools, **kwargs: responses.pop(0)):
             with caplog.at_level(logging.WARNING, logger="agent.runtime"):
                 rt._run_loop(sk, "list files")
 
