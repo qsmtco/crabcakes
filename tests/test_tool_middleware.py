@@ -498,7 +498,7 @@ class TestIntegration:
                 "usage": {"prompt_tokens": 50, "completion_tokens": 5},
             },
         ]
-        with unittest.mock.patch.object(rt, "_call_llm", lambda sk2, msgs, tools: responses.pop(0)):
+        with unittest.mock.patch.object(rt, "_call_llm", lambda sk2, msgs, tools, **kwargs: responses.pop(0)):
             # Patch the chain's run method to track invocation
             original_run = rt._tool_chain.run
             chain_calls = []
