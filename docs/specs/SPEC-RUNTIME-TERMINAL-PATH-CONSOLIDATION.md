@@ -1094,7 +1094,14 @@ Note: this **retains** the immediate `self._dispatch(self._on_error, ...)` from 
 
 **Edit H: Class docstring honesty pass** (replace the existing class docstring at the top of `agent/runtime.py`):
 
-The current class docstring (around lines 1-15 of the file) claims thread safety without enumeration. The replacement should explicitly enumerate what is and isn't thread-safe.
+> **AUDIT FIX (BUG #12).** The previous draft claimed `_turn_state`
+> and `_turn_results` were "protected under `self._lock`" — but the
+> prescribed implementation did NOT use `self._lock` (or any lock) for
+> those fields. The docstring was misleading: it described a property
+> the implementation did not have. The corrected docstring matches
+> the actual implementation: a dedicated `_state_lock` protects the
+> state-machine fields, separately from `self._lock` which protects
+> the existing conversation / cancellation / approval state.
 
 ```python
 """AgentRuntime: the core agent loop.
@@ -1103,7 +1110,7 @@ Threading model (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.2 Edit H):
 
   The runtime operates on TWO threads:
     1. Main thread (UI / GTK): calls create_conversation, send_message,
-       cancel, approve_exec. Reads are mostly safe.
+       cancel, approve_exec, get_turn_state, get_last_turn_result.
     2. Background thread per turn: runs _run_loop, _call_llm,
        _call_llm_streaming, tool execution, persistence.
 
@@ -1113,11 +1120,26 @@ Threading model (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.2 Edit H):
     - _active_loops (per-session in-flight marker)
     - _pending_approvals (read in _dispatch_approval, written in cancel/approve_exec)
     - _running (lifecycle flag)
-    - _turn_state, _turn_results (Edit B) — protected even though main-thread
-      reads dominate, because cancel() writes from main thread while
-      _run_loop reads from background thread.
 
-  Per-instance locks (separate from self._lock):
+  Synchronized state (under self._state_lock, a SEPARATE lock):
+    - _turn_tokens: session_key → active turn_token. Written by
+      _run_loop at start; read by _terminate_turn and cancel().
+    - _turn_state: (session_key, turn_token) → current TurnStatus.
+      Written only by _terminate_turn; read by _terminate_turn, the
+      STREAMING transition in _run_loop, and the public accessors
+      get_turn_state() / get_last_turn_result().
+    - _turn_results: (session_key, turn_token) → most recent
+      TurnResult. Same access pattern as _turn_state.
+
+  Why a separate _state_lock: the GIL does NOT make the compound
+  "read previous state → decide → write terminal state" operation
+  atomic. Two threads calling _terminate_turn for the same session
+  could both observe a non-terminal state and both dispatch. The
+  state lock serializes the compound operation. The lock is NOT
+  held during the dispatch callback (which is slow and may invoke
+  GLib.idle_add); the lock is only held for the state mutation.
+
+  Per-instance locks (separate from self._lock and _state_lock):
     - _tool_history_lock: protects _tool_history (stuck detection).
     - _compaction_lock: protects _compaction_events (telemetry).
 
@@ -1129,10 +1151,21 @@ Threading model (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.2 Edit H):
       Cross-turn races are possible if the user hits /clear mid-turn;
       see FIX-CLEAR-ASK-RACE for the active-loop guard that mitigates.
 
+  Known race: a result for a stale turn_token (one that has been
+  rotated by a new send_message()) is rejected by _terminate_turn.
+  The rejection is logged but the dispatch is NOT made. The handler
+  must be prepared for: a turn may dispatch on_error / on_response_complete
+  for the OLD token, then a NEW turn's RUNNING state begins, then the
+  OLD token's stale result is dropped. This is the desired behavior
+  (a previous turn must not abort a current turn), but it is observable
+  in tests as: "the dispatched callback for the old turn fires, but
+  no TurnResult is recorded for the new turn."
+
   Not actually thread-safe (concurrent access is a latent bug):
-    - None known after this spec; prior issues with _compaction_this_iteration
-      (Audit-Fix-26 Bug #1) and _streaming_text accumulator (handler-side,
-      Phase 1 deferred-race-fixes) are addressed.
+    - _pending_stuck_messages (see above).
+    - The streaming text accumulator lives in the HANDLER
+      (`ui/handlers/agent_runtime_handler.py`); the runtime's
+      _call_llm_streaming is single-threaded per call.
 """
 ```
 
