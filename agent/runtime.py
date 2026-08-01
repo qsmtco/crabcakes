@@ -30,6 +30,20 @@ if TYPE_CHECKING:
     from agent.config import LLMProviderConfig
 
 from agent.audit import AuditEntry, AuditLog
+# Typed callback protocols (Phase 1 — SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION
+# §2.1). The handler's `_on_*` methods already satisfy these structurally;
+# the type hints in `__init__` document the contract.
+from agent.callbacks import (
+    OnEnforcementStatus,
+    OnError,
+    OnResponseComplete,
+    OnTextDelta,
+    OnTokenBreakdown,
+    OnTokenUsage,
+    OnToolCallApprovalNeeded,
+    OnToolCallResult,
+    OnToolCallStart,
+)
 from agent.enforcement import check as _enforcement_check
 from agent.tool_middleware import (
     EnforcementMiddleware,
@@ -395,15 +409,15 @@ class AgentRuntime:
         config: Any,            # AgentConfig — imported lazily to avoid circular
         *,
         GLib=None,
-        on_text_delta: Callable | None = None,
-        on_tool_call_start: Callable | None = None,
-        on_tool_call_result: Callable | None = None,
-        on_tool_call_approval_needed: Callable | None = None,
-        on_response_complete: Callable | None = None,
-        on_token_usage: Callable | None = None,
-        on_token_breakdown: Callable | None = None,
-        on_error: Callable | None = None,
-        on_enforcement_status: Callable | None = None,
+        on_text_delta: OnTextDelta | None = None,
+        on_tool_call_start: OnToolCallStart | None = None,
+        on_tool_call_result: OnToolCallResult | None = None,
+        on_tool_call_approval_needed: OnToolCallApprovalNeeded | None = None,
+        on_response_complete: OnResponseComplete | None = None,
+        on_token_usage: OnTokenUsage | None = None,
+        on_token_breakdown: OnTokenBreakdown | None = None,
+        on_error: OnError | None = None,
+        on_enforcement_status: OnEnforcementStatus | None = None,
     ):
         self._config = config
         self._GLib = GLib
