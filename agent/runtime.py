@@ -70,6 +70,7 @@ class StreamingCallKwargs(TypedDict, total=False):
     tools: list[dict] | None
     timeout: float
     x_title: str
+    turn_token: object | None
 
 
 # Public API — symbols explicitly exported for external use (PHASE-FOLLOWUP-5)
@@ -1510,6 +1511,7 @@ class AgentRuntime:
         session_key: str,
         messages: list[dict],
         tools: list[dict],
+        turn_token: object | None = None,
     ) -> dict:
         """
         Make a single LLM API call. Uses SSE streaming when on_text_delta is set
@@ -1602,6 +1604,7 @@ class AgentRuntime:
                     tools=tools if tools else None,
                     timeout=float(self._config.tool_timeout_seconds),
                     x_title=x_title,
+                    turn_token=turn_token,
                 )
             except (IndexError, KeyError, TypeError, ValueError) as e:
                 e._crabcakes_context = {
@@ -1650,6 +1653,7 @@ class AgentRuntime:
         tools: list[dict] | None,
         timeout: float,
         x_title: str = "",
+        turn_token: object | None = None,
     ) -> dict:
         """
         Call the LLM with streaming. Fires on_text_delta as chunks arrive,
