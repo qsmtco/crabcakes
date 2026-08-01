@@ -33,7 +33,7 @@ Evidence the duplication causes real bugs:
 
 - **Phase 1 deferred-race-fixes (this session, 2026-07-31):** Had to add a turn generation counter + idempotency set to `_do_response_complete` and `_do_error` in the handler because the runtime's overlapping terminal paths update the same downstream state in different orders. The fix touches the **handler** to compensate for the **runtime's** lack of a single transition function.
 - **Pre-existing test failures** (context.md §2026-07-19): `TestApproval::test_exec_without_callback_denied` + `TestToolLoop::test_tool_call_appends_result` — 3-arg vs 4-arg `_on_tool_call_result` dispatch drift across 5+ terminal paths.
-- **`turn_token` contract regression (current baseline)**: `TypeError: lambda() got an unexpected keyword argument 'turn_token'` — `agent/runtime.py:1646` adds `turn_token=turn_token` to `_call_llm_streaming`, but the existing test's injected lambda only has the old 9-arg signature. The 12-15 failed tests in `TestToolLoop` are direct architectural evidence that adding kwargs to internal calls breaks downstream callers.
+- **`_turn_token` contract regression (current baseline)**: `TypeError: lambda() got an unexpected keyword argument '_turn_token'` — `agent/runtime.py` adds `_turn_token=_turn_token` to `_call_llm_streaming` (and to the LLM callbacks, see lines 1646, 1706 etc.), but several tests' injected lambdas only have the old 9-arg signature without `_turn_token`. The 12-15 failed tests in `TestToolLoop` are direct architectural evidence that adding kwargs to internal calls breaks downstream callers. This is the exact contract drift BUG #7 is fixing: the protocol now uses `_turn_token` (matching production) and the tests use `create_autospec` to enforce it.
 
 ### 1.2 Solution summary
 
@@ -48,16 +48,35 @@ Introduce a per-turn state machine that owns the terminal transition. All `_run_
 
 ### 1.3 Scope
 
+> **AUDIT FIX (BUG #1, #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14).**
+> The scope table has been amended to include the audit-driven additions:
+> - BUG #2: missing-conversation and prompt-build-failure routing (was:
+>   "out of scope" — now: in scope as terminal paths).
+> - BUG #3, #4: `_state_lock` and `(sk, tk)` keying (was: not in the
+>   original spec — required by audit).
+> - BUG #5: explicit `return` after `_terminate_turn` in D.3 (was: missing).
+> - BUG #6, #11: `_check_and_stop_on_limit` refactor (was: "leave as-is"
+>   — NameError and outside the state machine).
+> - BUG #8: migration of scripts and tests that use the removed aliases
+>   (was: not in scope — required by grep evidence).
+> - BUG #14: ARCHITECTURE.md updates (was: "none required" — new public
+>   module changes the doc surface).
+
 | In scope | Out of scope |
 |---|---|
-| Turn state machine in `agent/runtime.py` | New `agent/turn.py` module (deferred — see §2.5) |
-| `agent/callbacks.py` typed protocols | New `agent/callbacks.py` handlers (just the protocols; the existing functions are still the implementations) |
-| Single `_terminate_turn(result)` method | Removing `_PROVIDER_CALLERS` (still used by `_call_llm` non-streaming path; deferred) |
-| Removal of `_call_openai`, `_call_minimax`, `_call_anthropic` aliases | Refactoring `_call_llm` to use the new `TurnContext` (deferred) |
-| Removal of `_stream_openai_events`, `_stream_minimax_events`, `_stream_anthropic_events` | Refactoring KB synthesis (`_prepare_kb_synthesis`, `_inject_kb_context`) |
-| Removal of `_PROVIDER_STREAMERS` (dead — `_call_llm_streaming` already uses `_get_provider(...).stream`) | Touching `agent/persistence.py`, `agent/audit.py`, `agent/tool_middleware.py` |
-| Test mock fix (3 sites) | Conversation layer (`models/conversation.py`) |
-| `agent/runtime.py` class docstring honesty pass | Anything in `ui/`, `gateway/`, `models/` |
+| Turn state machine in `agent/runtime.py` (5-state enum, `(sk, tk)` keying, `_state_lock`) | New `agent/turn.py` module (deferred — see §2.5) |
+| `agent/callbacks.py` typed protocols (NEW, public) | New `agent/callbacks.py` handlers (just the protocols; the existing functions are still the implementations) |
+| Single `_terminate_turn(result)` method (returns `TurnResult \| None` for testability) | Removing `_PROVIDER_CALLERS` (still used by `_call_llm` non-streaming path; values migrated but dict retained) |
+| Routing missing-conversation and prompt-build-failure paths through `_terminate_turn` (BUG #2) | Refactoring `_call_llm` to use the new `TurnContext` (deferred) |
+| Removal of `_call_openai`, `_call_minimax`, `_call_anthropic` aliases (with consumer migration in `tests/test_agent_runtime.py` and audit scripts) | Refactoring KB synthesis (`_prepare_kb_synthesis`, `_inject_kb_context`) |
+| Removal of `_stream_openai_events`, `_stream_minimax_events`, `_stream_anthropic_events` (with consumer migration) | Touching `agent/persistence.py`, `agent/audit.py`, `agent/tool_middleware.py` |
+| Removal of `_PROVIDER_STREAMERS` (with consumer migration) | Conversation layer (`models/conversation.py`) |
+| Refactor `_check_and_stop_on_limit` to a pure predicate returning `(reason, msg) \| None` (BUG #6, #11) | Anything in `ui/`, `gateway/`, `models/` |
+| `cancel()` uses active turn token for the session, not the runtime's global `_turn_token` (BUG #13) | |
+| `send_message` rotates `_turn_tokens[sk]` (BUG #4) | |
+| Test mock fix (3 sites — `create_autospec`) | |
+| `agent/runtime.py` class docstring honesty pass (BUG #12) | |
+| `docs/ARCHITECTURE.md` §3.21 update (new `agent/callbacks.py` public surface, `TurnStatus`/`TurnResult` exports, removed aliases) (BUG #14) | |
 
 ### 1.4 Architecture principles that apply
 
@@ -2185,19 +2204,39 @@ on_error(sk, msg) → handler._do_error(...)
 
 ## 4. File Change Summary
 
+> **AUDIT FIX (BUG #14).** The previous draft listed `docs/ARCHITECTURE.md`
+> with 0 lines added / 0 lines removed and "no new section required."
+> That is wrong (see §8). The new public module `agent/callbacks.py` and
+> the removal of `_call_*` / `_stream_*_events` / `_PROVIDER_STREAMERS`
+> from the public surface are documentation changes.
+
 | File | Change type | Lines added | Lines removed | Risk |
 |---|---|---|---|---|
 | `agent/callbacks.py` (NEW) | New module | 140 | 0 | Low (typed Protocols, no runtime behavior) |
-| `agent/runtime.py` | State machine + protocol types + provider alias removal | ~170 | ~50 | Medium (5 ad-hoc paths → 1 function; the cancel() path has subtle thread interaction) |
-| `tests/test_agent_runtime.py` | New tests + create_autospec fixes | ~280 | ~15 | Low (test-only changes) |
-| `docs/ARCHITECTURE.md` | Docstring update only (in `agent/runtime.py`); no new section required | 0 | 0 | None |
+| `agent/runtime.py` | State machine + protocol types + provider alias removal + `_check_and_stop_on_limit` refactor | ~220 | ~30 | Medium (5 ad-hoc paths → 1 function; the cancel() path has subtle thread interaction; the new `(sk, tk)` keying and `_state_lock` are load-bearing for correctness) |
+| `tests/test_agent_runtime.py` | New tests + create_autospec fixes + alias-migration | ~450 | ~50 | Low (test-only changes; the alias-migration touches 9 test methods that were using the removed aliases) |
+| `scripts/audit_streaming_scenarios.py` | 9 `patch("agent.runtime._PROVIDER_STREAMERS", ...)` sites rewritten to `patch.object(OpenAIProvider, "stream", ...)` | ~10 | ~10 | Low (scripts only run manually) |
+| `scripts/audit_attack_scenarios.py` | 5 `_PROVIDER_STREAMERS` references rewritten to use `get_provider` | ~5 | ~5 | Low |
+| `agent/llm/streaming.py` | 3 docstring references to removed aliases updated | 0 | 0 | None (docstring-only) |
+| `utils/provider_test.py` | 1 docstring reference to removed alias updated | 0 | 0 | None (docstring-only) |
+| `docs/ARCHITECTURE.md` | §3.21.1 new subsection (Agent Callback Protocols); §3.21 update (turn state machine, public surface); docstring-only changes | ~80 | ~10 | None (docs) |
 
-**Total: ~590 lines added, ~65 lines removed.** Runtime net change: +120 lines (mostly the new `TurnStatus`/`TurnResult` dataclass + 5 new tests). After this spec, `agent/runtime.py` will be approximately **2275 lines** (2205 + 70 from new state machine, −10 from alias removal, +5 from the new class docstring section).
+**Total: ~905 lines added, ~105 lines removed.** Runtime net change:
+**+190 lines** (mostly the new `TurnStatus`/`TurnResult` dataclass,
+the `_state_lock` + `_turn_tokens` + `(sk, tk)` keying in `_terminate_turn`,
+the audit-driven `cancel()` rotation logic, and the audit-driven
+refactor of `_check_and_stop_on_limit` to a pure predicate).
+
+After this spec, `agent/runtime.py` will be approximately **2395 lines**
+(2205 + 220 from new state machine + locking + audit-driven additions,
+−30 from alias removal). Verified against baseline
+`wc -l agent/runtime.py` = 2205 at spec authoring (2026-07-31).
 
 **Risk level per file:**
 - `agent/callbacks.py` (NEW): Low. Typed Protocols don't change runtime behavior. The protocols describe the existing contract; they don't enforce it at runtime (no `runtime_checkable`).
-- `agent/runtime.py`: Medium. The `cancel()` interaction is the highest-risk change (two calls to `_terminate_turn` for the same turn — the dedup handles it, but the test must verify the behavior). The mid-stream-error-with-content path (D.3) changes behavior intentionally (was: fall-through; now: terminate).
+- `agent/runtime.py`: Medium. The `cancel()` interaction is the highest-risk change (two calls to `_terminate_turn` for the same turn — the dedup handles it, but the test must verify the behavior). The mid-stream-error-with-content path (D.3) changes behavior intentionally (was: fall-through; now: terminate). The `(sk, tk)` keying and `_state_lock` are load-bearing — a mistake here is a data-race / wrong-state bug. The `_check_and_stop_on_limit` refactor changes its contract (was: side-effecting predicate; now: pure predicate); the two call sites must be updated together.
 - `tests/test_agent_runtime.py`: Low. Test-only changes. The 3 `create_autospec` fixes may surface other latent contract drift in the existing test suite (a good thing — those latent drifts will become explicit test failures instead of silent drift).
+- `scripts/audit_*.py`: Low. The audit scripts are dev-only tools; runtime tests do not depend on them.
 
 ---
 
