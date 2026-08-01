@@ -2338,9 +2338,15 @@ Each step has a verification gate before moving on. The implementer MUST run the
 
 ### Step 5: Fix test mocks with `create_autospec`
 
-1. Apply Edit N (TestToolLoop::test_user_plus_assistant_in_conversation).
-2. Apply Edit O (TestApproval::test_exec_without_callback_denied).
-3. Apply Edit P (TestToolLoop::test_tool_call_appends_result).
+> Note: this step is the test mock fix from §2.4. The Edits N, O, P in
+> §2.3 (provider alias migration in scripts and tests) are part of
+> Step 4. The Edits N, O, P in §2.4 (test mock fix with `create_autospec`)
+> are part of this step. The naming overlap is intentional — both
+> sets of edits are scoped to their step.
+
+1. Apply Edit N from §2.4 (TestToolLoop::test_user_plus_assistant_in_conversation).
+2. Apply Edit O from §2.4 (TestApproval::test_exec_without_callback_denied).
+3. Apply Edit P from §2.4 (TestToolLoop::test_tool_call_appends_result).
 4. Run `grep -n "MagicMock()\|lambda sk, name" tests/test_agent_runtime.py` — identify any additional sites that may need fixing (be thorough; not just the 3 named in the spec).
 5. Run full test_agent_runtime.py: `python3 -m pytest tests/test_agent_runtime.py -q` → expect 0 failures (the 3-4 contract drift failures should now pass with proper signatures; the 2 pre-existing TestLocalAgentDrawerEmissions failures from baseline `0d63de9` may still fail — those are out of scope for this spec, see "Out of scope" below).
 
@@ -2366,6 +2372,10 @@ The implementer MUST verify each item before declaring done. The verification co
   - Verify: `python3 -c "from agent.callbacks import OnTextDelta, OnToolCallStart, OnToolCallResult, OnToolCallApprovalNeeded, OnResponseComplete, OnTokenUsage, OnTokenBreakdown, OnError, OnEnforcementStatus, AgentRuntimeCallbacks; print('OK')"`
   - Expected: `OK`
 
+- [ ] All callback protocols use the keyword `_turn_token` (with leading underscore), matching the production dispatch contract
+  - Verify: `grep -E "^\s*\* turn_token:" agent/callbacks.py` shows 0 matches (the previous draft used `turn_token` without the underscore — production uses `_turn_token`).
+  - Verify: `grep -E "def __call__\(.*turn_token" agent/callbacks.py | grep -v _turn_token` shows 0 matches.
+
 - [ ] `TurnStatus` enum has exactly 5 values: RUNNING, STREAMING, COMPLETED, FAILED, CANCELLED
   - Verify: `python3 -c "from agent.runtime import TurnStatus; print({s.value for s in TurnStatus})"`
   - Expected: `{'running', 'streaming', 'completed', 'failed', 'cancelled'}`
@@ -2374,30 +2384,63 @@ The implementer MUST verify each item before declaring done. The verification co
   - Verify: `python3 -c "from agent.runtime import TurnResult; import dataclasses; print([f.name for f in dataclasses.fields(TurnResult)])"`
   - Expected: `['status', 'session_key', 'turn_token', 'text', 'error', 'metadata']`
 
-- [ ] `_terminate_turn` method exists on `AgentRuntime` and has 5 documented behaviors (validates status, dedups, dispatches, persists, cleans up)
-  - Verify: `grep -n "def _terminate_turn" agent/runtime.py` shows 1 match; method body is ≥ 40 lines
-
-- [ ] `_run_loop` has exactly 5 `_terminate_turn` call sites (cancellation, empty-content, stream-error, text-success, max-iterations, top-level-exception = 6 actually, due to 2 cancellation paths) — and ZERO ad-hoc `_dispatch(self._on_response_complete` + `_auto_save` + `return` triplets
-  - Verify: `grep -c "self._terminate_turn(" agent/runtime.py` ≥ 6
-  - Verify: `grep -c "self._dispatch(self._on_response_complete" agent/runtime.py` ≤ 1 (the one in `_terminate_turn`)
-
-- [ ] Provider alias debt removed
-  - Verify: `python3 -c "import agent.runtime; assert not hasattr(agent.runtime, '_call_openai'); assert not hasattr(agent.runtime, '_stream_openai_events'); assert not hasattr(agent.runtime, '_PROVIDER_STREAMERS'); print('OK')"`
+- [ ] `AgentRuntime` has a `_state_lock` attribute (a `threading.Lock` instance)
+  - Verify: `python3 -c "from agent.runtime import AgentRuntime; rt = AgentRuntime.__new__(AgentRuntime); import threading; assert isinstance(rt._state_lock, type(threading.Lock())) or hasattr(rt._state_lock, 'acquire')" 2>/dev/null || (python3 -c "from agent.config import AgentConfig, LLMProviderConfig; from agent.runtime import AgentRuntime; rt = AgentRuntime(AgentConfig(providers={}, default_provider='openai', default_model='openai/gpt-4o'), GLib=None); import threading; assert isinstance(rt._state_lock, type(threading.Lock())) or hasattr(rt._state_lock, 'acquire'); print('OK')")`
   - Expected: `OK`
 
-- [ ] All 15 new tests pass
-  - Verify: `python3 -m pytest tests/test_agent_runtime.py -q -k "turn_status or turn_result or terminate_turn or run_loop_starts or run_loop_transitions or run_loop_terminates or test_runtime_no_longer_exposes or test_callbacks_module_exports" | tail -3`
-  - Expected: 15/15 (or 16/16 counting the smoke test) pass
+- [ ] `_turn_state` and `_turn_results` are keyed by `(session_key, turn_token)` tuple, not by `session_key` alone
+  - Verify: `grep -n "self._turn_state\[" agent/runtime.py` shows 0 matches for `self._turn_state[sk]` or `self._turn_state[session_key]`; all writes are `self._turn_state[(sk, tk)]` or `self._turn_state[(session_key, turn_token)]`.
 
-- [ ] The 3 contract-drift test failures (turn_token + 3-arg lambdas) are fixed
+- [ ] `_terminate_turn` method exists on `AgentRuntime` and:
+  - Returns `TurnResult | None` (not None unconditionally)
+  - Has 6 documented behaviors (validate status, check stale token, dedup terminal, record state, dispatch, persist, cleanup)
+  - Acquires `_state_lock` around the read-prev / write-terminal compound operation
+  - Verify: `grep -n "def _terminate_turn" agent/runtime.py` shows 1 match; method body is ≥ 50 lines (was: ≥ 40)
+  - Verify: `grep -n "with self._state_lock:" agent/runtime.py` shows the lock acquisition in `_terminate_turn`
+
+- [ ] `_run_loop` has `_terminate_turn` call sites for: cancellation (×2), empty content, stream error with content, text success, max iterations, top-level exception — at least 7 sites. ALSO has `_terminate_turn` calls for missing conversation and prompt-build failure (BUG #2) — total ≥ 9 sites.
+  - Verify: `grep -c "self._terminate_turn(" agent/runtime.py` ≥ 9
+  - Verify: `grep -c "self._dispatch(self._on_response_complete" agent/runtime.py` ≤ 1 (the one in `_terminate_turn`)
+
+- [ ] The mid-stream-error-with-content path explicitly `return`s after `_terminate_turn` (BUG #5)
+  - Verify: `sed -n '/stream_error_with_content/,/return$/p' agent/runtime.py` shows the `_terminate_turn` call followed by `return` (within 5 lines)
+
+- [ ] `_check_and_stop_on_limit` is a pure predicate returning `tuple[str, str] | None` (BUG #6, #11)
+  - Verify: `grep -n "def _check_and_stop_on_limit" agent/runtime.py` shows the signature with the new return type
+  - Verify: `grep -n "_dispatch.*on_error.*session_key" agent/runtime.py` in the body of `_check_and_stop_on_limit` shows 0 matches (the helper no longer dispatches)
+
+- [ ] `cancel()` uses the active turn token for the session (BUG #13)
+  - Verify: `grep -n "self._turn_tokens" agent/runtime.py` shows the `cancel()` method reading `_turn_tokens[session_key]`
+  - Verify: `grep -A 2 "def cancel" agent/runtime.py | grep -c "_turn_token=self._turn_token"` shows 0 matches (the previous draft used the runtime's global token; corrected version uses the active session token)
+
+- [ ] Provider alias debt removed (with consumer migration per BUG #8)
+  - Verify: `python3 -c "import agent.runtime; assert not hasattr(agent.runtime, '_call_openai'); assert not hasattr(agent.runtime, '_stream_openai_events'); assert not hasattr(agent.runtime, '_PROVIDER_STREAMERS'); print('OK')"`
+  - Expected: `OK`
+  - Verify: `grep -rn "_stream_openai_events\|_stream_minimax_events\|_stream_anthropic_events\|_PROVIDER_STREAMERS" --include='*.py' /home/q/projects/crabcakes/ | grep -v "tests/generate_synthetic_conversations.py"` shows 0 matches (the audit found 14+ matches in `tests/test_agent_runtime.py` and `scripts/audit_*.py`; these must be migrated).
+
+- [ ] All 18 new tests pass (the audit expanded the test count from 15 to 18-21; the implementation should run all of groups 1, 2, 3, 3a, 3b, 3c, 4, 5, 6)
+  - Verify: `python3 -m pytest tests/test_agent_runtime.py -q -k "turn_status or turn_result or terminate_turn or run_loop_starts or run_loop_transitions or run_loop_terminates or test_runtime_no_longer_exposes or test_callbacks_module_exports or rejects_stale_token or persistence_uses_separate_session_keys or cancelled_with_persist_metadata_saves or send_message_rotates_turn_token" | tail -3`
+  - Expected: 18/18 (or 21/21 counting the smoke tests) pass
+
+- [ ] The 3 contract-drift test failures (`_turn_token` + 3-arg lambdas) are fixed
   - Verify: `python3 -m pytest tests/test_agent_runtime.py -q -k "test_user_plus_assistant_in_conversation or test_exec_without_callback_denied or test_tool_call_appends_result" | tail -3`
   - Expected: 3/3 pass
 
-- [ ] Class docstring documents the threading model with explicit synchronization boundaries
-  - Verify: `head -50 agent/runtime.py` shows "Threading model" section enumerating synchronized vs unsynchronized state
+- [ ] Class docstring documents the threading model with explicit synchronization boundaries (BUG #12)
+  - Verify: `head -50 agent/runtime.py` shows "Threading model" section that:
+    - Distinguishes `self._lock` from `self._state_lock`
+    - States that the GIL does NOT make the state-machine compound operation atomic
+    - Enumerates what is NOT synchronized (NOT a claim of total safety)
+  - Verify: `grep -n "self._state_lock" agent/runtime.py` shows uses in `_terminate_turn`, `get_turn_state`, `get_last_turn_result`, and `_run_loop` (initial RUNNING + STREAMING transition)
 
-- [ ] `agent/persistence.py`, `agent/audit.py`, `agent/tool_middleware.py`, `agent/llm/*` are unchanged
-  - Verify: `git diff --stat HEAD~1..HEAD -- agent/persistence.py agent/audit.py agent/tool_middleware.py agent/llm/` shows no changes
+- [ ] `agent/persistence.py`, `agent/audit.py`, `agent/tool_middleware.py` are unchanged
+  - Verify: `git diff --stat HEAD~1..HEAD -- agent/persistence.py agent/audit.py agent/tool_middleware.py` shows no changes
+  - Note: `agent/llm/streaming.py` and `utils/provider_test.py` SHOULD have docstring-only changes (BUG #8 Edit P); these count as unchanged in line-count terms but the spec lists them in §4.
+
+- [ ] `docs/ARCHITECTURE.md` is updated per §8 (BUG #14)
+  - Verify: `grep -n "agent.callbacks" docs/ARCHITECTURE.md` shows the new module referenced in the agent module list and in a new §3.21.1 subsection
+  - Verify: `grep -n "TurnStatus\|TurnResult" docs/ARCHITECTURE.md` shows the new public exports
+  - Verify: `grep -n "_call_openai\|_stream_openai_events\|_PROVIDER_STREAMERS" docs/ARCHITECTURE.md` shows 0 matches (the removed aliases are no longer in the public surface)
 
 - [ ] No layer-boundary violations: no new imports from `ui/`, `gateway/`, or `models/` in `agent/runtime.py` or `agent/callbacks.py`
   - Verify: `grep -E "from ui\.|from gateway\.|from models\.|import ui\.|import gateway\.|import models\." agent/runtime.py agent/callbacks.py` shows 0 matches
@@ -2419,7 +2462,7 @@ The implementer MUST verify each item before declaring done. The verification co
 | Tool middleware (Enforcement/StuckDetection) raises during execution | Exception propagates up to the `try/except Exception` in `_run_loop`, which calls `_terminate_turn(FAILED, reason="exception")`. Middleware errors are surfaced as turn failures, not silent passes. | existing middleware tests in `tests/test_tool_middleware.py` (preserved) |
 | Conversation not found at turn start | `_run_loop` calls `_terminate_turn(FAILED, reason="no_conversation")` with metadata indicating the cause. | new test `test_run_loop_terminates_with_failed_on_no_conversation` |
 | User hits /clear during a running turn | `clear_conversation` in handler refuses (existing `is_loop_active` guard from FIX-CLEAR-ASK-RACE). Turn completes normally, then /clear can succeed. | existing test in `test_agent_runtime.py::TestClearConversation` (preserved) |
-| Two threads call `_terminate_turn` for the same session simultaneously | First call wins; second is logged as duplicate and ignored. Not a race because Python's GIL makes the dict set atomic, but the prev-state check is explicit for clarity. | new test `test_terminate_turn_dedups_concurrent_terminal_transitions` (use threading.Barrier to coordinate) |
+| Two threads call `_terminate_turn` for the same session simultaneously | First call wins; second is logged as duplicate and ignored. The dedup is NOT just the GIL — it is the explicit `_state_lock` acquisition around the read-prev / write-terminal compound operation (BUG #3). Without `_state_lock`, the GIL is insufficient for compound atomicity. | new test `test_terminate_turn_dedups_concurrent_terminal_transitions` (use `threading.Barrier` to coordinate two threads; assert exactly one `TurnResult` recorded) |
 | `_dispatch` raises (handler bug) | Caught by `_dispatch`'s existing `try/except: logger.exception(...)`. `_terminate_turn` does not crash; the state machine transition still happens (so subsequent terminal calls are deduped). | new test `test_terminate_continues_after_handler_raises` |
 | Provider returns 200 with `base_resp.status_code != 0` (MiniMax body-level error) | Existing `_call_llm` raises; caught by `_run_loop`'s top-level `except Exception`; calls `_terminate_turn(FAILED, reason="exception")`. | existing MiniMax tests in `tests/test_llm_providers.py` (preserved) |
 
