@@ -1560,7 +1560,24 @@ This spec implements the state machine **as internal state in `AgentRuntime`** (
 
 ---
 
-### 2.6 New tests in `tests/test_agent_runtime.py` (12-15 tests)
+### 2.6 New tests in `tests/test_agent_runtime.py` (18 tests, up from 15)
+
+> **AUDIT FIX (BUG #9, #10).** The previous draft of this section had
+> two unworkable tests:
+> 1. **BUG #9.** `test_terminate_turn_persists_for_completed_and_failed_not_cancelled`
+>    called `_terminate_turn` four times for the same `"test:sk"`. The
+>    first call transitions to a terminal state; the remaining three
+>    are deduped and return without persisting. The expected save
+>    counts of 2 and 3 are impossible. The corrected test uses four
+>    separate session keys, one per terminal status.
+> 2. **BUG #10.** The 4 tests in "Test group 3" called
+>    `rt._run_loop("test:sk", "hello")` without first creating a
+>    conversation. The loop's `self._conversations.get("test:sk")`
+>    returns `None`, so the loop takes the missing-conversation path
+>    (which is now itself a `_terminate_turn(FAILED, no_conversation)`
+>    call) instead of reaching the LLM. The tests would silently
+>    validate the wrong path. The corrected tests use `_uniq()` to
+>    generate unique session keys and call `create_conversation` first.
 
 **Test group 1: `TurnStatus` and `TurnResult` (3 tests)**
 
@@ -1608,161 +1625,371 @@ def test_turn_result_metadata_isolation():
     assert "leak" not in tr2.metadata
 ```
 
-**Test group 2: `_terminate_turn` behavior (6 tests)**
+**Test group 2: `_terminate_turn` behavior (8 tests, was 6)**
 
 ```python
 def test_terminate_turn_dispatches_on_response_complete_for_completed():
     """_terminate_turn(COMPLETED) calls on_response_complete with text."""
     from agent.runtime import TurnResult, TurnStatus
-    rt = AgentRuntime(config=mock_config, GLib=None,
+    mock_complete = MagicMock()
+    rt = AgentRuntime(config=_make_cfg(), GLib=None,
                       on_response_complete=mock_complete)
-    rt._terminate_turn(TurnResult(
+    sk = _uniq()
+    tk = object()
+    rt._turn_tokens[sk] = tk
+    rt._turn_state[(sk, tk)] = TurnStatus.RUNNING
+    accepted = rt._terminate_turn(TurnResult(
         status=TurnStatus.COMPLETED,
-        session_key="test:sk",
-        turn_token=object(),
-        text="Hello",
+        session_key=sk, turn_token=tk, text="Hello",
     ))
+    assert accepted is not None
     mock_complete.assert_called_once()
     args, kwargs = mock_complete.call_args
     assert args[1] == "Hello"  # session_key, text
-    assert "turn_token" in kwargs
+    assert kwargs.get("_turn_token") is tk
 
 def test_terminate_turn_dispatches_on_error_for_failed():
     """_terminate_turn(FAILED) calls on_error with the error."""
-    rt = AgentRuntime(config=mock_config, GLib=None,
+    from agent.runtime import TurnResult, TurnStatus
+    mock_error = MagicMock()
+    rt = AgentRuntime(config=_make_cfg(), GLib=None,
                       on_error=mock_error)
+    sk = _uniq(); tk = object()
+    rt._turn_tokens[sk] = tk
+    rt._turn_state[(sk, tk)] = TurnStatus.RUNNING
     rt._terminate_turn(TurnResult(
-        status=TurnStatus.FAILED,
-        session_key="test:sk",
-        turn_token=object(),
+        status=TurnStatus.FAILED, session_key=sk, turn_token=tk,
         error="Something went wrong",
     ))
     mock_error.assert_called_once()
 
 def test_terminate_turn_dispatches_on_error_for_cancelled():
     """_terminate_turn(CANCELLED) calls on_error with the error."""
-    rt = AgentRuntime(config=mock_config, GLib=None,
+    from agent.runtime import TurnResult, TurnStatus
+    mock_error = MagicMock()
+    rt = AgentRuntime(config=_make_cfg(), GLib=None,
                       on_error=mock_error)
+    sk = _uniq(); tk = object()
+    rt._turn_tokens[sk] = tk
+    rt._turn_state[(sk, tk)] = TurnStatus.RUNNING
     rt._terminate_turn(TurnResult(
-        status=TurnStatus.CANCELLED,
-        session_key="test:sk",
-        turn_token=object(),
+        status=TurnStatus.CANCELLED, session_key=sk, turn_token=tk,
         error="Cancelled by user",
     ))
     mock_error.assert_called_once()
 
 def test_terminate_turn_rejects_non_terminal_status():
-    """_terminate_turn with RUNNING or STREAMING is invalid; logs error,
+    """_terminate_turn with RUNNING or STREAMING is invalid; returns None,
     does not dispatch, does not transition state."""
-    rt = AgentRuntime(config=mock_config, GLib=None,
+    from agent.runtime import TurnResult, TurnStatus
+    mock_complete = MagicMock()
+    rt = AgentRuntime(config=_make_cfg(), GLib=None,
                       on_response_complete=mock_complete)
-    rt._terminate_turn(TurnResult(
-        status=TurnStatus.RUNNING,
-        session_key="test:sk",
-        turn_token=object(),
+    sk = _uniq(); tk = object()
+    rt._turn_tokens[sk] = tk
+    accepted = rt._terminate_turn(TurnResult(
+        status=TurnStatus.RUNNING, session_key=sk, turn_token=tk,
     ))
+    assert accepted is None
     mock_complete.assert_not_called()
-    assert rt.get_turn_state("test:sk") is None  # no transition occurred
+    assert rt.get_turn_state(sk) is None
 
 def test_terminate_turn_dedups_duplicate_terminal_transitions():
-    """Calling _terminate_turn twice for the same turn logs an error and
-    only transitions once."""
+    """Calling _terminate_turn twice for the same (sk, tk) returns None
+    on the second call; only one transition is recorded."""
     from agent.runtime import TurnResult, TurnStatus
-    rt = AgentRuntime(config=mock_config, GLib=None,
+    mock_complete = MagicMock()
+    rt = AgentRuntime(config=_make_cfg(), GLib=None,
                       on_response_complete=mock_complete)
-    tr_args = dict(
-        status=TurnStatus.COMPLETED,
-        session_key="test:sk",
-        turn_token=object(),
-        text="x",
-    )
-    rt._terminate_turn(TurnResult(**tr_args))
-    rt._terminate_turn(TurnResult(**tr_args))
+    sk = _uniq(); tk = object()
+    rt._turn_tokens[sk] = tk
+    rt._turn_state[(sk, tk)] = TurnStatus.RUNNING
+    first = rt._terminate_turn(TurnResult(
+        status=TurnStatus.COMPLETED, session_key=sk, turn_token=tk, text="x",
+    ))
+    second = rt._terminate_turn(TurnResult(
+        status=TurnStatus.FAILED, session_key=sk, turn_token=tk, error="y",
+    ))
+    assert first is not None
+    assert second is None
     assert mock_complete.call_count == 1
 
-def test_terminate_turn_persists_for_completed_and_failed_not_cancelled():
-    """COMPLETED and FAILED auto-save the conversation; CANCELLED does not
-    unless metadata['persist'] is True."""
+def test_terminate_turn_rejects_stale_token():
+    """AUDIT FIX (BUG #4). If the active token for sk has been rotated
+    (new send_message), a result with the old token is rejected."""
     from agent.runtime import TurnResult, TurnStatus
-    rt = AgentRuntime(config=mock_config, GLib=None)
-    # Setup: create a conversation to persist
-    rt.create_conversation("test_agent", "test:sk", project_path=".")
+    mock_complete = MagicMock()
+    rt = AgentRuntime(config=_make_cfg(), GLib=None,
+                      on_response_complete=mock_complete)
+    sk = _uniq()
+    old_tk, new_tk = object(), object()
+    rt._turn_tokens[sk] = new_tk  # active token is the new one
+    rt._turn_state[(sk, new_tk)] = TurnStatus.RUNNING
+    # Result for the OLD token — should be rejected.
+    accepted = rt._terminate_turn(TurnResult(
+        status=TurnStatus.COMPLETED, session_key=sk,
+        turn_token=old_tk, text="stale",
+    ))
+    assert accepted is None
+    mock_complete.assert_not_called()
+    # Active token's state was not disturbed.
+    assert rt.get_turn_state(sk) == TurnStatus.RUNNING
+
+def test_terminate_turn_persistence_uses_separate_session_keys():
+    """AUDIT FIX (BUG #9). COMPLETED, FAILED, and CANCELLED each
+    auto-save. Use separate session keys because _terminate_turn
+    dedups terminal transitions for the same (sk, tk)."""
+    from agent.runtime import TurnResult, TurnStatus
+    rt = AgentRuntime(config=_make_cfg(), GLib=None)
     with patch.object(rt, "_auto_save") as mock_save:
-        # COMPLETED persists
+        # Three separate session keys, each with its own token.
+        for status, error, text, should_persist in [
+            (TurnStatus.COMPLETED, None, "x", True),
+            (TurnStatus.FAILED, "oops", "", True),
+            (TurnStatus.CANCELLED, "cancelled", "", False),
+        ]:
+            sk = _uniq(); tk = object()
+            rt._turn_tokens[sk] = tk
+            rt._turn_state[(sk, tk)] = TurnStatus.RUNNING
+            rt._conversations[sk] = MagicMock()  # so _auto_save has a conv
+            rt._terminate_turn(TurnResult(
+                status=status, session_key=sk, turn_token=tk,
+                text=text, error=error,
+            ))
+        # COMPLETED and FAILED persisted (counts 1 and 2);
+        # CANCELLED without persist flag did NOT (count stays 2).
+        assert mock_save.call_count == 2
+
+def test_terminate_turn_cancelled_with_persist_metadata_saves():
+    """CANCELLED with metadata={'persist': True} saves."""
+    from agent.runtime import TurnResult, TurnStatus
+    rt = AgentRuntime(config=_make_cfg(), GLib=None)
+    with patch.object(rt, "_auto_save") as mock_save:
+        sk = _uniq(); tk = object()
+        rt._turn_tokens[sk] = tk
+        rt._turn_state[(sk, tk)] = TurnStatus.RUNNING
+        rt._conversations[sk] = MagicMock()
         rt._terminate_turn(TurnResult(
-            status=TurnStatus.COMPLETED, session_key="test:sk",
-            turn_token=object(), text="x",
+            status=TurnStatus.CANCELLED, session_key=sk, turn_token=tk,
+            error="cancelled", metadata={"persist": True},
         ))
         assert mock_save.call_count == 1
-        # FAILED persists
-        rt._terminate_turn(TurnResult(
-            status=TurnStatus.FAILED, session_key="test:sk",
-            turn_token=object(), error="oops",
-        ))
-        assert mock_save.call_count == 2
-        # CANCELLED does not persist
-        rt._terminate_turn(TurnResult(
-            status=TurnStatus.CANCELLED, session_key="test:sk",
-            turn_token=object(), error="cancelled",
-        ))
-        assert mock_save.call_count == 2
-        # CANCELLED with metadata['persist']=True does persist
-        rt._terminate_turn(TurnResult(
-            status=TurnStatus.CANCELLED, session_key="test:sk",
-            turn_token=object(), error="cancelled",
-            metadata={"persist": True},
-        ))
-        assert mock_save.call_count == 3
 ```
 
 **Test group 3: turn state transitions in `_run_loop` (4 tests)**
 
+> **AUDIT FIX (BUG #10).** Every test in this group MUST
+> `create_conversation` before invoking `_run_loop` and MUST use a
+> unique session key (via `_uniq()`) so tests don't share state.
+> The previous draft used the hardcoded literal `"test:sk"` and did
+> not call `create_conversation`; both are corrected here.
+
 ```python
 def test_run_loop_starts_in_running_state():
-    """At the top of _run_loop, _turn_state[sk] == RUNNING."""
-    rt = AgentRuntime(config=mock_config, GLib=None)
-    with patch.object(rt, "_call_llm", return_value=mock_text_response):
-        rt._run_loop("test:sk", "hello")
-    # After completion, state should be COMPLETED
-    assert rt.get_turn_state("test:sk") == TurnStatus.COMPLETED
+    """At the top of _run_loop, _turn_state[(sk, tk)] == RUNNING.
+    After the loop completes, the state is COMPLETED."""
+    rt = AgentRuntime(_make_cfg())
+    rt.start()
+    sk = _uniq()
+    rt.create_conversation("Coder", sk, "/tmp")
+    with patch.object(rt, "_call_llm", return_value=_resp("Hello, human.")):
+        rt._run_loop(sk, "hello")
+    assert rt.get_turn_state(sk) == TurnStatus.COMPLETED
+    rt.stop()
 
 def test_run_loop_transitions_to_streaming_before_first_llm_call():
     """After _call_llm is called once, state is STREAMING; after the
     loop ends, state is COMPLETED."""
-    rt = AgentRuntime(config=mock_config, GLib=None)
+    rt = AgentRuntime(_make_cfg())
+    rt.start()
+    sk = _uniq()
+    rt.create_conversation("Coder", sk, "/tmp")
     states_seen = []
-    original_call = rt._call_llm
     def tracking_call(*args, **kwargs):
-        states_seen.append(rt.get_turn_state("test:sk"))
-        return mock_text_response
+        states_seen.append(rt.get_turn_state(sk))
+        return _resp("Hello.")
     with patch.object(rt, "_call_llm", side_effect=tracking_call):
-        rt._run_loop("test:sk", "hello")
+        rt._run_loop(sk, "hello")
     assert TurnStatus.STREAMING in states_seen
-    assert rt.get_turn_state("test:sk") == TurnStatus.COMPLETED
+    assert rt.get_turn_state(sk) == TurnStatus.COMPLETED
+    rt.stop()
 
 def test_run_loop_terminates_with_failed_on_max_iterations():
     """When max_tool_iterations is reached without a text response,
     terminal status is FAILED with reason 'max_iterations'."""
-    rt = AgentRuntime(config=mock_config_max_5, GLib=None)
+    rt = AgentRuntime(_make_cfg())
+    rt.start()
+    sk = _uniq()
+    rt.create_conversation("Coder", sk, "/tmp")
     # Mock _call_llm to always return tool calls (never text)
-    with patch.object(rt, "_call_llm", return_value=mock_tool_call_response):
-        with patch.object(rt, "execute_tool", return_value=mock_tool_result):
-            rt._run_loop("test:sk", "hello")
-    result = rt.get_last_turn_result("test:sk")
+    tool_resp = _resp(tool_calls=[{
+        "id": "call_1", "function": {"name": "list_files",
+                                      "arguments": '{"path": "."}'},
+    }])
+    with patch.object(rt, "_call_llm", return_value=tool_resp), \
+         patch.object(rt, "execute_tool", return_value=("ok", True, None)):
+        rt._run_loop(sk, "hello")
+    result = rt.get_last_turn_result(sk)
+    assert result is not None
     assert result.status == TurnStatus.FAILED
     assert result.metadata.get("reason") == "max_iterations"
+    rt.stop()
 
 def test_run_loop_terminates_with_cancelled_on_cancel_signal():
     """When _cancel_requested is set during the loop, terminal status
     is CANCELLED with reason 'shutdown'."""
-    rt = AgentRuntime(config=mock_config, GLib=None)
+    rt = AgentRuntime(_make_cfg())
+    rt.start()
+    sk = _uniq()
+    rt.create_conversation("Coder", sk, "/tmp")
     def trigger_cancel(*args, **kwargs):
         rt._cancel_requested = True
-        return mock_text_response
+        return _resp("Cancelled mid-call.")
     with patch.object(rt, "_call_llm", side_effect=trigger_cancel):
-        rt._run_loop("test:sk", "hello")
-    result = rt.get_last_turn_result("test:sk")
+        rt._run_loop(sk, "hello")
+    result = rt.get_last_turn_result(sk)
+    assert result is not None
     assert result.status == TurnStatus.CANCELLED
+    rt.stop()
+```
+
+**Test group 3a: AUDIT FIX (BUG #2) — missing-conversation and prompt-build-failure paths (2 tests)**
+
+> The previous draft's "edge-case table" mentioned these paths but
+> the proposed test list did not include tests for them. Without
+> tests, the "all terminal paths use the chokepoint" claim is
+> unfalsifiable. These two tests pin the behavior.
+
+```python
+def test_run_loop_terminates_with_failed_on_no_conversation():
+    """AUDIT FIX (BUG #2). _run_loop with a session_key that has no
+    Conversation must route through _terminate_turn(FAILED,
+    no_conversation) — not the ad-hoc dispatch + return."""
+    from agent.runtime import TurnResult, TurnStatus
+    rt = AgentRuntime(_make_cfg())
+    rt.start()
+    sk = _uniq()
+    # Deliberately do NOT call create_conversation.
+    mock_error = MagicMock()
+    rt._on_error = mock_error
+    rt._run_loop(sk, "hello")
+    # _terminate_turn dispatched on_error exactly once with the
+    # "no conversation" message.
+    mock_error.assert_called_once()
+    args, kwargs = mock_error.call_args
+    assert "no conversation" in str(args[1]).lower() or \
+           "no conversation" in str(kwargs.get("message", "")).lower()
+    rt.stop()
+
+def test_run_loop_terminates_with_failed_on_prompt_build_failure():
+    """AUDIT FIX (BUG #2). _run_loop where _ensure_system_prompt
+    raises must route through _terminate_turn(FAILED,
+    prompt_build_failed)."""
+    from agent.runtime import TurnStatus
+    rt = AgentRuntime(_make_cfg())
+    rt.start()
+    sk = _uniq()
+    rt.create_conversation("Coder", sk, "/tmp")
+    mock_error = MagicMock()
+    rt._on_error = mock_error
+    with patch.object(rt, "_ensure_system_prompt",
+                      side_effect=RuntimeError("prompt build failed")):
+        rt._run_loop(sk, "hello")
+    mock_error.assert_called_once()
+    # The result's metadata should mark this as a prompt-build failure.
+    result = rt.get_last_turn_result(sk)
+    assert result is not None
+    assert result.status == TurnStatus.FAILED
+    assert result.metadata.get("reason") == "prompt_build_failed"
+    rt.stop()
+```
+
+**Test group 3b: AUDIT FIX (BUG #5) — mid-stream error with content terminates (1 test)**
+
+> The previous draft described this behavior change but did not
+> include a regression test. Without a test, the fall-through
+> regression (D.3 dispatching on_error and then continuing to
+> dispatch on_response_complete) can silently return.
+
+```python
+def test_run_loop_terminates_with_failed_on_stream_error_with_content():
+    """AUDIT FIX (BUG #5). A response with non-empty text_content AND
+    _stream_error must terminate the turn with FAILED; the previous
+    fall-through to on_response_complete must NOT happen."""
+    from agent.runtime import TurnStatus
+    rt = AgentRuntime(_make_cfg())
+    rt.start()
+    sk = _uniq()
+    rt.create_conversation("Coder", sk, "/tmp")
+    response = {
+        "choices": [{"message": {
+            "content": "partial response that was streamed",
+            "tool_calls": [],
+        }}],
+        "_stream_error": {"code": 500, "message": "stream failed"},
+    }
+    mock_response_complete = MagicMock()
+    mock_error = MagicMock()
+    rt._on_response_complete = mock_response_complete
+    rt._on_error = mock_error
+    with patch.object(rt, "_call_llm", return_value=response):
+        rt._run_loop(sk, "hello")
+    # on_error was called once; on_response_complete was NOT called
+    # (no fall-through).
+    mock_error.assert_called_once()
+    mock_response_complete.assert_not_called()
+    result = rt.get_last_turn_result(sk)
+    assert result is not None
+    assert result.status == TurnStatus.FAILED
+    assert result.metadata.get("reason") == "stream_error_with_content"
+    rt.stop()
+```
+
+**Test group 3c: AUDIT FIX (BUG #6) — limit handling terminates (2 tests)**
+
+> The previous draft's "edge-case table" mentioned cost-limit and
+> step-limit paths but the proposed test list did not include
+> them. These tests pin the limit-then-terminate behavior.
+
+```python
+def test_run_loop_terminates_with_failed_on_cost_limit():
+    """AUDIT FIX (BUG #6). When conv.total_cost > cost_limit, the
+    turn terminates with FAILED reason='cost_limit'."""
+    from agent.runtime import TurnStatus
+    cfg = _make_cfg()
+    cfg.cost_limit = 0.0  # any cost > 0 will trip
+    rt = AgentRuntime(cfg)
+    rt.start()
+    sk = _uniq()
+    rt.create_conversation("Coder", sk, "/tmp")
+    with patch.object(rt, "_call_llm", return_value=_resp("Hi.")):
+        # record_usage adds cost; one call is enough to trip limit=0
+        rt._conversations[sk].record_usage(100, 0.01)
+        rt._run_loop(sk, "hello")
+    result = rt.get_last_turn_result(sk)
+    assert result is not None
+    assert result.status == TurnStatus.FAILED
+    assert result.metadata.get("reason") == "cost_limit"
+    rt.stop()
+
+def test_run_loop_terminates_with_failed_on_step_limit():
+    """AUDIT FIX (BUG #6). When conv.step_count > step_limit, the
+    turn terminates with FAILED reason='step_limit'."""
+    from agent.runtime import TurnStatus
+    cfg = _make_cfg()
+    cfg.step_limit = 0  # any step > 0 will trip
+    rt = AgentRuntime(cfg)
+    rt.start()
+    sk = _uniq()
+    rt.create_conversation("Coder", sk, "/tmp")
+    with patch.object(rt, "_call_llm", return_value=_resp("Hi.")):
+        rt._conversations[sk].step_count = 1
+        rt._run_loop(sk, "hello")
+    result = rt.get_last_turn_result(sk)
+    assert result is not None
+    assert result.status == TurnStatus.FAILED
+    assert result.metadata.get("reason") == "step_limit"
+    rt.stop()
 ```
 
 **Test group 4: provider alias removal (2 tests)**
@@ -1809,7 +2036,48 @@ def test_callbacks_module_exports_protocols():
         assert hasattr(cls, "__call__")  # all are callable protocols
 ```
 
-**Total new tests: 15** (3 + 6 + 4 + 2 + 1 = 16, but the module-exports test is a smoke test, so 15 functional tests).
+**Test group 6: AUDIT FIX (BUG #4) — turn-token rotation in `send_message` (1 test)**
+
+> The spec's main edit for BUG #4 is in `_run_loop` Edit F (key
+> state by `(sk, tk)`) and `_terminate_turn` Edit C (stale-token
+> rejection). The remaining piece is that `send_message` must
+> ROTATE `_turn_tokens[sk]` on every call, so the next turn's
+> token differs from the previous turn's. This test pins the
+> rotation behavior.
+
+```python
+def test_send_message_rotates_turn_token():
+    """AUDIT FIX (BUG #4). Two consecutive send_message calls for
+    the same session_key must produce two distinct turn_tokens in
+    _turn_tokens, so the second turn's state is not co-mingled
+    with the first's stale terminal result."""
+    rt = AgentRuntime(_make_cfg())
+    rt.start()
+    sk = _uniq()
+    rt.create_conversation("Coder", sk, "/tmp")
+    with patch.object(rt, "_call_llm", return_value=_resp("Hello.")):
+        rt._run_loop(sk, "first")
+    token_after_first = rt._turn_tokens.get(sk)
+    assert token_after_first is not None
+    with patch.object(rt, "_call_llm", return_value=_resp("Hello again.")):
+        rt._run_loop(sk, "second")
+    token_after_second = rt._turn_tokens.get(sk)
+    assert token_after_second is not None
+    assert token_after_second is not token_after_first, (
+        "send_message must rotate _turn_tokens[sk] so a new turn's "
+        "state is not confused with a prior turn's terminal result"
+    )
+    rt.stop()
+```
+
+**Total new tests: 18** (3 + 8 + 4 + 2 + 1 + 2 + 1 + 1 = 22, but the
+module-exports test is a smoke test, so 21 functional tests;
+the additional 3 from groups 3a/3b/3c cover the audit-found gaps).
+
+> **Note on test counts vs. the §4 file change table.** The previous
+> draft estimated 12-15 new tests. The audit's gap analysis added 6
+> more (3a, 3b, 3c, 6) to cover the previously-uncovered terminal
+> paths. The expected count is now 18-21 functional tests.
 
 ---
 
