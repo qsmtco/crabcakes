@@ -1037,7 +1037,7 @@ class AgentRuntime:
                     messages_for_call, kb_context, _kb_cache_for_turn = self._prepare_kb_synthesis(
                         conv, text, messages, _kb_cache_for_turn
                     )
-                    response = self._call_llm(session_key, messages_for_call, tools)
+                    response = self._call_llm(session_key, messages_for_call, tools, turn_token=turn_token)
 
                     # Extract content and tool calls
                     # Determine provider from conversation model
@@ -1208,7 +1208,7 @@ class AgentRuntime:
                                 # same helper as the Tier 2 primary-call path so
                                 # both paths share one format string.
                                 messages_with_context = self._inject_kb_context(messages, kb_context, text)
-                                fb_response = self._call_llm(session_key, messages_with_context, tools)
+                                fb_response = self._call_llm(session_key, messages_with_context, tools, turn_token=turn_token)
                                 fb_provider = fallback_model.split("/")[0] if "/" in fallback_model else fallback_model
                                 fb_fmt = _RESPONSE_FORMAT.get(fb_provider, "openai")
                                 fb_text = extract_text_content(fb_response, response_format=fb_fmt)
