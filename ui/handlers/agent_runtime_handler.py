@@ -1782,10 +1782,11 @@ class AgentRuntimeHandler:
             self._last_error_exception[session_key] = message
         else:
             self._last_error_exception[session_key] = None
+        token = self._turn_tokens.get(session_key)
         if self._GLib is not None:
-            self._GLib.idle_add(self._do_error, session_key, message)
+            self._GLib.idle_add(self._do_error, session_key, message, token)
         else:
-            self._do_error(session_key, message)
+            self._do_error(session_key, message, token)
 
     def _on_enforcement_status(self, session_key: str, tool_name: str, status: dict) -> None:
         """§F — Enforcement status callback. Log enforcement results to observability log.
