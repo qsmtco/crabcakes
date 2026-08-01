@@ -1732,9 +1732,6 @@ class AgentRuntimeHandler:
             self._last_error_exception[session_key] = message
         else:
             self._last_error_exception[session_key] = None
-        # RACE-FIX: increment generation so stale _do_text_delta callbacks
-        # queued before this error are dropped (same pattern as _on_response_complete).
-        self._delta_generation[session_key] = self._delta_generation.get(session_key, 0) + 1
         if self._GLib is not None:
             self._GLib.idle_add(self._do_error, session_key, message)
         else:
