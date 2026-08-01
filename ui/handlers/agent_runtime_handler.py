@@ -1536,6 +1536,13 @@ class AgentRuntimeHandler:
         # bubble render — the streaming widget is cleaned up, but no empty header
         # bubble is created. end_streaming's render=False does the cleanup only.
         streaming_text = self._crh.get_streaming_text(session_key) or ""
+        # RACE-FIX: The authoritative full text is the `text` argument from the
+        # runtime (the complete LLM response). sb.plain_text may be stale if the
+        # handler's throttle skipped update_streaming calls for later chunks.
+        # Overwrite sb.plain_text with the full text so _finalize renders correctly.
+        if was_streaming and text and len(text) > len(streaming_text):
+            self._crh.set_streaming_text(session_key, text)
+            streaming_text = text
         self._crh.end_streaming(
             session_key,
             agent_name=resolved_name,
