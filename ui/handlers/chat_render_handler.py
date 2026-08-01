@@ -596,6 +596,7 @@ class ChatRenderHandler:
 
             if render:
                 # Build and append final bubble
+                print(f"[DBG-FIN] building bubble role={sb.role}")
                 final_bubble = build_role_bubble(
                     sb.role, full_text,
                     on_forward_click=self._on_forward_message,
