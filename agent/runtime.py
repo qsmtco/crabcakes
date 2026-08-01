@@ -455,6 +455,23 @@ class AgentRuntime:
         # is_loop_active() and maintained by _run_loop's try/finally.
         self._active_loops: set[str] = set()
 
+        # Turn state machine (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.2
+        # Edit B). All four attributes are read and written under
+        # `self._state_lock` (a dedicated lock, separate from `self._lock`).
+        # The GIL does NOT make the compound
+        #   read previous state → decide → write terminal state
+        # operation atomic; the lock does (BUG #3).
+        #
+        # Keying by (session_key, turn_token) tuple (NOT just session_key)
+        # lets two turns for the same session coexist briefly during the
+        # cancel race without overwriting each other (BUG #4).
+        # _terminate_turn rejects results whose token does not match the
+        # session's currently active token (stale-result rejection).
+        self._state_lock = threading.Lock()
+        self._turn_tokens: dict[str, object] = {}
+        self._turn_state: dict[tuple[str, object], TurnStatus] = {}
+        self._turn_results: dict[tuple[str, object], TurnResult] = {}
+
         # §E: Stuck detection — per-session tool call history for detecting loops
         # session_key → list[dict{"tool", "args_hash", "iteration"}]
         self._tool_history: dict[str, list[dict]] = {}
