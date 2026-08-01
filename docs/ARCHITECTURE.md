@@ -1675,6 +1675,24 @@ LLMResponse — normalized response dataclass
 
 **Architecture:** `agent/` layer — imports from stdlib + `agent.tools` only. No UI or gateway imports. Provider classes import SSE helpers and cost functions from sibling modules within the package.
 
+### 3.21m.3 `agent/callbacks.py` — Agent Runtime Callback Protocols (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION)
+
+**Responsibility:** Typed `Protocol` classes formalizing the callback contract between `agent/runtime.py` and `ui/handlers/agent_runtime_handler.py`. The 9 protocols are the source of truth for callback signatures; the handler's `_on_*` methods satisfy them structurally. No `@runtime_checkable` (protocols are documentation, not runtime enforcement).
+
+**Owns:** 9 Protocol classes (`OnTextDelta`, `OnToolCallStart`, `OnToolCallResult`, `OnToolCallApprovalNeeded`, `OnResponseComplete`, `OnTokenUsage`, `OnTokenBreakdown`, `OnError`, `OnEnforcementStatus`) + `AgentRuntimeCallbacks` type alias.
+
+**Architecture:** `agent/` layer — imports only `typing`. No imports from `agent.runtime`, `ui/`, `gateway/`, or `models/`. Same pattern as `agent/llm/protocol.py` (the `LLMProvider` Protocol). The keyword `_turn_token: object | None = None` (leading underscore) appears on every protocol, matching production dispatch in `_dispatch()`.
+
+**Public API:**
+```python
+# All 9 protocols have a single __call__ method with session_key as the
+# first positional arg and _turn_token as a keyword-only arg:
+class OnTextDelta(Protocol):
+    def __call__(self, session_key: str, text: str, *, _turn_token: object | None = None) -> None: ...
+
+AgentRuntimeCallbacks = dict[str, Callable | None]  # loose helper type for test fixtures
+```
+
 ### 3.21n `agent/tools.py` — Tool Definitions + Execution (Phase 1.1)
 
 **Responsibility:** 9 tools for local file/exec/web operations, sandboxed to `project_path`, with PM approval gating for `exec_command`.
