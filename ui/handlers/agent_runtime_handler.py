@@ -996,7 +996,7 @@ class AgentRuntimeHandler:
         else:
             self._do_text_delta(session_key, text, token)
 
-    def _do_text_delta(self, session_key: str, text: str, delta_gen: int | None = None) -> None:
+    def _do_text_delta(self, session_key: str, text: str, delta_token: object = None) -> None:
         """Main-thread portion of _on_text_delta.
 
         AgentRuntime sends incremental SSE chunks. ChatRenderHandler expects
@@ -1023,18 +1023,18 @@ class AgentRuntimeHandler:
                 "_do_text_delta: dropping delta for ended session %s", session_key,
             )
             return
-        # RACE-FIX v3: If this delta belongs to a previous turn (generation
-        # mismatch), drop it. This handles the cross-turn case where
-        # send_to_special_agent cleared _ended_sessions for the new turn
-        # but a stale delta from the old turn is still in the idle queue.
-        # delta_gen=None means a 2-arg caller (backward-compat tests) —
-        # treat as current generation (never stale).
-        if delta_gen is not None:
-            current_gen = self._turn_generation.get(session_key, 0)
-            if delta_gen < current_gen:
+        # RACE-FIX v4: If this delta's turn token doesn't match the current
+        # turn token, it's from a previous turn (stale). Drop it.
+        # delta_token=None means a 2-arg caller (backward-compat tests) —
+        # treat as current turn (never stale).
+        # Unlike a generation counter, the token does NOT change at completion
+        # time, so same-turn deltas are never wrongly dropped.
+        if delta_token is not None:
+            current_token = self._turn_tokens.get(session_key)
+            if delta_token is not current_token:
                 logger.debug(
-                    "_do_text_delta: dropping stale delta (gen %d < current %d) for %s",
-                    delta_gen, current_gen, session_key,
+                    "_do_text_delta: dropping stale delta (token mismatch) for %s",
+                    session_key,
                 )
                 return
         # Always accumulate text — ensures final output is complete
