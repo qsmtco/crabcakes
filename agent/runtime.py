@@ -367,6 +367,10 @@ class AgentRuntime:
         self._cancel_requested: bool = False  # immediate cancel signal for running thread
         self._lock = threading.Lock()
         self._running = False
+        # RACE-FIX v4b: turn token set by the handler before send_message.
+        # Captured by _dispatch at call time (background thread, stable per turn).
+        # Passed to handler callbacks so they can reject stale cross-turn events.
+        self._turn_token: object = object()
 
         # FIX-CLEAR-ASK-RACE: sessions with an in-flight _run_loop. Used by
         # is_loop_active() and maintained by _run_loop's try/finally.
