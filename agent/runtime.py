@@ -1116,6 +1116,17 @@ class AgentRuntime:
         # finally block at the end of this function.
         with self._lock:
             self._active_loops.add(session_key)
+        # Turn state machine (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.2
+        # Edit F): register the active turn_token for this session and init
+        # the per-turn state to RUNNING. This happens BEFORE the
+        # missing-conversation and prompt-build-failure early-exit paths
+        # so every terminal path has a well-defined starting state
+        # (BUG #2 fix). The actual `_terminate_turn` calls for those
+        # early-exit paths are added in Phase 2b; Phase 2a only registers
+        # the state so observability (get_turn_state) works.
+        with self._state_lock:
+            self._turn_tokens[session_key] = turn_token
+            self._turn_state[(session_key, turn_token)] = TurnStatus.RUNNING
         try:
             with self._lock:
                 if not self._running:
