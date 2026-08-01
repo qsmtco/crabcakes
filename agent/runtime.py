@@ -688,14 +688,21 @@ class AgentRuntime:
             # Stale-token check (BUG #4): if a new send_message() rotated
             # the active token for this session, this result is from an
             # old turn. Reject it.
-            active_token = self._turn_tokens.get(sk)
-            if active_token is not None and active_token is not tk:
-                logger.error(
-                    "_terminate_turn: stale turn_token for %s "
-                    "(active=%r, result=%r); result rejected",
-                    sk, active_token, tk,
-                )
-                return None
+            #
+            # Membership check (`sk in`) rather than truthiness / `.get()`
+            # because a turn_token of None is a valid registered token
+            # (Debugger BUG #2: none-sentinel-confusion). `_run_loop`'s
+            # default turn_token is None, so a key present with value None
+            # must NOT be treated as "no active token."
+            if sk in self._turn_tokens:
+                active_token = self._turn_tokens[sk]
+                if active_token is not tk:
+                    logger.error(
+                        "_terminate_turn: stale turn_token for %s "
+                        "(active=%r, result=%r); result rejected",
+                        sk, active_token, tk,
+                    )
+                    return None
 
             # Duplicate-terminal check (BUG #3, #4): if a terminal state
             # already exists for this (sk, tk), this is a duplicate
@@ -721,7 +728,7 @@ class AgentRuntime:
             # return None even after a successful transition.
             self._turn_state[state_key] = result.status
             self._turn_results[state_key] = result
-            if self._turn_tokens.get(sk) is None:
+            if sk not in self._turn_tokens:
                 self._turn_tokens[sk] = tk
 
         # Dispatch the appropriate callback. This happens OUTSIDE the
