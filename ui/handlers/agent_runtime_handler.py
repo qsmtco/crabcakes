@@ -1420,9 +1420,6 @@ class AgentRuntimeHandler:
         AgentRuntime response complete callback.
         → End streaming and render the final text bubble.
         """
-        # RACE-FIX: Increment generation so stale _do_text_delta callbacks
-        # (queued before completion but not yet executed) know they're outdated.
-        self._delta_generation[session_key] = self._delta_generation.get(session_key, 0) + 1
         if self._GLib is not None:
             self._GLib.idle_add(self._do_response_complete, session_key, text)
         else:
