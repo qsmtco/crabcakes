@@ -1018,8 +1018,10 @@ class AgentRuntimeHandler:
                 if self._on_agent_start_cb:
                     self._on_agent_start_cb(session_key)
                 # BUG #2: Clear ended flag on new turn — this session is active again.
-                self._ended_sessions.discard(session_key)
-                # BUG #14: also clear started_turn flag (text delta path, already handles itself).
+                # RACE-FIX: Do NOT clear _ended_sessions here. The flag is cleared
+                # by send_to_special_agent when a NEW turn starts. Clearing it here
+                # (inside _do_text_delta) was the original race bug: a stale delta
+                # arriving after completion would clear the flag and start a new bubble.
                 self._started_turn_sessions.discard(session_key)
                 # NEW: drawer-lifecycle start → drawer separator
                 if self._on_drawer_lifecycle is not None:
