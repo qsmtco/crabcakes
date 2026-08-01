@@ -627,12 +627,7 @@ class AgentRuntime:
         self._dispatch(self._on_enforcement_status, session_key, tool_name, status)
 
     def _terminate_turn(self, result: TurnResult) -> TurnResult | None:
-        """Single terminal transition function for all turn endings (Phase 2a).
-
-        Phase 2a SCOPE: this method is defined and tested but not yet called
-        by `_run_loop`. The existing 5+ ad-hoc terminal blocks continue to
-        dispatch directly. Phase 2b rewires those blocks to call
-        `_terminate_turn` instead.
+        """Single terminal transition function for all turn endings.
 
         Replaces the 5+ ad-hoc patterns of::
 
