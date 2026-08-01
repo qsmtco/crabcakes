@@ -5202,7 +5202,7 @@ class TestTurnStateMachine:
             },
         }])
         with unittest.mock.patch.object(rt, "_call_llm", return_value=tool_resp), \
-             unittest.mock.patch.object(rt, "execute_tool", return_value=("ok", True, None)):
+             unittest.mock.patch("agent.tools.execute_tool", return_value=("ok", True, None)):
             rt._run_loop(sk, "hello")
         result = rt.get_last_turn_result(sk)
         assert result is not None
@@ -5234,7 +5234,7 @@ class TestTurnStateMachine:
             }])
 
         with unittest.mock.patch.object(rt, "_call_llm", side_effect=trigger_cancel), \
-             unittest.mock.patch.object(rt, "execute_tool", return_value=("ok", True, None)):
+             unittest.mock.patch("agent.tools.execute_tool", return_value=("ok", True, None)):
             rt._run_loop(sk, "hello")
         result = rt.get_last_turn_result(sk)
         assert result is not None
