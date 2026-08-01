@@ -767,15 +767,65 @@ Note: this **retains** the immediate `self._dispatch(self._on_error, ...)` from 
         return self._turn_state.get(session_key)
 ```
 
-**Edit F: Initialize `TurnStatus.RUNNING` at turn start** (insert at the top of `_run_loop`, after the `_active_loops.add` block, around line 884):
+**Edit F: Initialize `TurnStatus.RUNNING` at turn start** (insert at the top of `_run_loop`, BEFORE the missing-conversation check):
+
+> **AUDIT FIX (BUG #2).** The previous draft initialized `RUNNING` AFTER
+> the `if conv is None: return` early-exit and after the prompt-build
+> try/except. That left `RUNNING` undefined for those two terminal paths
+> and made the state machine observation order depend on which path was
+> taken. The corrected plan initializes `RUNNING` as the first action in
+> `_run_loop`, then routes BOTH early-exit paths through `_terminate_turn`.
 
 ```python
+    def _run_loop(self, session_key: str, text: str, turn_token: object = None) -> None:
+        """Background thread: run the full tool loop for one user message."""
+        # FIX-CLEAR-ASK-RACE: mark this session as having an active loop so
+        # clear_conversation() can refuse to wipe it mid-turn. Cleared in the
+        # finally block at the end of this function.
         with self._lock:
             self._active_loops.add(session_key)
-        # Turn state machine: mark this turn as RUNNING. _terminate_turn
-        # is the only function that transitions to a terminal state.
-        self._turn_state[session_key] = TurnStatus.RUNNING
+        # Turn state machine: register the active token and initialize
+        # RUNNING. _terminate_turn is the only function that transitions
+        # to a terminal state. Initialization is BEFORE the conv-is-None
+        # and prompt-build-failure checks so those paths also have a
+        # well-defined starting state.
+        with self._state_lock:
+            self._turn_tokens[session_key] = turn_token
+            self._turn_state[(session_key, turn_token)] = TurnStatus.RUNNING
         try:
+            with self._lock:
+                if not self._running:
+                    return
+                conv = self._conversations.get(session_key)
+                if conv is None:
+                    # AUDIT FIX (BUG #2): route through _terminate_turn
+                    # rather than ad-hoc dispatch + return.
+                    self._terminate_turn(TurnResult(
+                        status=TurnStatus.FAILED,
+                        session_key=session_key,
+                        turn_token=turn_token,
+                        error="No conversation found",
+                        metadata={"reason": "no_conversation"},
+                    ))
+                    return
+
+            # BUG #13 — Deferred prompt build. If create_conversation was called
+            # with defer_prompt_build=True (system_prompt == ""), build it now on
+            # the background thread. This eliminates ~300ms of main-thread blocking
+            # on every new agent conversation.
+            try:
+                self._ensure_system_prompt(session_key)
+            except Exception as e:
+                # AUDIT FIX (BUG #2): route through _terminate_turn.
+                self._terminate_turn(TurnResult(
+                    status=TurnStatus.FAILED,
+                    session_key=session_key,
+                    turn_token=turn_token,
+                    error=e,
+                    metadata={"reason": "prompt_build_failed",
+                              "exception_type": type(e).__name__},
+                ))
+                return
             ...
 ```
 
@@ -785,10 +835,15 @@ Note: this **retains** the immediate `self._dispatch(self._on_error, ...)` from 
                     # First LLM call this turn — transition to STREAMING.
                     # STREAMING is a non-terminal state; _terminate_turn
                     # does the final transition to COMPLETED/FAILED/CANCELLED.
-                    if self._turn_state.get(session_key) == TurnStatus.RUNNING:
-                        self._turn_state[session_key] = TurnStatus.STREAMING
+                    # AUDIT FIX (BUG #3, #4): access state under _state_lock
+                    # and key by (session_key, turn_token).
+                    with self._state_lock:
+                        tk = self._turn_tokens.get(session_key)
+                        if tk == turn_token and \
+                                self._turn_state.get((session_key, turn_token)) == TurnStatus.RUNNING:
+                            self._turn_state[(session_key, turn_token)] = TurnStatus.STREAMING
 
-                    response = self._call_llm(session_key, messages_for_call, tools, turn_token=turn_token)
+                    response = self._call_llm(session_key, messages_for_call, tools, _turn_token=turn_token)
 ```
 
 **Edit H: Class docstring honesty pass** (replace the existing class docstring at the top of `agent/runtime.py`):
@@ -837,7 +892,49 @@ Threading model (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.2 Edit H):
 
 ---
 
-### 2.3 `agent/runtime.py` — Remove provider alias debt (5 edits, ~10 lines removed)
+### 2.3 `agent/runtime.py` — Remove provider alias debt (6 edits, ~7 lines removed + 12 test/script lines updated)
+
+> **AUDIT FIX (BUG #1, #8).** A previous draft of this section asserted
+> that no tests or scripts used the aliases and that a grep sweep before
+> commit would confirm 0 external matches. **This was false.** A repository-
+> wide grep against the current tree (`git rev-parse HEAD`) returns these
+> live external consumers:
+>
+> - `agent/llm/streaming.py:77,370-371` — docstring references to
+>   `_stream_openai_events` / `_stream_minimax_events` / `_stream_anthropic_events`.
+> - `utils/provider_test.py:96` — docstring references `_call_minimax`.
+> - `scripts/audit_streaming_scenarios.py` lines 43, 70, 92, 118, 143, 191,
+>   222, 242, 262 — `patch("agent.runtime._PROVIDER_STREAMERS", ...)`.
+> - `scripts/audit_attack_scenarios.py:6,118,119,122,123,124,125` —
+>   imports `_PROVIDER_STREAMERS` directly; `get_provider("").get("")` smoke
+>   tests use the dict.
+> - `tests/test_llm_providers.py:735` — references `_PROVIDER_STREAMERS`
+>   in a docstring.
+> - `tests/test_agent_runtime.py` lines 1362, 1541-1593, 1650-1697, 2336-
+>   2379, 2479-2724, 3679-3703 — 9 test methods that `from agent.runtime
+>   import _stream_openai_events / _stream_anthropic_events /
+>   _stream_minimax_events / _call_minimax / _call_anthropic`.
+> - `tests/generate_synthetic_conversations.py:56,126` — a *local* function
+>   named `_call_minimax` (NOT the runtime alias; name collision only — no
+>   runtime import, but grep will match).
+>
+> The corrected plan below divides the symbols into two groups based on
+> whether they have **active** external consumers (which must be migrated
+> in the same commit) or only **inert** consumers (docstrings, comments).
+>
+> **Two-tier removal:**
+> - **Tier 1 — Safe to remove (docstring-only references):**
+>   `_stream_openai_events` / `_stream_minimax_events` / `_stream_anthropic_events`
+>   references in `agent/llm/streaming.py` and `utils/provider_test.py`
+>   docstrings. These are inert — `streaming.py` re-uses the
+>   `stream_with_ssl_retry` callable shape, not the runtime alias. The
+>   docstrings will be updated to refer to `OpenAIProvider("openai").stream`
+>   etc. by name. **No test breaks.**
+> - **Tier 2 — Migration of active consumers:** the test and script
+>   consumers listed above. They must be rewritten to use
+>   `agent.llm.registry.get_provider(caller_key).stream(...)` /
+>   `.call(...)` instead of importing the removed aliases. This is 12+
+>   line changes across 4 files.
 
 **Background:** During the Phase B4/B6 extraction, the following aliases were preserved "for test-patch compatibility":
 
@@ -847,11 +944,19 @@ Threading model (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.2 Edit H):
 - `_stream_openai_events = OpenAIProvider("openai").stream` (line 179)
 - `_stream_minimax_events = MiniMaxProvider().stream` (line 180)
 - `_stream_anthropic_events = AnthropicProvider().stream` (line 181)
-- `_PROVIDER_STREAMERS: dict[str, Any]` (line 186) — used by NO production code; `_call_llm_streaming` already uses `_get_provider(caller_key).stream` (line 2175)
-
-**Verified against source:** `grep -n "_PROVIDER_STREAMERS\|_stream_openai_events\|_stream_anthropic_events\|_stream_minimax_events" agent/runtime.py` shows all four are defined but the streamer is never read from `_PROVIDER_STREAMERS` in production code. The dict is exported in `__all__` (line 82) but no external module imports it. The phase-1 deferred-race-fixes post-mortem (context.md) flagged dead test patches for these as a Phase 8 cleanup item.
+- `_PROVIDER_STREAMERS: dict[str, Any]` (line 186) — used by `scripts/audit_*`
+  and `tests/test_agent_runtime.py`; not used by production runtime code
+  (production dispatch is via `_get_provider(caller_key).stream`).
 
 **Edit I: Delete `_call_openai`, `_call_minimax`, `_call_anthropic` aliases** (lines 102-105):
+
+> **AUDIT FIX (BUG #1).** The previous draft deleted these aliases while
+> keeping `_PROVIDER_CALLERS` and `_RESPONSE_FORMAT`, which depend on them
+> for their `.get()` calls and the `if _caller is _call_anthropic:` check.
+> That left undefined names during module import. The corrected plan keeps
+> `_PROVIDER_CALLERS` (used by `_call_llm` non-streaming dispatch and by
+> `get_valid_callers()` for the provider-caller taxonomy) but migrates its
+> values from the bound-method aliases to direct provider lookups.
 
 ```python
 # Before (lines 102-105):
@@ -861,15 +966,23 @@ _call_minimax = MiniMaxProvider().call
 _call_anthropic = AnthropicProvider().call
 
 # After:
-# Provider dispatch is exclusively via agent.llm.registry._get_provider()
-# (Phase B4). _call_llm's non-streaming path uses
-# _get_provider(caller_key).call(...) (line ~1620). _call_llm_streaming
-# uses _get_provider(caller_key).stream. The previous bound-method
-# aliases were preserved "for test-patch compatibility" but no test
-# patches them in the current test suite (verified by grep).
+# Provider dispatch is via agent.llm.registry._get_provider() (Phase B4).
+# _call_llm's non-streaming path uses _get_provider(caller_key).call(...).
+# _call_llm_streaming uses _get_provider(caller_key).stream.
+# The previous bound-method aliases _call_openai / _call_minimax /
+# _call_anthropic were preserved for test-patch compatibility but have
+# been migrated to use the registry (see _PROVIDER_CALLERS below).
+# Tests in tests/test_agent_runtime.py that `from agent.runtime import
+# _call_minimax` / `_call_anthropic` have been rewritten to call
+# MiniMaxProvider().call(...) / AnthropicProvider().call(...) directly
+# (Edit O).
 ```
 
 **Edit J: Delete `_stream_*_events` aliases and `_PROVIDER_STREAMERS` dict** (lines 179-189):
+
+> **AUDIT FIX (BUG #8).** The previous draft asserted no external consumers
+> exist; this is false (see the grep evidence in the section header). The
+> corrected plan migrates the consumers in the same commit.
 
 ```python
 # Before (lines 179-189):
@@ -883,18 +996,24 @@ _PROVIDER_STREAMERS: dict[str, Any] = {
     "openai": _stream_openai_events,
     "minimax": _stream_minimax_events,
     "anthropic": _stream_anthropic_events,
+    "openrouter": OpenAIProvider("openrouter").stream,
+    "zai": OpenAIProvider("zai").stream,
 }
 
 # After:
-# _PROVIDER_STREAMERS and the _stream_*_events aliases were dead dispatch
+# _PROVIDER_STREAMERS and the _stream_*_events aliases were dispatch
 # infrastructure superseded by _get_provider(caller_key).stream in
 # Phase B6. Removed in SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.3.
+# Tests in tests/test_agent_runtime.py and audit scripts that imported
+# them have been migrated to OpenAIProvider("openai").stream(...) /
+# MiniMaxProvider().stream(...) / AnthropicProvider().stream(...)
+# (Edits N, O).
 ```
 
-**Edit K: Remove `_PROVIDER_STREAMERS` from `__all__`** (line 82):
+**Edit K: Update `__all__` and `_PROVIDER_CALLERS` to remove alias dependencies** (lines 82, 112-118):
 
 ```python
-# Before:
+# Before (line 82):
 __all__ = [
     "AgentRuntime",
     "SSEEvent",
@@ -903,36 +1022,151 @@ __all__ = [
     "_PROVIDER_STREAMERS",
 ]
 
-# After:
+# After (line 82):
 __all__ = [
     "AgentRuntime",
     "SSEEvent",
     "StreamingCallKwargs",
     # _PROVIDER_CALLERS retained: used by _call_llm's non-streaming
-    # dispatch (line 1618) and re-exported for legacy external callers.
-    # _PROVIDER_STREAMERS removed: dead since Phase B6 (Edit J).
+    # dispatch (line ~1618) and by get_valid_callers() for the
+    # provider-caller taxonomy. _PROVIDER_STREAMERS removed: dead
+    # since Phase B6 (Edit J).
     "_PROVIDER_CALLERS",
+    "TurnStatus",
+    "TurnResult",
 ]
+
+# Before (lines 110-118):
+_PROVIDER_CALLERS: dict[str, Any] = {
+    "openai": _call_openai,
+    "minimax": _call_minimax,
+    "anthropic": _call_anthropic,
+    "openrouter": OpenAIProvider("openrouter").call,
+    "zai": OpenAIProvider("zai").call,
+}
+
+# After (lines 110-118):
+# _PROVIDER_CALLERS values are now direct lookups into the provider
+# registry rather than bound-method aliases. _RESPONSE_FORMAT
+# (derived from this dict) and get_valid_callers() (returns
+# _PROVIDER_CALLERS.keys()) work unchanged.
+_PROVIDER_CALLERS: dict[str, Any] = {
+    "openai": OpenAIProvider("openai").call,
+    "minimax": MiniMaxProvider().call,
+    "anthropic": AnthropicProvider().call,
+    "openrouter": OpenAIProvider("openrouter").call,
+    "zai": OpenAIProvider("zai").call,
+}
 ```
 
-**Edit L: Verify no production code uses the removed symbols** (grep sweep before commit):
+> **Note on `_RESPONSE_FORMAT`:** The derivation loop
+> `for _pk, _caller in _PROVIDER_CALLERS.items(): if _caller is _call_anthropic`
+> depends on **identity comparison** with `_call_anthropic`. After Edit I
+> deletes `_call_anthropic`, the comparison must be rewritten to compare
+> with the new dict value (e.g. `_caller is _PROVIDER_CALLERS["anthropic"]`)
+> or, preferably, to use the caller key directly:
+>
+> ```python
+> # After (replacement for lines 145-152):
+> # Response format families — derived from caller key (was: identity
+> # comparison against _call_anthropic; deleted in Edit I). Any provider
+> # not in {"anthropic"} uses OpenAI-format responses.
+> _RESPONSE_FORMAT: dict[str, str] = {
+>     pk: "anthropic" if pk == "anthropic" else "openai"
+>     for pk in _PROVIDER_CALLERS
+> }
+> ```
+>
+> This avoids the identity-comparison trap and is clearer.
+
+**Edit L: Verify no production code uses the removed symbols after the migration in Edits N, O, P** (grep sweep before commit):
 
 ```bash
 grep -rn "_PROVIDER_STREAMERS\|_stream_openai_events\|_stream_minimax_events\|_stream_anthropic_events" \
-    --include="*.py" /home/q/projects/crabcakes/
+    --include="*.py" /home/q/projects/crabcakes/ | \
+    grep -v "tests/generate_synthetic_conversations.py\|_call_minimax"
 ```
 
-Expected output: 0 matches outside `agent/runtime.py` (where the symbols are being removed). If any matches exist in `tests/` or `agent/llm/`, those are dead test mocks (Phase 8 cleanup item from context.md) and must be removed in the same commit.
+Expected output: 0 matches. The only inert match is
+`tests/generate_synthetic_conversations.py:56` which defines a **local**
+function named `_call_minimax` (not an import of the runtime alias).
+`grep -v` filters it.
+
+> **If any matches remain after Edits N, O, P**, do not commit. The
+> remaining consumers must be migrated in the same commit or the
+> aliases must be kept as compat shims (deferred to a follow-up spec).
 
 **Edit M: Verify no production code uses the removed `_call_*` aliases** (grep sweep):
 
 ```bash
-grep -rn "_call_openai\|_call_minimax\|_call_anthropic" \
+grep -rn "from agent.runtime import.*\(_call_openai\|_call_minimax\|_call_anthropic\)\|agent\.runtime\._call_openai\|agent\.runtime\._call_minimax\|agent\.runtime\._call_anthropic" \
     --include="*.py" /home/q/projects/crabcakes/ | \
-    grep -v "agent/llm/.*_provider.py\|test_llm_providers"
+    grep -v "tests/generate_synthetic_conversations.py"
 ```
 
-Expected output: 0 matches in `agent/runtime.py` (we're removing them) and 0 matches in any test file (the dead test mocks from context.md must be removed). If matches exist, the implementer must fix them in the same commit.
+Expected output: 0 matches outside `agent/runtime.py` (where the symbols
+are being removed). The local `_call_minimax` in
+`tests/generate_synthetic_conversations.py` is a name collision only —
+no import of the runtime alias, so it does not break.
+
+**Edit N: Migrate `scripts/audit_streaming_scenarios.py` and `scripts/audit_attack_scenarios.py`** (12 sites).
+
+The 9 `patch("agent.runtime._PROVIDER_STREAMERS", {"openai": streamer})`
+sites in `scripts/audit_streaming_scenarios.py` and the 5
+`from agent.runtime import _PROVIDER_STREAMERS` / `_PROVIDER_STREAMERS.get(...)`
+sites in `scripts/audit_attack_scenarios.py` must be rewritten to patch
+the provider class method instead:
+
+```python
+# scripts/audit_streaming_scenarios.py — replace each:
+# Before:
+with patch("agent.runtime._PROVIDER_STREAMERS", {"openai": bad_streamer}):
+    ...
+
+# After (one canonical pattern; the streamer key "openai" selects OpenAIProvider):
+with patch("agent.llm.registry.get_provider",
+           return_value=_FakeProvider(stream=bad_streamer)) as mock_get:
+    ...
+
+# Or, more directly for tests that don't need registry mocking:
+with patch.object(OpenAIProvider, "stream", bad_streamer):
+    ...
+```
+
+The implementer should choose the simpler `patch.object(OpenAIProvider,
+"stream", ...)` form unless the test specifically exercises registry
+routing. For `audit_attack_scenarios.py`, the imports
+(`from agent.runtime import _PROVIDER_STREAMERS`) become
+`from agent.llm.registry import get_provider` and the `.get("")` calls
+become `get_provider("") is None` style direct calls.
+
+**Edit O: Migrate `tests/test_agent_runtime.py` `_stream_*_events` and `_call_*` imports** (9 test methods, lines 1362, 1541-1593, 1650-1697, 2336-2379, 2479-2724, 3679-3703).
+
+For each test that does `from agent.runtime import _stream_openai_events`
+(or `_stream_anthropic_events`, `_stream_minimax_events`, `_call_minimax`,
+`_call_anthropic`), rewrite the call to use the provider class directly:
+
+```python
+# Before:
+from agent.runtime import _stream_openai_events
+with patch.object(rt, "_call_llm_streaming", return_value=...) as mock_stream:
+    events = list(_stream_openai_events(...))
+
+# After:
+from agent.llm.openai_provider import OpenAIProvider
+with patch.object(rt, "_call_llm_streaming", return_value=...) as mock_stream:
+    events = list(OpenAIProvider("openai").stream(...))
+```
+
+The 9 sites in §2.3's header can be migrated mechanically. The test
+behavior is unchanged because the bound-method aliases were direct
+wrappers around `OpenAIProvider("openai").stream` etc.
+
+**Edit P: Update docstring/comment references in `agent/llm/streaming.py` and `utils/provider_test.py`** (3 sites, lines 77, 370-371, 96).
+
+Replace the runtime-alias names with provider class method names in
+docstrings and comments. These are inert but should not lie about
+the current shape.
 
 ---
 
