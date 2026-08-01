@@ -604,6 +604,7 @@ class ChatRenderHandler:
                     agent_name=resolved_name,
                 )
                 sb.container.append(final_bubble)
+                print(f"[DBG-FIN] bubble appended ok")
                 if self._main_content is not None:
                     self._main_content.scroll_chat_to_bottom()
 
