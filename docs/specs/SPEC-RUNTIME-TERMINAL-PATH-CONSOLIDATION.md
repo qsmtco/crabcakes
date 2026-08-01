@@ -2565,4 +2565,44 @@ A separate spec (e.g. `SPEC-LOCAL-DRAWER-EMISSIONS-FIX.md`) is the appropriate p
 
 ---
 
+## Appendix C: Audit Bug Resolution Summary
+
+This appendix is the single-page index of where each of the 14 audit bugs
+is fixed in the spec. The audit was run on the initial draft of this
+spec; the corrections are inlined at the relevant section and
+cross-referenced here.
+
+| # | Severity | Bug | Resolution section | What changed |
+|---|----------|-----|--------------------|--------------|
+| #1 | CRITICAL | Removing provider aliases leaves undefined references in `_PROVIDER_CALLERS` and `_RESPONSE_FORMAT` | §2.3 Edit I + Edit K | `_PROVIDER_CALLERS` values are migrated to direct provider lookups (not bound-method aliases); `_RESPONSE_FORMAT` is rewritten to key off `pk == "anthropic"` instead of identity comparison with deleted `_call_anthropic`. |
+| #2 | HIGH | `_run_loop` early-exits for missing conversation and prompt-build failure bypass `_terminate_turn` | §2.2 Edit F + §2.6 group 3a | `RUNNING` is initialized at the TOP of `_run_loop` (before the conv-is-None check). Both early-exits are rewritten to call `_terminate_turn(FAILED, no_conversation)` and `_terminate_turn(FAILED, prompt_build_failed)`. Two new tests pin the behavior. |
+| #3 | HIGH | `_turn_state` / `_turn_results` not thread-safe; GIL insufficient for compound atomicity | §2.2 Edit B + Edit C + Edit E + Edit H | New `_state_lock` is added; all state reads and writes acquire it. The class docstring (Edit H) accurately describes the lock separation and the GIL's insufficiency. |
+| #4 | HIGH | State keyed only by `session_key`; cancellation races the new turn | §2.2 Edit B + Edit C + §2.6 group 6 | State and results are keyed by `(session_key, turn_token)` tuple. `_terminate_turn` rejects results whose token does not match the session's active token. `send_message` rotates the active token (new test pins it). |
+| #5 | HIGH | Mid-stream error with non-empty content falls through into text-success dispatch | §2.2 Edit D.3 + §2.6 group 3b | Explicit `return` added after `_terminate_turn(FAILED, stream_error_with_content)`. New regression test (`test_run_loop_terminates_with_failed_on_stream_error_with_content`) pins the no-fall-through behavior. |
+| #6 | HIGH | `_check_and_stop_on_limit` references undefined `turn_token` (NameError on limit) | §2.2 Edit Q + §2.6 group 3c | Helper refactored to a pure predicate returning `(reason, message) | None`. New cost-limit and step-limit tests pin the limit-then-terminate behavior. |
+| #7 | HIGH | Protocol uses `turn_token` keyword; production uses `_turn_token` | §2.1 (all 9 protocols) | All protocol signatures use `_turn_token` (with leading underscore). New acceptance criterion verifies the keyword match. The class docstring in `OnTextDelta` explains why the underscore matters. |
+| #8 | HIGH | Alias removal breaks 12+ tests and scripts | §2.3 Edit N + Edit O + Edit P | New edits migrate the 14 affected sites in `tests/test_agent_runtime.py`, `scripts/audit_streaming_scenarios.py`, `scripts/audit_attack_scenarios.py`, `agent/llm/streaming.py`, and `utils/provider_test.py`. The grep evidence (4 test files + 2 scripts + 2 docstring references) is documented in the §2.3 preamble. |
+| #9 | HIGH | Persistence test uses same session key for 4 terminal transitions (impossible — dedup prevents 2nd+) | §2.6 group 2 (`test_terminate_turn_persistence_uses_separate_session_keys`) | Test rewritten to use 3 separate session keys (one per terminal status). New acceptance criterion verifies the deduplication behavior. |
+| #10 | MEDIUM | `_run_loop` tests don't create a conversation; loop takes missing-conversation path | §2.6 group 3 (4 tests) | Every test now uses `_uniq()` for the session key and calls `rt.create_conversation(sk, ...)` before `rt._run_loop(sk, ...)`. |
+| #11 | MEDIUM | `_check_and_stop_on_limit` is outside the state machine | §2.2 Edit Q + Edit R | Same as BUG #6. The helper no longer dispatches or saves; `_run_loop` builds the `TurnResult` and routes through `_terminate_turn`. Two call sites are updated (D.4 text-success and the post-tool-execution check). |
+| #12 | MEDIUM | Class docstring claims sync under `self._lock` but spec didn't add locking | §2.2 Edit H | Docstring rewritten to accurately describe the actual implementation: separate `_state_lock` for state-machine fields, separate from `self._lock` for the existing conversation / cancellation / approval state. Explicitly enumerates what is NOT synchronized. |
+| #13 | MEDIUM | `cancel()` uses runtime's global `_turn_token` instead of session's active token | §2.2 Edit D.7 | `cancel()` reads `_turn_tokens[session_key]` (under `_state_lock`) and uses that for the dispatch token. Prevents stale-token errors when a new `send_message()` has rotated the active token. |
+| #14 | LOW | Spec asserts runtime line count, no external consumers, no ARCHITECTURE.md update needed — all wrong | §1.1, §1.3, §4, §8 | Line count claim now has a verification timestamp. Scope table amended. §4 file change table adds `agent/callbacks.py` and the migration sites. §8 rewritten to require ARCHITECTURE.md updates: new §3.21.1 "Agent Callback Protocols", §3.21 update for the turn state machine, public surface list updated. New acceptance criterion verifies the ARCHITECTURE.md changes. |
+
+**Total audit fixes: 14/14.** All 14 bugs from the audit report have
+been resolved in the spec. The corrected spec is now implementation-
+safe: the implementer can delegate without re-running the audit.
+
+**Pattern tags added to `.crabcakes/coder-bugs.md`** (per §8):
+- `state-machine-terminal` (BUG #2, #5, #11)
+- `provider-alias-rot` (BUG #1, #8)
+- `spec-drift-line-count` (BUG #14)
+- `turn-token-identity` (BUG #4, #13)
+- `gil-compound-atomicity` (BUG #3)
+- `callback-keyword-mismatch` (BUG #7)
+- `test-state-dedup-impossible` (BUG #9)
+- `test-fixture-missing` (BUG #10)
+
+---
+
 **End of spec. Implementation by Supervisor's standing-order protocol: steelFramedCodeWriter prompt per Coder invocation.**
