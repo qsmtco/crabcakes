@@ -1445,10 +1445,11 @@ class AgentRuntimeHandler:
         AgentRuntime response complete callback.
         → End streaming and render the final text bubble.
         """
+        token = self._turn_tokens.get(session_key)
         if self._GLib is not None:
-            self._GLib.idle_add(self._do_response_complete, session_key, text)
+            self._GLib.idle_add(self._do_response_complete, session_key, text, token)
         else:
-            self._do_response_complete(session_key, text)
+            self._do_response_complete(session_key, text, token)
 
     def _do_response_complete(self, session_key: str, text: str) -> None:
         """Main-thread portion of _on_response_complete.
