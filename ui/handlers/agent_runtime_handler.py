@@ -853,6 +853,12 @@ class AgentRuntimeHandler:
         if conv is not None:
             conv.step_count = 0
 
+        # RACE-FIX: Clear the ended flag for this session — a new turn is starting.
+        # This is the ONLY place _ended_sessions should be cleared. Previously it
+        # was cleared inside _do_text_delta, which allowed stale deltas from the
+        # previous turn to clear the flag and start a phantom streaming bubble.
+        self._ended_sessions.discard(session_key)
+
         rt.send_message(session_key, text)
 
     def stop_all(self) -> None:
