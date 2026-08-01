@@ -93,7 +93,7 @@ def test_connection(
     MiniMax: same as OpenAI-compatible but checks body-level errors.
 
     On MiniMax, a body-level error (HTTP 200 with base_resp.status_code != 0)
-    is treated as failure — mirroring agent/runtime._call_minimax.
+    is treated as failure — mirroring agent.llm.minimax_provider.MiniMaxProvider().call.
     """
     # PHASE-10: prefer explicit caller when provided; fall back to model prefix derivation
     if caller:

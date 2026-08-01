@@ -732,7 +732,7 @@ class TestStreamingDispatch:
         """_call_llm_streaming must call get_provider(caller_key).stream().
 
         This is a regression guard: if the dispatch reverts to
-        _PROVIDER_STREAMERS[caller_key], this test fails because
+        _get_provider(caller_key).stream (via get_provider), this test fails because
         mock_provider.stream would never be called via the registry path.
         """
         from unittest.mock import MagicMock, patch

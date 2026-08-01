@@ -3,7 +3,7 @@ import sys
 sys.path.insert(0, "/home/q/projects/crabcakes")
 
 from agent.config import LLMProviderConfig
-from agent.runtime import AgentRuntime, _PROVIDER_CALLERS, _PROVIDER_STREAMERS
+from agent.runtime import AgentRuntime, _PROVIDER_CALLERS
 
 KNOWN_CALLERS = {"openai", "minimax", "anthropic", "openrouter", "zai"}
 
@@ -115,14 +115,13 @@ banner("Scenario 11: all 5 known callers round-trip correctly")
 for caller in ["openai", "minimax", "anthropic", "openrouter", "zai"]:
     p = make_config(f"test-{caller}", caller, f"{caller}/model")
     result = AgentRuntime._resolve_caller_key(p, f"{caller}/model")
-    ok = result == caller and result in _PROVIDER_CALLERS and result in _PROVIDER_STREAMERS
-    print(f"  {caller}: resolved={result!r}, in callers={result in _PROVIDER_CALLERS}, in streamers={result in _PROVIDER_STREAMERS} → {'PASS' if ok else 'FAIL'}")
+    ok = result == caller and result in _PROVIDER_CALLERS
+    print(f"  {caller}: resolved={result!r}, in callers={result in _PROVIDER_CALLERS} → {'PASS' if ok else 'FAIL'}")
 
 # ── Scenario 12: streamer lookup with None/empty caller_key ──
-banner("Scenario 12: _PROVIDER_STREAMERS.get('') and .get(None)")
-print(f"  _PROVIDER_STREAMERS.get(''): {_PROVIDER_STREAMERS.get('')!r}")
-print(f"  _PROVIDER_STREAMERS.get(None): {_PROVIDER_STREAMERS.get(None)!r}")
-print(f"  VERDICT: {'PASS — both return None' if _PROVIDER_STREAMERS.get('') is None and _PROVIDER_STREAMERS.get(None) is None else 'FAIL'}")
+banner("Scenario 12: (deprecated — _PROVIDER_STREAMERS removed in Phase 4 of SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION)")
+print("  _PROVIDER_STREAMERS was removed; dispatch now uses agent.llm.registry.get_provider(caller_key).stream")
+print("  VERDICT: SKIPPED (no longer applicable)")
 
 print("\n" + "="*60)
 print("Audit complete.")

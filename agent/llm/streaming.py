@@ -74,7 +74,7 @@ def parse_sse_line(line: bytes) -> SSEEvent | None:
 def parse_sse_delta(d: dict) -> list[SSEEvent]:
     """Extract text_delta and tool_call_delta events from an SSE delta dict.
 
-    Shared by _stream_openai_events and _stream_minimax_events.
+    Shared by OpenAIProvider("openai").stream and MiniMaxProvider().stream.
     The dict is the parsed JSON of an SSE `data:` line whose type is "raw"
     (i.e., it has a `choices` field with a delta).
 
@@ -367,8 +367,8 @@ def stream_with_ssl_retry(
     surfaces it via `friendly_error_message`.
 
     Args:
-        streamer: A callable matching the `_stream_openai_events` /
-            `_stream_minimax_events` / `_stream_anthropic_events` signature:
+        streamer: A callable matching the `OpenAIProvider("openai").stream` /
+            `MiniMaxProvider().stream` / `AnthropicProvider().stream` signature:
             keyword arguments `base_url`, `api_key`, `model`, `messages`,
             `tools`, `timeout`, `x_title`. Called once per attempt.
         max_retries: Total retry budget (default `MAX_SSL_RETRIES`).

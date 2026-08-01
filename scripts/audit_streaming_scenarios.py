@@ -5,6 +5,7 @@ sys.path.insert(0, "/home/q/projects/crabcakes")
 from unittest.mock import MagicMock, patch
 from agent.config import AgentConfig
 from agent.runtime import AgentRuntime, SSEEvent
+from agent.llm.openai_provider import OpenAIProvider
 
 def banner(title):
     print("\n" + "="*60)
@@ -40,7 +41,7 @@ def bad_streamer(*a, **kw):
 deltas = []
 rt._on_text_delta = lambda sk, d: deltas.append(d)
 
-with patch("agent.runtime._PROVIDER_STREAMERS", {"openai": bad_streamer}):
+with patch.object(OpenAIProvider, "stream", bad_streamer):
     try:
         result = rt._call_llm_streaming(
             session_key="test",
@@ -67,7 +68,7 @@ def empty_streamer(*a, **kw):
     return
     yield  # unreachable, makes this a generator
 
-with patch("agent.runtime._PROVIDER_STREAMERS", {"openai": empty_streamer}):
+with patch.object(OpenAIProvider, "stream", empty_streamer):
     result = rt._call_llm_streaming(
         session_key="test",
         base_url="https://api.openai.com/v1",
@@ -89,7 +90,7 @@ rt = make_rt()
 def broken_tool_streamer(*a, **kw):
     yield SSEEvent(type="tool_call_delta", data={"name": "list_files", "arguments": "{}"})  # no index
 
-with patch("agent.runtime._PROVIDER_STREAMERS", {"openai": broken_tool_streamer}):
+with patch.object(OpenAIProvider, "stream", broken_tool_streamer):
     try:
         result = rt._call_llm_streaming(
             session_key="test",
@@ -115,7 +116,7 @@ rt._on_text_delta = lambda sk, d: deltas.append(d)
 def none_text_streamer(*a, **kw):
     yield SSEEvent(type="text_delta", data={"content": None})
 
-with patch("agent.runtime._PROVIDER_STREAMERS", {"openai": none_text_streamer}):
+with patch.object(OpenAIProvider, "stream", none_text_streamer):
     result = rt._call_llm_streaming(
         session_key="test",
         base_url="https://api.openai.com/v1",
@@ -140,7 +141,7 @@ rt._on_text_delta = bad_callback
 def normal_streamer(*a, **kw):
     yield SSEEvent(type="text_delta", data={"content": "hello"})
 
-with patch("agent.runtime._PROVIDER_STREAMERS", {"openai": normal_streamer}):
+with patch.object(OpenAIProvider, "stream", normal_streamer):
     try:
         result = rt._call_llm_streaming(
             session_key="test",
@@ -188,7 +189,7 @@ def thread_target(thread_id):
         for i in range(3):
             yield SSEEvent(type="text_delta", data={"content": f"t{thread_id}-{i} "})
     
-    with patch("agent.runtime._PROVIDER_STREAMERS", {"openai": streamer}):
+    with patch.object(OpenAIProvider, "stream", streamer):
         rt._call_llm_streaming(
             session_key=f"thread-{thread_id}",
             base_url="https://api.openai.com/v1",
@@ -219,7 +220,7 @@ def weird_streamer(*a, **kw):
     yield SSEEvent(type="unknown_event", data={"foo": "bar"})
     yield SSEEvent(type="text_delta", data={"content": " world"})
 
-with patch("agent.runtime._PROVIDER_STREAMERS", {"openai": weird_streamer}):
+with patch.object(OpenAIProvider, "stream", weird_streamer):
     result = rt._call_llm_streaming(
         session_key="test",
         base_url="https://api.openai.com/v1",
@@ -239,7 +240,7 @@ rt = make_rt()
 def immediate_done(*a, **kw):
     yield SSEEvent(type="done", data={})
 
-with patch("agent.runtime._PROVIDER_STREAMERS", {"openai": immediate_done}):
+with patch.object(OpenAIProvider, "stream", immediate_done):
     result = rt._call_llm_streaming(
         session_key="test",
         base_url="https://api.openai.com/v1",
@@ -259,7 +260,7 @@ rt = make_rt()
 def bad_args_streamer(*a, **kw):
     yield SSEEvent(type="tool_call_delta", data={"index": 0, "name": "list_files", "arguments": "{not valid json"})
 
-with patch("agent.runtime._PROVIDER_STREAMERS", {"openai": bad_args_streamer}):
+with patch.object(OpenAIProvider, "stream", bad_args_streamer):
     try:
         result = rt._call_llm_streaming(
             session_key="test",
