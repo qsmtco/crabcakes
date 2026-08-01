@@ -1367,7 +1367,7 @@ class TestListConversations:
 def _mock_stream_openai_3_chunks():
     """
     Yield the equivalent of: "Hello world!" as 3 SSE events.
-    Returns a generator compatible with _stream_openai_events signature.
+    Returns a generator compatible with OpenAIProvider("openai").stream signature.
     """
     from agent.runtime import SSEEvent
     # Chunk 1: "Hello"
@@ -1547,7 +1547,7 @@ class TestStreaming:
 
         Regression: the old test (pre-2026-06-23) patched
         _PROVIDER_STREAMERS["openai"] with a pre-built SSEEvent generator —
-        that bypassed _sse_lines → parse_sse_line → _stream_openai_events
+        that bypassed _sse_lines → parse_sse_line → OpenAIProvider("openai").stream
         entirely, so the streamer layer was never tested.
 
         This test feeds raw SSE bytes through the full pipeline (mocking only
@@ -1558,7 +1558,7 @@ class TestStreaming:
         See docs/bugs/BUG_REPORT-streaming-tool-call-id-loss.md.
         """
         from agent import runtime as rt_module
-        from agent.runtime import _stream_openai_events
+        from agent.llm.openai_provider import OpenAIProvider
 
         # Provider-shape raw SSE bytes — real id in first delta, argument
         # fragments in subsequent deltas (OpenAI / MiniMax / OpenRouter / ZAI).
@@ -1592,13 +1592,13 @@ class TestStreaming:
                     pass
             return _Ctx()
 
-        # Phase 1: Feed raw SSE bytes through the real _stream_openai_events
+        # Phase 1: Feed raw SSE bytes through the real OpenAIProvider("openai").stream
         # and verify the SSEEvent stream carries the id forward.
         with unittest.mock.patch(
             "agent.llm.openai_provider.urlopen_with_ssl_retry",
             lambda req, timeout: _make_fake_urlopen(raw_sse),
         ):
-            events = list(_stream_openai_events(
+            events = list(OpenAIProvider("openai").stream(
                 base_url="https://api.openai.com/v1",
                 api_key="***",
                 model="openai/gpt-4o",
@@ -1655,7 +1655,7 @@ class TestStreaming:
         assert tool_name == "read_file"
 
     def test_anthropic_content_block_start_preserves_tool_use_id(self):
-        """STREAM-ID-PRES (BUG #4): _stream_anthropic_events must forward the
+        """STREAM-ID-PRES (BUG #4): AnthropicProvider().stream must forward the
         tool_use.id from the content_block_start event through to the SSE event
         stream, so the accumulator captures the provider-assigned id before
         the first content_block_delta arrives.
@@ -1666,7 +1666,7 @@ class TestStreaming:
         synthetic `call_{idx}`.
         """
         from agent import runtime as rt_module
-        from agent.runtime import _stream_anthropic_events
+        from agent.llm.anthropic_provider import AnthropicProvider
 
         ANTHROPIC_ID = "toolu_01A09qGhdummyExample"
         raw_sse = (
@@ -1702,7 +1702,7 @@ class TestStreaming:
             "agent.llm.anthropic_provider.urlopen_with_ssl_retry",
             lambda req, timeout: _make_fake_urlopen(raw_sse),
         ):
-            events = list(_stream_anthropic_events(
+            events = list(AnthropicProvider().stream(
                 base_url="https://api.anthropic.com/v1",
                 api_key="***",
                 model="claude-3-5-sonnet",
@@ -2341,8 +2341,8 @@ class TestMinimaxBodyLevelError:
     The runtime must raise RuntimeError so the error surfaces to the user."""
 
     def test_minimax_body_level_error_raises(self):
-        """_call_minimax with base_resp.status_code=1004 raises RuntimeError."""
-        from agent.runtime import _call_minimax
+        """MiniMaxProvider().call with base_resp.status_code=1004 raises RuntimeError."""
+        from agent.llm.minimax_provider import MiniMaxProvider
         error_body = json.dumps({
             "base_resp": {
                 "status_code": 1004,
@@ -2356,7 +2356,7 @@ class TestMinimaxBodyLevelError:
 
         with unittest.mock.patch("urllib.request.urlopen", return_value=mock_resp):
             with pytest.raises(RuntimeError, match="status_code=1004"):
-                _call_minimax(
+                MiniMaxProvider().call(
                     base_url="https://api.minimax.chat/v1",
                     api_key="invalid-key",
                     model="minimax/MiniMax-M2.7",
@@ -2366,8 +2366,8 @@ class TestMinimaxBodyLevelError:
                 )
 
     def test_streaming_minimax_body_error_raises(self):
-        """_stream_minimax_events with base_resp.status_code=1004 raises RuntimeError."""
-        from agent.runtime import _stream_minimax_events
+        """MiniMaxProvider().stream with base_resp.status_code=1004 raises RuntimeError."""
+        from agent.llm.minimax_provider import MiniMaxProvider
         error_body = json.dumps({
             "base_resp": {
                 "status_code": 1004,
@@ -2384,7 +2384,7 @@ class TestMinimaxBodyLevelError:
         with unittest.mock.patch("urllib.request.urlopen", return_value=mock_resp):
             with pytest.raises(RuntimeError, match="status_code=1004"):
                 # Must consume the generator to trigger the error
-                list(_stream_minimax_events(
+                list(MiniMaxProvider().stream(
                     base_url="https://api.minimax.chat/v1",
                     api_key="invalid-key",
                     model="minimax/MiniMax-M2.7",
