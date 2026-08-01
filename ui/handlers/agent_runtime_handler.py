@@ -1443,6 +1443,16 @@ class AgentRuntimeHandler:
         if self._crh is None:
             return
 
+        # RACE-FIX: Mark session ended IMMEDIATELY — before any rendering work.
+        # This ensures stale _do_text_delta callbacks (queued before this
+        # callback but running after it, or running earlier in the same idle
+        # cycle) see the flag and bail out. Previously this was at the END of
+        # the method (line ~1542), which was too late: a stale delta could
+        # run between end_streaming and the flag being set, starting a phantom
+        # streaming bubble. The flag is cleared by send_to_special_agent on
+        # the next turn.
+        self._ended_sessions.add(session_key)
+
         # Clear accumulated streaming text — no longer needed
         self._streaming_text.pop(session_key, None)
         self._last_delta_dispatch.pop(session_key, None)
