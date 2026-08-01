@@ -5201,8 +5201,12 @@ class TestTurnStateMachine:
                 "arguments": '{"path": "."}',
             },
         }])
+        from agent.tools import ToolResult as _ToolResult
         with unittest.mock.patch.object(rt, "_call_llm", return_value=tool_resp), \
-             unittest.mock.patch("agent.tools.execute_tool", return_value=("ok", True, None)):
+             unittest.mock.patch(
+                 "agent.tools.execute_tool",
+                 return_value=_ToolResult(success=True, output="ok"),
+             ):
             rt._run_loop(sk, "hello")
         result = rt.get_last_turn_result(sk)
         assert result is not None
@@ -5233,8 +5237,12 @@ class TestTurnStateMachine:
                 "function": {"name": "list_files", "arguments": '{"path": "."}'},
             }])
 
+        from agent.tools import ToolResult as _ToolResult
         with unittest.mock.patch.object(rt, "_call_llm", side_effect=trigger_cancel), \
-             unittest.mock.patch("agent.tools.execute_tool", return_value=("ok", True, None)):
+             unittest.mock.patch(
+                 "agent.tools.execute_tool",
+                 return_value=_ToolResult(success=True, output="ok"),
+             ):
             rt._run_loop(sk, "hello")
         result = rt.get_last_turn_result(sk)
         assert result is not None
