@@ -4892,3 +4892,576 @@ class TestStreamErrorIntegration:
         conv = rt.get_conversation(sk)
         assert conv is not None
         rt.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Phase 5: Turn state machine + terminal paths + alias removal
+#  (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.6)
+#
+#  22 tests across 8 groups:
+#    Group 1: TurnStatus / TurnResult dataclasses (3)
+#    Group 2: _terminate_turn behavior (8)
+#    Group 3: _run_loop state transitions (4)
+#    Group 3a: BUG #2 terminal paths (2)
+#    Group 3b: BUG #5 mid-stream error (1)
+#    Group 3c: BUG #6 limit handling (2)
+#    Group 4: provider alias removal (2)
+#    Group 5: callback protocol exports (1)
+#    Group 6: send_message token rotation (1)
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestTurnStateMachine:
+    """22 tests for the per-turn state machine introduced in Phase 2a/2b.
+
+    Locks in the contract of TurnStatus/TurnResult, _terminate_turn,
+    the (sk, tk) keying, stale-token rejection, the new terminal paths
+    (no_conversation, prompt_build_failed, stream_error_with_content,
+    cost_limit, step_limit), and the provider alias removal from Phase 4.
+    """
+
+    # ── Group 1: TurnStatus / TurnResult (3 tests) ──────────────────
+
+    def test_turn_status_enum_values(self):
+        """TurnStatus has 5 values, 2 non-terminal + 3 terminal."""
+        from agent.runtime import TurnStatus
+        all_values = {s.value for s in TurnStatus}
+        assert all_values == {
+            "running", "streaming", "completed", "failed", "cancelled",
+        }
+        non_terminal = {TurnStatus.RUNNING, TurnStatus.STREAMING}
+        terminal = {TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.CANCELLED}
+        assert non_terminal.isdisjoint(terminal)
+        assert len(non_terminal) + len(terminal) == 5
+
+    def test_turn_result_required_fields(self):
+        """TurnResult requires status/session_key/turn_token; others have defaults."""
+        from agent.runtime import TurnResult, TurnStatus
+        tr = TurnResult(
+            status=TurnStatus.COMPLETED,
+            session_key="test:sk",
+            turn_token=object(),
+        )
+        assert tr.text == ""
+        assert tr.error is None
+        assert tr.metadata == {}
+
+    def test_turn_result_metadata_isolation(self):
+        """Two TurnResult instances must not share metadata dict (mutable default trap)."""
+        from agent.runtime import TurnResult, TurnStatus
+        tr1 = TurnResult(
+            status=TurnStatus.FAILED,
+            session_key="test:sk",
+            turn_token=object(),
+            metadata={"reason": "x"},
+        )
+        tr2 = TurnResult(
+            status=TurnStatus.FAILED,
+            session_key="test:sk",
+            turn_token=object(),
+        )
+        tr1.metadata["leak"] = "value"
+        assert "leak" not in tr2.metadata, (
+            "metadata dict leaked between TurnResult instances — mutable default trap"
+        )
+
+    # ── Group 2: _terminate_turn behavior (8 tests) ─────────────────
+
+    def test_terminate_turn_dispatches_on_response_complete_for_completed(self):
+        """_terminate_turn(COMPLETED) calls on_response_complete with text + _turn_token."""
+        from agent.runtime import TurnResult, TurnStatus
+        mock_complete = unittest.mock.MagicMock()
+        rt = AgentRuntime(_make_cfg(), GLib=None, on_response_complete=mock_complete)
+        sk = _uniq()
+        tk = object()
+        # Pre-register the active token so stale-token check passes.
+        rt._turn_tokens[sk] = tk
+        rt._turn_state[(sk, tk)] = TurnStatus.RUNNING
+        accepted = rt._terminate_turn(TurnResult(
+            status=TurnStatus.COMPLETED,
+            session_key=sk, turn_token=tk, text="Hello",
+        ))
+        assert accepted is not None
+        mock_complete.assert_called_once()
+        args, kwargs = mock_complete.call_args
+        # _dispatch calls on_response_complete(sk, text, _turn_token=tk)
+        assert args[0] == sk
+        assert args[1] == "Hello"
+        assert kwargs.get("_turn_token") is tk
+
+    def test_terminate_turn_dispatches_on_error_for_failed(self):
+        """_terminate_turn(FAILED) calls on_error with the error message."""
+        from agent.runtime import TurnResult, TurnStatus
+        mock_error = unittest.mock.MagicMock()
+        rt = AgentRuntime(_make_cfg(), GLib=None, on_error=mock_error)
+        sk = _uniq()
+        tk = object()
+        rt._turn_tokens[sk] = tk
+        rt._turn_state[(sk, tk)] = TurnStatus.RUNNING
+        rt._terminate_turn(TurnResult(
+            status=TurnStatus.FAILED,
+            session_key=sk, turn_token=tk, error="Something went wrong",
+        ))
+        mock_error.assert_called_once()
+        args, kwargs = mock_error.call_args
+        # _dispatch calls on_error(sk, msg, _turn_token=tk)
+        assert args[0] == sk
+        assert args[1] == "Something went wrong"
+        assert kwargs.get("_turn_token") is tk
+
+    def test_terminate_turn_dispatches_on_error_for_cancelled(self):
+        """_terminate_turn(CANCELLED) calls on_error (CANCELLED is a terminal failure variant)."""
+        from agent.runtime import TurnResult, TurnStatus
+        mock_error = unittest.mock.MagicMock()
+        rt = AgentRuntime(_make_cfg(), GLib=None, on_error=mock_error)
+        sk = _uniq()
+        tk = object()
+        rt._turn_tokens[sk] = tk
+        rt._turn_state[(sk, tk)] = TurnStatus.RUNNING
+        rt._terminate_turn(TurnResult(
+            status=TurnStatus.CANCELLED,
+            session_key=sk, turn_token=tk, error="Cancelled by user",
+        ))
+        mock_error.assert_called_once()
+        args, _ = mock_error.call_args
+        assert args[1] == "Cancelled by user"
+
+    def test_terminate_turn_rejects_non_terminal_status(self):
+        """_terminate_turn with RUNNING or STREAMING returns None and does not dispatch."""
+        from agent.runtime import TurnResult, TurnStatus
+        mock_complete = unittest.mock.MagicMock()
+        rt = AgentRuntime(_make_cfg(), GLib=None, on_response_complete=mock_complete)
+        sk = _uniq()
+        tk = object()
+        rt._turn_tokens[sk] = tk
+        # Note: do NOT pre-set state — RUNNING/STREAMING are non-terminal and must be rejected.
+        for non_terminal in (TurnStatus.RUNNING, TurnStatus.STREAMING):
+            accepted = rt._terminate_turn(TurnResult(
+                status=non_terminal,
+                session_key=sk, turn_token=tk,
+            ))
+            assert accepted is None, (
+                f"_terminate_turn should reject non-terminal {non_terminal!r}"
+            )
+        mock_complete.assert_not_called()
+        # get_turn_state returns None because no terminal state was recorded.
+        assert rt.get_turn_state(sk) is None
+
+    def test_terminate_turn_dedups_duplicate_terminal_transitions(self):
+        """Second call to _terminate_turn for the same (sk, tk) is rejected (None)."""
+        from agent.runtime import TurnResult, TurnStatus
+        mock_complete = unittest.mock.MagicMock()
+        mock_error = unittest.mock.MagicMock()
+        rt = AgentRuntime(
+            _make_cfg(), GLib=None,
+            on_response_complete=mock_complete,
+            on_error=mock_error,
+        )
+        sk = _uniq()
+        tk = object()
+        rt._turn_tokens[sk] = tk
+        rt._turn_state[(sk, tk)] = TurnStatus.RUNNING
+        first = rt._terminate_turn(TurnResult(
+            status=TurnStatus.COMPLETED,
+            session_key=sk, turn_token=tk, text="x",
+        ))
+        # Second call with different status but same (sk, tk) must be rejected.
+        second = rt._terminate_turn(TurnResult(
+            status=TurnStatus.FAILED,
+            session_key=sk, turn_token=tk, error="y",
+        ))
+        assert first is not None
+        assert second is None, "second _terminate_turn should be deduped"
+        # Only the first dispatch fired.
+        assert mock_complete.call_count == 1
+        mock_error.assert_not_called()
+        # Recorded state is the first one (COMPLETED).
+        assert rt.get_turn_state(sk) == TurnStatus.COMPLETED
+
+    def test_terminate_turn_rejects_stale_token(self):
+        """BUG #4: a result for an old (rotated) turn_token is rejected."""
+        from agent.runtime import TurnResult, TurnStatus
+        mock_complete = unittest.mock.MagicMock()
+        rt = AgentRuntime(_make_cfg(), GLib=None, on_response_complete=mock_complete)
+        sk = _uniq()
+        old_tk, new_tk = object(), object()
+        # Active token for this session is the new one (simulating a fresh send_message).
+        rt._turn_tokens[sk] = new_tk
+        rt._turn_state[(sk, new_tk)] = TurnStatus.RUNNING
+        # Submit a result for the OLD token — must be rejected.
+        accepted = rt._terminate_turn(TurnResult(
+            status=TurnStatus.COMPLETED,
+            session_key=sk, turn_token=old_tk, text="stale",
+        ))
+        assert accepted is None, "stale-token result should be rejected"
+        mock_complete.assert_not_called()
+        # The new (active) token's state was not disturbed.
+        assert rt.get_turn_state(sk) == TurnStatus.RUNNING
+
+    def test_terminate_turn_persistence_uses_separate_session_keys(self):
+        """BUG #9: 3 separate session keys for COMPLETED/FAILED/CANCELLED persistence test.
+
+        _terminate_turn dedups terminal transitions for the same (sk, tk),
+        so each terminal status needs its own session key to test the
+        auto_save behavior independently.
+        """
+        from agent.runtime import TurnResult, TurnStatus
+        rt = AgentRuntime(_make_cfg(), GLib=None)
+        with unittest.mock.patch.object(rt, "_auto_save") as mock_save:
+            cases = [
+                (TurnStatus.COMPLETED, None, "x", True),    # saves
+                (TurnStatus.FAILED, "oops", "", True),      # saves
+                (TurnStatus.CANCELLED, "cancelled", "", False),  # does NOT save (no persist flag)
+            ]
+            for status, error, text, should_persist in cases:
+                sk = _uniq()
+                tk = object()
+                rt._turn_tokens[sk] = tk
+                rt._turn_state[(sk, tk)] = TurnStatus.RUNNING
+                rt._conversations[sk] = unittest.mock.MagicMock()  # so _auto_save has a conv
+                rt._terminate_turn(TurnResult(
+                    status=status, session_key=sk, turn_token=tk,
+                    text=text, error=error,
+                ))
+            # COMPLETED (1) and FAILED (2) persisted; CANCELLED without persist flag (3) did NOT.
+            assert mock_save.call_count == 2, (
+                f"Expected 2 auto_save calls (COMPLETED + FAILED); got {mock_save.call_count}"
+            )
+
+    def test_terminate_turn_cancelled_with_persist_metadata_saves(self):
+        """CANCELLED with metadata={'persist': True} saves (explicit opt-in)."""
+        from agent.runtime import TurnResult, TurnStatus
+        rt = AgentRuntime(_make_cfg(), GLib=None)
+        with unittest.mock.patch.object(rt, "_auto_save") as mock_save:
+            sk = _uniq()
+            tk = object()
+            rt._turn_tokens[sk] = tk
+            rt._turn_state[(sk, tk)] = TurnStatus.RUNNING
+            rt._conversations[sk] = unittest.mock.MagicMock()
+            rt._terminate_turn(TurnResult(
+                status=TurnStatus.CANCELLED,
+                session_key=sk, turn_token=tk,
+                error="cancelled", metadata={"persist": True},
+            ))
+            assert mock_save.call_count == 1, (
+                f"Expected 1 auto_save call when persist=True; got {mock_save.call_count}"
+            )
+
+    # ── Group 3: _run_loop state transitions (4 tests) ──────────────
+
+    def test_run_loop_starts_in_running_state(self):
+        """At the top of _run_loop, state is RUNNING; after success, state is COMPLETED."""
+        from agent.runtime import TurnStatus
+        rt = AgentRuntime(_make_cfg(), GLib=None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        with unittest.mock.patch.object(
+            rt, "_call_llm",
+            lambda sk, msgs, tools, **kwargs: _resp("Hello, human."),
+        ):
+            rt._run_loop(sk, "hello")
+        assert rt.get_turn_state(sk) == TurnStatus.COMPLETED
+        rt.stop()
+
+    def test_run_loop_transitions_to_streaming_before_first_llm_call(self):
+        """STREAMING is recorded before the first _call_llm returns; final state is COMPLETED."""
+        from agent.runtime import TurnStatus
+        rt = AgentRuntime(_make_cfg(), GLib=None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        states_seen = []
+
+        def tracking_call(*args, **kwargs):
+            states_seen.append(rt.get_turn_state(sk))
+            return _resp("Hello.")
+
+        with unittest.mock.patch.object(rt, "_call_llm", side_effect=tracking_call):
+            rt._run_loop(sk, "hello")
+        # The first LLM call saw STREAMING (set just before _call_llm is invoked).
+        assert TurnStatus.STREAMING in states_seen, (
+            f"Expected STREAMING during first LLM call; states seen: {states_seen}"
+        )
+        assert rt.get_turn_state(sk) == TurnStatus.COMPLETED
+        rt.stop()
+
+    def test_run_loop_terminates_with_failed_on_max_iterations(self):
+        """When max_tool_iterations is reached with no text response, terminal is FAILED."""
+        from agent.runtime import TurnStatus
+        rt = AgentRuntime(_make_cfg(), GLib=None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        # Always return a tool call (never text) — loop will exhaust max_iterations.
+        tool_resp = _resp(tool_calls=[{
+            "id": "call_1",
+            "function": {
+                "name": "list_files",
+                "arguments": '{"path": "."}',
+            },
+        }])
+        with unittest.mock.patch.object(rt, "_call_llm", return_value=tool_resp), \
+             unittest.mock.patch.object(rt, "execute_tool", return_value=("ok", True, None)):
+            rt._run_loop(sk, "hello")
+        result = rt.get_last_turn_result(sk)
+        assert result is not None
+        assert result.status == TurnStatus.FAILED
+        assert result.metadata.get("reason") == "max_iterations"
+        rt.stop()
+
+    def test_run_loop_terminates_with_cancelled_on_cancel_signal(self):
+        """When _cancel_requested is set, the next loop iteration's cancel check fires CANCELLED.
+
+        The trigger returns a tool call (not text) so the loop iterates again,
+        where the cancel check at the top of the while loop fires and routes
+        through _terminate_turn(CANCELLED).
+        """
+        from agent.runtime import TurnStatus
+        rt = AgentRuntime(_make_cfg(), GLib=None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        call_count = [0]
+
+        def trigger_cancel(*args, **kwargs):
+            call_count[0] += 1
+            rt._cancel_requested = True
+            # Return a tool call so the loop iterates (does not exit via text-success).
+            return _resp(tool_calls=[{
+                "id": "call_1",
+                "function": {"name": "list_files", "arguments": '{"path": "."}'},
+            }])
+
+        with unittest.mock.patch.object(rt, "_call_llm", side_effect=trigger_cancel), \
+             unittest.mock.patch.object(rt, "execute_tool", return_value=("ok", True, None)):
+            rt._run_loop(sk, "hello")
+        result = rt.get_last_turn_result(sk)
+        assert result is not None
+        assert result.status == TurnStatus.CANCELLED, (
+            f"Expected CANCELLED; got {result.status} (metadata: {result.metadata})"
+        )
+        # The cancel check fired on the SECOND iteration, so the first call completed.
+        assert call_count[0] >= 1
+        rt.stop()
+
+    # ── Group 3a: BUG #2 terminal paths (2 tests) ───────────────────
+
+    def test_run_loop_terminates_with_failed_on_no_conversation(self):
+        """BUG #2: _run_loop with a session_key that has no Conversation must
+        route through _terminate_turn(FAILED, no_conversation) — not the
+        ad-hoc dispatch + return of the pre-2b code."""
+        from agent.runtime import TurnStatus
+        rt = AgentRuntime(_make_cfg(), GLib=None)
+        rt.start()
+        sk = _uniq()
+        # Deliberately do NOT call create_conversation.
+        errors = []
+        rt._on_error = lambda sk2, msg: errors.append(msg)
+        rt._run_loop(sk, "hello")
+        # _terminate_turn dispatched on_error exactly once with "No conversation found".
+        assert len(errors) == 1, f"Expected 1 error; got: {errors}"
+        assert "no conversation" in str(errors[0]).lower(), (
+            f"Expected 'no conversation' in error message; got: {errors[0]!r}"
+        )
+        result = rt.get_last_turn_result(sk)
+        assert result is not None
+        assert result.status == TurnStatus.FAILED
+        assert result.metadata.get("reason") == "no_conversation"
+        rt.stop()
+
+    def test_run_loop_terminates_with_failed_on_prompt_build_failure(self):
+        """BUG #2: _run_loop where _ensure_system_prompt raises must route through
+        _terminate_turn(FAILED, prompt_build_failed)."""
+        from agent.runtime import TurnStatus
+        rt = AgentRuntime(_make_cfg(), GLib=None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        errors = []
+        rt._on_error = lambda sk2, msg: errors.append(msg)
+        with unittest.mock.patch.object(
+            rt, "_ensure_system_prompt",
+            side_effect=RuntimeError("prompt build failed"),
+        ):
+            rt._run_loop(sk, "hello")
+        # The error fired once.
+        assert len(errors) == 1, f"Expected 1 error; got: {errors}"
+        # And the recorded result has reason='prompt_build_failed'.
+        result = rt.get_last_turn_result(sk)
+        assert result is not None
+        assert result.status == TurnStatus.FAILED
+        assert result.metadata.get("reason") == "prompt_build_failed"
+        rt.stop()
+
+    # ── Group 3b: BUG #5 mid-stream error (1 test) ──────────────────
+
+    def test_run_loop_terminates_with_failed_on_stream_error_with_content(self):
+        """BUG #5: a response with non-empty text_content AND _stream_error must
+        terminate the turn with FAILED. The previous fall-through to
+        on_response_complete must NOT happen."""
+        from agent.runtime import TurnStatus
+        rt = AgentRuntime(_make_cfg(), GLib=None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        response = {
+            "choices": [{"message": {
+                "content": "partial response that was streamed",
+                "tool_calls": [],
+            }}],
+            "_stream_error": {"code": 500, "message": "stream failed"},
+        }
+        complete = []
+        errors = []
+        rt._on_response_complete = lambda sk2, t: complete.append(t)
+        rt._on_error = lambda sk2, msg: errors.append(msg)
+        with unittest.mock.patch.object(rt, "_call_llm", return_value=response):
+            rt._run_loop(sk, "hello")
+        # on_error was called once; on_response_complete was NOT (no fall-through).
+        assert len(errors) == 1, f"Expected 1 on_error; got: {errors}"
+        assert len(complete) == 0, (
+            f"on_response_complete must NOT fire after stream error; got: {complete}"
+        )
+        result = rt.get_last_turn_result(sk)
+        assert result is not None
+        assert result.status == TurnStatus.FAILED
+        assert result.metadata.get("reason") == "stream_error_with_content"
+        rt.stop()
+
+    # ── Group 3c: BUG #6 limit handling (2 tests) ───────────────────
+
+    def test_run_loop_terminates_with_failed_on_cost_limit(self):
+        """BUG #6: When conv.total_cost > cost_limit, terminate FAILED with reason='cost_limit'."""
+        from agent.runtime import TurnStatus
+        cfg = _make_cfg()
+        cfg.cost_limit = 0.0  # any cost > 0 trips the limit (predicate is strict >)
+        rt = AgentRuntime(cfg, GLib=None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        with unittest.mock.patch.object(
+            rt, "_call_llm",
+            lambda sk, msgs, tools, **kwargs: _resp("Hi."),
+        ):
+            # record_usage adds cost; one call is enough to trip limit=0.
+            rt._conversations[sk].record_usage(100, 0.01)
+            rt._run_loop(sk, "hello")
+        result = rt.get_last_turn_result(sk)
+        assert result is not None
+        assert result.status == TurnStatus.FAILED
+        assert result.metadata.get("reason") == "cost_limit", (
+            f"Expected reason='cost_limit'; got: {result.metadata}"
+        )
+        rt.stop()
+
+    def test_run_loop_terminates_with_failed_on_step_limit(self):
+        """BUG #6: When conv.step_count > step_limit, terminate FAILED with reason='step_limit'."""
+        from agent.runtime import TurnStatus
+        cfg = _make_cfg()
+        cfg.step_limit = 0  # any step > 0 trips the limit
+        rt = AgentRuntime(cfg, GLib=None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        with unittest.mock.patch.object(
+            rt, "_call_llm",
+            lambda sk, msgs, tools, **kwargs: _resp("Hi."),
+        ):
+            # Bump step_count above the limit (the strict-greater predicate needs >0).
+            rt._conversations[sk].step_count = 1
+            rt._run_loop(sk, "hello")
+        result = rt.get_last_turn_result(sk)
+        assert result is not None
+        assert result.status == TurnStatus.FAILED
+        assert result.metadata.get("reason") == "step_limit", (
+            f"Expected reason='step_limit'; got: {result.metadata}"
+        )
+        rt.stop()
+
+    # ── Group 4: provider alias removal (2 tests) ───────────────────
+
+    def test_runtime_no_longer_exposes_call_provider_aliases(self):
+        """_call_openai, _call_minimax, _call_anthropic removed in Phase 4 §2.3 Edit I."""
+        import agent.runtime
+        for name in ("_call_openai", "_call_minimax", "_call_anthropic"):
+            assert not hasattr(agent.runtime, name), (
+                f"agent.runtime.{name} should be removed (Phase 4 Edit I)"
+            )
+
+    def test_runtime_no_longer_exposes_stream_provider_aliases(self):
+        """_stream_*_events and _PROVIDER_STREAMERS removed in Phase 4 §2.3 Edit J."""
+        import agent.runtime
+        for name in (
+            "_stream_openai_events", "_stream_minimax_events",
+            "_stream_anthropic_events", "_PROVIDER_STREAMERS",
+        ):
+            assert not hasattr(agent.runtime, name), (
+                f"agent.runtime.{name} should be removed (Phase 4 Edit J)"
+            )
+
+    # ── Group 5: callback protocol exports (1 test) ─────────────────
+
+    def test_callbacks_module_exports_protocols(self):
+        """agent.callbacks exports all 9 callback Protocols + AgentRuntimeCallbacks alias.
+
+        Smoke test: each Protocol class has a __call__ (they're callable
+        structural-typing contracts).
+        """
+        from agent.callbacks import (
+            OnTextDelta, OnToolCallStart, OnToolCallResult,
+            OnToolCallApprovalNeeded, OnResponseComplete, OnTokenUsage,
+            OnTokenBreakdown, OnError, OnEnforcementStatus,
+            AgentRuntimeCallbacks,
+        )
+        for cls in (
+            OnTextDelta, OnToolCallStart, OnToolCallResult,
+            OnToolCallApprovalNeeded, OnResponseComplete, OnTokenUsage,
+            OnTokenBreakdown, OnError, OnEnforcementStatus,
+        ):
+            assert hasattr(cls, "__call__"), (
+                f"{cls.__name__} is missing __call__ — not a callable Protocol"
+            )
+        # AgentRuntimeCallbacks is a dict alias; just verify it's accessible.
+        assert AgentRuntimeCallbacks is not None
+
+    # ── Group 6: send_message token rotation (1 test) ───────────────
+
+    def test_send_message_rotates_turn_token(self):
+        """BUG #4: two consecutive _run_loop calls with different turn_tokens
+        must produce different _turn_tokens[sk] values so a new turn's state
+        is not confused with a prior turn's terminal result.
+
+        _run_loop registers _turn_tokens[sk] = turn_token at the top.
+        The handler (agent_runtime_handler) rotates self._turn_token before
+        each send_message; here we exercise the runtime-level rotation
+        directly by calling _run_loop with two different explicit tokens.
+        """
+        from agent.runtime import TurnStatus
+        rt = AgentRuntime(_make_cfg(), GLib=None)
+        rt.start()
+        sk = _uniq()
+        rt.create_conversation("Coder", sk, "/tmp")
+        first_tk = object()
+        second_tk = object()
+        assert first_tk is not second_tk, "test setup: tokens must differ"
+        with unittest.mock.patch.object(
+            rt, "_call_llm",
+            lambda sk, msgs, tools, **kwargs: _resp("Hello."),
+        ):
+            rt._run_loop(sk, "first", turn_token=first_tk)
+        token_after_first = rt._turn_tokens.get(sk)
+        assert token_after_first is first_tk
+        assert rt.get_turn_state(sk) == TurnStatus.COMPLETED
+        with unittest.mock.patch.object(
+            rt, "_call_llm",
+            lambda sk, msgs, tools, **kwargs: _resp("Hello again."),
+        ):
+            rt._run_loop(sk, "second", turn_token=second_tk)
+        token_after_second = rt._turn_tokens.get(sk)
+        assert token_after_second is second_tk
+        assert token_after_second is not token_after_first, (
+            "_turn_tokens[sk] must rotate to the new token on a fresh turn"
+        )
+        rt.stop()
+
