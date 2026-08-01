@@ -1281,6 +1281,14 @@ class AgentRuntime:
                     messages_for_call, kb_context, _kb_cache_for_turn = self._prepare_kb_synthesis(
                         conv, text, messages, _kb_cache_for_turn
                     )
+                    # Turn state machine (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION
+                    # §2.2 Edit G): transition RUNNING → STREAMING (non-terminal)
+                    # before the first LLM call. Keyed by (sk, tk) tuple (BUG #3,
+                    # #4) and read/written under _state_lock (the GIL does not
+                    # make the compound op atomic).
+                    with self._state_lock:
+                        if self._turn_state.get((session_key, turn_token)) == TurnStatus.RUNNING:
+                            self._turn_state[(session_key, turn_token)] = TurnStatus.STREAMING
                     response = self._call_llm(session_key, messages_for_call, tools, turn_token=turn_token)
 
                     # Extract content and tool calls
