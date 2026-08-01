@@ -420,8 +420,15 @@ class AgentRuntime:
         """Dispatch a callback thread-safely via GLib.idle_add or directly."""
         if callback is None:
             return
+        # RACE-FIX v4b: capture the turn token NOW (background thread, stable).
+        # The handler's _on_* callbacks will read this from the closure, not
+        # from a mutable dict that could change before the idle callback runs.
+        token = self._turn_token
         def inner():
             try:
+                callback(*args, **kwargs, _turn_token=token)
+            except TypeError:
+                # Callback doesn't accept _turn_token kwarg — call without it
                 callback(*args, **kwargs)
             except Exception:
                 logger.exception("Callback %s raised", callback)

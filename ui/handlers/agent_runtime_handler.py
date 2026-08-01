@@ -986,16 +986,15 @@ class AgentRuntimeHandler:
 
     # ── AgentRuntime callbacks (dispatched to render pipeline) ───────────────
 
-    def _on_text_delta(self, session_key: str, text: str) -> None:
+    def _on_text_delta(self, session_key: str, text: str, _turn_token: object = None) -> None:
         """
         AgentRuntime text delta callback.
         → Start or update a streaming bubble in the UI.
         """
-        token = self._turn_tokens.get(session_key)
         if self._GLib is not None:
-            self._GLib.idle_add(self._do_text_delta, session_key, text, token)
+            self._GLib.idle_add(self._do_text_delta, session_key, text, _turn_token)
         else:
-            self._do_text_delta(session_key, text, token)
+            self._do_text_delta(session_key, text, _turn_token)
 
     def _do_text_delta(self, session_key: str, text: str, delta_token: object = None) -> None:
         """Main-thread portion of _on_text_delta.
@@ -1440,16 +1439,15 @@ class AgentRuntimeHandler:
             "args": args,
         }
 
-    def _on_response_complete(self, session_key: str, text: str) -> None:
+    def _on_response_complete(self, session_key: str, text: str, _turn_token: object = None) -> None:
         """
         AgentRuntime response complete callback.
         → End streaming and render the final text bubble.
         """
-        token = self._turn_tokens.get(session_key)
         if self._GLib is not None:
-            self._GLib.idle_add(self._do_response_complete, session_key, text, token)
+            self._GLib.idle_add(self._do_response_complete, session_key, text, _turn_token)
         else:
-            self._do_response_complete(session_key, text, token)
+            self._do_response_complete(session_key, text, _turn_token)
 
     def _do_response_complete(self, session_key: str, text: str, complete_token: object = None) -> None:
         """Main-thread portion of _on_response_complete.
