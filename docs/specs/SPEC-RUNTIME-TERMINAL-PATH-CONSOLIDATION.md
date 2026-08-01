@@ -43,7 +43,7 @@ Introduce a per-turn state machine that owns the terminal transition. All `_run_
 2. **Replaces ad-hoc `_dispatch(self._on_*, ...)` + `_auto_save` + `return` triplets** with a single call.
 3. **Defines a `TurnResult` dataclass** (status, text, error, terminal_metadata) that captures everything a terminal callback needs in one struct.
 4. **Defines typed callback protocols** in `agent/callbacks.py` for the 9 runtime→handler callbacks, ending the 3+ known contract-drift failures structurally.
-5. **Removes provider alias debt** (`_call_openai`, `_call_minimax`, `_call_anthropic`, `_stream_*_events`, `_PROVIDER_STREAMERS` dead dispatch — `_PROVIDER_CALLERS` retained for now since it's used by `_call_llm`'s non-streaming path).
+5. **Removes provider alias debt** (`_call_openai`, `_call_minimax`, `_call_anthropic`, `_stream_*_events`, `_PROVIDER_STREAMERS` dead dispatch — `_PROVIDER_CALLERS` retained but its values are migrated from bound-method aliases to direct provider lookups; `_RESPONSE_FORMAT` derivation rewritten to key off `pk == "anthropic"` instead of identity comparison with deleted `_call_anthropic`; consumer migration in `tests/test_agent_runtime.py` and `scripts/audit_*.py` is in scope per BUG #8).
 6. **Replaces test-mock `MagicMock()` patterns** with `create_autospec` for the 3 confirmed contract-drift test sites.
 
 ### 1.3 Scope
