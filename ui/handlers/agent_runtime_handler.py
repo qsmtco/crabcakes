@@ -1774,6 +1774,8 @@ class AgentRuntimeHandler:
 
     def _do_error(self, session_key: str, message: str) -> None:
         """Main-thread portion of _on_error."""
+        # RACE-FIX: Mark session ended IMMEDIATELY (same pattern as _do_response_complete).
+        self._ended_sessions.add(session_key)
         logger.debug("[handler] _do_error: sk=%s msg=%s", session_key, message)
         self._streaming_text.pop(session_key, None)
         self._last_delta_dispatch.pop(session_key, None)
