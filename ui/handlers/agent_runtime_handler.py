@@ -990,11 +990,11 @@ class AgentRuntimeHandler:
         AgentRuntime text delta callback.
         → Start or update a streaming bubble in the UI.
         """
-        gen = self._turn_generation.get(session_key, 0)
+        token = self._turn_tokens.get(session_key)
         if self._GLib is not None:
-            self._GLib.idle_add(self._do_text_delta, session_key, text, gen)
+            self._GLib.idle_add(self._do_text_delta, session_key, text, token)
         else:
-            self._do_text_delta(session_key, text, gen)
+            self._do_text_delta(session_key, text, token)
 
     def _do_text_delta(self, session_key: str, text: str, delta_gen: int | None = None) -> None:
         """Main-thread portion of _on_text_delta.
