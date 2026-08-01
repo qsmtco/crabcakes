@@ -2626,7 +2626,7 @@ class TestStreamAnthropicEvents:
             with patch("agent.llm.anthropic_provider.sse_lines", return_value=iter([
                 b'data: {"type": "message_stop"}\n\n'
             ])):
-                list(_stream_anthropic_events(
+                list(AnthropicProvider().stream(
                     base_url="https://api.anthropic.com",
                     api_key="test-key",
                     model="claude-3-5-sonnet-20241022",
@@ -2729,7 +2729,7 @@ class TestSystemPromptPlacement:
             with patch("agent.llm.anthropic_provider.sse_lines", return_value=iter([
                 b'data: {"type": "message_stop"}\n\n'
             ])):
-                list(_stream_anthropic_events(
+                list(AnthropicProvider().stream(
                     base_url="https://api.anthropic.com",
                     api_key="test",
                     model="claude-3-5-sonnet-20241022",
