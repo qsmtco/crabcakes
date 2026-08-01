@@ -2339,18 +2339,68 @@ The implementer MUST verify each item before declaring done. The verification co
 
 ## 8. ARCHITECTURE.md Updates Required
 
-The `agent/runtime.py` class docstring (replaced in Edit H) is the only documentation change inside the spec's scope. **No new section in `docs/ARCHITECTURE.md` is required** because:
+> **AUDIT FIX (BUG #14).** The previous draft asserted that no
+> `docs/ARCHITECTURE.md` update is required, claiming that the turn
+> state machine is "internal to the runtime" and the `On*` Protocols
+> "are not consumed externally." Both claims are wrong:
+> 1. `agent/callbacks.py` is a **new public module** exporting 9
+>    `Protocol` classes. Public Protocols are architectural surface
+>    even if `runtime_checkable` is not used — they document the
+>    runtime's callback contract and any external code that wants
+>    to provide callbacks (handler implementations, test doubles,
+>    third-party integrations) must satisfy these protocols.
+> 2. The provider alias removal IS a code cleanup, but it's a
+>    cleanup that BREAKS 12+ lines of test/script code (see §2.3
+>    Edit N, O, P). The migration is in scope, but the architectural
+>    fact that the public API of `agent.runtime` is shrinking (the
+>    `_call_*` and `_stream_*_events` names leave the public surface)
+>    is a doc change.
+> 3. The runtime line count of **2205** at the draft's authoring
+>    (2026-07-31) is correct (verified via `wc -l agent/runtime.py`),
+>    but the previous draft's prose said "approximately 2205 lines"
+>    without a verification timestamp. Implementation-time verification
+>    is required (§5 step 7).
 
-- The turn state machine is internal to the runtime — it's an implementation detail, not a public API contract.
-- The `On*` Protocols in `agent/callbacks.py` are referenced from the runtime's `__init__` type hints but not consumed externally. They are formal documentation, not architectural surface.
-- The provider alias removal is a code cleanup with no architectural impact.
+The corrected plan:
 
-**Post-implementation follow-up** (out of scope): a future spec may add `docs/ARCHITECTURE.md §3.21.1` documenting the turn state machine as a public extension point (for custom agent runtimes that want to reuse the state machine without reimplementing it). That work belongs in the deferred `agent/turn.py` extraction spec (§2.5), not this one.
+1. **Add `docs/ARCHITECTURE.md` §3.21.1 "Agent Callback Protocols"**
+   (new subsection of §3.21 "Agent Runtime"). Enumerate the 9
+   `On*` protocols with their signatures and the module location
+   (`agent/callbacks.py`). Note that the protocols are the source of
+   truth for callback contracts.
+
+2. **Update §3.21 "Agent Runtime" to mention the turn state
+   machine** as internal infrastructure. State the 5-state enum
+   (`RUNNING`, `STREAMING`, `COMPLETED`, `FAILED`, `CANCELLED`)
+   and the single `_terminate_turn` chokepoint. Note that
+   `_terminate_turn` is internal (not part of the public API; not
+   a `Protocol`).
+
+3. **Update the public surface list in §3.21** to remove
+   `_call_openai`, `_call_minimax`, `_call_anthropic`,
+   `_stream_*_events`, `_PROVIDER_STREAMERS`. Add `TurnStatus`,
+   `TurnResult` to the public surface (they are exported from
+   `agent.runtime` via the new `__all__`).
+
+4. **Update the `agent/callbacks.py` entry** in the project layout
+   in §2.1 (if present) or add it.
+
+These updates are in scope for this spec. The implementer should
+make them in the same commit as the code changes.
+
+**Post-implementation follow-up** (out of scope): a future spec may
+add `docs/ARCHITECTURE.md §3.21.1.1` documenting the turn state
+machine as a public extension point (for custom agent runtimes that
+want to reuse the state machine without reimplementing it). That
+work belongs in the deferred `agent/turn.py` extraction spec (§2.5),
+not this one.
 
 **Pattern tags** to add to `.crabcakes/coder-bugs.md` after implementation:
 
 - `state-machine-terminal` — when adding a new terminal path to a turn/state machine, route it through the existing `_terminate_turn` function rather than adding a new ad-hoc dispatch site. If `_terminate_turn` doesn't fit, extend it; don't bypass it.
-- `provider-alias-rot` — when extracting a dispatch mechanism (registry, switch, dict), delete the old dispatch symbols in the same commit. Preserved "for test-patch compatibility" is a 1-month smell; if the tests don't use the aliases, neither does the code.
+- `provider-alias-rot` — when extracting a dispatch mechanism (registry, switch, dict), migrate the consumers in the same commit. Preserved "for test-patch compatibility" is a 1-month smell AND a 1-line grep away from being proven to still be in use; if grep returns matches, the migration is in scope.
+- `spec-drift-line-count` — when a spec states a line count or "no external consumers" claim, run the verification (`wc -l` / `grep -rn`) at draft time AND in the same session as implementation; the claim is a falsifiable assertion, not a statement of intent.
+- `turn-token-identity` — when implementing a per-turn state machine, the state MUST be keyed by turn identity (e.g. `(session_key, turn_token)` tuple), not by session_key alone. Cancellation races the new turn; without identity, a stale terminal result can clobber the new turn's state.
 
 ---
 
