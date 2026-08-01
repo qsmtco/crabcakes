@@ -1648,18 +1648,52 @@ class AgentRuntime:
                             # error path (see lines ~1145-1155).
                             logger.warning("[tool-loop] sk=%s stream error with non-empty content: %s",
                                            session_key, error_text)
-                            try:
-                                self._dispatch(self._on_error, session_key, error_text, _turn_token=turn_token)
-                            except Exception as _e:
-                                logger.error("[tool-loop] sk=%s _on_error handler raised %s: %s — continuing",
-                                             session_key, type(_e).__name__, _e)
+                            # Phase 2b Edit D.3: route through _terminate_turn.
+                            # CRITICAL: the explicit `return` after this call is
+                            # MANDATORY (BUG #5). Without it, the code falls through
+                            # to the text-success path below and dispatches BOTH
+                            # on_error AND on_response_complete for the same turn.
+                            # _terminate_turn handles the dispatch (subsumed — it
+                            # already catches handler exceptions in _dispatch) and
+                            # the _auto_save.
+                            self._terminate_turn(TurnResult(
+                                status=TurnStatus.FAILED,
+                                session_key=session_key,
+                                turn_token=turn_token,
+                                error=error_text,
+                                metadata={"reason": "stream_error_with_content", "iteration": iteration},
+                            ))
+                            return
 
                         logger.debug("[tool-loop] sk=%s text-only response, dispatching on_response_complete len=%d",
                                      session_key, len(text_content or ""))
                         conv.add_assistant_message(text_content, [])
-                        self._dispatch(self._on_response_complete, session_key, text_content, _turn_token=turn_token)
-                        self._check_and_stop_on_limit(session_key, conv)
-                        self._auto_save(session_key, conv)
+                        # Phase 2b Edit D.4: _check_and_stop_on_limit is now a
+                        # pure predicate (Edit Q). If a limit is hit, terminate
+                        # FAILED; otherwise terminate COMPLETED. The dispatch
+                        # and _auto_save are subsumed by _terminate_turn.
+                        limit_result = self._check_and_stop_on_limit(session_key, conv)
+                        if limit_result is not None:
+                            stopped_reason, reason_msg = limit_result
+                            conv.add_assistant_message(f"[stopped: {reason_msg}]", [])
+                            self._terminate_turn(TurnResult(
+                                status=TurnStatus.FAILED,
+                                session_key=session_key,
+                                turn_token=turn_token,
+                                error=reason_msg,
+                                metadata={"reason": stopped_reason, "iteration": iteration},
+                            ))
+                            return
+                        self._terminate_turn(TurnResult(
+                            status=TurnStatus.COMPLETED,
+                            session_key=session_key,
+                            turn_token=turn_token,
+                            text=text_content,
+                            metadata={
+                                "fallback_used": getattr(conv, "_fallback_attempted", False),
+                                "stream_error": response.get("_stream_error"),
+                            },
+                        ))
                         return
 
                     # Tool calls — execute each
@@ -1808,25 +1842,57 @@ class AgentRuntime:
                         )
 
                     # Check cost/step limits after tool execution
-                    if self._check_and_stop_on_limit(session_key, conv):
+                    # Phase 2b Edit D.7: _check_and_stop_on_limit is now a pure
+                    # predicate (Edit Q). On hit, route through _terminate_turn
+                    # with FAILED status. The conv.add_assistant_message +
+                    # _auto_save are subsumed by _terminate_turn's terminal
+                    # transition (FAILED always persists).
+                    limit_result = self._check_and_stop_on_limit(session_key, conv)
+                    if limit_result is not None:
+                        stopped_reason, reason_msg = limit_result
+                        conv.add_assistant_message(f"[stopped: {reason_msg}]", [])
+                        self._terminate_turn(TurnResult(
+                            status=TurnStatus.FAILED,
+                            session_key=session_key,
+                            turn_token=turn_token,
+                            error=reason_msg,
+                            metadata={"reason": stopped_reason, "iteration": iteration},
+                        ))
                         return
 
                 # Max iterations reached
+                # Phase 2b Edit D.5: route through _terminate_turn. No explicit
+                # return needed — control falls out of the while loop and the
+                # function ends after the finally block. The original code had
+                # no return here either.
                 conv.add_assistant_message("[max tool iterations reached]", [])
-                self._dispatch(self._on_error, session_key, "Max tool iterations reached", _turn_token=turn_token)
-                self._auto_save(session_key, conv)
+                self._terminate_turn(TurnResult(
+                    status=TurnStatus.FAILED,
+                    session_key=session_key,
+                    turn_token=turn_token,
+                    error="Max tool iterations reached",
+                    metadata={"reason": "max_iterations", "iterations": max_iter},
+                ))
 
             except Exception as e:
                 logger.exception("Error in tool loop for %s", session_key)
-                # QTR-FIX: persist whatever partial progress was made before the
-                # exception so the next /resume / restart can recover it instead of
-                # silently dropping the in-memory conversation. conv is in scope
-                # from the surrounding `with self._lock` block above.
-                try:
-                    self._auto_save(session_key, conv)
-                except Exception:
-                    logger.exception("Failed to auto_save after tool-loop error for %s", session_key)
-                self._dispatch(self._on_error, session_key, e, _turn_token=turn_token)
+                # Phase 2b Edit D.6: route through _terminate_turn. The
+                # _auto_save is subsumed (FAILED always persists per
+                # _terminate_turn's contract) and the dispatch is subsumed
+                # (handler exceptions are caught by _terminate_turn's internal
+                # _dispatch wrapper). Conv may be undefined if the exception
+                # happened before the conv resolution — guard with the local
+                # name rebind.
+                # The original QTR-FIX noted that partial progress must be
+                # persisted; _terminate_turn's persistence path handles this
+                # via _auto_save on FAILED.
+                self._terminate_turn(TurnResult(
+                    status=TurnStatus.FAILED,
+                    session_key=session_key,
+                    turn_token=turn_token,
+                    error=e,
+                    metadata={"reason": "exception", "exception_type": type(e).__name__},
+                ))
         finally:
             # FIX-CLEAR-ASK-RACE: always release the active-loop marker, even
             # on exception or early return, so a crashed loop doesn't block
