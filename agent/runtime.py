@@ -669,7 +669,7 @@ class AgentRuntime:
                     ev = self._pending_approvals[sk]["event"]
                     self._pending_approvals[sk]["result"] = None
                     ev.set()
-            self._dispatch(self._on_error, session_key, "Cancelled by user", _turn_token=turn_token)
+            self._dispatch(self._on_error, session_key, "Cancelled by user", _turn_token=self._turn_token)
             logger.info("Cancelled session %s", session_key)
         # §E: Clean up stuck-detection history when conversation ends
         self._cleanup_tool_history(session_key)
