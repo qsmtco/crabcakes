@@ -1513,7 +1513,15 @@ class AgentRuntimeHandler:
         agent_def = self._agents.get(session_key)
         resolved_name = agent_def.display_name if agent_def else None
 
-        # Phase C: Extract crabcards from streaming text before end_streaming
+        # RACE-FIX: The authoritative full text is the `text` argument from the
+        # runtime (the complete LLM response). sb.plain_text may be stale if the
+        # handler's throttle skipped update_streaming calls for later chunks.
+        # Overwrite sb.plain_text with the full text BEFORE crabcard extraction
+        # so _finalize always renders the complete message.
+        if was_streaming and text:
+            self._crh.set_streaming_text(session_key, text)
+
+        # Phase C: Extract crabcards from the authoritative text before end_streaming
         if was_streaming and project_name and self._fh is not None:
             from utils.crabcard_parser import extract_crabcards
             full_text = self._crh.get_streaming_text(session_key) or ""
@@ -1536,13 +1544,6 @@ class AgentRuntimeHandler:
         # bubble render — the streaming widget is cleaned up, but no empty header
         # bubble is created. end_streaming's render=False does the cleanup only.
         streaming_text = self._crh.get_streaming_text(session_key) or ""
-        # RACE-FIX: The authoritative full text is the `text` argument from the
-        # runtime (the complete LLM response). sb.plain_text may be stale if the
-        # handler's throttle skipped update_streaming calls for later chunks.
-        # Overwrite sb.plain_text with the full text so _finalize renders correctly.
-        if was_streaming and text and len(text) > len(streaming_text):
-            self._crh.set_streaming_text(session_key, text)
-            streaming_text = text
         self._crh.end_streaming(
             session_key,
             agent_name=resolved_name,
