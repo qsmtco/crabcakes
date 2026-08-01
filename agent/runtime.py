@@ -875,7 +875,7 @@ class AgentRuntime:
             messages_for_call = self._inject_kb_context(messages, kb_context, text)
         return messages_for_call, kb_context, new_cache
 
-    def _run_loop(self, session_key: str, text: str) -> None:
+    def _run_loop(self, session_key: str, text: str, turn_token: object = None) -> None:
         """Background thread: run the full tool loop for one user message."""
         # FIX-CLEAR-ASK-RACE: mark this session as having an active loop so
         # clear_conversation() can refuse to wipe it mid-turn. Cleared in the
