@@ -104,14 +104,17 @@ class AgentRuntimeHandler:
         # BUG #2: Track sessions that have ended (cancel/error/complete) to prevent
         # orphan tool_start bubbles from stale idle_add dispatches.
         self._ended_sessions: set[str] = set()
-        # RACE-FIX v3: per-session turn generation. Incremented at the TOP of
-        # _do_response_complete and _do_error (main thread, synchronously).
-        # Deltas capture the generation when _on_text_delta runs (main thread).
-        # A delta with an old generation (from a previous turn) is dropped.
-        self._turn_generation: dict[str, int] = {}
-        # RACE-FIX v3: track which (session_key, generation) pairs have already
-        # been completed. Prevents duplicate completion from rendering twice.
-        self._completed_turns: set[tuple[str, int]] = set()
+        # RACE-FIX v4: per-session completion flag. Set at the TOP of
+        # _do_response_complete and _do_error (main thread). Prevents
+        # duplicate completion from rendering two bubbles. Cleared by
+        # send_to_special_agent on the next turn.
+        self._session_completed: set[str] = set()
+        # RACE-FIX v4: per-session turn token. A unique object assigned in
+        # send_to_special_agent. Both deltas and completion capture it.
+        # A delta with a mismatched token (from a previous turn) is dropped.
+        # Unlike a counter, the token does NOT change at completion time,
+        # so same-turn deltas are never wrongly dropped.
+        self._turn_tokens: dict[str, object] = {}
         # BUG #14: track sessions that have started a tool-only turn (no text delta)
         # so _ended_sessions can be cleared on the first tool_start of a new turn
         # while preserving stale-call suppression for previous-turn dispatches.
