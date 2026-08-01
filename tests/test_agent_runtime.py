@@ -4677,9 +4677,13 @@ class TestStreamErrorIntegration:
 
     def test_stream_error_fallback_path(self):
         """_stream_error attached via fallback path (no done event).
-        With BUG #3 fix: on_error IS called even with non-empty content,
-        but the partial text is preserved in the response (not polluted
-        with the warning text)."""
+        Phase 2b (BUG #5 fix): the turn terminates FAILED via
+        _terminate_turn; on_error IS called with the 503, and the partial
+        text accumulated from text_delta is NOT persisted to the
+        conversation (the prior fall-through to the text-success path,
+        which preserved partial text but ALSO dispatched on_response_complete
+        for the same turn, is the bug BUG #5 documents).
+        """
         from agent.llm.streaming import SSEEvent
         from unittest.mock import MagicMock
 
@@ -4695,8 +4699,6 @@ class TestStreamErrorIntegration:
 
         mock_provider = MagicMock()
         # No done event — stream ends after text + error event (fallback path)
-        # Content is non-empty; on_error IS called (BUG #3 fix) but the partial
-        # text is preserved
         mock_provider.stream.return_value = iter([
             SSEEvent(type="text_delta", data={"content": "Partial text"}),
             SSEEvent(type="error", data={"error": {"code": 503, "message": "Service unavailable"}}),
@@ -4715,11 +4717,20 @@ class TestStreamErrorIntegration:
         )
         conv = rt.get_conversation(sk)
         assert conv is not None
-        # Verify the partial text made it through WITHOUT the warning pollution
-        assert "Partial text" in conv.messages[-1].content
-        assert "Warning" not in conv.messages[-1].content, (
-            "BUG #3: warning text should not be appended to conversation content"
+        # BUG #5 fix: the partial text is NOT preserved. The previous
+        # behavior fell through to the text-success path which called
+        # conv.add_assistant_message(text_content, []), preserving the
+        # partial text. That fall-through also dispatched on_response_complete
+        # for the same turn, which is the BUG #5 behavior change. The new
+        # behavior terminates the turn FAILED via _terminate_turn and the
+        # partial text is discarded.
+        last = conv.messages[-1]
+        assert last.role == "user", (
+            f"Expected last message to be the original user message (no "
+            f"partial-text assistant message should have been added), got: "
+            f"role={last.role}, content={last.content!r}"
         )
+        assert "Partial text" not in last.content
         rt.stop()
 
     def test_stream_error_fallback_empty_content(self):
