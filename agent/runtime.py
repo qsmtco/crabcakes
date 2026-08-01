@@ -712,8 +712,17 @@ class AgentRuntime:
                 return None
 
             # Accepted transition — record state + result under the lock.
+            # Also record the active token for this session (BUG #4): if no
+            # token was previously set (e.g. _terminate_turn is called
+            # before _run_loop's RUNNING init — as in tests, or in a
+            # direct external call), the accessors get_turn_state() and
+            # get_last_turn_result() need to know which token is the
+            # "active" one. Without this, get_turn_state(sk) would
+            # return None even after a successful transition.
             self._turn_state[state_key] = result.status
             self._turn_results[state_key] = result
+            if self._turn_tokens.get(sk) is None:
+                self._turn_tokens[sk] = tk
 
         # Dispatch the appropriate callback. This happens OUTSIDE the
         # state lock so a slow handler does not block other state
