@@ -248,7 +248,7 @@ class TestToolLoop:
         rt.create_conversation("Coder", sk, "/tmp")
 
         received = []
-        def mock(sk, msgs, tools):
+        def mock(sk, msgs, tools, **kwargs):
             received.append(msgs)
             return _resp("Done.")
 
@@ -523,7 +523,7 @@ class TestToolLoop:
         rt.create_conversation("Coder", sk, "/tmp")
 
         call_num = [0]
-        def mock_caller(sk, msgs, tools):
+        def mock_caller(sk, msgs, tools, **kwargs):
             call_num[0] += 1
             has_tool = any(m.get("role") == "tool" for m in msgs)
             if call_num[0] == 1:
@@ -576,7 +576,7 @@ class TestToolLoop:
         rt.create_conversation("Coder", sk, "/tmp")
 
         call_count = [0]
-        def mock_caller(sk, msgs, tools):
+        def mock_caller(sk, msgs, tools, **kwargs):
             call_count[0] += 1
             return _resp(tool_calls=[{
                 "id": f"c{call_count[0]}",
@@ -1075,7 +1075,7 @@ class TestCostLimit:
         errors = []
         rt._on_error = lambda sk2, msg: errors.append(msg)
 
-        def mock_caller(sk, msgs, tools):
+        def mock_caller(sk, msgs, tools, **kwargs):
             return {
                 "choices": [{"message": {"content": "Done."}}],
                 "usage": {"prompt_tokens": 1000, "completion_tokens": 1000},
@@ -2220,7 +2220,7 @@ class TestStuckMessageTransient:
             {"id": "c1", "function": {"name": "read_file", "arguments": '{"path": "test.py"}'}}
         ]), _resp("Done.")]
         call_idx = [0]
-        def mock_call_llm(sk, msgs, tools):
+        def mock_call_llm(sk, msgs, tools, **kwargs):
             r = responses[min(call_idx[0], len(responses) - 1)]
             call_idx[0] += 1
             return r
