@@ -867,7 +867,13 @@ class AgentRuntimeHandler:
         # in _do_text_delta.
         self._ended_sessions.discard(session_key)
         self._session_completed.discard(session_key)
-        self._turn_tokens[session_key] = object()  # unique sentinel per turn
+        # RACE-FIX v4b: Assign a new turn token ON THE RUNTIME object.
+        # _dispatch captures this token at call time (background thread, stable).
+        # The handler's _on_* callbacks receive it as a kwarg — they don't
+        # read from a mutable dict that could change between dispatch and execution.
+        new_token = object()
+        self._turn_tokens[session_key] = new_token
+        rt._turn_token = new_token
 
         rt.send_message(session_key, text)
 
