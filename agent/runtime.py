@@ -1684,6 +1684,40 @@ class AgentRuntime:
         with self._lock:
             return session_key in self._active_loops
 
+    def get_last_turn_result(self, session_key: str) -> TurnResult | None:
+        """Return the most recent terminal ``TurnResult`` for ``session_key``.
+
+        Returns the ``TurnResult`` for the session's currently active turn
+        token. If no terminal transition has occurred for the active token
+        (turn is still RUNNING or STREAMING, or no turn has been
+        attempted), returns ``None``.
+
+        Used by the handler for observability and by tests to assert on
+        terminal state. Thread-safe via `_state_lock`.
+
+        Note: results for stale tokens (a prior turn that has since been
+        superseded by a new ``send_message()``) are NOT returned; only
+        the active token's result is exposed.
+        """
+        with self._state_lock:
+            tk = self._turn_tokens.get(session_key)
+            if tk is None:
+                return None
+            return self._turn_results.get((session_key, tk))
+
+    def get_turn_state(self, session_key: str) -> TurnStatus | None:
+        """Return the current ``TurnStatus`` for ``session_key``'s active turn
+        token, or ``None`` if no turn is active.
+
+        Thread-safe via `_state_lock`. Returns the status of the session's
+        currently active token only.
+        """
+        with self._state_lock:
+            tk = self._turn_tokens.get(session_key)
+            if tk is None:
+                return None
+            return self._turn_state.get((session_key, tk))
+
 
     def _dispatch_approval(self, session_key: str, tool_name: str, args: dict) -> bool | None:
         """
