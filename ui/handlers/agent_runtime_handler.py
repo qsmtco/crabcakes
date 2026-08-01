@@ -1803,14 +1803,12 @@ class AgentRuntimeHandler:
 
     def _do_error(self, session_key: str, message: str) -> None:
         """Main-thread portion of _on_error."""
-        # RACE-FIX v3: Mark session ended + increment generation (same as _do_response_complete).
+        # RACE-FIX v4: Mark session ended + completed (same as _do_response_complete).
         self._ended_sessions.add(session_key)
-        gen = self._turn_generation.get(session_key, 0)
-        self._turn_generation[session_key] = gen + 1
-        if (session_key, gen) in self._completed_turns:
-            logger.debug("_do_error: duplicate completion for %s gen %d, skipping", session_key, gen)
+        if session_key in self._session_completed:
+            logger.debug("_do_error: duplicate completion for %s, skipping", session_key)
             return
-        self._completed_turns.add((session_key, gen))
+        self._session_completed.add(session_key)
 
         logger.debug("[handler] _do_error: sk=%s msg=%s", session_key, message)
         self._streaming_text.pop(session_key, None)
