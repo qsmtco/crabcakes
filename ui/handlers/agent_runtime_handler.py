@@ -862,6 +862,8 @@ class AgentRuntimeHandler:
         # was cleared inside _do_text_delta, which allowed stale deltas from the
         # previous turn to clear the flag and start a phantom streaming bubble.
         self._ended_sessions.discard(session_key)
+        # RACE-FIX v3: Clear turn tracking for the new turn.
+        self._completed_turns.discard((session_key, self._turn_generation.get(session_key, 0)))
 
         rt.send_message(session_key, text)
 
@@ -1018,6 +1020,20 @@ class AgentRuntimeHandler:
                 "_do_text_delta: dropping delta for ended session %s", session_key,
             )
             return
+        # RACE-FIX v3: If this delta belongs to a previous turn (generation
+        # mismatch), drop it. This handles the cross-turn case where
+        # send_to_special_agent cleared _ended_sessions for the new turn
+        # but a stale delta from the old turn is still in the idle queue.
+        # delta_gen=None means a 2-arg caller (backward-compat tests) —
+        # treat as current generation (never stale).
+        if delta_gen is not None:
+            current_gen = self._turn_generation.get(session_key, 0)
+            if delta_gen < current_gen:
+                logger.debug(
+                    "_do_text_delta: dropping stale delta (gen %d < current %d) for %s",
+                    delta_gen, current_gen, session_key,
+                )
+                return
         # Always accumulate text — ensures final output is complete
         self._streaming_text[session_key] = self._streaming_text.get(session_key, "") + text
 
@@ -1449,18 +1465,23 @@ class AgentRuntimeHandler:
         build_role_bubble's header condition (chat_bubble.py:284) is satisfied.
         Without this, local agent bubbles render the body but no name/dot/timestamp.
         """
+        # RACE-FIX v3: Mark session ended + increment generation BEFORE any
+        # rendering work or early returns. This ensures:
+        # 1. Stale deltas see the flag (regardless of idle ordering)
+        # 2. The generation bump happens on the main thread (deterministic)
+        # 3. Even if _crh is None, the flag is set (fixes early-return gap)
+        self._ended_sessions.add(session_key)
+        gen = self._turn_generation.get(session_key, 0)
+        self._turn_generation[session_key] = gen + 1
+        # Idempotency: if this (session, gen) was already completed, skip.
+        # Prevents duplicate completion from rendering two bubbles.
+        if (session_key, gen) in self._completed_turns:
+            logger.debug("_do_response_complete: duplicate completion for %s gen %d, skipping", session_key, gen)
+            return
+        self._completed_turns.add((session_key, gen))
+
         if self._crh is None:
             return
-
-        # RACE-FIX: Mark session ended IMMEDIATELY — before any rendering work.
-        # This ensures stale _do_text_delta callbacks (queued before this
-        # callback but running after it, or running earlier in the same idle
-        # cycle) see the flag and bail out. Previously this was at the END of
-        # the method (line ~1542), which was too late: a stale delta could
-        # run between end_streaming and the flag being set, starting a phantom
-        # streaming bubble. The flag is cleared by send_to_special_agent on
-        # the next turn.
-        self._ended_sessions.add(session_key)
 
         # Clear accumulated streaming text — no longer needed
         self._streaming_text.pop(session_key, None)
@@ -1783,8 +1804,15 @@ class AgentRuntimeHandler:
 
     def _do_error(self, session_key: str, message: str) -> None:
         """Main-thread portion of _on_error."""
-        # RACE-FIX: Mark session ended IMMEDIATELY (same pattern as _do_response_complete).
+        # RACE-FIX v3: Mark session ended + increment generation (same as _do_response_complete).
         self._ended_sessions.add(session_key)
+        gen = self._turn_generation.get(session_key, 0)
+        self._turn_generation[session_key] = gen + 1
+        if (session_key, gen) in self._completed_turns:
+            logger.debug("_do_error: duplicate completion for %s gen %d, skipping", session_key, gen)
+            return
+        self._completed_turns.add((session_key, gen))
+
         logger.debug("[handler] _do_error: sk=%s msg=%s", session_key, message)
         self._streaming_text.pop(session_key, None)
         self._last_delta_dispatch.pop(session_key, None)
