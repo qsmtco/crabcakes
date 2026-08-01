@@ -635,25 +635,27 @@ class TestToolLoop:
             with caplog.at_level(logging.WARNING, logger="agent.runtime"):
                 rt._run_loop(sk, "list files")
 
-        # Find the persisted assistant message
-        conv = rt.get_conversation(sk)
+        # Find the persisted assistant messages. With a 2-response sequence
+        # (tool-call first, then text), the FIRST assistant message has the
+        # substituted placeholder; the last is the text response.
         asst_msgs = [m for m in conv.messages if m.role.value == "assistant"]
         assert asst_msgs, f"Expected assistant message; got: {conv.messages}"
 
-        # The content is the substituted placeholder, NOT empty
-        last_asst = asst_msgs[-1]
-        assert last_asst.content, (
+        # The FIRST assistant message is the tool-call response with the
+        # substituted placeholder (not empty content).
+        placeholder_msg = asst_msgs[0]
+        assert placeholder_msg.content, (
             f"Expected non-empty content (placeholder substituted); got empty. "
             f"messages: {[(m.role.value, m.content) for m in conv.messages]}"
         )
-        assert last_asst.content == "[calling tools]", (
-            f"Expected '[calling tools]' placeholder; got: {last_asst.content!r}"
+        assert placeholder_msg.content == "[calling tools]", (
+            f"Expected '[calling tools]' placeholder; got: {placeholder_msg.content!r}"
         )
 
         # And the tool_calls are intact (semantics preserved)
-        assert last_asst.tool_calls, (
+        assert placeholder_msg.tool_calls, (
             f"Expected tool_calls preserved on the substituted message; got: "
-            f"{last_asst.tool_calls}"
+            f"{placeholder_msg.tool_calls}"
         )
 
         # The WARNING was emitted so provider issues are detectable
