@@ -654,7 +654,7 @@ class AgentRuntime:
         if conv is not None:
             conv._fallback_attempted = False
 
-        t = threading.Thread(target=self._run_loop, args=(session_key, text), daemon=True)
+        t = threading.Thread(target=self._run_loop, args=(session_key, text, self._turn_token), daemon=True)
         t.start()
 
     def cancel(self, session_key: str) -> None:
