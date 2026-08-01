@@ -669,7 +669,7 @@ class AgentRuntime:
                     ev = self._pending_approvals[sk]["event"]
                     self._pending_approvals[sk]["result"] = None
                     ev.set()
-            self._dispatch(self._on_error, session_key, "Cancelled by user")
+            self._dispatch(self._on_error, session_key, "Cancelled by user", _turn_token=turn_token)
             logger.info("Cancelled session %s", session_key)
         # §E: Clean up stuck-detection history when conversation ends
         self._cleanup_tool_history(session_key)
@@ -888,7 +888,7 @@ class AgentRuntime:
                     return
                 conv = self._conversations.get(session_key)
                 if conv is None:
-                    self._dispatch(self._on_error, session_key, "No conversation found")
+                    self._dispatch(self._on_error, session_key, "No conversation found", _turn_token=turn_token)
                     return
 
             # BUG #13 — Deferred prompt build. If create_conversation was called
@@ -898,7 +898,7 @@ class AgentRuntime:
             try:
                 self._ensure_system_prompt(session_key)
             except Exception as e:
-                self._dispatch(self._on_error, session_key, e)
+                self._dispatch(self._on_error, session_key, e, _turn_token=turn_token)
                 return
 
             # BUG #21: Fire a turn-start signal BEFORE any LLM call or tool processing.
@@ -909,7 +909,7 @@ class AgentRuntime:
             # delta of a turn (is_streaming is False), and the empty content is a
             # harmless no-op for text accumulation.
             if self._on_text_delta:
-                self._dispatch(self._on_text_delta, session_key, "")
+                self._dispatch(self._on_text_delta, session_key, "", _turn_token=turn_token)
 
             try:
                 # Step 1: add user message
@@ -930,13 +930,13 @@ class AgentRuntime:
                     # Check immediate cancel signal first
                     if self._cancel_requested:
                         self._cancel_requested = False
-                        self._dispatch(self._on_error, session_key, "Cancelled")
+                        self._dispatch(self._on_error, session_key, "Cancelled", _turn_token=turn_token)
                         return
                     # Check cancellation before each iteration
                     with self._lock:
                         if session_key in self._cancelled:
                             self._cancelled.discard(session_key)
-                            self._dispatch(self._on_error, session_key, "Cancelled")
+                            self._dispatch(self._on_error, session_key, "Cancelled", _turn_token=turn_token)
                             return
                     iteration += 1
                     logger.debug("[tool-loop] sk=%s iteration=%d/%d", session_key, iteration, max_iter)
@@ -1165,7 +1165,7 @@ class AgentRuntime:
                             # with another empty response (which would add duplicate
                             # placeholders until max_iterations_enforced trips).
                             try:
-                                self._dispatch(self._on_error, session_key, error_text)
+                                self._dispatch(self._on_error, session_key, error_text, _turn_token=turn_token)
                             except Exception as _e:
                                 logger.error("[tool-loop] sk=%s _on_error handler raised %s: %s — continuing with save+return",
                                              session_key, type(_e).__name__, _e)
@@ -1253,7 +1253,7 @@ class AgentRuntime:
                             logger.warning("[tool-loop] sk=%s stream error with non-empty content: %s",
                                            session_key, error_text)
                             try:
-                                self._dispatch(self._on_error, session_key, error_text)
+                                self._dispatch(self._on_error, session_key, error_text, _turn_token=turn_token)
                             except Exception as _e:
                                 logger.error("[tool-loop] sk=%s _on_error handler raised %s: %s — continuing",
                                              session_key, type(_e).__name__, _e)
@@ -1261,7 +1261,7 @@ class AgentRuntime:
                         logger.debug("[tool-loop] sk=%s text-only response, dispatching on_response_complete len=%d",
                                      session_key, len(text_content or ""))
                         conv.add_assistant_message(text_content, [])
-                        self._dispatch(self._on_response_complete, session_key, text_content)
+                        self._dispatch(self._on_response_complete, session_key, text_content, _turn_token=turn_token)
                         self._check_and_stop_on_limit(session_key, conv)
                         self._auto_save(session_key, conv)
                         return
@@ -1417,7 +1417,7 @@ class AgentRuntime:
 
                 # Max iterations reached
                 conv.add_assistant_message("[max tool iterations reached]", [])
-                self._dispatch(self._on_error, session_key, "Max tool iterations reached")
+                self._dispatch(self._on_error, session_key, "Max tool iterations reached", _turn_token=turn_token)
                 self._auto_save(session_key, conv)
 
             except Exception as e:
@@ -1430,7 +1430,7 @@ class AgentRuntime:
                     self._auto_save(session_key, conv)
                 except Exception:
                     logger.exception("Failed to auto_save after tool-loop error for %s", session_key)
-                self._dispatch(self._on_error, session_key, e)
+                self._dispatch(self._on_error, session_key, e, _turn_token=turn_token)
         finally:
             # FIX-CLEAR-ASK-RACE: always release the active-loop marker, even
             # on exception or early return, so a crashed loop doesn't block
@@ -1698,7 +1698,7 @@ class AgentRuntime:
                 text = ev.data.get("content") or ""
                 full_content += text
                 if self._on_text_delta:
-                    self._dispatch(self._on_text_delta, session_key, text)
+                    self._dispatch(self._on_text_delta, session_key, text, _turn_token=turn_token)
 
             elif ev.type == "tool_call_delta":
                 # PHASE-11.5: default to 0 if streamer omits 'index' (e.g. Anthropic
@@ -1877,7 +1877,7 @@ class AgentRuntime:
 
         if stopped:
             conv.add_assistant_message(f"[stopped: {reason}]", [])
-            self._dispatch(self._on_error, session_key, reason)
+            self._dispatch(self._on_error, session_key, reason, _turn_token=turn_token)
             self._auto_save(session_key, conv)
 
         return stopped
