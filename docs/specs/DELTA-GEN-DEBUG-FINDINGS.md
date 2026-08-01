@@ -1,42 +1,41 @@
 # Delta Generation Debug Findings
 
-## Root cause: a partial stream can become the “streaming” path
+## Exact idle-queue ordering: all deltas are dropped
 
-The generation counter does drop all queued deltas that were captured before completion, but that is not by itself the truncation mechanism. The visible `Type` result occurs when the first `_do_text_delta` happens to run before the completion callback, while later deltas run after completion.
+The generation guard does drop **all** text deltas on the first turn when the runtime uses its two-stage dispatch. The queue is FIFO (same default GLib idle priority), so newly-added callbacks go behind callbacks already queued.
 
-Exact main-thread ordering for the observed symptom:
+For chunks `"Type"`, `" test…"`, then completion:
 
-1. Runtime `_dispatch(_on_text_delta, "Type")` queues an idle wrapper **#1**.
-2. Runtime `_dispatch(_on_text_delta, " test…")` queues wrapper **#2**.
-3. Runtime `_dispatch(_on_response_complete, full_text)` queues wrapper **#3**.
-4. Wrapper **#1** runs `_on_text_delta`. It captures generation `0` and queues `_do_text_delta("Type", 0)` as **#4**.
-5. **#4 runs before #3**. `_do_text_delta` sees `0 == current_gen(0)`, appends `Type`, and starts the ChatRenderHandler streaming bubble. The bubble's `plain_text` is now `Type`.
-6. Wrapper **#2** runs and queues `_do_text_delta(" test…", 0)` as **#5** (or #5 may already be queued; the relevant fact is it executes after completion).
-7. Wrapper **#3** runs `_on_response_complete`, increments generation to `1`, and queues `_do_response_complete` as **#6**.
-8. **#5** runs: `0 < current_gen(1)`, so it is dropped.
-9. **#6** runs: `was_streaming = True`, because #4 already created the bubble. It calls `end_streaming(render=True)`. That finalizer renders `sb.plain_text`, which is only `Type`.
+1. Runtime background thread calls `_dispatch(_on_text_delta, "Type")`: runtime queues wrapper **A1**.
+2. Runtime queues wrapper **A2** for the next delta.
+3. Runtime queues wrapper **A3** for `_on_response_complete(full_text)`.
+4. Main thread runs **A1**. `_on_text_delta` reads generation `0`, then queues `_do_text_delta("Type", 0)` as **B1**. Existing A2 and A3 remain ahead of B1.
+5. Main thread runs **A2**. It queues `_do_text_delta(" test…", 0)` as **B2**. Queue is now A3, B1, B2.
+6. Main thread runs **A3**. `_on_response_complete` increments generation from `0` to `1`, then queues `_do_response_complete(full_text)` as **C1**. Queue is now B1, B2, C1.
+7. B1 runs: `delta_gen=0 < current_gen=1`, so it is dropped.
+8. B2 runs: same check, so it is dropped.
+9. C1 runs. `was_streaming` is false because no accepted delta reached `_crh.start_streaming()`.
 
-The full `text` argument is deliberately ignored in this branch: `_do_response_complete` only uses `text` for the `not was_streaming` fallback. Therefore the final bubble is truncated to the first delta that won the scheduling race.
+Thus the suspected guard does not selectively remove late deltas: in this normal burst, it removes every delta because every B callback captured generation 0 before A3 advanced it.
 
-## Why the “all dropped => full fallback” reasoning is insufficient
+## Consequence: this does *not* explain a visible `Type` by itself
 
-If completion (#3) runs before every `_do_text_delta`, then `was_streaming` is false and the `not was_streaming and text` branch at `agent_runtime_handler.py:1507-1527` does render the full response. That ordering is correct.
+With all deltas dropped, `_do_response_complete` takes the non-streaming branch at `agent_runtime_handler.py:1507-1527` and renders its authoritative `text` argument (`full_text`). The full-text fallback is not conditional on `_streaming_text`; it should produce the complete bubble.
 
-The failure is the mixed ordering above: one delta runs before completion and starts streaming; the generation increment then drops the rest. Once `was_streaming` is true, the full-text fallback is not entered. This explains both the first-word truncation and why it can appear timing-dependent.
+A `Type`-only bubble requires a different ordering/state: at least one `_do_text_delta` must be accepted before completion, thereby creating a streaming bubble, while later deltas are dropped. However, with the shown two-stage `GLib.idle_add` FIFO ordering, B1/B2 are behind A3, so that mixed ordering cannot arise from this callback chain alone. If logs show `was_streaming=True` and only `Type`, another producer/callback or a pre-existing streaming bubble is involved (or queue priorities differ from the default FIFO assumption).
 
-## Relevant code evidence
+## Code evidence
 
-- `ui/handlers/agent_runtime_handler.py:978-980`: captures generation in `_on_text_delta`, then adds a second idle callback.
-- `ui/handlers/agent_runtime_handler.py:1007-1013`: drops captured generation `0` after completion has advanced current generation to `1`; accumulation occurs only after this check.
-- `ui/handlers/agent_runtime_handler.py:1015-1018`: the first accepted delta starts the streaming bubble.
-- `ui/handlers/agent_runtime_handler.py:1417-1421`: completion advances generation before queuing `_do_response_complete`.
-- `ui/handlers/agent_runtime_handler.py:1451`: completion samples `is_streaming()` after the race.
-- `ui/handlers/agent_runtime_handler.py:1486-1490`: streaming branch finalizes the ChatRenderHandler buffer and chooses render based on its accumulated text.
-- `ui/handlers/agent_runtime_handler.py:1507-1527`: full `text` fallback is conditional on `not was_streaming`.
-- `ui/handlers/chat_render_handler.py:461-462`: accepted updates replace `sb.plain_text`; after only #4, it is `Type`.
-- `ui/handlers/chat_render_handler.py:570-605`: `end_streaming` renders `sb.plain_text`, not the completion callback's `text` argument.
-- `agent/runtime.py:419-425`: each callback is itself wrapped in `GLib.idle_add`, creating the two-stage idle queue.
+- `agent/runtime.py:419-425`: every runtime callback is wrapped in `GLib.idle_add`; this creates A callbacks.
+- `ui/handlers/agent_runtime_handler.py:978-980`: each A delta callback queues a second idle callback and captures generation 0.
+- `ui/handlers/agent_runtime_handler.py:1417-1421`: A3 advances generation before queueing C1.
+- `ui/handlers/agent_runtime_handler.py:1007-1013`: B callbacks are rejected before accumulation/start-streaming.
+- `ui/handlers/agent_runtime_handler.py:1015-1018`: therefore no streaming bubble is created in the all-dropped ordering.
+- `ui/handlers/agent_runtime_handler.py:1451`: C1 observes `was_streaming=False`.
+- `ui/handlers/agent_runtime_handler.py:1507-1527`: C1 renders the full completion `text`.
+- `ui/handlers/chat_render_handler.py:461-462`: only an accepted delta can populate `sb.plain_text`; dropped deltas cannot leave `Type` there.
+- `ui/handlers/chat_render_handler.py:570-605`: the streaming finalizer renders only `sb.plain_text`, relevant only if a streaming bubble was already active.
 
 ## Conclusion
 
-The generation guard is placed at the wrong abstraction boundary for this two-stage dispatch. Completion can advance the generation between the first-stage callback and its second-stage delta callback. A single early delta is enough to set `was_streaming=True`; all subsequent captured-generation deltas are then discarded, and completion finalizes that partial buffer instead of rendering the authoritative full response.
+The generation fix has a real bug: it drops all queued deltas in the ordinary two-stage FIFO burst. It does **not**, on the code shown, account for the reported `Type`-only final bubble; that symptom requires proving `was_streaming=True` (or locating another callback path/queue priority). Instrument the A/B/C callbacks with sequence numbers and log `was_streaming`, `text_len`, and `sb.plain_text` immediately before `end_streaming` to distinguish these cases.
