@@ -104,10 +104,6 @@ class AgentRuntimeHandler:
         # BUG #2: Track sessions that have ended (cancel/error/complete) to prevent
         # orphan tool_start bubbles from stale idle_add dispatches.
         self._ended_sessions: set[str] = set()
-        # RACE-FIX: per-session generation counter. Incremented on each
-        # _on_response_complete. Deltas capture the generation at dispatch
-        # time; stale deltas (old generation) are dropped in _do_text_delta.
-        self._delta_generation: dict[str, int] = {}
         # BUG #14: track sessions that have started a tool-only turn (no text delta)
         # so _ended_sessions can be cleared on the first tool_start of a new turn
         # while preserving stale-call suppression for previous-turn dispatches.
