@@ -388,7 +388,28 @@ from enum import Enum  # if not already imported
 
 **Verified against source:** `agent/runtime.py:30-50` has the existing import block. `dataclass` is imported (used in `StreamingCallKwargs`). `Enum` may or may not be; check with `grep -n "from enum\|^import enum" agent/runtime.py` and add if missing.
 
-**Edit B: Add `_turn_state: dict[str, TurnStatus]` and `_turn_results: dict[str, TurnResult]` to `__init__`** (after `_active_loops` declaration at line 369):
+**Edit B: Add `_turn_state: dict[tuple[str, object], TurnStatus]`, `_turn_tokens: dict[str, object]`, `_turn_results: dict[tuple[str, object], TurnResult]`, and `_state_lock` to `__init__`** (after `_active_loops` declaration at line 369):
+
+> **AUDIT FIX (BUG #3, #4).** The previous draft used
+> `dict[str, TurnStatus]` keyed only by `session_key`. The audit
+> correctly identified two structural problems:
+> 1. **BUG #3 — GIL is not enough.** The compound "read previous
+>    state → decide → write terminal state" operation is NOT atomic
+>    under the GIL. Two terminal calls can both observe a non-terminal
+>    state and dispatch twice. The fix is a dedicated `_state_lock`
+>    acquired around ALL reads and writes of `_turn_state` /
+>    `_turn_results` / `_turn_tokens`. The class docstring's
+>    "synchronized under `self._lock`" claim is now literally true
+>    for state-machine fields (under `_state_lock`).
+> 2. **BUG #4 — Cancellation races the new turn.** With state keyed
+>    only by `session_key`, a stale `cancel()` from the previous turn
+>    can terminate the new turn's state. The fix is to key by
+>    `(session_key, turn_token)` (a tuple) so a new turn with a fresh
+>    token is observationally distinct from the prior turn. The
+>    active token for a session is stored in `_turn_tokens[sk]`; a
+>    terminal result whose `turn_token` does not match
+>    `_turn_tokens[sk]` is a stale result and is rejected (logged,
+>    ignored).
 
 ```python
         # FIX-CLEAR-ASK-RACE: sessions with an in-flight _run_loop. Used by
@@ -396,20 +417,42 @@ from enum import Enum  # if not already imported
         self._active_loops: set[str] = set()
 
         # Turn state machine (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.2).
-        # _turn_state: session_key → current TurnStatus. Transitions are
-        # owned by _terminate_turn; _run_loop may read but not write directly.
-        # _turn_results: session_key → most recent terminal TurnResult.
-        # Kept for the handler to query via get_last_turn_result().
-        # Both are dicts (not per-conversation fields) because the turn
-        # state outlives the Conversation object on disk persistence.
-        self._turn_state: dict[str, TurnStatus] = {}
-        self._turn_results: dict[str, TurnResult] = {}
+        # _turn_tokens: session_key → active turn_token (object() identity).
+        #   A new send_message() rotates this, so any terminal result
+        #   carrying a stale token is rejected (BUG #4).
+        # _turn_state: (session_key, turn_token) → current TurnStatus.
+        #   Keyed by the tuple (NOT just session_key) so two turns for
+        #   the same session can coexist briefly during the cancel race
+        #   without overwriting each other.
+        # _turn_results: (session_key, turn_token) → most recent terminal
+        #   TurnResult. The handler queries via get_last_turn_result(sk)
+        #   which returns the result for the currently active token.
+        # _state_lock: dedicated lock for all state-machine mutations and
+        #   reads. GIL does NOT make the compound operation atomic; this
+        #   lock does. (BUG #3)
+        self._state_lock = threading.Lock()
+        self._turn_tokens: dict[str, object] = {}
+        self._turn_state: dict[tuple[str, object], TurnStatus] = {}
+        self._turn_results: dict[tuple[str, object], TurnResult] = {}
 ```
 
 **Edit C: Add `_terminate_turn` method** (insert after `_dispatch_enforcement_status` at line 457):
 
+> **AUDIT FIX (BUG #3, #4).** The previous draft read/wrote
+> `_turn_state` and `_turn_results` without holding a lock, and
+> deduplicated by `session_key` alone. The corrected version:
+> 1. Acquires `_state_lock` for the read-prev / write-terminal
+>    compound operation (BUG #3).
+> 2. Keys state by `(session_key, turn_token)` (BUG #4).
+> 3. Rejects terminal results whose `turn_token` does not match
+>    `_turn_tokens[sk]` (stale-result rejection).
+> 4. Returns the rejected `TurnResult` (or None) for testability
+>    — the audit's BUG #9 deduplication test was impossible to
+>    write without a way to know whether a call was "accepted"
+>    or "rejected".
+
 ```python
-    def _terminate_turn(self, result: TurnResult) -> None:
+    def _terminate_turn(self, result: TurnResult) -> TurnResult | None:
         """Single terminal transition function for all turn endings.
 
         Replaces the 5+ ad-hoc patterns of:
@@ -428,36 +471,66 @@ from enum import Enum  # if not already imported
             - Records the result in _turn_results
 
         Threading: this method runs on the background thread (_run_loop's
-        thread). All callback dispatches go through _dispatch which
-        schedules GLib.idle_add for the main thread.
+        thread) and may also run on the main thread (from `cancel()`).
+        All state-mutation paths acquire `self._state_lock`. All callback
+        dispatches go through `_dispatch` which schedules
+        `GLib.idle_add` for the main thread.
 
-        Invariant: Calling _terminate_turn twice for the same turn is a
-        bug. The function does not enforce this; the caller (_run_loop)
-        must ensure exactly one terminal transition per turn. A runtime
-        assertion is logged (not raised) if a duplicate is detected, to
-        aid debugging without crashing the background thread.
+        Returns:
+            The result if the transition was accepted; None if the result
+            was rejected (invalid status, stale token, or duplicate
+            terminal). Callers can use the return value for tests and
+            for cancellation dedup (cancel() and the background thread
+            may both call _terminate_turn for the same turn; only the
+            first wins).
+
+        Invariant: At most ONE accepted terminal transition per
+        (session_key, turn_token) tuple. The function is the only
+        writer of terminal state.
         """
         if result.status not in (TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.CANCELLED):
             logger.error(
                 "_terminate_turn: invalid status %r (must be terminal); ignoring",
                 result.status,
             )
-            return
+            return None
 
         sk = result.session_key
-        prev = self._turn_state.get(sk)
-        if prev in (TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.CANCELLED):
-            logger.error(
-                "_terminate_turn: duplicate terminal transition for %s "
-                "(prev=%s, new=%s); second call ignored",
-                sk, prev, result.status,
-            )
-            return
+        tk = result.turn_token
+        state_key = (sk, tk)
 
-        self._turn_state[sk] = result.status
-        self._turn_results[sk] = result
+        with self._state_lock:
+            # Stale-token check (BUG #4): if a new send_message() rotated
+            # the active token for this session, this result is from an
+            # old turn. Reject it.
+            active_token = self._turn_tokens.get(sk)
+            if active_token is not None and active_token is not tk:
+                logger.error(
+                    "_terminate_turn: stale turn_token for %s "
+                    "(active=%r, result=%r); result rejected",
+                    sk, active_token, tk,
+                )
+                return None
 
-        # Dispatch the appropriate callback.
+            # Duplicate terminal check (BUG #3, #4): if a terminal state
+            # already exists for this (sk, tk), this is a duplicate
+            # transition. Reject it.
+            prev = self._turn_state.get(state_key)
+            if prev in (TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.CANCELLED):
+                logger.error(
+                    "_terminate_turn: duplicate terminal transition for %s "
+                    "(prev=%s, new=%s); second call ignored",
+                    sk, prev, result.status,
+                )
+                return None
+
+            # Accepted transition — record state + result under the lock.
+            self._turn_state[state_key] = result.status
+            self._turn_results[state_key] = result
+
+        # Dispatch the appropriate callback. This happens OUTSIDE the
+        # state lock so a slow handler doesn't block other state
+        # transitions on the same session.
         # For COMPLETED: on_response_complete with the text.
         # For FAILED/CANCELLED: on_error with the error message.
         if result.status == TurnStatus.COMPLETED:
@@ -501,12 +574,21 @@ from enum import Enum  # if not already imported
             self._cleanup_tool_history(sk)
 
         logger.debug(
-            "_terminate_turn: sk=%s status=%s text_len=%d has_error=%s",
-            sk, result.status.value, len(result.text or ""), result.error is not None,
+            "_terminate_turn: sk=%s tk=%r status=%s text_len=%d has_error=%s",
+            sk, tk, result.status.value, len(result.text or ""),
+            result.error is not None,
         )
+        return result
 ```
 
 **Edit D: Refactor `_run_loop` to use `_terminate_turn`** — replace the 5+ ad-hoc terminal blocks. Each replacement is targeted; the loop's body is preserved verbatim except for the terminal-call site.
+
+> **AUDIT FIX (BUG #5).** Edit D.3 (mid-stream error with content) MUST
+> include an explicit `return` after `_terminate_turn`. The previous
+> draft did not, and the audit correctly observed that the code fell
+> through into the text-success path (`conv.add_assistant_message(...)`
+> + `_dispatch(on_response_complete, ...)`), dispatching both an error
+> AND a success for the same turn.
 
 **D.1: Cancellation paths (lines 932-940):**
 
@@ -526,13 +608,15 @@ from enum import Enum  # if not already imported
                     # After:
                     if self._cancel_requested:
                         self._cancel_requested = False
-                        self._terminate_turn(TurnResult(
+                        accepted = self._terminate_turn(TurnResult(
                             status=TurnStatus.CANCELLED,
                             session_key=session_key,
                             turn_token=turn_token,
                             error="Cancelled",
                             metadata={"reason": "shutdown", "iteration": iteration},
                         ))
+                        # If rejected (stale token), the loop should still
+                        # exit — the new turn owns the session now.
                         return
                     # Check cancellation before each iteration
                     with self._lock:
@@ -590,12 +674,20 @@ Note: the `try/except` around the `_dispatch` call is **subsumed** by `_terminat
                                 logger.error(...)
 
                     # After:
+                            # AUDIT FIX (BUG #5): the previous code did not
+                            # `return` here, falling through into the
+                            # text-success path (conv.add_assistant_message +
+                            # on_response_complete dispatch) below. Both an
+                            # error AND a success were dispatched for the
+                            # same turn. The corrected code returns
+                            # unconditionally after _terminate_turn.
                             self._terminate_turn(TurnResult(
                                 status=TurnStatus.FAILED,
                                 session_key=session_key,
                                 turn_token=turn_token,
                                 error=error_text,
-                                metadata={"reason": "stream_error_with_content", "iteration": iteration},
+                                metadata={"reason": "stream_error_with_content",
+                                          "iteration": iteration},
                             ))
                             return
 ```
@@ -618,7 +710,22 @@ Note: this path **previously did not return** — it fell through to the text-on
                         logger.debug("[tool-loop] sk=%s text-only response, dispatching on_response_complete len=%d",
                                      session_key, len(text_content or ""))
                         conv.add_assistant_message(text_content, [])
-                        self._check_and_stop_on_limit(session_key, conv)
+                        # AUDIT FIX (BUG #6, #11): _check_and_stop_on_limit
+                        # is now a pure predicate that returns (stopped,
+                        # reason) or None; it does NOT dispatch or save.
+                        # If the limit is hit, build the FAILED TurnResult
+                        # here and route through _terminate_turn.
+                        limit_result = self._check_and_stop_on_limit(session_key, conv)
+                        if limit_result is not None:
+                            stopped, reason = limit_result
+                            self._terminate_turn(TurnResult(
+                                status=TurnStatus.FAILED,
+                                session_key=session_key,
+                                turn_token=turn_token,
+                                error=reason,
+                                metadata={"reason": stopped, "iteration": iteration},
+                            ))
+                            return
                         self._terminate_turn(TurnResult(
                             status=TurnStatus.COMPLETED,
                             session_key=session_key,
@@ -632,7 +739,22 @@ Note: this path **previously did not return** — it fell through to the text-on
                         return
 ```
 
-Note: `_check_and_stop_on_limit` is preserved at this call site (it has side effects — increments step_count, may dispatch a usage warning). The auto_save is moved into `_terminate_turn`.
+> **AUDIT FIX (BUG #6, #11).** The previous draft kept
+> `_check_and_stop_on_limit(session_key, conv)` at this call site
+> unchanged. The audit caught two problems:
+> 1. **BUG #6 — NameError.** The existing helper
+>    `_check_and_stop_on_limit` (agent/runtime.py:1868) references an
+>    undefined local `turn_token` in its `_dispatch(...)` call. This
+>    would raise `NameError` the moment a limit is hit. The helper
+>    also has no `turn_token` parameter.
+> 2. **BUG #11 — Outside the state machine.** The helper dispatches
+>    `on_error` and calls `_auto_save` directly, bypassing
+>    `_terminate_turn`. That means a limit hit is a 6th ad-hoc
+>    terminal path.
+>
+> The corrected plan replaces the helper with a pure predicate
+> returning `(stopped, reason) | None`, and `_run_loop` builds the
+> `TurnResult` itself. See Edit Q for the helper signature change.
 
 **D.5: Max iterations (lines 1419-1423):**
 
@@ -685,6 +807,14 @@ Note: `_terminate_turn` internally calls `_auto_save` and the existing `_dispatc
 
 **D.7: External cancellation in `cancel()` method (lines 661-678):**
 
+> **AUDIT FIX (BUG #13).** The previous draft used
+> `_turn_token=self._turn_token` (the runtime's single global token).
+> The audit caught that if a previous `send_message()` rotated
+> `_turn_token`, the cancellation dispatch carries the WRONG token,
+> and the handler's stale-event filter rejects the cancellation
+> event or associates it with the wrong turn. The corrected plan
+> uses the active token for the session from `_turn_tokens[sk]`.
+
 ```python
                     # Before:
     def cancel(self, session_key: str) -> None:
@@ -708,15 +838,17 @@ Note: `_terminate_turn` internally calls `_auto_save` and the existing `_dispatc
     def cancel(self, session_key: str) -> None:
         """Cancel an in-progress conversation.
 
-        Signals the running thread to break out of the loop and terminates
-        the turn via _terminate_turn. The thread-side _run_loop's per-iteration
-        cancellation check will pick up the signal and call _terminate_turn
-        a second time with status=CANCELLED; the second call is deduplicated
-        by _terminate_turn's prev-state check.
+        Signals the running thread to break out of the loop and dispatches
+        a user-facing cancellation message. The background thread's
+        `_run_loop` per-iteration cancellation check will see the signal
+        and call `_terminate_turn(CANCELLED)`.
 
-        The first _terminate_turn here (from the main thread) ensures that
-        /cancel returns the user-facing "Cancelled" message immediately,
-        even if the background thread is blocked on a network call.
+        The dispatch here uses the active turn token from
+        `_turn_tokens[sk]` (not the runtime's single `_turn_token`
+        attribute, which may have been rotated by a fresh
+        `send_message()`). The dispatch is a UX path only — the
+        authoritative state transition is the one made by
+        `_terminate_turn` from the background thread.
         """
         with self._lock:
             self._cancelled.add(session_key)
@@ -736,9 +868,13 @@ Note: `_terminate_turn` internally calls `_auto_save` and the existing `_dispatc
         # dedup in _terminate_turn ensures only one terminal transition.
         # We DO need the main-thread dispatch so the user sees the message
         # immediately rather than waiting for the loop to wake up.
+        # AUDIT FIX (BUG #13): use the active token for this session,
+        # not the runtime's single _turn_token attribute.
+        with self._state_lock:
+            active_tk = self._turn_tokens.get(session_key, self._turn_token)
         self._dispatch(
             self._on_error, session_key, "Cancelled by user",
-            _turn_token=self._turn_token,
+            _turn_token=active_tk,
         )
         logger.info("Cancelled session %s", session_key)
 ```
@@ -747,24 +883,134 @@ Note: this **retains** the immediate `self._dispatch(self._on_error, ...)` from 
 
 **Verified against source:** All 5+ sites verified at the line numbers cited. The line numbers will drift by ~30-50 after Edit A-C are applied; the implementer must use the function/block anchors, not line numbers (per `prompts/steelFramedCodeWriter.md` Step 6.8 — Spec Drift Verification).
 
-**Edit E: Add `get_last_turn_result` public method** (insert after `is_loop_active` at line 1444):
+**Edit Q: Refactor `_check_and_stop_on_limit` to be a pure predicate** (replaces Edit D.4's helper at line 1868):
+
+> **AUDIT FIX (BUG #6, #11).** The helper has two structural defects:
+> 1. References an undefined `turn_token` local in its `_dispatch` call
+>    (BUG #6 — NameError when limit is hit).
+> 2. Dispatches `on_error` and saves, bypassing `_terminate_turn`
+>    (BUG #11 — outside the state machine).
+>
+> The corrected version is a pure predicate. It does NOT dispatch,
+> save, or modify any state beyond `conv.step_count` / `conv.total_cost`
+> accounting. It returns `(stopped_reason, error_message) | None` so
+> `_run_loop` can build the `TurnResult` and route through
+> `_terminate_turn`.
+
+```python
+    def _check_and_stop_on_limit(
+        self, session_key: str, conv: Any,
+    ) -> tuple[str, str] | None:
+        """Check cost and step limits. Returns (stopped_reason, error_message)
+        if a limit is exceeded; None if the turn should continue.
+
+        This is a PURE predicate: it does NOT dispatch callbacks, does NOT
+        call `_auto_save`, and does NOT mutate `_turn_state` /
+        `_turn_results`. The caller (`_run_loop`) is responsible for
+        building a `TurnResult` and calling `_terminate_turn` if this
+        returns non-None.
+
+        Audit fixes (BUG #6, #11):
+          - Removed the `_dispatch(self._on_error, ...)` call (was:
+            NameError because `turn_token` was undefined in this scope).
+          - Removed the `_auto_save(...)` call (was: a 6th ad-hoc
+            terminal path that bypassed the state machine).
+          - Removed the `conv.add_assistant_message(...)` call (was:
+            a side effect that mutated conversation state from a
+            "predicate" function — confusing for tests).
+
+        Returns:
+            None if the turn should continue.
+            (stopped_reason, error_message) if a limit is hit, where
+            stopped_reason is one of {"cost_limit", "step_limit"} for
+            use as the TurnResult.metadata["reason"] value.
+        """
+        if self._config.cost_limit is not None and conv.total_cost > self._config.cost_limit:
+            reason = (
+                f"Cost limit exceeded: ${conv.total_cost:.4f} "
+                f"> ${self._config.cost_limit:.4f}"
+            )
+            return ("cost_limit", reason)
+        if self._config.step_limit is not None and conv.step_count > self._config.step_limit:
+            reason = (
+                f"Step limit exceeded: {conv.step_count} "
+                f"> {self._config.step_limit}"
+            )
+            return ("step_limit", reason)
+        return None
+```
+
+> **Note on `add_assistant_message` for limit placeholder.** The previous
+> helper added a `[stopped: {reason}]` placeholder to the conversation.
+> That mutation is now `_run_loop`'s responsibility, immediately before
+> building the `TurnResult`. See Edit R.
+
+**Edit R: Add limit placeholder mutation in `_run_loop`** (D.4's `if limit_result is not None` branch and the post-tool-execution limit check at line 1416):
+
+```python
+                    # At the post-tool-execution limit check (line 1416):
+                    # Before:
+                    if self._check_and_stop_on_limit(session_key, conv):
+                        return
+                    # After:
+                    limit_result = self._check_and_stop_on_limit(session_key, conv)
+                    if limit_result is not None:
+                        stopped, reason = limit_result
+                        conv.add_assistant_message(f"[stopped: {reason}]", [])
+                        self._terminate_turn(TurnResult(
+                            status=TurnStatus.FAILED,
+                            session_key=session_key,
+                            turn_token=turn_token,
+                            error=reason,
+                            metadata={"reason": stopped, "iteration": iteration},
+                        ))
+                        return
+```
+
+**Edit E: Add `get_last_turn_result` and `get_turn_state` public methods** (insert after `is_loop_active` at line 1444):
+
+> **AUDIT FIX (BUG #3, #4).** The accessors must read under
+> `_state_lock` (BUG #3 — GIL is not enough) and return the
+> result for the *active* token, not any token (BUG #4 — a stale
+> token from a prior turn must not be observable as the "current"
+> state).
 
 ```python
     def get_last_turn_result(self, session_key: str) -> TurnResult | None:
         """Return the most recent terminal TurnResult for ``session_key``.
 
-        Returns None if no terminal transition has occurred yet (turn is
-        still RUNNING or STREAMING, or no turn has been attempted for this
-        session).
+        Returns the TurnResult for the session's currently active
+        turn token. If no terminal transition has occurred for the
+        active token (turn is still RUNNING or STREAMING, or no turn
+        has been attempted), returns None.
 
-        Used by the handler's `get_last_turn_result` accessor for
-        observability and by tests to assert on terminal state.
+        Used by the handler for observability and by tests to assert
+        on terminal state. Thread-safe via `_state_lock`.
+
+        Note: results for stale tokens (a prior turn that has since
+        been superseded by a new send_message) are NOT returned.
+        Use `get_turn_state(session_key)` to inspect the active
+        token's status; use `get_turn_result_for_token(sk, tk)` (if
+        you need it) to inspect a specific token.
         """
-        return self._turn_results.get(session_key)
+        with self._state_lock:
+            tk = self._turn_tokens.get(session_key)
+            if tk is None:
+                return None
+            return self._turn_results.get((session_key, tk))
 
     def get_turn_state(self, session_key: str) -> TurnStatus | None:
-        """Return the current TurnStatus for ``session_key``, or None."""
-        return self._turn_state.get(session_key)
+        """Return the current TurnStatus for ``session_key``'s active
+        turn token, or None if no turn is active.
+
+        Thread-safe via `_state_lock`. Returns the status of the
+        session's currently active token only.
+        """
+        with self._state_lock:
+            tk = self._turn_tokens.get(session_key)
+            if tk is None:
+                return None
+            return self._turn_state.get((session_key, tk))
 ```
 
 **Edit F: Initialize `TurnStatus.RUNNING` at turn start** (insert at the top of `_run_loop`, BEFORE the missing-conversation check):
