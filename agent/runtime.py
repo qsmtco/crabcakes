@@ -22,6 +22,7 @@ import re
 import threading
 import time
 import uuid
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Iterator, TypedDict
 
 if TYPE_CHECKING:
@@ -80,9 +81,86 @@ __all__ = [
     "StreamingCallKwargs",
     "_PROVIDER_CALLERS",
     "_PROVIDER_STREAMERS",
+    # Turn state machine (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.2 Edit A;
+    # added in Phase 2a; full terminal-path routing is Phase 2b).
+    "TurnStatus",
+    "TurnResult",
 ]
 
 logger = logging.getLogger(__name__)
+
+
+# ── Turn state machine (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.2 Edit A) ──
+# Per-turn state machine. All terminal transitions in _run_loop funnel
+# through a single chokepoint function (`_terminate_turn`, Edit C) which
+# reads/writes `_turn_state` and `_turn_results` under `_state_lock` (Edit B).
+# Phase 2a adds the data structures only; Phase 2b wires the existing
+# terminal dispatch sites to the chokepoint.
+#
+# Invariant: a turn transitions RUNNING → STREAMING → exactly one of
+# {COMPLETED, FAILED, CANCELLED}. STREAMING is non-terminal.
+
+
+class TurnStatus(Enum):
+    """Per-turn state. Transitions are owned by `_terminate_turn`.
+
+    RUNNING: Turn started, no LLM call has been made yet.
+    STREAMING: At least one LLM call returned; text deltas or tool
+        calls may be in flight. Non-terminal.
+    COMPLETED: Terminal success — assistant text dispatched to handler,
+        no further LLM calls will be made this turn.
+    FAILED: Terminal failure — error dispatched to handler, partial
+        state persisted. The conversation remains consistent.
+    CANCELLED: Terminal user-initiated cancellation — error dispatched,
+        tool history cleaned. The conversation remains consistent.
+    """
+
+    RUNNING = "running"
+    STREAMING = "streaming"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+@dataclasses.dataclass
+class TurnResult:
+    """Everything a terminal callback needs in one struct.
+
+    Built by callers of `_terminate_turn` (Phase 2b) from the runtime's
+    per-iteration state. The struct is dispatched to the appropriate
+    handler callback (`on_response_complete` for COMPLETED, `on_error`
+    for FAILED/CANCELLED) and stored in `_turn_results[(sk, tk)]` so
+    tests and the handler can inspect the terminal state after the
+    fact.
+
+    Fields:
+        status: Terminal status (COMPLETED / FAILED / CANCELLED).
+            RUNNING and STREAMING are not valid here; `_terminate_turn`
+            rejects them.
+        session_key: The session whose turn ended.
+        turn_token: Identity object set at `_run_loop` time. Used by
+            `_terminate_turn` to reject stale results from a prior turn
+            (BUG #4).
+        text: Final assistant text (for COMPLETED). Empty for
+            FAILED / CANCELLED.
+        error: The error that caused termination. None for COMPLETED.
+            May be a string (user-friendly) or a `BaseException` (raw,
+            for the handler to translate via `friendly_error_message`).
+        metadata: Free-form dict. Keys vary by status:
+            - COMPLETED: ``{"fallback_used": bool, "stream_error": dict|None}``
+            - FAILED: ``{"reason": str, "iteration": int, ...}``
+            - CANCELLED: ``{"reason": "user"|"shutdown", "iteration": int,
+              "persist": bool}``  (``persist`` defaults False; only True
+              when the caller explicitly wants the partial state on disk.)
+    """
+
+    status: TurnStatus
+    session_key: str
+    turn_token: object
+    text: str = ""
+    error: str | BaseException | None = None
+    metadata: dict = dataclasses.field(default_factory=dict)
+
 
 # ── Audit Log (A-4) ──────────────────────────────────────────────────────────
 
