@@ -638,6 +638,7 @@ class TestToolLoop:
         # Find the persisted assistant messages. With a 2-response sequence
         # (tool-call first, then text), the FIRST assistant message has the
         # substituted placeholder; the last is the text response.
+        conv = rt.get_conversation(sk)
         asst_msgs = [m for m in conv.messages if m.role.value == "assistant"]
         assert asst_msgs, f"Expected assistant message; got: {conv.messages}"
 
