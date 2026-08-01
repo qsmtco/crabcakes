@@ -1812,9 +1812,13 @@ class AgentRuntime:
         the active token's result is exposed.
         """
         with self._state_lock:
-            tk = self._turn_tokens.get(session_key)
-            if tk is None:
+            # Membership check (Debugger BUG #2: none-sentinel-confusion):
+            # a turn_token of None is valid when _run_loop is called with
+            # its default. `session_key in` distinguishes "no turn
+            # registered" from "turn registered with None token."
+            if session_key not in self._turn_tokens:
                 return None
+            tk = self._turn_tokens[session_key]
             return self._turn_results.get((session_key, tk))
 
     def get_turn_state(self, session_key: str) -> TurnStatus | None:
