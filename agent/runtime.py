@@ -202,17 +202,21 @@ from agent.llm.registry import get_provider as _get_provider
 # The previous bound-method aliases _call_openai / _call_minimax /
 # _call_anthropic were preserved for test-patch compatibility but have
 # been removed (see Edit J below for the stream-side equivalents). The
-# values in _PROVIDER_CALLERS are now direct lookups into the provider
-# registry (see the dict below). Tests in tests/test_agent_runtime.py
-# that `from agent.runtime import _call_minimax` / `_call_anthropic`
-# have been rewritten to call MiniMaxProvider().call(...) /
+# values in _PROVIDER_CALLERS below are now direct lookups into the
+# provider registry. Tests in tests/test_agent_runtime.py that
+# `from agent.runtime import _call_minimax` / `_call_anthropic` have
+# been rewritten to call MiniMaxProvider().call(...) /
 # AnthropicProvider().call(...) directly (Edit O).
-# get_valid_callers(). Do not add new dispatch logic here — use
-# agent.llm.registry.get_provider().
+#
+# _PROVIDER_CALLERS is retained for backward compatibility with test
+# patches and get_valid_callers(). Do not add new dispatch logic here —
+# use agent.llm.registry.get_provider().
+# SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.3 Edit I: values are
+# direct lookups into the provider registry (not bound-method aliases).
 _PROVIDER_CALLERS: dict[str, Any] = {
-    "openai": _call_openai,
-    "minimax": _call_minimax,
-    "anthropic": _call_anthropic,
+    "openai": OpenAIProvider("openai").call,
+    "minimax": MiniMaxProvider().call,
+    "anthropic": AnthropicProvider().call,
     "openrouter": OpenAIProvider("openrouter").call,
     "zai": OpenAIProvider("zai").call,
 }
@@ -242,16 +246,15 @@ def get_valid_callers() -> frozenset[str]:
     return frozenset(_PROVIDER_CALLERS.keys())
 
 
-# Response format families — derived from caller configuration.
-# Any provider using _call_openai or _call_minimax returns OpenAI-format responses.
+# Response format families — derived from caller key (BUG #1 fix: was
+# identity comparison against the deleted _call_anthropic alias).
+# Any provider not in {"anthropic"} uses OpenAI-format responses.
 # Used by extract_text_content, extract_tool_calls, extract_usage to avoid
 # hardcoding provider name lists.
-_RESPONSE_FORMAT: dict[str, str] = {}
-for _pk, _caller in _PROVIDER_CALLERS.items():
-    if _caller is _call_anthropic:
-        _RESPONSE_FORMAT[_pk] = "anthropic"
-    else:
-        _RESPONSE_FORMAT[_pk] = "openai"  # openai, minimax, openrouter, zai, etc.
+_RESPONSE_FORMAT: dict[str, str] = {
+    pk: ("anthropic" if pk == "anthropic" else "openai")
+    for pk in _PROVIDER_CALLERS
+}
 
 
 # ── SSE streaming helpers (extracted to agent/llm/streaming.py, Phase B5) ──
@@ -276,21 +279,13 @@ import urllib.request
 
 
 # ── Stream functions (moved to provider classes, Phase B6) ──────────────────
-# Re-exported as bound methods for backward compatibility with test patches.
-_stream_openai_events = OpenAIProvider("openai").stream
-_stream_minimax_events = MiniMaxProvider().stream
-_stream_anthropic_events = AnthropicProvider().stream
-
-# DEPRECATED: dispatch now uses get_provider(caller_key).stream().
-# This dict is retained for backward compatibility with test patches.
-# Do not add new dispatch logic here — use agent.llm.registry.get_provider().
-_PROVIDER_STREAMERS: dict[str, Any] = {
-    "openai": _stream_openai_events,
-    "minimax": _stream_minimax_events,
-    "anthropic": _stream_anthropic_events,
-    "openrouter": OpenAIProvider("openrouter").stream,  # OpenAI-compatible SSE
-    "zai": OpenAIProvider("zai").stream,        # OpenAI-compatible SSE
-}
+# SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.3 Edit J:
+# _PROVIDER_STREAMERS and the _stream_*_events aliases were dispatch
+# infrastructure superseded by _get_provider(caller_key).stream in
+# Phase B6 and have been removed. Tests in tests/test_agent_runtime.py
+# and audit scripts that imported them have been migrated to
+# OpenAIProvider("openai").stream(...) / MiniMaxProvider().stream(...) /
+# AnthropicProvider().stream(...) (Edits N, O).
 
 
 
