@@ -1006,11 +1006,9 @@ class AgentRuntimeHandler:
         # current generation (never stale).
         current_gen = self._delta_generation.get(session_key, 0)
         if delta_gen is not None and delta_gen < current_gen:
-            logger.debug(
-                "_do_text_delta: dropping stale delta (gen %d < current %d) for %s",
-                delta_gen, current_gen, session_key,
-            )
+            print(f"[DBG-DELTA] STALE dropped gen={delta_gen} current={current_gen} text={text[:40]!r}")
             return
+        print(f"[DBG-DELTA] accept gen={delta_gen} current={current_gen} text={text[:40]!r}")
         # Always accumulate text — ensures final output is complete
         self._streaming_text[session_key] = self._streaming_text.get(session_key, "") + text
 
