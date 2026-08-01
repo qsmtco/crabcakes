@@ -549,6 +549,144 @@ class AgentRuntime:
         """
         self._dispatch(self._on_enforcement_status, session_key, tool_name, status)
 
+    def _terminate_turn(self, result: TurnResult) -> TurnResult | None:
+        """Single terminal transition function for all turn endings (Phase 2a).
+
+        Phase 2a SCOPE: this method is defined and tested but not yet called
+        by `_run_loop`. The existing 5+ ad-hoc terminal blocks continue to
+        dispatch directly. Phase 2b rewires those blocks to call
+        `_terminate_turn` instead.
+
+        Replaces the 5+ ad-hoc patterns of::
+
+            self._dispatch(self._on_response_complete, ..., _turn_token=...)
+            self._auto_save(...)
+            return
+
+        scattered across `_run_loop`. All terminal paths funnel through here.
+
+        This is the only function that:
+          * sets the terminal `TurnStatus` in `_turn_state`,
+          * dispatches the appropriate handler callback (on_response_complete
+            for COMPLETED, on_error for FAILED / CANCELLED),
+          * calls `_auto_save` (for COMPLETED and FAILED; CANCELLED only
+            persists when ``result.metadata.get("persist", False)`` is True),
+          * cleans up `_tool_history` for FAILED / CANCELLED,
+          * records the result in `_turn_results` for later inspection.
+
+        Threading: this method runs on the background thread (`_run_loop`'s
+        thread) and may also run on the main thread (from `cancel()` in
+        Phase 2b Edit D.7). All state-mutation paths acquire
+        `self._state_lock`. All callback dispatches go through `_dispatch`
+        which schedules `GLib.idle_add` for the main thread when GLib is
+        available; the lock is NOT held during the dispatch (a slow handler
+        must not block other state transitions).
+
+        Returns:
+            The result if the transition was accepted; ``None`` if the
+            result was rejected (invalid status, stale token, or duplicate
+            terminal). Callers can use the return value for tests and for
+            cancellation dedup — `cancel()` and the background thread may
+            both attempt to call `_terminate_turn` for the same turn; only
+            the first wins.
+
+        Invariant: at most ONE accepted terminal transition per
+        `(session_key, turn_token)` tuple. This function is the only writer
+        of terminal state.
+        """
+        if result.status not in (
+            TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.CANCELLED,
+        ):
+            logger.error(
+                "_terminate_turn: invalid status %r (must be terminal); ignoring",
+                result.status,
+            )
+            return None
+
+        sk = result.session_key
+        tk = result.turn_token
+        state_key = (sk, tk)
+
+        with self._state_lock:
+            # Stale-token check (BUG #4): if a new send_message() rotated
+            # the active token for this session, this result is from an
+            # old turn. Reject it.
+            active_token = self._turn_tokens.get(sk)
+            if active_token is not None and active_token is not tk:
+                logger.error(
+                    "_terminate_turn: stale turn_token for %s "
+                    "(active=%r, result=%r); result rejected",
+                    sk, active_token, tk,
+                )
+                return None
+
+            # Duplicate-terminal check (BUG #3, #4): if a terminal state
+            # already exists for this (sk, tk), this is a duplicate
+            # transition. Reject it.
+            prev = self._turn_state.get(state_key)
+            if prev in (
+                TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.CANCELLED,
+            ):
+                logger.error(
+                    "_terminate_turn: duplicate terminal transition for %s "
+                    "(prev=%s, new=%s); second call ignored",
+                    sk, prev, result.status,
+                )
+                return None
+
+            # Accepted transition — record state + result under the lock.
+            self._turn_state[state_key] = result.status
+            self._turn_results[state_key] = result
+
+        # Dispatch the appropriate callback. This happens OUTSIDE the
+        # state lock so a slow handler does not block other state
+        # transitions on the same session.
+        if result.status == TurnStatus.COMPLETED:
+            self._dispatch(
+                self._on_response_complete, sk, result.text,
+                _turn_token=result.turn_token,
+            )
+        else:  # FAILED or CANCELLED
+            err_msg = result.error
+            if err_msg is None:
+                err_msg = "Turn ended without error message"
+            self._dispatch(
+                self._on_error, sk, err_msg,
+                _turn_token=result.turn_token,
+            )
+
+        # Persist (except for CANCELLED unless explicitly requested).
+        # FAILED always persists (partial state is better than lost state).
+        # COMPLETED always persists (next turn must see the assistant message).
+        # CANCELLED persists only if metadata["persist"] is True.
+        should_persist = (
+            result.status in (TurnStatus.COMPLETED, TurnStatus.FAILED)
+            or result.metadata.get("persist", False)
+        )
+        if should_persist:
+            try:
+                conv = self._conversations.get(sk)
+                if conv is not None:
+                    self._auto_save(sk, conv)
+            except Exception:
+                logger.exception(
+                    "_terminate_turn: auto_save failed for %s (status=%s)",
+                    sk, result.status,
+                )
+
+        # Clean up stuck-detection history on terminal transitions.
+        # Previously only `cancel()` did this; moved here so FAILED and
+        # COMPLETED also reset the detector for the next turn.
+        if result.status in (TurnStatus.FAILED, TurnStatus.CANCELLED):
+            self._cleanup_tool_history(sk)
+
+        logger.debug(
+            "_terminate_turn: sk=%s tk=%r status=%s text_len=%d has_error=%s",
+            sk, tk, result.status.value, len(result.text or ""),
+            result.error is not None,
+        )
+        return result
+
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def start(self) -> None:
