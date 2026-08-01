@@ -1468,20 +1468,16 @@ class AgentRuntimeHandler:
         build_role_bubble's header condition (chat_bubble.py:284) is satisfied.
         Without this, local agent bubbles render the body but no name/dot/timestamp.
         """
-        # RACE-FIX v3: Mark session ended + increment generation BEFORE any
-        # rendering work or early returns. This ensures:
+        # RACE-FIX v4: Mark session ended + completed BEFORE any rendering
+        # work or early returns. This ensures:
         # 1. Stale deltas see the flag (regardless of idle ordering)
-        # 2. The generation bump happens on the main thread (deterministic)
-        # 3. Even if _crh is None, the flag is set (fixes early-return gap)
+        # 2. Duplicate completion is prevented (boolean, not counter-based)
+        # 3. Even if _crh is None, the flags are set (fixes early-return gap)
         self._ended_sessions.add(session_key)
-        gen = self._turn_generation.get(session_key, 0)
-        self._turn_generation[session_key] = gen + 1
-        # Idempotency: if this (session, gen) was already completed, skip.
-        # Prevents duplicate completion from rendering two bubbles.
-        if (session_key, gen) in self._completed_turns:
-            logger.debug("_do_response_complete: duplicate completion for %s gen %d, skipping", session_key, gen)
+        if session_key in self._session_completed:
+            logger.debug("_do_response_complete: duplicate completion for %s, skipping", session_key)
             return
-        self._completed_turns.add((session_key, gen))
+        self._session_completed.add(session_key)
 
         if self._crh is None:
             return
