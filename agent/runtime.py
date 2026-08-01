@@ -378,9 +378,72 @@ class AgentRuntime:
     """
     Core agent loop: manages conversations, calls LLM APIs, executes tools.
 
-    Thread-safe: all public methods are thread-safe. Callbacks are dispatched
-    via GLib.idle_add if GLib is provided (for GTK thread safety), otherwise
-    called directly in the caller's thread.
+    Threading model (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.2 Edit H;
+    Phase 2a — scaffolding):
+
+      The runtime operates on TWO threads:
+        1. Main thread (UI / GTK): calls create_conversation, send_message,
+           cancel, approve_exec, get_turn_state, get_last_turn_result.
+        2. Background thread per turn: runs _run_loop, _call_llm,
+           _call_llm_streaming, tool execution, persistence.
+
+      Synchronized state (under self._lock):
+        - _conversations (read in many places, written in create_conversation)
+        - _cancelled, _cancel_requested (cancellation signals)
+        - _active_loops (per-session in-flight marker)
+        - _pending_approvals (read in _dispatch_approval, written in
+          cancel/approve_exec)
+        - _running (lifecycle flag)
+
+      Synchronized state (under self._state_lock, a SEPARATE lock):
+        - _turn_tokens: session_key → active turn_token. Written by
+          _run_loop at start; read by _terminate_turn and cancel().
+        - _turn_state: (session_key, turn_token) → current TurnStatus.
+          Written only by _terminate_turn; read by _terminate_turn, the
+          STREAMING transition in _run_loop, and the public accessors
+          get_turn_state() / get_last_turn_result().
+        - _turn_results: (session_key, turn_token) → most recent
+          TurnResult. Same access pattern as _turn_state.
+
+      Why a separate _state_lock: the GIL does NOT make the compound
+      "read previous state → decide → write terminal state" operation
+      atomic. Two threads calling _terminate_turn for the same session
+      could both observe a non-terminal state and both dispatch. The
+      state lock serializes the compound operation. The lock is NOT
+      held during the dispatch callback (which is slow and may invoke
+      GLib.idle_add); the lock is only held for the state mutation.
+
+      Per-instance locks (separate from self._lock and _state_lock):
+        - _tool_history_lock: protects _tool_history (stuck detection).
+        - _compaction_lock: protects _compaction_events (telemetry).
+
+      NOT synchronized (read-mostly, written once at init):
+        - _runtimes, _agents, _config, _GLib
+        - All callback references (on_text_delta etc.)
+        - _pending_stuck_messages: per-session dict; written by _check_stuck
+          (background), read by _call_llm (same thread, sequential).
+          Cross-turn races are possible if the user hits /clear mid-turn;
+          see FIX-CLEAR-ASK-RACE for the active-loop guard that mitigates.
+
+      Known race (BUG #4): a result for a stale turn_token (one that has
+      been rotated by a new send_message()) is rejected by _terminate_turn.
+      The rejection is logged but the dispatch is NOT made. The handler
+      must be prepared for: a turn may dispatch on_error / on_response_complete
+      for the OLD token, then a NEW turn's RUNNING state begins, then the
+      OLD token's stale result is dropped. This is the desired behavior
+      (a previous turn must not abort a current turn), but it is observable
+      in tests as: "the dispatched callback for the old turn fires, but
+      no TurnResult is recorded for the new turn."
+
+      Phase 2a NOTE: this threading model section is the authoritative
+      description of the state-machine synchronization. The accessors
+      (get_turn_state, get_last_turn_result) and the RUNNING / STREAMING
+      transitions in _run_loop are wired; the actual _terminate_turn
+      call sites for the 5+ ad-hoc terminal blocks in _run_loop are
+      added in Phase 2b. Until Phase 2b lands, the existing terminal
+      dispatch sites continue to fire self._dispatch(self._on_*) +
+      self._auto_save directly; the state machine observes the
+      transitions but does not own them yet.
 
     Args:
         config: AgentConfig with provider credentials and limits.
