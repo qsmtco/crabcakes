@@ -1774,17 +1774,16 @@ class AgentRuntimeHandler:
         """
         self._on_token_breakdown_extra = cb
 
-    def _on_error(self, session_key: str, message: str) -> None:
+    def _on_error(self, session_key: str, message: str, _turn_token: object = None) -> None:
         """AgentRuntime error callback. Show error bubble."""
         if isinstance(message, BaseException):
             self._last_error_exception[session_key] = message
         else:
             self._last_error_exception[session_key] = None
-        token = self._turn_tokens.get(session_key)
         if self._GLib is not None:
-            self._GLib.idle_add(self._do_error, session_key, message, token)
+            self._GLib.idle_add(self._do_error, session_key, message, _turn_token)
         else:
-            self._do_error(session_key, message, token)
+            self._do_error(session_key, message, _turn_token)
 
     def _on_enforcement_status(self, session_key: str, tool_name: str, status: dict) -> None:
         """§F — Enforcement status callback. Log enforcement results to observability log.
