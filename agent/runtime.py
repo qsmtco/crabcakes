@@ -1829,9 +1829,10 @@ class AgentRuntime:
         currently active token only.
         """
         with self._state_lock:
-            tk = self._turn_tokens.get(session_key)
-            if tk is None:
+            # Membership check (Debugger BUG #2: none-sentinel-confusion).
+            if session_key not in self._turn_tokens:
                 return None
+            tk = self._turn_tokens[session_key]
             return self._turn_state.get((session_key, tk))
 
 
