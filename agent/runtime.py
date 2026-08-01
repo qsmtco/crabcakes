@@ -93,8 +93,13 @@ __all__ = [
     "AgentRuntime",
     "SSEEvent",
     "StreamingCallKwargs",
+    # _PROVIDER_CALLERS retained: used by _call_llm's non-streaming
+    # dispatch (line ~2125) and by get_valid_callers() for the
+    # provider-caller taxonomy. _PROVIDER_STREAMERS removed: dead
+    # since Phase B6; consumers migrated to OpenAIProvider(stream=...)/MiniMaxProvider(stream=...)
+    # /AnthropicProvider(stream=...) or to get_provider(caller_key).stream.
+    # (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.3 Edit J.)
     "_PROVIDER_CALLERS",
-    "_PROVIDER_STREAMERS",
     # Turn state machine (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.2 Edit A;
     # added in Phase 2a; full terminal-path routing is Phase 2b).
     "TurnStatus",
@@ -191,13 +196,17 @@ from agent.llm.minimax_provider import MiniMaxProvider
 from agent.llm.anthropic_provider import AnthropicProvider
 from agent.llm.registry import get_provider as _get_provider
 
-# Bound methods for test-patch compatibility (patch("agent.runtime._call_openai"))
-_call_openai = OpenAIProvider("openai").call
-_call_minimax = MiniMaxProvider().call
-_call_anthropic = AnthropicProvider().call
-
-# DEPRECATED: dispatch now uses get_provider(caller_key).call().
-# This dict is retained for backward compatibility with test patches and
+# ── Provider dispatch (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION §2.3 Edit I) ──
+# _call_llm's non-streaming path uses _get_provider(caller_key).call(...).
+# _call_llm_streaming uses _get_provider(caller_key).stream.
+# The previous bound-method aliases _call_openai / _call_minimax /
+# _call_anthropic were preserved for test-patch compatibility but have
+# been removed (see Edit J below for the stream-side equivalents). The
+# values in _PROVIDER_CALLERS are now direct lookups into the provider
+# registry (see the dict below). Tests in tests/test_agent_runtime.py
+# that `from agent.runtime import _call_minimax` / `_call_anthropic`
+# have been rewritten to call MiniMaxProvider().call(...) /
+# AnthropicProvider().call(...) directly (Edit O).
 # get_valid_callers(). Do not add new dispatch logic here — use
 # agent.llm.registry.get_provider().
 _PROVIDER_CALLERS: dict[str, Any] = {
