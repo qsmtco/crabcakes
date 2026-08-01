@@ -975,13 +975,12 @@ class AgentRuntimeHandler:
         AgentRuntime text delta callback.
         → Start or update a streaming bubble in the UI.
         """
-        gen = self._delta_generation.get(session_key, 0)
         if self._GLib is not None:
-            self._GLib.idle_add(self._do_text_delta, session_key, text, gen)
+            self._GLib.idle_add(self._do_text_delta, session_key, text)
         else:
-            self._do_text_delta(session_key, text, gen)
+            self._do_text_delta(session_key, text)
 
-    def _do_text_delta(self, session_key: str, text: str, delta_gen: int | None = None) -> None:
+    def _do_text_delta(self, session_key: str, text: str) -> None:
         """Main-thread portion of _on_text_delta.
 
         AgentRuntime sends incremental SSE chunks. ChatRenderHandler expects
@@ -994,21 +993,20 @@ class AgentRuntimeHandler:
             return
         # Skip empty text deltas — OpenRouter sends delta: {content: ""} with
         # finish_reason:"error". Starting a streaming bubble on empty text
-        # creates a flickering empty box that is immediately replaced by the
-        # error message.
+        # creates a flickering empty box that is immediately replaced by
+        # the error message.
         if not text:
             return
-        # RACE-FIX: If this delta's generation is stale (completion already
-        # incremented the counter), drop it. This prevents stale idle callbacks
-        # from starting a new streaming bubble after completion has rendered
-        # the final bubble.
-        # delta_gen=None means a 2-arg caller (backward-compat) — treat as
-        # current generation (never stale).
-        current_gen = self._delta_generation.get(session_key, 0)
-        if delta_gen is not None and delta_gen < current_gen:
-            print(f"[DBG-DELTA] STALE dropped gen={delta_gen} current={current_gen} text={text[:40]!r}")
+        # RACE-FIX: If this session has already completed (response_complete
+        # or error set _ended_sessions), drop the delta. This prevents stale
+        # idle callbacks from starting a new streaming bubble AFTER the final
+        # bubble has been rendered. The flag is cleared by send_to_special_agent
+        # when a NEW turn starts — NOT here (that was the old bug).
+        if session_key in self._ended_sessions:
+            logger.debug(
+                "_do_text_delta: dropping delta for ended session %s", session_key,
+            )
             return
-        print(f"[DBG-DELTA] accept gen={delta_gen} current={current_gen} text={text[:40]!r}")
         # Always accumulate text — ensures final output is complete
         self._streaming_text[session_key] = self._streaming_text.get(session_key, "") + text
 
