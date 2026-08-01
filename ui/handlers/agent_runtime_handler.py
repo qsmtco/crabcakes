@@ -860,13 +860,14 @@ class AgentRuntimeHandler:
         if conv is not None:
             conv.step_count = 0
 
-        # RACE-FIX: Clear the ended flag for this session — a new turn is starting.
-        # This is the ONLY place _ended_sessions should be cleared. Previously it
-        # was cleared inside _do_text_delta, which allowed stale deltas from the
-        # previous turn to clear the flag and start a phantom streaming bubble.
+        # RACE-FIX v4: Clear the ended/completed flags and assign a NEW turn
+        # token for this session. This is the ONLY place these should be cleared.
+        # The new token ensures stale deltas from the previous turn (which
+        # captured the OLD token) are rejected by the token mismatch check
+        # in _do_text_delta.
         self._ended_sessions.discard(session_key)
-        # RACE-FIX v3: Clear turn tracking for the new turn.
-        self._completed_turns.discard((session_key, self._turn_generation.get(session_key, 0)))
+        self._session_completed.discard(session_key)
+        self._turn_tokens[session_key] = object()  # unique sentinel per turn
 
         rt.send_message(session_key, text)
 
