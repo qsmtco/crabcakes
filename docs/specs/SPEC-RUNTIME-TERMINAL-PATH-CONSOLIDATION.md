@@ -84,7 +84,7 @@ From `docs/ARCHITECTURE.md`:
 
 - **§3.21 Agent Runtime:** "The runtime owns the tool loop, conversation lifecycle, and provider dispatch. It is the only module in `agent/` allowed to import `httpx` and the streaming HTTP path." — preserved. The new state machine is internal to the runtime; it does not add new I/O.
 - **§8.6 Layer Rules:** "`agent/` must not import from `ui/`, `gateway/`, or `models/`. `agent/llm/`, `agent/audit/`, `agent/persistence/`, `agent/context_strategy.py`, `agent/tool_middleware.py`, `agent/enforcement.py` are the only allowed imports for new code in `agent/runtime.py`." — preserved. The new `agent/callbacks.py` follows the same rule.
-- **§8.4 Test count discipline:** "When a feature changes, the tests change with it in the same commit. New tests for new behavior; removed tests for removed behavior; modified tests for changed behavior." — applied. We add 12-15 new tests for the state machine + callback protocols, remove 0 tests for the deleted aliases (no test asserted on the aliases' existence), and fix 3 tests with `create_autospec`.
+- **§8.4 Test count discipline:** "When a feature changes, the tests change with it in the same commit. New tests for new behavior; removed tests for removed behavior; modified tests for changed behavior." — applied. We add 22 new tests for the state machine + callback protocols + audit-driven terminal paths, remove 0 tests for the deleted aliases (no test asserted on the aliases' existence), and fix 3 tests with `create_autospec`. The audit expanded the count from the initial 12-15 estimate.
 
 ---
 
@@ -2089,14 +2089,18 @@ def test_send_message_rotates_turn_token():
     rt.stop()
 ```
 
-**Total new tests: 18** (3 + 8 + 4 + 2 + 1 + 2 + 1 + 1 = 22, but the
-module-exports test is a smoke test, so 21 functional tests;
-the additional 3 from groups 3a/3b/3c cover the audit-found gaps).
+**Total new tests: 22** (3 + 8 + 4 + 2 + 1 + 2 + 1 + 1 = 22). The
+group-5 module-exports test is a smoke test for typos, so 21
+functional tests + 1 smoke test = 22 total.
 
 > **Note on test counts vs. the §4 file change table.** The previous
 > draft estimated 12-15 new tests. The audit's gap analysis added 6
-> more (3a, 3b, 3c, 6) to cover the previously-uncovered terminal
-> paths. The expected count is now 18-21 functional tests.
+> more (groups 3a, 3b, 3c cover the previously-uncovered terminal
+> paths; group 6 covers the `send_message` token rotation that
+> BUG #4 requires). Group 2 was also expanded from 6 to 8 tests
+> (added `test_terminate_turn_rejects_stale_token` and the corrected
+> `test_terminate_turn_persistence_uses_separate_session_keys`).
+> The expected count is now 22 functional tests + 1 smoke test.
 
 ---
 
