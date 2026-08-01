@@ -1245,6 +1245,18 @@ class AgentRuntime:
         try:
             with self._lock:
                 if not self._running:
+                    # Runtime stopped between thread startup and loop body.
+                    # Route through _terminate_turn so the state machine
+                    # records a terminal state (Debugger BUG #2: otherwise
+                    # get_turn_state() would stay RUNNING forever and no
+                    # callback would fire).
+                    self._terminate_turn(TurnResult(
+                        status=TurnStatus.CANCELLED,
+                        session_key=session_key,
+                        turn_token=turn_token,
+                        error="Runtime stopped before turn started",
+                        metadata={"reason": "runtime_shutdown"},
+                    ))
                     return
                 conv = self._conversations.get(session_key)
                 if conv is None:
