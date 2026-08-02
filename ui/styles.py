@@ -469,7 +469,7 @@ button.lib-fav-star {
     margin-right: 4px;
 }
 .context-agent-name {
-    font-size: 11px;
+    font-size: 13px;
     color: #a0a0b0;
 }
 .context-avatar {

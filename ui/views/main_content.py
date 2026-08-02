@@ -97,7 +97,7 @@ class MainContent(Gtk.Box):
 
         # Agent avatar + name display (left of meter in button bar)
         self._context_avatar = Gtk.Picture()
-        self._context_avatar.set_size_request(20, 20)
+        self._context_avatar.set_size_request(28, 28)
         self._context_avatar.add_css_class("context-avatar")
         self._context_name_label = Gtk.Label(label="")
         self._context_name_label.add_css_class("context-agent-name")
@@ -897,7 +897,7 @@ class MainContent(Gtk.Box):
             initials = agent_name[:2].upper()
         else:
             initials = "??"
-        texture = render_agent_icon(agent_color or "#6366f1", initials, size=20)
+        texture = render_agent_icon(agent_color or "#6366f1", initials, size=28)
         if texture is not None:
             self._context_avatar.set_paintable(texture)
         self._context_name_label.set_text(agent_name or "")
