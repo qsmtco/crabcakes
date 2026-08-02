@@ -1110,11 +1110,11 @@ class FileTree(Gtk.Box):
         self._column_view.append_column(self._col_status)
 
         self._col_size = Gtk.ColumnViewColumn.new("Size", FileTreeSizeFactory())
-        self._col_size.set_fixed_width(80)
+        self._col_size.set_fixed_width(50)
         self._column_view.append_column(self._col_size)
 
         self._col_modified = Gtk.ColumnViewColumn.new("Modified", FileTreeModifiedFactory())
-        self._col_modified.set_fixed_width(100)
+        self._col_modified.set_fixed_width(75)
         self._column_view.append_column(self._col_modified)
 
         # Phase 2: Query git status via stub callback
