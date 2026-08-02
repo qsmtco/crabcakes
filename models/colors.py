@@ -81,3 +81,69 @@ def next_project_color() -> str:
     color = AGENT_COLORS[_project_color_next % len(AGENT_COLORS)]
     _project_color_next += 1
     return color
+
+
+# ── Agent color → CSS class mapping ─────────────────────────────────────────
+# Maps a hex color (e.g. "#6366f1") to a CSS class name (e.g. "agent-bg-6366f1").
+# Used by chat bubble rendering to apply per-agent tinted backgrounds.
+
+def css_class_for_color(hex_color: str, prefix: str = "agent-bg") -> str:
+    """Return a CSS class name for a hex color.
+
+    Args:
+        hex_color: Hex color string like "#6366f1" (with or without leading #).
+        prefix:    "agent-bg" for bubble background classes, "agent-dot" for
+                   header-dot background classes.
+
+    Returns:
+        CSS class name like "agent-bg-6366f1". Always lowercase, no '#'.
+        Returns "agent-bg-default" if hex_color is falsy/invalid.
+    """
+    if not hex_color or not isinstance(hex_color, str):
+        return f"{prefix}-default"
+    cleaned = hex_color.lstrip("#").lower()
+    if not cleaned:
+        return f"{prefix}-default"
+    return f"{prefix}-{cleaned}"
+
+
+def all_palette_css_classes() -> list[tuple[str, str, str]]:
+    """Return all (css_class, prefix, hex_color) tuples for the palette.
+
+    Generates both "agent-bg-<hex>" and "agent-dot-<hex>" entries for every
+    color in AGENT_COLORS. Used by ui/styles.py to generate CSS rules at startup.
+
+    Returns:
+        List of (css_class_name, prefix, hex_color) tuples.
+    """
+    result: list[tuple[str, str, str]] = []
+    for hex_color in AGENT_COLORS:
+        cleaned = hex_color.lstrip("#").lower()
+        result.append((f"agent-bg-{cleaned}", "agent-bg", hex_color))
+        result.append((f"agent-dot-{cleaned}", "agent-dot", hex_color))
+    return result
+
+
+def hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """Convert a hex color string to an (r, g, b) tuple (0-255 each).
+
+    Handles "#rrggbb", "rrggbb", "#rgb", "rgb" formats.
+    Returns (99, 102, 241) (indigo) as a safe fallback on parse failure.
+    """
+    if not hex_color or not isinstance(hex_color, str):
+        return (99, 102, 241)
+    cleaned = hex_color.lstrip("#").lower()
+    try:
+        if len(cleaned) == 3:
+            r = int(cleaned[0] * 2, 16)
+            g = int(cleaned[1] * 2, 16)
+            b = int(cleaned[2] * 2, 16)
+        elif len(cleaned) == 6:
+            r = int(cleaned[0:2], 16)
+            g = int(cleaned[2:4], 16)
+            b = int(cleaned[4:6], 16)
+        else:
+            return (99, 102, 241)
+        return (r, g, b)
+    except (ValueError, IndexError):
+        return (99, 102, 241)

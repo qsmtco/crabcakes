@@ -354,9 +354,9 @@ class FileTreeStatusFactory(Gtk.SignalListItemFactory):
         label: Gtk.Label = list_item.get_child()
         display = row.props.git_status_display
         label.set_text(display)
-        # Clear previous status class, add current
+        # Clear previous color class, add current (keep the base badge class)
         for cls in list(label.get_css_classes()):
-            if cls.startswith("file-tree-status-"):
+            if cls.startswith("file-tree-status-") and cls != "file-tree-status-badge":
                 label.remove_css_class(cls)
         class_map = {
             "M": "file-tree-status-modified",

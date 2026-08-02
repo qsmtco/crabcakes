@@ -237,7 +237,7 @@ def _process_text_chunk(text_chunk: str, processed: list) -> None:
     flush_text()
 
 
-def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool = False, forwarded_from: str = None, session_key: str = None, agent_name: str = None) -> Gtk.Widget:
+def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool = False, forwarded_from: str = None, session_key: str = None, agent_name: str = None, agent_color: str = None) -> Gtk.Widget:
     """
     Build a styled chat bubble for the given role and raw text.
 
@@ -262,13 +262,20 @@ def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool =
     container.set_halign(Gtk.Align.END if role == "You" else Gtk.Align.START)
 
     # ── Bubble box: vertical stack of segments + optional role label ───
+    # Determine bubble CSS class: agent-colored if agent_color provided,
+    # else fall back to role-based defaults.
+    from models.colors import css_class_for_color
+    if role == "System":
+        bubble_css = "chat-bubble-System"
+    elif role == "You":
+        bubble_css = "chat-bubble-you"
+    elif agent_color:
+        bubble_css = css_class_for_color(agent_color, "agent-bg")
+    else:
+        bubble_css = "chat-bubble-agent"
     bubble = Gtk.Box(
         orientation=Gtk.Orientation.VERTICAL,
-        css_classes=[
-            "chat-bubble-System" if role == "System"
-            else "chat-bubble-you" if role == "You"
-            else "chat-bubble-agent"
-        ],
+        css_classes=[bubble_css],
     )
     bubble.set_margin_top(1 if tight else 4)
     bubble.set_margin_bottom(4)
@@ -298,7 +305,8 @@ def build_role_bubble(role: str, text: str, on_forward_click=None, tight: bool =
 
         dot = Gtk.Box()
         dot.set_size_request(6, 6)
-        dot.add_css_class("chat-bubble-header-dot")
+        dot_css = css_class_for_color(agent_color, "agent-dot") if agent_color and role == "Agent" else "chat-bubble-header-dot"
+        dot.add_css_class(dot_css)
         dot.set_valign(Gtk.Align.CENTER)
 
         time_label = Gtk.Label(label=timestamp)

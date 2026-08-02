@@ -319,6 +319,100 @@ button.lib-fav-star {
     margin: 0 2px;
 }
 
+/* Agent-colored bubble backgrounds — per-agent tint matching avatar color.
+   Applied when build_role_bubble receives agent_color. Falls back to
+   .chat-bubble-agent (generic green) when no color is provided. */
+.agent-bg-6366f1 {
+    background: linear-gradient(135deg,
+        rgba(99, 102, 241, 0.70) 0%,
+        rgba(255, 255, 255, 0.20) 100%);
+    border-radius: 12px 12px 12px 4px;
+    padding: 6px 10px 8px 10px;
+    margin: 2px 12px 2px 8px;
+}
+.agent-dot-6366f1 { background: #6366f1; }
+.agent-bg-10b981 {
+    background: linear-gradient(135deg,
+        rgba(16, 185, 129, 0.70) 0%,
+        rgba(255, 255, 255, 0.20) 100%);
+    border-radius: 12px 12px 12px 4px;
+    padding: 6px 10px 8px 10px;
+    margin: 2px 12px 2px 8px;
+}
+.agent-dot-10b981 { background: #10b981; }
+.agent-bg-f59e0b {
+    background: linear-gradient(135deg,
+        rgba(245, 158, 11, 0.70) 0%,
+        rgba(255, 255, 255, 0.20) 100%);
+    border-radius: 12px 12px 12px 4px;
+    padding: 6px 10px 8px 10px;
+    margin: 2px 12px 2px 8px;
+}
+.agent-dot-f59e0b { background: #f59e0b; }
+.agent-bg-f43f5e {
+    background: linear-gradient(135deg,
+        rgba(244, 63, 94, 0.70) 0%,
+        rgba(255, 255, 255, 0.20) 100%);
+    border-radius: 12px 12px 12px 4px;
+    padding: 6px 10px 8px 10px;
+    margin: 2px 12px 2px 8px;
+}
+.agent-dot-f43f5e { background: #f43f5e; }
+.agent-bg-06b6d4 {
+    background: linear-gradient(135deg,
+        rgba(6, 182, 212, 0.70) 0%,
+        rgba(255, 255, 255, 0.20) 100%);
+    border-radius: 12px 12px 12px 4px;
+    padding: 6px 10px 8px 10px;
+    margin: 2px 12px 2px 8px;
+}
+.agent-dot-06b6d4 { background: #06b6d4; }
+.agent-bg-8b5cf6 {
+    background: linear-gradient(135deg,
+        rgba(139, 92, 246, 0.70) 0%,
+        rgba(255, 255, 255, 0.20) 100%);
+    border-radius: 12px 12px 12px 4px;
+    padding: 6px 10px 8px 10px;
+    margin: 2px 12px 2px 8px;
+}
+.agent-dot-8b5cf6 { background: #8b5cf6; }
+.agent-bg-ec4899 {
+    background: linear-gradient(135deg,
+        rgba(236, 72, 153, 0.70) 0%,
+        rgba(255, 255, 255, 0.20) 100%);
+    border-radius: 12px 12px 12px 4px;
+    padding: 6px 10px 8px 10px;
+    margin: 2px 12px 2px 8px;
+}
+.agent-dot-ec4899 { background: #ec4899; }
+.agent-bg-14b8a6 {
+    background: linear-gradient(135deg,
+        rgba(20, 184, 166, 0.70) 0%,
+        rgba(255, 255, 255, 0.20) 100%);
+    border-radius: 12px 12px 12px 4px;
+    padding: 6px 10px 8px 10px;
+    margin: 2px 12px 2px 8px;
+}
+.agent-dot-14b8a6 { background: #14b8a6; }
+.agent-bg-f97316 {
+    background: linear-gradient(135deg,
+        rgba(249, 115, 22, 0.70) 0%,
+        rgba(255, 255, 255, 0.20) 100%);
+    border-radius: 12px 12px 12px 4px;
+    padding: 6px 10px 8px 10px;
+    margin: 2px 12px 2px 8px;
+}
+.agent-dot-f97316 { background: #f97316; }
+.agent-bg-84cc16 {
+    background: linear-gradient(135deg,
+        rgba(132, 204, 22, 0.70) 0%,
+        rgba(255, 255, 255, 0.20) 100%);
+    border-radius: 12px 12px 12px 4px;
+    padding: 6px 10px 8px 10px;
+    margin: 2px 12px 2px 8px;
+}
+.agent-dot-84cc16 { background: #84cc16; }
+
 /* Tab dot — shows agent status in the chat tab label */
 .tab-dot {
     min-width: 8px;
@@ -328,6 +422,34 @@ button.lib-fav-star {
 }
 .tab-dot-idle {
     background: #4ade80;
+}
+/* Context meter — ProgressBar between chat tabs and input box.
+   Zone classes are applied by set_context_meter() in main_content.py:
+   low (<70%, green), medium (70-90%, yellow), high (>=90%, red). */
+.context-meter {
+    filter: none;
+}
+.context-meter-low trough {
+    background: rgba(74, 222, 128, 0.15);
+}
+.context-meter-low progress {
+    background: #4ade80;
+}
+.context-meter-medium trough {
+    background: rgba(250, 204, 21, 0.15);
+}
+.context-meter-medium progress {
+    background: #facc15;
+}
+.context-meter-high trough {
+    background: rgba(239, 68, 68, 0.15);
+}
+.context-meter-high progress {
+    background: #ef4444;
+}
+.context-meter-label {
+    font-size: 10px;
+    color: #a0a0b0;
 }
 .tab-dot-unread {
     background: #facc15;
@@ -1420,7 +1542,7 @@ button.settings-remove-btn:hover {
 }
 
 /* ── File tree status badges (Phase 1) ─────────────────────────────────── */
-.file-tree-status-badge { padding: 1px 4px; border-radius: 3px; font-size: 10px; font-weight: 600; min-width: 18px; }
+.file-tree-status-badge { padding: 1px 6px; border-radius: 9999px; font-size: 10px; font-weight: 600; min-width: 18px; }
 .file-tree-status-modified { background: #f59e0b; color: #1e1e1e; }
 .file-tree-status-staged { background: #22c55e; color: #1e1e1e; }
 .file-tree-status-untracked { background: #6366f1; color: #fff; }

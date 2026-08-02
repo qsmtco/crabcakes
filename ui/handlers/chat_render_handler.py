@@ -67,7 +67,7 @@ class _ReentrancySet:
         return key in self._keys
 
 
-def _assemble_from_processed(role: str, raw_text: str, processed: list[dict], on_forward_click=None, agent_name: str = None) -> Gtk.Widget:
+def _assemble_from_processed(role: str, raw_text: str, processed: list[dict], on_forward_click=None, agent_name: str = None, agent_color: str = None) -> Gtk.Widget:
     """
     Assemble a GTK bubble widget from pre-processed segments.
     Must be called on the main thread — creates GTK widgets.
@@ -75,13 +75,20 @@ def _assemble_from_processed(role: str, raw_text: str, processed: list[dict], on
     from gi.repository import Pango
     from datetime import datetime
     from ui.views.chat_bubble import _build_segment_widget, _build_code_from_markup, _add_action_buttons
+    from models.colors import css_class_for_color
 
     container = Gtk.Box()
     container.set_halign(Gtk.Align.END if role == "You" else Gtk.Align.START)
 
+    if role == "You":
+        bubble_css = "chat-bubble-you"
+    elif agent_color:
+        bubble_css = css_class_for_color(agent_color, "agent-bg")
+    else:
+        bubble_css = "chat-bubble-agent"
     bubble = Gtk.Box(
         orientation=Gtk.Orientation.VERTICAL,
-        css_classes=["chat-bubble-you" if role == "You" else "chat-bubble-agent"],
+        css_classes=[bubble_css],
     )
     bubble.set_margin_top(4)
     bubble.set_margin_bottom(4)
@@ -103,7 +110,8 @@ def _assemble_from_processed(role: str, raw_text: str, processed: list[dict], on
 
         dot = Gtk.Box()
         dot.set_size_request(6, 6)
-        dot.add_css_class("chat-bubble-header-dot")
+        dot_css = css_class_for_color(agent_color, "agent-dot") if agent_color and role == "Agent" else "chat-bubble-header-dot"
+        dot.add_css_class(dot_css)
         dot.set_valign(Gtk.Align.CENTER)
 
         time_label = Gtk.Label(label=timestamp)
@@ -201,7 +209,7 @@ class ChatRenderHandler:
 
     # ── Async (thread-safe) ──────────────────────────────────────────────
 
-    def render_async(self, role: str, text: str, session_key: str, on_bubble_ready, on_forward_click=None, on_error=None, agent_name: str = None):
+    def render_async(self, role: str, text: str, session_key: str, on_bubble_ready, on_forward_click=None, on_error=None, agent_name: str = None, agent_color: str = None):
         """
         Process text on a background thread, assemble GTK widgets on main thread.
 
@@ -217,9 +225,15 @@ class ChatRenderHandler:
             on_forward_click: optional callback for forward button
             on_error:       optional callback(error_msg) — called on main thread
             agent_name:     Optional display name for the agent header
+            agent_color:    Optional hex color for tinted bubble background
         """
         if not self._reentrancy.add(session_key):
             return  # render already in flight
+
+        # Resolve agent color for tinted bubble background (3-tier fallback)
+        agent_color = None
+        if role == "Agent" and agent_name:
+            agent_color = self._resolve_agent_color(agent_name)
 
         # Fast path: skip fancy formatting for large messages
         if len(text) > self.PLAIN_TEXT_THRESHOLD:
@@ -229,6 +243,7 @@ class ChatRenderHandler:
                         role, text,
                         on_forward_click=on_forward_click,
                         agent_name=agent_name,
+                        agent_color=agent_color,
                     )
                     self._reentrancy.remove(session_key)
                     on_bubble_ready(bubble)
@@ -250,6 +265,7 @@ class ChatRenderHandler:
                             role, text, processed,
                             on_forward_click=on_forward_click,
                             agent_name=agent_name,
+                            agent_color=agent_color,
                         )
                         self._reentrancy.remove(session_key)
                         on_bubble_ready(bubble)
@@ -323,6 +339,34 @@ class ChatRenderHandler:
         """Set MainContent reference for self-contained scroll operations and agent name lookup."""
         self._main_content = main_content
 
+    def _resolve_agent_color(self, agent_name: str) -> str | None:
+        """Resolve hex color for an agent name (3-tier fallback).
+
+        Mirrors AgentListHandler.get_agent_color:
+          1. Live agent registered in AgentManager (gateway path).
+          2. Special agent role lookup (Coder, Debugger, etc.).
+          3. Deterministic default "#6366f1".
+
+        Returns None only if agent_name is falsy.
+        """
+        if not agent_name:
+            return None
+        # Tier 1: live agent
+        if self._main_content is not None:
+            agent_mgr = getattr(self._main_content, '_agent_mgr', None)
+            if agent_mgr is not None:
+                color = agent_mgr.get_color(agent_name)
+                if color:
+                    return color
+        # Tier 2: special agent role
+        from agent.special_agents import get_special_agents
+        from models.colors import color_for_special_agent
+        for agent_def in get_special_agents():
+            if agent_def.display_name == agent_name:
+                return color_for_special_agent(agent_def.role)
+        # Tier 3: deterministic default
+        return "#6366f1"
+
     def render_sync(self, role: str, text: str, session_key: str = None, on_forward_click=None, forwarded_from: str = None, agent_name: str = None, tab_key: str = None):
         """
         Process text and return a bubble widget synchronously.
@@ -348,10 +392,15 @@ class ChatRenderHandler:
         if session_key is not None and session_key in self._reentrancy:
             return None
         # Auto-lookup agent name for Agent role if not provided
+        agent_color = None
         if agent_name is None and role == "Agent" and session_key and self._main_content is not None:
             agent_mgr = getattr(self._main_content, '_agent_mgr', None)
             if agent_mgr is not None:
                 agent_name = agent_mgr.get_name(session_key)
+        # Resolve agent color for tinted bubble background (3-tier fallback
+        # mirrors AgentListHandler.get_agent_color: live agent → special role → default)
+        if role == "Agent" and agent_name:
+            agent_color = self._resolve_agent_color(agent_name)
         current_key = f"{role}:{session_key}" if session_key else None
         tight = (current_key == self._last_message_key) and self._last_message_key is not None
 
@@ -368,7 +417,7 @@ class ChatRenderHandler:
         else:
             cleaned_text = text
 
-        bubble = build_role_bubble(role, cleaned_text, on_forward_click=on_forward_click, tight=tight, session_key=session_key, forwarded_from=forwarded_from, agent_name=agent_name)
+        bubble = build_role_bubble(role, cleaned_text, on_forward_click=on_forward_click, tight=tight, session_key=session_key, forwarded_from=forwarded_from, agent_name=agent_name, agent_color=agent_color)
         self._last_message_key = current_key
         return bubble
 
@@ -475,7 +524,7 @@ class ChatRenderHandler:
         # main thread (caller dispatched via GLib.idle_add), so no _dispatch needed.
         sb.label.set_text(sb.plain_text + " ▍")
 
-    def _render_plain_text(self, role: str, text: str, on_forward_click=None, agent_name: str = None):
+    def _render_plain_text(self, role: str, text: str, on_forward_click=None, agent_name: str = None, agent_color: str = None):
         """
         Fast-path bubble for large messages: single Gtk.Label, no fancy formatting.
         Creates the bubble on the main thread — call from _dispatch or directly.
@@ -486,13 +535,20 @@ class ChatRenderHandler:
         from gi.repository import Pango
         from datetime import datetime
         from ui.views.chat_bubble import _add_action_buttons
+        from models.colors import css_class_for_color
 
         container = Gtk.Box()
         container.set_halign(Gtk.Align.END if role == "You" else Gtk.Align.START)
 
+        if role == "You":
+            bubble_css = "chat-bubble-you"
+        elif agent_color:
+            bubble_css = css_class_for_color(agent_color, "agent-bg")
+        else:
+            bubble_css = "chat-bubble-agent"
         bubble = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
-            css_classes=["chat-bubble-you" if role == "You" else "chat-bubble-agent"],
+            css_classes=[bubble_css],
         )
         bubble.set_margin_top(4)
         bubble.set_margin_bottom(4)
@@ -514,7 +570,8 @@ class ChatRenderHandler:
 
             dot = Gtk.Box()
             dot.set_size_request(6, 6)
-            dot.add_css_class("chat-bubble-header-dot")
+            dot_css = css_class_for_color(agent_color, "agent-dot") if agent_color and role == "Agent" else "chat-bubble-header-dot"
+            dot.add_css_class(dot_css)
             dot.set_valign(Gtk.Align.CENTER)
 
             time_label = Gtk.Label(label=timestamp)
@@ -593,6 +650,11 @@ class ChatRenderHandler:
                 if agent_mgr is not None:
                     resolved_name = agent_mgr.get_name(session_key)
 
+            # Resolve agent color for tinted bubble background
+            resolved_color = None
+            if sb.role == "Agent" and resolved_name:
+                resolved_color = self._resolve_agent_color(resolved_name)
+
             if render:
                 # Build and append final bubble
                 final_bubble = build_role_bubble(
@@ -600,6 +662,7 @@ class ChatRenderHandler:
                     on_forward_click=self._on_forward_message,
                     session_key=session_key,
                     agent_name=resolved_name,
+                    agent_color=resolved_color,
                 )
                 sb.container.append(final_bubble)
                 if self._main_content is not None:
