@@ -303,3 +303,4 @@ def xml_template(template: str, **kwargs: str) -> str:
     escaped = {k: xml_escape_text(v) for k, v in kwargs.items()}
     return template.format(**escaped)
 # Test marker for status badge verification — safe to remove.
+# temp modification for badge test
