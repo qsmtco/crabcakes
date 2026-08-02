@@ -2048,10 +2048,6 @@ class FileTree(Gtk.Box):
             icon = get_icon_for_path(full_path, is_dir)
             rel_path = os.path.relpath(full_path, self._project_path) if self._project_path else full_path
             raw_status = self._git_status_map.get(rel_path, "")
-            # [DEBUG] git status badge investigation — remove after fix
-            import sys as _sys
-            print(f"[DEBUG _on_dir_loaded] child: rel_path={rel_path!r} raw_status={raw_status!r}", file=_sys.stderr)
-            _sys.stderr.flush()
             child = FileTreeRow(
                 display_name=entry_name,
                 full_path=full_path,
