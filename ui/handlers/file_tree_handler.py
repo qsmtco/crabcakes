@@ -36,10 +36,6 @@ class FileTreeHandler:
         Returns empty dict if not a git repo or on any error.
         Cached until invalidate_git_status() is called.
         """
-        # [DEBUG] git status badge investigation — remove after fix
-        import sys as _sys
-        print(f"[DEBUG refresh_git_status] project_path={self._project_path!r} dirty={self._git_status_dirty}", file=_sys.stderr)
-        _sys.stderr.flush()
         if not self._git_status_dirty:
             return dict(self._git_status_cache)
         result = status_porcelain(self._project_path)
