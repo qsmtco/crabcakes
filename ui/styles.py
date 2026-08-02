@@ -465,6 +465,16 @@ button.lib-fav-star {
     font-size: 9px;
     color: #707088;
 }
+.agent-context-box {
+    margin-right: 4px;
+}
+.context-agent-name {
+    font-size: 11px;
+    color: #a0a0b0;
+}
+.context-avatar {
+    border-radius: 50%;
+}
 .tab-dot-unread {
     background: #facc15;
 }

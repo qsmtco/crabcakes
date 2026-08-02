@@ -70,6 +70,7 @@ class MainContent(Gtk.Box):
         self._chat_render_handler = None  # injected via set_chat_render_handler()
         self._project_handler = None   # injected via set_project_handler()
         self._on_project_tab_closed = None  # callback(name) — set by window.py
+        self._on_session_changed = None  # callback(session_key) — set by window.py for context meter update
         # Bulk-close guard: skip reindex until all removals are done
         self._bulk_closing = False
         # Unread tab tracking — session_keys with unseen messages
@@ -93,6 +94,17 @@ class MainContent(Gtk.Box):
         meter_box.append(self._context_pct_label)
         meter_box.append(self._context_meter)
         meter_box.append(self._context_caption_label)
+
+        # Agent avatar + name display (left of meter in button bar)
+        self._context_avatar = Gtk.Picture()
+        self._context_avatar.set_size_request(20, 20)
+        self._context_avatar.add_css_class("context-avatar")
+        self._context_name_label = Gtk.Label(label="")
+        self._context_name_label.add_css_class("context-agent-name")
+        self._agent_context_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        self._agent_context_box.append(self._context_avatar)
+        self._agent_context_box.append(self._context_name_label)
+        self._agent_context_box.add_css_class("agent-context-box")
 
         self._toolbar = ChatInputToolbar()
 
@@ -204,6 +216,7 @@ class MainContent(Gtk.Box):
         self._send_button.add_css_class("suggested-action")
 
         button_bar.set_spacing(6)
+        button_bar.append(self._agent_context_box)
         button_bar.append(meter_box)
         button_bar.append(self._prompt_button)
         button_bar.append(self._improve_button)
@@ -461,6 +474,10 @@ class MainContent(Gtk.Box):
         tab_label = self._chat_notebook.get_tab_label(notebook.get_nth_page(page_num))
         if tab_label and hasattr(tab_label, '_session_key'):
             self.clear_unread(tab_label._session_key)
+        # Notify listeners of the session change (for context meter avatar/name update)
+        new_sk = self._tab_sessions.get(page_num)
+        if new_sk and self._on_session_changed:
+            self._on_session_changed(new_sk)
 
     # ── Unread dot management ──────────────────────────────────────────────
 
@@ -805,6 +822,13 @@ class MainContent(Gtk.Box):
         """
         self._on_project_tab_closed = callback
 
+    def set_on_session_changed(self, callback):
+        """Set callback for when the active chat tab changes.
+        Signature: callback(session_key: str). Called by window.py._build()
+        to update the context meter avatar/name display.
+        """
+        self._on_session_changed = callback
+
     def close_project_tab(self, project_name: str):
         """Remove the project tab from the notebook. Called by window._close_project_tab()."""
         session_key = f"project:{project_name}"
@@ -856,6 +880,27 @@ class MainContent(Gtk.Box):
             self._scroll_btn.set_opacity(0)
 
     # ── Context meter (Phase A) ──────────────────────────────────────────
+
+    def update_agent_context_display(self, agent_name: str, agent_color: str) -> None:
+        """Update the small avatar + name display next to the context meter.
+
+        Args:
+            agent_name: Display name of the active agent (e.g. "Coder").
+            agent_color: Hex color string (e.g. "#6366f1").
+        """
+        from utils.icons import render_agent_icon
+        # Compute initials from name
+        parts = agent_name.split() if agent_name else []
+        if len(parts) >= 2:
+            initials = (parts[0][0] + parts[1][0]).upper()
+        elif agent_name:
+            initials = agent_name[:2].upper()
+        else:
+            initials = "??"
+        texture = render_agent_icon(agent_color or "#6366f1", initials, size=20)
+        if texture is not None:
+            self._context_avatar.set_paintable(texture)
+        self._context_name_label.set_text(agent_name or "")
 
     def set_context_meter(
         self, session_key: str, usage_percent: float

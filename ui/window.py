@@ -642,10 +642,39 @@ class MainWindow(Gtk.ApplicationWindow):
         # set_on_token_breakdown_extra() slot. The existing
         # _on_token_breakdown in agent_runtime_handler.py dispatches to
         # the logger.info (preserved) and to this extra listener.
+        def _resolve_agent_info(sk: str) -> tuple[str | None, str | None]:
+            """Resolve (agent_name, agent_color) for a session key."""
+            agent_name = None
+            agent_color = None
+            if self._main_content._agent_mgr is not None:
+                agent_name = self._main_content._agent_mgr.get_name(sk)
+            if not agent_name:
+                from agent.special_agents import get_special_agents
+                from models.colors import color_for_special_agent
+                for agent_def in get_special_agents():
+                    if sk == agent_def.conv_id_prefix:
+                        agent_name = agent_def.display_name
+                        agent_color = color_for_special_agent(agent_def.role)
+                        break
+            if agent_name and not agent_color:
+                if self._main_content._agent_mgr is not None:
+                    agent_color = self._main_content._agent_mgr.get_color(agent_name)
+            return agent_name, agent_color
+
+        def _update_agent_display(sk: str):
+            """Update context meter avatar/name for a session key."""
+            agent_name, agent_color = _resolve_agent_info(sk)
+            if agent_name:
+                self._main_content.update_agent_context_display(agent_name, agent_color or "#6366f1")
+
         def _on_context_meter(sk: str, breakdown: dict) -> None:
             usage_pct = breakdown.get("usage_percent", 0.0)
             self._main_content.set_context_meter(sk, usage_pct)
+            _update_agent_display(sk)
         self._agent_runtime_handler.set_on_token_breakdown_extra(_on_context_meter)
+
+        # Update avatar/name on tab switch
+        self._main_content.set_on_session_changed(_update_agent_display)
 
         # Phase B — Wire /compact data-plane + UI side-effect.
         self._project_handler.set_compact_callback(
