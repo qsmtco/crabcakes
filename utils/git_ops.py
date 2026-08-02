@@ -402,5 +402,9 @@ def status_porcelain(project_path: str) -> dict[str, str]:
             rest = rest.rstrip('/')
             status_map[rest] = status_code
         return status_map
-    except Exception:
+    except Exception as _e:
+        # [DEBUG] git status badge investigation — remove after fix
+        import sys as _sys
+        print(f"[DEBUG status_porcelain] EXCEPTION: {type(_e).__name__}: {_e}", file=_sys.stderr)
+        _sys.stderr.flush()
         return {}
