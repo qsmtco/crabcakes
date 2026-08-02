@@ -1121,6 +1121,14 @@ class FileTree(Gtk.Box):
         status_map: dict[str, str] = {}
         if self._on_get_git_status:
             status_map = self._on_get_git_status() or {}
+        # [DEBUG] git status badge investigation — remove after fix
+        import sys as _sys
+        print(f"[DEBUG _show_tree] project_path={path!r}", file=_sys.stderr)
+        print(f"[DEBUG _show_tree] callback is None? {self._on_get_git_status is None}", file=_sys.stderr)
+        print(f"[DEBUG _show_tree] status_map has {len(status_map)} entries", file=_sys.stderr)
+        for _k, _v in list(status_map.items())[:10]:
+            print(f"[DEBUG _show_tree]   {_v!r} -> {_k}", file=_sys.stderr)
+        _sys.stderr.flush()
         self._git_status_map = status_map
 
         # Populate root entries
@@ -1133,6 +1141,10 @@ class FileTree(Gtk.Box):
             # Look up git status from status_map
             rel_path = os.path.relpath(full_path, path) if path else full_path
             raw_status = status_map.get(rel_path, "")
+            # [DEBUG] git status badge investigation — remove after fix
+            import sys as _sys
+            print(f"[DEBUG _show_tree] row: rel_path={rel_path!r} raw_status={raw_status!r} display={git_status_to_display(raw_status)!r}", file=_sys.stderr)
+            _sys.stderr.flush()
             row = FileTreeRow(
                 display_name=entry_name,
                 full_path=full_path,
@@ -2048,6 +2060,10 @@ class FileTree(Gtk.Box):
             icon = get_icon_for_path(full_path, is_dir)
             rel_path = os.path.relpath(full_path, self._project_path) if self._project_path else full_path
             raw_status = self._git_status_map.get(rel_path, "")
+            # [DEBUG] git status badge investigation — remove after fix
+            import sys as _sys
+            print(f"[DEBUG _on_dir_loaded] child: rel_path={rel_path!r} raw_status={raw_status!r}", file=_sys.stderr)
+            _sys.stderr.flush()
             child = FileTreeRow(
                 display_name=entry_name,
                 full_path=full_path,

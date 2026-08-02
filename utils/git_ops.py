@@ -375,6 +375,10 @@ def status_porcelain(project_path: str) -> dict[str, str]:
             cwd=project_path,
             capture_output=True, text=True, timeout=10,
         )
+        # [DEBUG] git status badge investigation — remove after fix
+        import sys as _sys
+        print(f"[DEBUG status_porcelain] project_path={project_path!r} returncode={result.returncode} stdout_len={len(result.stdout)} stderr={result.stderr[:200]!r}", file=_sys.stderr)
+        _sys.stderr.flush()
         if result.returncode != 0:
             return {}
         raw = result.stdout
