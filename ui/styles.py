@@ -431,18 +431,24 @@ button.lib-fav-star {
 }
 .context-meter-low trough {
     background: rgba(74, 222, 128, 0.15);
+    border-color: rgba(74, 222, 128, 0.4);
+    box-shadow: none;
 }
 .context-meter-low progress {
     background: #4ade80;
 }
 .context-meter-medium trough {
     background: rgba(250, 204, 21, 0.15);
+    border-color: rgba(250, 204, 21, 0.4);
+    box-shadow: none;
 }
 .context-meter-medium progress {
     background: #facc15;
 }
 .context-meter-high trough {
     background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.4);
+    box-shadow: none;
 }
 .context-meter-high progress {
     background: #ef4444;
@@ -450,6 +456,14 @@ button.lib-fav-star {
 .context-meter-label {
     font-size: 10px;
     color: #a0a0b0;
+}
+.context-meter-pct {
+    font-size: 10px;
+    color: #a0a0b0;
+}
+.context-meter-caption {
+    font-size: 9px;
+    color: #707088;
 }
 .tab-dot-unread {
     background: #facc15;

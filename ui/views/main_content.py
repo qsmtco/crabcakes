@@ -79,14 +79,20 @@ class MainContent(Gtk.Box):
         # These are instance attributes so set_context_meter() can find them.
         self._context_meter = Gtk.ProgressBar()
         self._context_meter.set_size_request(80, 6)
-        self._context_meter.set_show_text(True)
+        self._context_meter.set_show_text(False)
         self._context_meter.set_fraction(0.0)
         self._context_meter.add_css_class("context-meter")
         self._context_meter_label = Gtk.Label(label="")
         self._context_meter_label.add_css_class("context-meter-label")
-        meter_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        self._context_meter_label.set_visible(False)  # hidden — meter bar color conveys zone
+        self._context_pct_label = Gtk.Label(label="0%")
+        self._context_pct_label.add_css_class("context-meter-pct")
+        self._context_caption_label = Gtk.Label(label="context")
+        self._context_caption_label.add_css_class("context-meter-caption")
+        meter_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        meter_box.append(self._context_pct_label)
         meter_box.append(self._context_meter)
-        meter_box.append(self._context_meter_label)
+        meter_box.append(self._context_caption_label)
 
         self._toolbar = ChatInputToolbar()
 
@@ -198,11 +204,10 @@ class MainContent(Gtk.Box):
         self._send_button.add_css_class("suggested-action")
 
         button_bar.set_spacing(6)
+        button_bar.append(meter_box)
         button_bar.append(self._prompt_button)
         button_bar.append(self._improve_button)
         button_bar.append(self._send_button)
-        # Phase A — Append context meter to the button bar.
-        button_bar.append(meter_box)
 
         # STT state
         self._on_stt_start_stop = None
@@ -890,6 +895,7 @@ class MainContent(Gtk.Box):
             self._context_meter.add_css_class("context-meter-low")
             color_label = "ok"
         self._context_meter_label.set_text(f"{color_label} {usage_percent:.0f}%")
+        self._context_pct_label.set_text(f"{usage_percent:.0f}%")
 
     # ── STT (Speech-to-Text) ───────────────────────────────────────────────
     # State machine: idle → click → recording → click → idle.
