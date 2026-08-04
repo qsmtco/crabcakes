@@ -92,6 +92,14 @@ class MainWindow(Gtk.ApplicationWindow):
         # Forward handler — owns agent-to-agent message forwarding (Phase 3b extraction)
         self._forward_handler = None
 
+        # ── Project settings bar — branch refresh state (SPEC-...-FIX-3 §2.2) ──
+        # Cache keyed by project_path — a switch A->B->A reuses A's cached branch.
+        # Round 2 BUG #2/#7 + Round 3 BUG #5.
+        self._cached_branch_by_path: dict[str, str] = {}   # {project_path: branch_name}
+        self._branch_request_token: int = 0           # monotonic request id (BUG #7)
+        self._branch_active_token: int | None = None  # token of in-flight worker (BUG #2)
+        self._branch_request_path: str | None = None  # project path captured at schedule time (BUG #2)
+
         self._build()
         self._setup_keyboard_shortcuts()
 
@@ -498,6 +506,25 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # Populate agent scope dropdown with registered agent names.
         self._feed_handler.set_agent_options_for_dropdown()
+
+        # ── Project settings bar — wire all callbacks (SPEC-...-FIX-3 §2.2) ──
+        # Round 2 BUG #4: main_content clicks → window handlers.
+        self._main_content.set_on_settings_clicked(self._on_settings_btn_clicked)
+        self._main_content.set_on_agent_cycle(self._on_agent_cycle_clicked)
+        self._main_content.set_on_autoaccept_cycle(self._on_autoaccept_cycle_clicked)
+
+        # Round 2 BUG #4: wire ProjectHandler solo-change -> bar refresh.
+        self._project_handler.set_on_solo_target_changed(self._on_solo_target_changed)
+
+        # Round 3 BUG #1/#2: register NAMED lifecycle methods as additional
+        # callbacks (project_handler supports multiple open/close callbacks).
+        self._project_handler.set_on_project_opened(self._on_project_opened)
+        self._project_handler.set_on_project_closed(self._on_project_closed)
+
+        # Round 3 BUG #4: after async auto-accept confirmation, refresh the bar.
+        self._feed_handler.set_on_auto_accept_level_changed(
+            self._on_auto_accept_level_changed
+        )
 
         # Inject FeedTab into LeftPanel's Projects notebook "Feed" sub-tab
         self._left_panel.set_feed_tab(self._feed_tab)
@@ -1050,9 +1077,258 @@ class MainWindow(Gtk.ApplicationWindow):
         if project_name:
             self._close_project_tab(project_name)
 
-    def _on_feed_bar_update(self, project_name: str, member_count: int):
-        """Update the project settings bar with project name + member count."""
-        self._main_content._update_project_settings_from_project(project_name, member_count)
+    def _on_feed_bar_update(self, project_name: str, member_count: int,
+                            *, solo_target=None, auto_accept_level=None,
+                            branch_name=None):
+        """Update the project settings bar with all per-project state.
+
+        Backward compatible: the four lifecycle call sites pass
+        (project_name, member_count) and the remaining state is resolved here.
+        """
+        if not project_name:
+            self._main_content.update_project_settings("", 0, None, "off", None)
+            return
+        # Resolve solo target from ProjectHandler (source of truth).
+        if solo_target is None and self._project_handler is not None:
+            solo_target = self._project_handler.get_solo_target(project_name)
+        # Resolve auto-accept level from FeedHandler (source of truth).
+        if auto_accept_level is None and self._feed_handler is not None:
+            auto_accept_level = self._feed_handler.get_auto_accept_level()
+        # Branch scheduling — Round 3 BUG #6: separate the TWO distinct reasons
+        # a branch refresh might be needed from "a worker is already running".
+        #   needs_resolution: the ACTIVE project's branch is not yet cached
+        #                    (checked against the path-keyed cache, BUG #5).
+        #   already_running:  a worker is in flight for the CURRENT request.
+        if branch_name is None and self._project_handler is not None:
+            active_path = self._project_handler.get_active_project_path() or ""
+            cached_for_active = self._cached_branch_by_path.get(active_path)
+            needs_resolution = cached_for_active is None
+            already_running = self._branch_active_token is not None
+            if needs_resolution and not already_running:
+                self._schedule_branch_refresh(
+                    project_name, member_count, solo_target, auto_accept_level
+                )
+            branch_name = cached_for_active
+        self._main_content.update_project_settings(
+            project_name, member_count, solo_target,
+            auto_accept_level or "off", branch_name,
+        )
+
+    def _schedule_branch_refresh(self, project_name, member_count,
+                                 solo_target, auto_accept_level):
+        """Start a background branch lookup, guarded by a monotonic request token.
+
+        All state transitions happen on the GTK thread. The worker only reads a
+        captured project_path and reports back; it never mutates window state.
+        """
+        if self._branch_active_token is not None:
+            return  # a worker is already in flight — don't stack a second one
+
+        import os
+        path = self._project_handler.get_active_project_path()
+        if not path:
+            return
+
+        self._branch_request_token += 1
+        token = self._branch_request_token
+        self._branch_active_token = token
+        self._branch_request_path = path
+
+        import threading
+        t = threading.Thread(
+            target=self._resolve_branch_worker,
+            args=(token, path, project_name, member_count,
+                  solo_target, auto_accept_level),
+            daemon=True,
+        )
+        t.start()
+
+    def _resolve_branch_worker(self, token, path, project_name, member_count,
+                               solo_target, auto_accept_level):
+        """Background worker: resolve the branch for the CAPTURED path.
+
+        Reads only `path` (captured) — never the live active project. On
+        completion, dispatches a main-thread callback. If the token no longer
+        matches, the result is DISCARDED.
+        """
+        branch = None
+        try:
+            from utils.git_ops import get_branch
+            result = get_branch(path)
+            # get_branch returns success=True with "(detached HEAD)" for detached;
+            # failure (non-git, unborn) -> success=False -> None -> "—".
+            branch = result.stdout if result.success else None
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("branch lookup failed for %s", path)
+            branch = None
+        from gi.repository import GLib
+        GLib.idle_add(
+            lambda: self._on_branch_result(token, path, project_name, member_count,
+                                           solo_target, auto_accept_level, branch)
+        )
+
+    def _on_branch_result(self, token, path, project_name, member_count,
+                          solo_target, auto_accept_level, branch):
+        """GTK-thread callback applying a branch result IF it is still current.
+
+        Round 3 BUG #2: ALL staleness + active-identity checks run BEFORE any
+        state is mutated. A stale result can never write _cached_branch_by_path
+        for the wrong project.
+        """
+        # Clear the in-flight marker (always — the worker has reported back).
+        if token == self._branch_active_token:
+            self._branch_active_token = None
+
+        # 1) Superseded by a newer request OR the project closed/switch -> discard.
+        if token != self._branch_request_token:
+            return
+        if path != self._branch_request_path:
+            return
+
+        # 2) Active project must still be the one we resolved for — check name
+        #    AND path BEFORE writing the cache (BUG #2 / BUG #5).
+        current_name = self._project_handler.get_active_project_name() \
+            if self._project_handler else None
+        if current_name != project_name:
+            return
+        current_path = self._project_handler.get_active_project_path() \
+            if self._project_handler else None
+        if current_path != path:
+            return
+
+        # All checks pass — safe to commit to the path-keyed cache (BUG #5).
+        self._cached_branch_by_path[path] = branch
+        self._on_feed_bar_update(project_name, member_count,
+                                 solo_target=solo_target,
+                                 auto_accept_level=auto_accept_level,
+                                 branch_name=branch)
+
+    def _on_project_closed(self, name: str) -> None:
+        """Invalidate any in-flight branch request when a project closes.
+
+        Round 3 BUG #1: defined as a NAMED method (not inserted into the existing
+        tuple lambda, which cannot contain assignment statements). Registered as an
+        ADDITIONAL callback via set_on_project_closed — the handler supports
+        multiple open/close callbacks, so this runs alongside (not instead of)
+        the existing feed/crabwatch/review shutdown lambdas.
+        """
+        self._branch_request_token += 1   # invalidate any in-flight worker
+        self._branch_active_token = None
+        self._branch_request_path = None
+
+    def _on_project_opened(self, name: str, path: str) -> None:
+        """Invalidate in-flight branch state when a project opens or switches.
+
+        Round 3 BUG #2: FIX-2 only invalidated on CLOSE. A project A->B switch
+        without opening invalidation could let A's in-flight worker apply A's
+        branch to B. This named method is registered as an ADDITIONAL
+        set_on_project_opened callback (handler fires cb(name, path) at line 132).
+
+        NOTE: the path-keyed cache (BUG #5) is deliberately NOT cleared here —
+        switching back to A should reuse A's cached branch. Only the in-flight
+        marker is invalidated so a stale worker result cannot land.
+
+        BUILD-TIME FIX (Round 4 BUG #1): after invalidation, also re-run
+        _on_feed_bar_update so the newly opened project gets its branch
+        scheduled even if a previous worker was in flight.
+        """
+        self._branch_request_token += 1
+        self._branch_active_token = None
+        self._branch_request_path = None
+        # Re-evaluate the bar for the newly active project (BUILD-TIME FIX Round 4).
+        try:
+            members = self._project_handler.get_project_members(name) \
+                if self._project_handler else []
+            self._on_feed_bar_update(name, len(members))
+        except Exception:
+            logger.exception("Failed to re-evaluate settings bar on project open")
+
+    def _on_agent_cycle_clicked(self, current_solo):
+        """Cycle agent label: ALL(None) -> member[0] -> ... -> member[N-1] -> ALL(None)."""
+        project_name = self._project_handler.get_active_project_name() \
+            if self._project_handler else None
+        if not project_name:
+            return
+        members = self._project_handler.get_project_members(project_name)
+        if not members:
+            return
+        if current_solo is None or current_solo not in members:
+            next_solo = members[0]
+        else:
+            idx = members.index(current_solo)
+            next_solo = members[idx + 1] if idx < len(members) - 1 else None
+        self._project_handler.set_solo_target(project_name, next_solo)
+        # set_solo_target fires _on_solo_target_changed -> bar refreshes.
+
+    def _on_autoaccept_cycle_clicked(self, current_level):
+        """Cycle auto-accept (file changes): off -> diffs -> files -> all -> off.
+
+        Round 3 BUG #4: this does NOT optimistically rebuild the bar before
+        confirmation. set_auto_accept_level() shows the warning gate on enable
+        and only commits on confirm; the bar refresh happens in the
+        on_auto_accept_level_changed callback AFTER _commit_auto_accept_level.
+        """
+        project_name = self._project_handler.get_active_project_name() \
+            if self._project_handler else None
+        if not project_name:
+            return
+        cycle = {"off": "diffs", "diffs": "files", "files": "all", "all": "off"}
+        next_level = cycle.get(current_level, "off")
+        if self._feed_handler is not None:
+            self._feed_handler.set_auto_accept_level(next_level)
+        # No bar rebuild here — the confirmation callback handles it (BUG #4).
+
+    def _on_solo_target_changed(self, project_name: str):
+        """ProjectHandler fired after a solo-target change.
+
+        Round 3 BUG #3: guard against a stale/non-active project name. The
+        ProjectHandler implementation validates the project exists; this window
+        guard additionally enforces that it is the ACTIVE project so a stale
+        right-click selection cannot rebuild the bar for a closed project.
+        """
+        if not project_name or self._project_handler is None:
+            return
+        if self._project_handler.get_active_project_name() != project_name:
+            return  # stale/non-active project — ignore (BUG #3)
+        members = self._project_handler.get_project_members(project_name)
+        self._on_feed_bar_update(
+            project_name,
+            len(members),
+            solo_target=self._project_handler.get_solo_target(project_name),
+        )
+
+    def _refresh_settings_bar_for_active(self, auto_accept_level=None):
+        """Helper: rebuild the settings bar for the currently active project.
+
+        Used by the on_auto_accept_level_changed callback (Round 3 BUG #4) so
+        the bar reflects the new auto-accept level only AFTER async confirmation
+        has committed it.
+        """
+        project_name = self._project_handler.get_active_project_name() \
+            if self._project_handler else None
+        if not project_name:
+            self._on_feed_bar_update("", 0, auto_accept_level=auto_accept_level)
+            return
+        members = self._project_handler.get_project_members(project_name)
+        self._on_feed_bar_update(
+            project_name,
+            len(members),
+            solo_target=self._project_handler.get_solo_target(project_name),
+            auto_accept_level=auto_accept_level,
+        )
+
+    def _on_auto_accept_level_changed(self, level: str):
+        """Callback fired by FeedHandler after an auto-accept level COMMITS.
+
+        Delegates to _refresh_settings_bar_for_active so the bar shows the
+        newly confirmed level (Round 3 BUG #4).
+        """
+        self._refresh_settings_bar_for_active(level)
+
+    def _on_settings_btn_clicked(self):
+        """⚙ -> open the existing Settings dialog (fresh instance each call)."""
+        self._open_settings()
 
     def update_agent_id_display(self, agent_id: str) -> None:
         """A-9: Update the agent_id label in the status bar."""

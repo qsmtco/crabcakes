@@ -486,6 +486,28 @@ self._agent_to_project = AgentRoutingTable()  # shared with ProjectHandler (writ
 
 **Right-click spell suggestions:** The `_on_input_right_click` closure (defined in `MainWindow._build()`) consumes `InputToolbarHandler.is_spell_enabled()` (FRAGILE-1) and `get_word_at_iter()` (STALE-1) from `InputToolbarHandler`. The closure captures the clicked word's text at right-click time and verifies it at suggestion-click time to avoid replacing a different word if the buffer changed in between. See `SPEC-SPELL-POPOVER-FOLLOWUP.md` for details.
 
+**Project settings bar wiring (Spec PROJECT-SETTINGS-BAR-ENHANCED):** `window.py` wires the settings-bar callbacks in `_build()` (named lifecycle methods registered as ADDITIONAL `set_on_project_opened`/`set_on_project_closed` callbacks — the handler is append-based, so they coexist with the existing feed/crabwatch/review lambdas):
+
+| Setter | Window impl | Action |
+|--------|-------------|--------|
+| `main_content.set_on_settings_clicked` | `_on_settings_btn_clicked` | ⚙ -> `_open_settings()` (fresh dialog each click) |
+| `main_content.set_on_agent_cycle` | `_on_agent_cycle_clicked` | cycle solo member -> `set_solo_target` (bar refreshes via solo-changed callback) |
+| `main_content.set_on_autoaccept_cycle` | `_on_autoaccept_cycle_clicked` | `FeedHandler.set_auto_accept_level(next)` — NO optimistic bar rebuild (BUG #4; bar updates post-confirmation) |
+| `project_handler.set_on_solo_target_changed` | `_on_solo_target_changed` | bar refresh, active-project guarded (BUG #3) |
+| `project_handler.set_on_project_opened` | `_on_project_opened` | invalidate in-flight branch worker + re-evaluate bar (Round 4 fix) |
+| `project_handler.set_on_project_closed` | `_on_project_closed` | invalidate in-flight branch worker (Round 3 BUG #1) |
+| `feed_handler.set_on_auto_accept_level_changed` | `_on_auto_accept_level_changed` -> `_refresh_settings_bar_for_active` | bar refresh after async confirmation (BUG #4) |
+
+**Token-guarded, path-keyed branch worker (Round 2 BUG #1/#2/#7 + Round 3 BUG #2/#5/#6):** `_on_feed_bar_update` schedules `_schedule_branch_refresh` when `needs_resolution` (active path not cached) and `not already_running` (two independent conditions, BUG #6). The worker `_resolve_branch_worker` reads only the CAPTURED path and dispatches `_on_branch_result` via `GLib.idle_add`. `_on_branch_result` runs ALL staleness + active-identity checks (token, path, active-name, active-path) BEFORE writing the cache (BUG #2), then re-runs `_on_feed_bar_update` with `branch_name=branch`.
+
+**State fields (window `__init__`):**
+```python
+self._cached_branch_by_path: dict[str, str] = {}   # {project_path: branch_name} (BUG #5)
+self._branch_request_token: int = 0                # monotonic request id (BUG #7)
+self._branch_active_token: int | None = None       # token of in-flight worker (BUG #2)
+self._branch_request_path: str | None = None       # project path captured at schedule time (BUG #2)
+```
+
 ### 3.6a `ui/handlers/input_toolbar_handler.py` — Input Toolbar Handler
 
 **Responsibility:** All input toolbar logic — find/replace, spell check, file I/O, word count. Pure data layer; imports no `Gtk.*` widget types in module scope. GTK types are accessed only via `self._mc.user_input.get_buffer()` which returns `Gtk.TextBuffer` (the established pattern).
@@ -645,6 +667,23 @@ content.set_on_improve_click(cb) # Improve button clicked
 content.replace_input_text(text) # replace input with improved text
 content.append_stt_text(text)    # append STT partial transcript
 content.update_stt_state(state) # "idle" | "recording" — button label/style
+
+# Spec PROJECT-SETTINGS-BAR-ENHANCED: project settings bar (agent name,
+# auto-accept level, git branch, ⚙ button) rebuilt from resolved primitives.
+def update_project_settings(project_name, member_count, solo_target,
+                            auto_accept_level, branch_name) -> None
+    # Rebuild the settings bar with all 5 elements. Falsy project_name hides
+    # the bar and returns. xml_escape_text()s the UNTRUSTED project_name and
+    # branch (BUG #6). Re-appends the singleton gear button last.
+def set_on_settings_clicked(cb) -> None   # ⚙ -> _on_settings_btn_clicked -> Settings dialog
+def set_on_agent_cycle(cb) -> None        # agent label clicked -> cycle solo member
+def set_on_autoaccept_cycle(cb) -> None   # auto label clicked -> cycle level (off->diffs->files->all->off)
+# _clear_settings_bar() — sibling-walk child removal (get_first_child()/remove()
+#   loop; NEVER `for child in list(box)` — gtk-container-membership bug class).
+# Gear-preservation invariant (BUG #5): BOTH legacy methods
+#   set_project_settings_text(text) and set_feed_bar_text(text) clear the bar,
+#   append their label, then re-append _settings_btn so the gear is never lost
+#   across rebuilds.
 ```
 
 **Tab close:** Each tab has an × button (top-right of tab label) and responds to middle-click. Both call `_close_tab(page_idx)` which removes the page and re-indexes tracking dicts.
@@ -1276,6 +1315,17 @@ def update_agent_session(project_name: str, old_session_key: str, new_session_ke
 
 def set_agent_manager(agent_mgr) -> None:
     """Inject AgentManager after gateway connect."""
+
+def set_on_solo_target_changed(cb): pass
+    # Spec PROJECT-SETTINGS-BAR-ENHANCED: fired after set_solo_target() changes
+    # a project's solo DM target, cb(project_name: str). Only fires on a REAL
+    # change (old == new -> no-op) and only for a VALIDATED existing project
+    # (_get_project_path is not None, BUG #3 — unknown names are rejected).
+
+def set_solo_target(project_name, member_session_key): pass
+    # Set/clear the solo DM target for a project. Validates the project exists
+    # (unknown -> no-op, no state, no callback). Fires _on_solo_target_changed
+    # only when the value actually changes.
 
 def set_on_members_changed(cb: Callable): pass
 def set_on_navigate_back(cb: Callable): pass
@@ -2701,6 +2751,24 @@ class FeedHandler:
     def handle_copy(self, text: str) -> None
     def handle_batch_accept(self, card_ids: list[str]) -> None
         # Phase 5: accepts a list of file-change cards in one go
+
+    # Spec PROJECT-SETTINGS-BAR-ENHANCED: settings-bar auto-accept level
+    # (file-change scoped; exec_command is a SEPARATE axis and is never
+    # collapsed into this label — the bar shows "⚡ files: ...").
+    def get_auto_accept_level(self) -> str
+        # Returns "off" | "diffs" | "files" | "all".
+        #   off:   diff off AND file_created/modified/deleted all off
+        #   diffs: diff on  AND file types all off
+        #   files: diff off AND file types all on
+        #   all:   all four on
+    def set_auto_accept_level(self, level: str) -> None
+        # Set file-change level; enabling routes through the warning gate
+        # (_show_auto_accept_warning) and commits via _refresh_auto_accept_state.
+        # Invalid level or _prefs is None -> no-op. exec_command untouched.
+    def set_on_auto_accept_level_changed(self, cb) -> None
+        # Register callback fired AFTER a level COMMITS (i.e. after the async
+        # warning dialog's on_confirm). Used by window to rebuild the bar post-
+        # confirmation; NOT fired on cancel (BUG #4). cb(level: str).
 ```
 
 **Thread safety:** All GTK operations via `GLib.idle_add()`. Git ops in background threads. `_lock` protects dict mutations.

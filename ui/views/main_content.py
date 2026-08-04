@@ -133,6 +133,21 @@ class MainContent(Gtk.Box):
         _feed_lbl.set_markup('<span foreground="#6b6b7a" font_desc="Sans 10">Project Settings</span>')
         self._project_settings.append(_feed_lbl)
 
+        # Singleton gear button (⚙) — right-aligned, opens the Settings dialog.
+        # Round 2 BUG #5: this widget is re-appended by update_project_settings()
+        # and BOTH legacy text setters after _clear_settings_bar() removes all
+        # children, so it is never lost across bar rebuilds (SPEC-...-FIX-3 §2.1).
+        # GTK4: set_has_frame(False), NOT set_relief()/ReliefStyle (removed in GTK4).
+        self._settings_btn = Gtk.Button(label="⚙")
+        self._settings_btn.set_has_frame(False)
+        self._settings_btn.set_focus_on_click(False)
+        self._settings_btn.add_css_class("project-bar-gear")
+        self._settings_btn.set_margin_end(8)
+        self._settings_btn.connect("clicked", self._on_settings_btn_clicked)
+        self._on_settings_clicked = None
+        self._on_agent_cycle = None
+        self._on_autoaccept_cycle = None
+
         # Phase 5b: scroll-to-bottom floating button
         self._scroll_btn = Gtk.Button(label="↓")
         self._scroll_btn.add_css_class("scroll-to-bottom-btn")
@@ -255,10 +270,153 @@ class MainContent(Gtk.Box):
 
         self.append(paned)
 
+    def _clear_settings_bar(self) -> None:
+        """Remove all children from the settings bar box (sibling-walk safe)."""
+        while self._project_settings.get_first_child() is not None:
+            self._project_settings.remove(self._project_settings.get_first_child())
+
+    def update_project_settings(self, project_name, member_count,
+                                solo_target, auto_accept_level, branch_name):
+        """Rebuild the settings bar with the latest per-project state.
+
+        Called by window.py when project opens/closes, members change, solo
+        target changes, auto-accept level changes, or branch refresh lands.
+
+        Empty project (project_name falsy) -> hide the bar and return.
+        """
+        if not project_name:
+            self._project_settings.set_visible(False)
+            self._clear_settings_bar()
+            return
+
+        self._clear_settings_bar()
+        self._project_settings.set_visible(True)
+
+        info_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        info_box.set_hexpand(True)
+        info_box.set_halign(Gtk.Align.START)
+
+        # Project name + member count. BUG #6: xml_escape_text() the UNTRUSTED
+        # project name (escape_for_pango preserves <b> etc -> injection).
+        from utils.escaping import xml_escape_text
+        safe_name = xml_escape_text(project_name)
+        name_label = Gtk.Label()
+        name_label.set_markup(
+            f'<span font_desc="Sans 10"><b>{safe_name}</b>  ·  '
+            f'{member_count} member{"s" if member_count != 1 else ""}</span>'
+        )
+        name_label.set_margin_start(8)
+        info_box.append(name_label)
+
+        # Agent name (green) — clickable to cycle. Pango markup drives the
+        # font (Sans 10, matching the Git/branch label) and splits the prefix
+        # ("Chat:") into a brighter color from the value.
+        agent_text = self._resolve_agent_display_name(solo_target) if solo_target else "ALL"
+        agent_label = Gtk.Button()
+        agent_label.set_has_frame(False)   # GTK4 — set_relief()/ReliefStyle do NOT exist
+        agent_label.set_focus_on_click(False)
+        agent_label.add_css_class("project-bar-agent")
+        _agent_lbl = Gtk.Label()
+        _agent_lbl.set_markup(
+            f'<span font_desc="Sans 10" foreground="#cfd8e8">Chat:</span> '
+            f'<span font_desc="Sans 10" foreground="#4ade80">{xml_escape_text(agent_text)}</span>'
+        )
+        agent_label.set_child(_agent_lbl)
+        agent_label.connect("clicked", lambda _b: self._on_agent_label_clicked(solo_target))
+        info_box.append(agent_label)
+
+        # Auto-accept level (file changes) — clickable, cycles off->diffs->files->all
+        level_labels = {
+            "off": "off",
+            "diffs": "diffs",
+            "files": "files",
+            "all": "all",
+        }
+        auto_label = Gtk.Button()
+        auto_label.set_has_frame(False)
+        auto_label.set_focus_on_click(False)
+        auto_label.add_css_class("project-bar-autoaccept")
+        _auto_lbl = Gtk.Label()
+        _auto_lbl.set_markup(
+            f'<span font_desc="Sans 10" foreground="#cfd8e8">Files:</span> '
+            f'<span font_desc="Sans 10" foreground="#facc15">{xml_escape_text(level_labels.get(auto_accept_level, "off"))}</span>'
+        )
+        auto_label.set_child(_auto_lbl)
+        auto_label.connect("clicked", lambda _b: self._on_autoaccept_label_clicked(auto_accept_level))
+        info_box.append(auto_label)
+
+        # Git branch (read-only) — interpolated into markup, must be xml_escape_text'd.
+        branch_text = branch_name or "—"
+        branch_label = Gtk.Label()
+        branch_label.set_markup(
+            f'<span font_desc="Sans 10" foreground="#cfd8e8">Git:</span> '
+            f'<span font_desc="Sans 10" foreground="#6b9bd8">⎇ {xml_escape_text(branch_text)}</span>'
+        )
+        branch_label.set_margin_start(4)
+        info_box.append(branch_label)
+
+        self._project_settings.append(info_box)
+        # Always re-append the singleton gear — _clear_settings_bar() removed it.
+        self._project_settings.append(self._settings_btn)
+
+    def _resolve_agent_display_name(self, session_key: str) -> str:
+        """Resolve a member session_key to a human-readable name.
+
+        Ordered fallback (mirrors existing _on_tab_right_click logic):
+          1. _agent_mgr.get_name(sk)  (gateway/connected AgentManager)
+          2. _agent_runtime_handler.get_special_agents()[sk]  (offline special agents)
+          3. session_key as-is.
+
+        Uses the dict returned by ARTH.get_special_agents() — NO reliance on a
+        SpecialAgentDef.session_key attribute (keyed by conv_id_prefix).
+
+        Round 3 BUG #7: use .get() + truthiness, NOT `if sk in special` — an
+        entry whose value is "" or None must fall through to session_key
+        rather than return a blank label.
+        """
+        if self._agent_mgr is not None:
+            name = self._agent_mgr.get_name(session_key)
+            if name:
+                return name
+        if self._agent_runtime_handler is not None:
+            special = self._agent_runtime_handler.get_special_agents()
+            name = special.get(session_key)
+            if name:
+                return name
+        return session_key
+
+    def _on_agent_label_clicked(self, current_solo):
+        if self._on_agent_cycle is None:
+            return
+        self._on_agent_cycle(current_solo)
+
+    def _on_autoaccept_label_clicked(self, current_level):
+        if self._on_autoaccept_cycle is None:
+            return
+        self._on_autoaccept_cycle(current_level)
+
+    def _on_settings_btn_clicked(self, _btn):
+        if self._on_settings_clicked:
+            self._on_settings_clicked()
+
+    def set_on_settings_clicked(self, callback):
+        self._on_settings_clicked = callback
+
+    def set_on_agent_cycle(self, callback):
+        self._on_agent_cycle = callback
+
+    def set_on_autoaccept_cycle(self, callback):
+        self._on_autoaccept_cycle = callback
+
     def set_project_settings_text(self, text: str):
-        """Set text or markup on the project settings bar. Handles Pango markup correctly."""
-        for child in list(self._project_settings):
-            self._project_settings.remove(child)
+        """Set text or markup on the project settings bar. Handles Pango markup correctly.
+
+        Backward compat: still clears the bar, appends the label, then re-appends the
+        singleton gear button so it is never lost (BUG #5). Uses the sibling-walk
+        _clear_settings_bar() helper (not `for child in list(box)`). A later
+        update_project_settings() call fully rebuilds the row.
+        """
+        self._clear_settings_bar()
         lbl = Gtk.Label()
         lbl.set_halign(Gtk.Align.END)
         lbl.set_margin_start(8)
@@ -268,6 +426,7 @@ class MainContent(Gtk.Box):
         else:
             lbl.set_text(text)
         self._project_settings.append(lbl)
+        self._project_settings.append(self._settings_btn)
 
     def set_on_buffer_changed(self, cb: callable) -> None:
         """Register callback for input buffer 'changed' events. cb(buffer)."""
@@ -323,9 +482,13 @@ class MainContent(Gtk.Box):
             self.set_project_settings_text('Project Settings')
 
     def set_feed_bar_text(self, text):
-        """Update the project feed bar with a status message."""
-        for child in list(self._project_settings):
-            self._project_settings.remove(child)
+        """Update the project feed bar with a status message (legacy).
+
+        Same gear-preservation as set_project_settings_text() (BUG #5): uses the
+        sibling-walk _clear_settings_bar() helper and re-appends the singleton
+        gear button so it is never lost.
+        """
+        self._clear_settings_bar()
         if text:
             lbl = Gtk.Label()
             lbl.set_halign(Gtk.Align.END)
@@ -336,6 +499,7 @@ class MainContent(Gtk.Box):
             else:
                 lbl.set_text(text)
             self._project_settings.append(lbl)
+        self._project_settings.append(self._settings_btn)
 
     # ── Tab management ──────────────────────────────────────────────────────
 

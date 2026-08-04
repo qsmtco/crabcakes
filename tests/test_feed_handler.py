@@ -3418,3 +3418,170 @@ class TestHideCardButtonsBug:
             "Accept button (file-change label) must be hidden when "
             "passed as 'accept' to hide_card_buttons"
         )
+
+
+# ── TestAutoAcceptLevel — SPEC-PROJECT-SETTINGS-BAR-ENHANCED-FIX-3 §5 Step 2
+# Phase I.5. Regression tests for the settings-bar auto-accept level API:
+#   get_auto_accept_level / set_auto_accept_level / _commit_auto_accept_level
+#   / _emit_auto_accept_level_changed / set_on_auto_accept_level_changed.
+# Pure Python — reuses the MockGLib + feed_handler fixtures (no real GTK).
+
+class TestAutoAcceptLevel:
+    """Round-trip + warning-gate behaviour of the file-change auto-accept
+    level API (SPEC-PROJECT-SETTINGS-BAR-ENHANCED-FIX-3 §2.3)."""
+
+    def _make_handler(self, wire_warning=None):
+        from ui.handlers.feed_handler import FeedHandler
+        h = FeedHandler(GLib=MockGLib(), on_send_to_agent=MagicMock())
+        h.set_feed_tab(MockFeedTab())
+        if wire_warning is not None:
+            h.set_show_auto_accept_warning(wire_warning)
+        return h
+
+    def test_round_trip_all_four_levels(self):
+        """Set each of off/diffs/files/all, get it back, assert round-trip."""
+        h = self._make_handler()
+        for level in ("off", "diffs", "files", "all"):
+            h.set_auto_accept_level(level)
+            assert h.get_auto_accept_level() == level, (
+                f"round-trip failed for level {level!r}: "
+                f"got {h.get_auto_accept_level()!r}"
+            )
+
+    def test_distinct_states_persisted(self):
+        """Each level serializes via to_dict()/from_dict() and survives."""
+        for level in ("off", "diffs", "files", "all"):
+            h = self._make_handler()
+            h.set_auto_accept_level(level)
+            raw = h._prefs.to_dict()
+            p2 = AutoAcceptPrefs.from_dict(raw)
+            h2 = self._make_handler()
+            h2._prefs = p2
+            assert h2.get_auto_accept_level() == level, (
+                f"persisted level mismatch for {level!r}"
+            )
+
+    def test_invalid_level_noop(self):
+        """set_auto_accept_level('bogus') is a no-op (state unchanged)."""
+        h = self._make_handler()
+        before = h.get_auto_accept_level()
+        h.set_auto_accept_level("bogus")
+        assert h.get_auto_accept_level() == before
+        # Internal state untouched as well
+        assert all(fc.enabled is False
+                   for fc in h._prefs.file_changes.values())
+
+    def test_off_path_emits_callback(self):
+        """set_auto_accept_level('off') emits on_auto_accept_level_changed('off')."""
+        h = self._make_handler()
+        captured = []
+        h.set_on_auto_accept_level_changed(captured.append)
+        h.set_auto_accept_level("off")
+        assert captured == ["off"]
+
+    def test_warning_gate_on_enable(self):
+        """Enabling level routes through warning; level stays 'off' until confirm."""
+        h = self._make_handler()
+        warning_calls = []
+        h.set_show_auto_accept_warning(
+            lambda category, agent, on_confirm, on_cancel:
+                warning_calls.append((category, agent, on_confirm, on_cancel))
+        )
+        h.set_auto_accept_level("files")
+        # Warning invoked with category 'files'
+        assert warning_calls, "warning callback not invoked"
+        category, agent, on_confirm, on_cancel = warning_calls[0]
+        assert category == "files"
+        # NOT committed yet — still 'off'
+        assert h.get_auto_accept_level() == "off"
+        # Confirm -> commit
+        on_confirm()
+        assert h.get_auto_accept_level() == "files"
+
+    def test_warning_cancel_no_commit(self):
+        """Cancel path does NOT commit and does NOT emit."""
+        h = self._make_handler()
+        emitted = []
+        h.set_on_auto_accept_level_changed(emitted.append)
+        captured = {}
+        h.set_show_auto_accept_warning(
+            lambda category, agent, on_confirm, on_cancel:
+                captured.update(on_cancel=on_cancel)
+        )
+        h.set_auto_accept_level("diffs")
+        assert h.get_auto_accept_level() == "off"
+        # cancel
+        captured["on_cancel"]()
+        assert h.get_auto_accept_level() == "off"
+        assert emitted == [], "cancel must not emit the change callback"
+
+    def test_off_bypasses_warning(self):
+        """Setting 'off' from any state never invokes the warning."""
+        h = self._make_handler()
+        warner = MagicMock()
+        h.set_show_auto_accept_warning(warner)
+        # Put it in an on-state first so the transition is a real disable.
+        h.set_show_auto_accept_warning(None)  # commit straight through
+        h.set_auto_accept_level("all")
+        h.set_show_auto_accept_warning(warner)
+        warner.reset_mock()
+        h.set_auto_accept_level("off")
+        warner.assert_not_called()
+        assert h.get_auto_accept_level() == "off"
+
+    def test_exec_untouched(self):
+        """File-change level changes never touch exec_command auto-accept."""
+        h = self._make_handler()
+        # set exec to a non-off mode
+        h._prefs.exec_command.mode = "show"
+        h.set_auto_accept_level("files")
+        assert h._prefs.exec_command.mode == "show", (
+            "file-level change must not modify exec axis"
+        )
+        h.set_auto_accept_level("all")
+        assert h._prefs.exec_command.mode == "show"
+        h.set_auto_accept_level("off")
+        assert h._prefs.exec_command.mode == "show"
+
+    def test_prefs_none_guard(self):
+        """With _prefs=None every level is a no-op (no crash)."""
+        h = self._make_handler()
+        h._prefs = None
+        for level in ("off", "diffs", "files", "all"):
+            h.set_auto_accept_level(level)  # must not raise
+        # Nothing to assert on state, but ensure no exception when reading.
+        # get_auto_accept_level would crash on None prefs — guard is in setter.
+
+    def test_refresh_called_after_commit(self):
+        """_refresh_auto_accept_state is called after each commit path."""
+        h = self._make_handler()
+        with patch.object(h, "_refresh_auto_accept_state") as refresh:
+            # off path
+            h.set_auto_accept_level("off")
+            assert refresh.call_count == 1
+            # enabling path commits via _commit_auto_accept_level (no warning wired)
+            refresh.reset_mock()
+            h.set_auto_accept_level("files")
+            assert refresh.call_count == 1
+            # confirming an enabling level
+            refresh.reset_mock()
+            warned = {}
+            h.set_show_auto_accept_warning(
+                lambda category, agent, on_confirm, on_cancel:
+                    warned.update(on_confirm=on_confirm)
+            )
+            h.set_auto_accept_level("all")
+            refresh.reset_mock()
+            warned["on_confirm"]()
+            assert refresh.call_count == 1
+            # on_cancel also refreshes (state sync) but does not commit
+            refresh.reset_mock()
+            warned2 = {}
+            h.set_show_auto_accept_warning(
+                lambda category, agent, on_confirm, on_cancel:
+                    warned2.update(on_cancel=on_cancel)
+            )
+            h.set_auto_accept_level("diffs")
+            refresh.reset_mock()
+            warned2["on_cancel"]()
+            assert refresh.call_count == 1

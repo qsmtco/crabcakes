@@ -35,6 +35,61 @@ APP_CSS = """
     border-radius: 4px;
 }
 
+/* -- Project settings bar interactive elements -------------------------- */
+/* Applied to the agent / auto-accept / gear buttons inside the project
+   settings bar (ui/views/main_content.py). These are Gtk.Button with
+   set_has_frame(False), so :hover/:active give lightweight press feedback.
+   GTK4-safe: no text-align (use padding/halign), border:none + box-shadow:none
+   to neutralize the default button chrome. */
+
+.project-bar-agent {
+    color: #4ade80;
+    font-weight: 600;
+    padding: 0 6px;
+    border-radius: 3px;
+    min-height: 0;
+    margin: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+}
+.project-bar-agent:hover {
+    background: rgba(74, 222, 128, 0.15);
+}
+.project-bar-agent:active {
+    background: rgba(74, 222, 128, 0.25);
+}
+
+.project-bar-autoaccept {
+    color: #facc15;
+    padding: 0 6px;
+    border-radius: 3px;
+    min-height: 0;
+    margin: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+}
+.project-bar-autoaccept:hover {
+    background: rgba(250, 204, 21, 0.15);
+}
+.project-bar-autoaccept:active {
+    background: rgba(250, 204, 21, 0.25);
+}
+
+.project-bar-gear {
+    font-size: 14px;
+    padding: 0 8px;
+    min-height: 0;
+    border-radius: 3px;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+}
+.project-bar-gear:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
 /* -- Buttons ------------------------------------------------------------ */
 button.suggested-action {
     background: #6366f1;

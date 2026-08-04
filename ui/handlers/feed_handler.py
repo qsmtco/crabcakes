@@ -109,6 +109,11 @@ class FeedHandler:
         # _refresh_auto_accept_state; cleared after the idle callback runs).
         self._pending_save_id = None
         self._show_auto_accept_warning: Callable | None = None  # callback injected by Window
+        # Round 3 BUG #4 (SPEC-PROJECT-SETTINGS-BAR-ENHANCED-FIX-3): fired after
+        # an auto-accept level COMMITS (on_auto_accept_level_changed), so the
+        # settings bar can rebuild with the newly confirmed level after the async
+        # warning dialog. See _emit_auto_accept_level_changed.
+        self._on_auto_accept_level_changed: Callable[[str], None] | None = None
 
     def set_feed_tab(self, feed_tab) -> None:
         """
@@ -159,6 +164,16 @@ class FeedHandler:
         Pass None to clear. Called by Window after FeedHandler is constructed.
         """
         self._show_auto_accept_warning = callback
+
+    def set_on_auto_accept_level_changed(self, cb: Callable[[str], None] | None) -> None:
+        """Register a callback fired after an auto-accept level has COMMITTED.
+
+        cb(level: str) — "off" | "diffs" | "files" | "all". Fired from
+        _commit_auto_accept_level() after _refresh_auto_accept_state(), i.e.
+        only after the user confirms the warning dialog (Round 3 BUG #4). Safe
+        to call with None to unregister.
+        """
+        self._on_auto_accept_level_changed = cb
 
     def _resolve_agent_name_for_dialog(self) -> str:
         """
@@ -412,6 +427,87 @@ class FeedHandler:
         # schedules a new save; the old one already ran (or is running)
         # and is harmless to leave alone.
         self._pending_save_id = self._GLib.idle_add(self._save_feed_prefs_idle)
+
+    # ── Auto-accept level (settings bar) ──────────────────────────────────
+    # SPEC-PROJECT-SETTINGS-BAR-ENHANCED-FIX-3 §2.3. The four file-change
+    # auto-accept states are distinct and round-trippable. exec_command is a
+    # SEPARATE axis and is never touched by these methods (file-only scope).
+
+    def get_auto_accept_level(self) -> str:
+        """File-change auto-accept level: "off" | "diffs" | "files" | "all".
+
+        Scoped to FILE changes only; exec is a separate axis. Distinct,
+        round-trippable mapping:
+          - "off":   diff off AND file_created/modified/deleted all off
+          - "diffs": diff on  AND file_created/modified/deleted all off
+          - "files": diff off AND file_created/modified/deleted all on
+          - "all":   all four on
+        """
+        fc = self._prefs.file_changes
+        diff = fc["diff"].enabled
+        group = all(fc[ct].enabled for ct in ("file_created", "file_modified", "file_deleted"))
+        group_off = not any(fc[ct].enabled for ct in ("file_created", "file_modified", "file_deleted"))
+        if not diff and group_off:
+            return "off"
+        if diff and group_off:
+            return "diffs"
+        if diff and group:
+            return "all"
+        return "files"
+
+    def set_auto_accept_level(self, level: str) -> None:
+        """Set file-change auto-accept level; enabling routes through the warning gate.
+
+        level in {"off","diffs","files","all"}; invalid -> no-op. Enabling states
+        call the warning callback (category + agent + on_confirm/on_cancel) and
+        only commit on confirm. All commits call _refresh_auto_accept_state().
+        """
+        if level not in ("off", "diffs", "files", "all") or self._prefs is None:
+            return
+        if level == "off":
+            for ct in self._prefs.file_changes:
+                self._prefs.file_changes[ct].enabled = False
+            self._refresh_auto_accept_state()
+            self._emit_auto_accept_level_changed(level)
+            return
+        category = "diffs" if level == "diffs" else "files"
+        if self._show_auto_accept_warning is not None:
+            self._show_auto_accept_warning(
+                category,
+                self._resolve_agent_name_for_dialog(),
+                on_confirm=lambda lvl=level: self._commit_auto_accept_level(lvl),
+                on_cancel=lambda: self._refresh_auto_accept_state(),
+            )
+        else:
+            self._commit_auto_accept_level(level)
+
+    def _emit_auto_accept_level_changed(self, level: str) -> None:
+        """Fire the on_auto_accept_level_changed callback (Round 3 BUG #4)."""
+        if self._on_auto_accept_level_changed is not None:
+            self._on_auto_accept_level_changed(level)
+
+    def _commit_auto_accept_level(self, level: str) -> None:
+        """Write the distinct file-change state and sync (internal).
+
+        Round 3 BUG #4: after _refresh_auto_accept_state() this emits
+        on_auto_accept_level_changed so the settings bar rebuilds with the
+        newly committed level. FeedTab/persistence are updated by the refresh;
+        MainWindow is updated by this callback — not by the cycle handler.
+        """
+        fc = self._prefs.file_changes
+        if level == "diffs":
+            fc["diff"].enabled = True
+            for ct in ("file_created", "file_modified", "file_deleted"):
+                fc[ct].enabled = False
+        elif level == "files":
+            fc["diff"].enabled = False
+            for ct in ("file_created", "file_modified", "file_deleted"):
+                fc[ct].enabled = True
+        elif level == "all":
+            for ct in self._prefs.file_changes:
+                fc[ct].enabled = True
+        self._refresh_auto_accept_state()
+        self._emit_auto_accept_level_changed(level)
 
     # ── V2 policy helpers (Phase 4 / SPEC-AUTO-ACCEPT-GRANULAR-1.md §2.4) ──
 

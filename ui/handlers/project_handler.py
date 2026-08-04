@@ -66,6 +66,9 @@ class ProjectHandler:
         # ── Per-project solo DM target ────────────────────────────────────
         # Key: project_name, Value: member session_key or None (all = broadcast)
         self._solo_targets: dict[str, str | None] = {}
+        # Round 2 BUG #4: fired after a solo-target change so the settings bar
+        # can refresh immediately on right-click member selection.
+        self._on_solo_target_changed: Callable[[str], None] | None = None
 
         # ── Cross-handler callbacks (set by window) ───────────────────────
         self._on_project_opened: list[Callable] = []   # window's callbacks
@@ -378,11 +381,24 @@ class ProjectHandler:
         Set or clear the solo DM target for a project.
 
         Args:
-            project_name:          Name of the project.
+            project_name:          Name of the project (must be an existing project).
             member_session_key:    Session key of the solo recipient, or None to
                                    restore group broadcast (All members).
+
+        Round 3 BUG #3 (Option A — strict): the project must exist. An unknown
+        or deleted project name is a no-op (returns None, fires nothing) so a
+        stale right-click selection cannot create orphaned solo-target state.
+        Fires _on_solo_target_changed(project_name) only when the value actually
+        changes (old == new -> no-op) to avoid redundant bar rebuilds.
         """
+        if self._get_project_path(project_name) is None:
+            return  # unknown project — no-op (BUG #3)
+        old = self._solo_targets.get(project_name)
+        if old == member_session_key:
+            return  # no change — skip redundant callback
         self._solo_targets[project_name] = member_session_key
+        if self._on_solo_target_changed is not None:
+            self._on_solo_target_changed(project_name)
 
     # ── Setters for cross-handler callbacks ─────────────────────────────────
 
@@ -397,6 +413,15 @@ class ProjectHandler:
     def set_on_members_changed(self, cb: Callable):
         """Window calls this to receive membership-change notifications."""
         self._on_members_changed = cb
+
+    def set_on_solo_target_changed(self, cb: Callable[[str], None] | None) -> None:
+        """Register a callback fired after set_solo_target() changes.
+
+        cb(project_name: str). Window wires this to refresh the project settings
+        bar's agent name. Safe to call with None to unregister, or before any
+        project open (no-op until set_solo_target is invoked).
+        """
+        self._on_solo_target_changed = cb
 
     def set_agent_manager(self, agent_mgr) -> None:
         """Inject the live AgentManager after gateway connect. Called by window.py."""
