@@ -87,7 +87,9 @@ def make_safe_label(
     Caller passes already-formatted Pango markup (output of escape_for_pango +
     format_markdown). This helper:
       1. Creates the Gtk.Label.
-      2. Sets the markup.
+      2. Pre-validates the markup via Pango.parse_markup; if Pango rejects it,
+         falls back to set_text so the raw text renders instead of an empty
+         bubble.
       3. Connects `activate-link` to on_activate_link (the HIGH-6 guard).
       4. Sets xalign / wrap / selectable / css_class / css_classes as specified.
 
@@ -117,7 +119,18 @@ def make_safe_label(
     from gi.repository import Gtk, Pango  # noqa: F401
 
     label = Gtk.Label()
-    label.set_markup(markup)
+    # Pre-validate markup before set_markup to avoid Gtk-WARNING terminal spam.
+    # If Pango rejects the markup (asymmetric escaping from escape_for_pango),
+    # fall back to set_text so the raw text is visible instead of an empty
+    # bubble. set_markup() does NOT raise a catchable Python exception on
+    # malformed markup — it logs a Gtk-WARNING and leaves the label empty. Only
+    # Pango.parse_markup() raises a catchable GLib.Error, so we validate first.
+    try:
+        Pango.parse_markup(markup, -1, "\x00")
+        label.set_markup(markup)
+    except Exception as e:
+        logger.debug("Pango markup rejected (%s), falling back to set_text: %r", e, markup[:120])
+        label.set_text(markup)
     label.set_xalign(xalign)
     if wrap:
         label.set_wrap(True)
