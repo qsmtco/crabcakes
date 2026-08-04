@@ -11,8 +11,8 @@
 [![GTK4](https://img.shields.io/badge/GTK4-native-4a86cf?style=for-the-badge&logo=gtk&logoColor=white)](https://docs.gtk.org/gtk4/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776ab?style=for-the-badge&logo=python&logoColor=ffdd54)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge)](LICENSE)
-[![Tests: 1,200+](https://img.shields.io/badge/tests-1,200%2B-22c55e?style=for-the-badge&logo=pytest&logoColor=white)](tests/)
-[![Handlers: 21](https://img.shields.io/badge/handlers-21-8b5cf6?style=for-the-badge)](ui/handlers/)
+[![Tests: 3,200+](https://img.shields.io/badge/tests-3,200%2B-22c55e?style=for-the-badge&logo=pytest&logoColor=white)](tests/)
+[![Handlers: 26](https://img.shields.io/badge/handlers-26-8b5cf6?style=for-the-badge)](ui/handlers/)
 [![Loop: 3-Agent](https://img.shields.io/badge/loop-3--agent-f59e0b?style=for-the-badge)](#-autonomous-coding-loop)
 [![Zero Stale Failures](https://img.shields.io/badge/test_suite-0_failures-f43f5e?style=for-the-badge&logo=checkmarx&logoColor=white)](tests/)
 
@@ -171,7 +171,7 @@ Every prompt in the library can be refined before loading. The built-in prompt i
 
 ### <img src="icons/emoji/studio_mic.png" width="80" height="80" alt="studio_mic" style="vertical-align:middle; margin-top:-0.5em; margin-bottom:-0.5em" /> Voice Input
 
-Push-to-talk via **faster-whisper**. No cloud, no latency. Hold a key, speak, release — your words land in the input box. Built for when you're mid-flow and reaching for the keyboard would break your concentration.
+Push-to-talk via **faster-whisper** — a Python-native speech-to-text engine. No separate CLI binary, no cloud, no latency. Hold a key, speak, release — your words land in the input box. Model size is configurable via `STT_MODEL_SIZE` (default: `tiny.en` for fastest CPU inference). Built for when you're mid-flow and reaching for the keyboard would break your concentration.
 
 ### <img src="icons/emoji/plug.png" width="80" height="80" alt="plug" style="vertical-align:middle; margin-top:-0.5em; margin-bottom:-0.5em" /> MCP Server Integration
 
@@ -194,7 +194,8 @@ The **Memory server is verified working end-to-end** through the UI. Agents can 
 
 ### <img src="icons/emoji/folder.png" width="80" height="80" alt="folder" style="vertical-align:middle; margin-top:-0.5em; margin-bottom:-0.5em" /> Project Browser & Team Management
 
-- **File tree** in the left panel. Open any file, browse directories, see what's changed.
+- **File tree** in the left panel with file-type icons, git status badges, size and modified-date columns, 6-mode sort (name, status, size, modified, type, depth), and live search/filter. Open any file, browse directories, see what's changed at a glance.
+- **Project settings bar** — an actionable bar above the chat showing the project name, member count, active agent, file-change auto-accept level, and git branch. Click to cycle agents or toggle auto-accept. All state in one row, no hunting through menus.
 - **Project creation** scaffolds `AGENTS.md` and `.crabcakes/` for you.
 - **Membership toggles** — who do you need on this project? Add someone mid-sprint. Remove them when the work is done. Changes fan out immediately, no restart, no reconfigure.
 - **Agent Discovery** — connect to an OpenClaw gateway and CrabCakes pulls the full agent roster. Remote agents blend seamlessly into project group chats alongside your local Coder and Debugger. The split between local and remote is invisible to the user.
@@ -506,7 +507,8 @@ In all cases, the supervisor writes an abort note explaining why and what's need
 sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 libgirepository1.0-dev
 
 # Python packages
-pip install pygobject websockets cryptography gitpython
+pip install pygobject websockets cryptography gitpython \
+    tiktoken faster-whisper sentence-transformers httpx pyyaml
 ```
 
 ### Run
@@ -539,9 +541,11 @@ openclaw gateway start
 |----------|---------|---------|
 | `CRABCAKES_GATEWAY_URL` | `ws://localhost:18789` | OpenClaw gateway URL |
 | `CRABCAKES_PROJECTS_DIR` | `~/projects` | Root directory for projects |
-| `WHISPER_CLI` | `~/whisper.cpp/build/bin/whisper-cli` | Whisper binary for voice |
-| `WHISPER_MODEL` | `~/whisper.cpp/models/ggml-large-v3-turbo.bin` | Whisper model |
+| `STT_MODEL_SIZE` | `tiny.en` | faster-whisper model size (tiny, base, small, ...) |
+| `CRABCAKES_KB_SYNTHESIS_URL` | `localhost:18790` | Local KB HTTP server (MCP retrieval) |
 | `CRABCAKES_DEBUG` | `0` | Set `1` for verbose logging |
+| `CRABCAKES_TEXTVIEW_BUBBLES` | _(off)_ | Feature flag: new TextView/TextTag rendering |
+| `CRABCAKES_WEB_FETCH_RESTRICT` | _(off)_ | Restrict web fetch to allowlisted domains |
 
 Agent configs live in `~/.config/crabcakes/`. LLM provider settings in `agent.json`. MCP server registry in `mcp-servers.json`. Everything is plain files — version-controllable, diffable, greppable.
 
@@ -567,34 +571,38 @@ Agent configs live in `~/.config/crabcakes/`. LLM provider settings in `agent.js
 └─────────────────────────────────────────────────────────┘
 ```
 
-### The 21-Handler Pattern
+### The 26-Handler Pattern
 
 Every handler follows the same pattern: **receives dependencies via setters, never imports from other handlers.** `window.py` is the composition root — it creates everything and wires the callbacks. No circular dependencies. No hidden state.
 
 ```
 ui/handlers/
-├── chat_handler.py            Send · fan-out · routing
-├── chat_render_handler.py     Markdown · bubbles · streaming
-├── activity_handler.py        6-state activity machine
-├── command_handler.py         Backtick command parser
-├── review_handler.py          Review lifecycle
-├── task_handler.py            Task CRUD
-├── collab_handler.py          ask / delegate / stop / tell
-├── agent_runtime_handler.py   Local agent bridge
-├── agent_command_handler.py   Audit reports · enforcement
-├── agent_builder_handler.py   Custom agent config UI
-├── agent_list_handler.py      Agent roster
-├── project_handler.py         Project open/close/create
-├── project_list_handler.py    Project browser
-├── prompts_handler.py         Prompt library
-├── gateway_handler.py         WebSocket lifecycle
-├── connection_sync_handler.py Post-connect wiring
-├── forward_handler.py         Agent-to-agent forwarding
-├── crabwatch_handler.py       File system watcher
-├── session_handler.py         Session management
-├── media_handler.py           STT + prompt improvement
-├── input_toolbar_handler.py   Chat input controls
-└── feed_handler.py            Feed card lifecycle
+├── activity_handler.py            6-state activity machine
+├── activity_wiring_handler.py     Activity state → widget wiring
+├── agent_builder_handler.py       Custom agent config UI
+├── agent_command_handler.py       Audit reports · enforcement
+├── agent_list_handler.py          Agent roster
+├── agent_runtime_handler.py       Local agent bridge
+├── auxilium_wizard_handler.py     Onboarding wizard
+├── chat_handler.py                Send · fan-out · routing
+├── chat_render_handler.py         Markdown · bubbles · streaming
+├── collab_handler.py              ask / delegate / stop / tell
+├── command_handler.py             Backtick command parser
+├── connection_sync_handler.py     Post-connect wiring
+├── crabwatch_handler.py           File system watcher
+├── feed_handler.py                Feed card lifecycle
+├── file_tree_handler.py           File tree sort · filter · prefs
+├── forward_handler.py             Agent-to-agent forwarding
+├── gateway_handler.py             WebSocket lifecycle
+├── input_toolbar_handler.py       Chat input controls
+├── media_handler.py               STT + prompt improvement
+├── project_handler.py             Project open/close/create
+├── project_list_handler.py        Project browser
+├── prompts_handler.py             Prompt library
+├── review_handler.py              Review lifecycle
+├── session_handler.py             Session management
+├── settings_handler.py            Settings dialog
+└── task_handler.py                Task CRUD
 ```
 
 ### Project Layout
@@ -616,21 +624,43 @@ crabcakes/
 │   ├── review_state.py              # Review session state
 │   ├── streaming.py                 # Streaming bubble state
 │   ├── colors.py                    # Agent color rotation
+│   ├── providers.py                 # Provider config data
 │   └── team.py                      # Team membership
+├── chat/                            # TextView/TextTag rendering (feature-flagged)
+│   ├── parser.py                    # Markdown → segment AST (mistune 3.x)
+│   ├── renderer.py                  # Segment → Gtk.TextView + TextTags
+│   └── segments.py                  # 10 frozen dataclasses (TextSeg, CodeBlock, ...)
 ├── agent/                           # Local agent runtime
 │   ├── runtime.py                   # Tool loop · streaming · cost tracking
 │   ├── tools.py                     # 8 built-in tools
 │   ├── context.py                   # System prompt builder
+│   ├── context_strategy.py          # Context-window budget strategy
 │   ├── config.py                    # Provider config
 │   ├── enforcement.py               # Post-write verification
-│   └── special_agents.py            # Coder + Debugger definitions
+│   ├── special_agents.py            # Coder + Debugger definitions
+│   ├── tool_middleware.py           # Middleware chain (enforcement + stuck detection)
+│   ├── callbacks.py                 # Typed callback protocols
+│   ├── audit.py                     # AuditEntry + AuditLog
+│   ├── persistence.py               # Conversation save/load
+│   ├── kb_server.py                 # Local KB HTTP server
+│   ├── kb_lookup.py                 # Sentence-Transformers retrieval
+│   └── llm/                         # Provider adapters (extracted from runtime)
+│       ├── protocol.py              # LLMProvider Protocol
+│       ├── openai_provider.py       # OpenAI call + stream
+│       ├── minimax_provider.py      # MiniMax call + stream
+│       ├── anthropic_provider.py    # Anthropic call + stream
+│       ├── registry.py              # Provider dispatch by caller key
+│       ├── cost.py                  # Token cost calculation
+│       ├── convert.py               # Message/tool format conversion (Anthropic)
+│       ├── extractors.py            # Tool-call + usage extraction
+│       └── streaming.py             # SSE parsing + SSL retry
 ├── utils/                           # Pure Python utilities
 │   ├── escaping.py                  # Pango-aware XML escape
 │   ├── markdown.py                  # Markdown → Pango markup
 │   ├── git_ops.py                   # GitPython wrapper
 │   ├── diff_parser.py               # Unified diff parser
 │   ├── prompt_loader.py             # System prompt composer
-│   ├── stt.py                       # Voice input engine
+│   ├── stt.py                       # Voice input (faster-whisper)
 │   ├── mcp_client.py                # MCP stdio transport
 │   ├── mcp_config.py                # MCP server registry
 │   ├── agent_defs.py                # User agent YAML loader
@@ -643,9 +673,14 @@ crabcakes/
 │   ├── workflow_state.py            # Task workflow state
 │   ├── spellcheck.py                # Inline spellcheck
 │   ├── syntax_highlight.py          # Code syntax highlighting
+│   ├── file_icons.py                # File-type icon registry (60+ extensions)
+│   ├── gtk_containers.py            # GTK4 container membership helper
+│   ├── gtk_safe_link.py             # Safe label with link-scheme guard
+│   ├── block_parser.py              # Code-block aware text chunking
+│   ├── crabcard_parser.py           # Feed-card block extraction
+│   ├── providers_store.py           # Provider config persistence
+│   ├── conversation_store.py        # Conversation persistence
 │   ├── favorites.py                 # Prompt favorites
-│   ├── image_utils.py               # Image upload
-│   ├── quoting.py                   # Message quoting
 │   └── feed_store.py                # Feed persistence
 ├── prompts/                           # System prompts & loop definitions
 │   ├── system/                      # System prompt templates
@@ -655,12 +690,27 @@ crabcakes/
 │   │   ├── project-onboarding.md    # New project interview
 │   │   ├── project-awareness.md     # Project context injection
 │   │   ├── code-review.md           # Review mode instructions
-│   │   └── improve.md               # Prompt improver system prompt
+│   │   ├── improve.md               # Prompt improver system prompt
+│   │   ├── default.md               # Default agent prompt
+│   │   ├── auxilium.md              # Onboarding guide prompt
+│   │   ├── cc-implementation.md     # Implementation loop context
+│   │   ├── crabcakes-commands.md    # Slash-command reference
+│   │   └── crabcakes-context.md     # Project awareness template
 │   └── default_agents/              # Built-in agent YAMLs
 │       ├── coder.yaml
 │       ├── debugger.yaml
+│       ├── auxilium.yaml
 │       └── crabcakes.yaml
-├── tests/                           # 1,200+ tests · 0 stale failures
+├── .crabcakes/                      # Per-project config (git-tracked)
+│   ├── project.md                   # Project manifest
+│   ├── workflow.md                  # Phase history
+│   ├── team.json                    # Team roster
+│   ├── context.md                   # Session context (shared notepad)
+│   ├── coder-bugs.md                # Coder bug journal (self-improvement)
+│   ├── enforcement.json             # Per-project enforcement overrides
+│   └── review-log.jsonl             # Review audit trail
+├── tests/                           # 3,200+ tests · 130 test files
+├── scripts/                         # Audit + maintenance scripts
 └── docs/                            # Specs · post-mortems · research
 ```
 
@@ -675,7 +725,7 @@ pytest -x                 # stop on first failure
 pytest -k pattern         # filter by name
 ```
 
-**1,200+ tests** covering all handlers, models, rendering, MCP, the agent runtime, and the full event pipeline. **Zero stale failures** — the suite is kept clean. When an API changes, the tests change with it in the same commit.
+**3,200+ tests** across 130 test files covering all handlers, models, rendering, MCP, the agent runtime, and the full event pipeline. **Zero stale failures** — the suite is kept clean. When an API changes, the tests change with it in the same commit.
 
 ---
 
@@ -710,6 +760,6 @@ Named after the Chesapeake Bay delicacy — sweet, rich, and built from parts ot
 [![GTK4](https://img.shields.io/badge/GTK4-native-4a86cf?style=flat-square)](https://docs.gtk.org/gtk4/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776ab?style=flat-square)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE)
-[![Tests: 1,200+](https://img.shields.io/badge/tests-1,200%2B-22c55e?style=flat-square)](tests/)
+[![Tests: 3,200+](https://img.shields.io/badge/tests-3,200%2B-22c55e?style=flat-square)](tests/)
 
 </div>
