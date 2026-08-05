@@ -7,6 +7,9 @@ which is current, and timestamps.
 Phase names: "onboarding", "discovery", "architecture", "task-planning",
 "implementation", "testing", "ship"
 
+Each phase row includes a Prompt column that names the prompt file governing
+that phase, so agents know exactly which prompt to load when a phase is active.
+
 Usage:
     from utils.workflow_state import init_workflow, advance_phase, get_current_phase
     init_workflow("/path/to/project")
@@ -35,7 +38,29 @@ PHASES = [
 # Map phase name → index
 _PHASE_INDEX = {name: i for i, name in enumerate(PHASES)}
 
+# ── Phase prompt mapping ─────────────────────────────────────────────────────
+# Each phase is governed by a specific prompt file. This is surfaced in the
+# workflow.md table so agents see exactly which prompt to load for the active
+# phase — no guessing, no searching.
+
+PHASE_PROMPTS = {
+    "onboarding":     "`prompts/system/project-onboarding.md`",
+    "discovery":      "`prompts/cc-discovery.md`",
+    "architecture":   "`prompts/cc-architecture-design.md`",
+    "task-planning":  "`prompts/cc-task-planning.md`",
+    "implementation": "`prompts/implementationLoop.md`",
+    "testing":        "`prompts/steelFramedCodeWriter.md`",
+    "ship":           "`prompts/cc-workflow-guide.md`",
+}
+
 # ── Phase row helpers ─────────────────────────────────────────────────────────
+
+_NEW_HEADER = "| # | Phase | Prompt | Status | Started | Completed | Notes |"
+
+# Regex for phase name: matches word chars AND hyphens (e.g. "task-planning").
+# BUGFIX: original code used \w+ which does NOT match hyphens, so
+# "task-planning" could never be found or advanced.
+_PHASE_NAME_RE = r"[\w-]+"
 
 
 def _make_phase_row(
@@ -47,7 +72,8 @@ def _make_phase_row(
     notes: str,
 ) -> str:
     """Return one table row line (WITHOUT trailing newline — join handles that)."""
-    return f"| {idx} | {name} | {status} | {started} | {completed} | {notes} |"
+    prompt = PHASE_PROMPTS.get(name, "—")
+    return f"| {idx} | {name} | {prompt} | {status} | {started} | {completed} | {notes} |"
 
 
 def _initial_workflow_content() -> str:
@@ -55,38 +81,118 @@ def _initial_workflow_content() -> str:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     rows = [
         "## Phase History",
-        "| # | Phase | Status | Started | Completed | Notes |",
-        "|---|-------|--------|---------|-----------|-------|",
+        _NEW_HEADER,
+        "|---|-------|--------|--------|---------|-----------|-------|",
     ]
     rows += [
         _make_phase_row(i, name, "🔄 current" if i == 0 else "⏳ pending", now, "—", "...")
         for i, name in enumerate(PHASES)
     ]
-    # Header lines 0-2 have no trailing newlines from _make_phase_row.
-    # Join with \n so header lines get one; last line (last phase row) also gets one.
     return "\n".join(rows) + "\n"
+
+
+# ── Old-format detection + migration ─────────────────────────────────────────
+
+
+def _is_old_format(lines: list[str]) -> bool:
+    """True if the table header lacks the Prompt column (6-column old format)."""
+    for line in lines:
+        if line.strip().startswith("| # |") and "Prompt" not in line:
+            return True
+    return False
+
+
+def _parse_old_row(line: str) -> tuple[int, str, str, str, str, str] | None:
+    """Parse a 6-column old-format row.
+
+    Old: | idx | name | status | started | completed | notes |
+    Returns (idx, name, status, started, completed, notes) or None.
+    """
+    m = re.match(
+        rf"\|\s*(\d+)\s*\|\s*({_PHASE_NAME_RE})\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.*?)\s*\|",
+        line,
+    )
+    if not m:
+        return None
+    return (int(m.group(1)), m.group(2), m.group(3), m.group(4), m.group(5), m.group(6))
+
+
+def _parse_new_row(line: str) -> tuple[int, str, str, str, str, str, str] | None:
+    """Parse a 7-column new-format row.
+
+    New: | idx | name | prompt | status | started | completed | notes |
+    Returns (idx, name, prompt, status, started, completed, notes) or None.
+    """
+    m = re.match(
+        rf"\|\s*(\d+)\s*\|\s*({_PHASE_NAME_RE})\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.*?)\s*\|",
+        line,
+    )
+    if not m:
+        return None
+    return (int(m.group(1)), m.group(2), m.group(3), m.group(4), m.group(5), m.group(6), m.group(7))
+
+
+def _migrate_old_format(lines: list[str]) -> list[str]:
+    """Upgrade a 6-column workflow.md table to 7-column format in-place.
+
+    - Replaces the header and separator with the new format
+    - Re-emits every phase row with the Prompt column inserted
+    - Preserves all existing status/started/completed/notes values
+    """
+    new_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        # Replace header
+        if stripped.startswith("| # | Phase | Status |"):
+            new_lines.append(_NEW_HEADER)
+            continue
+        # Replace separator (matching 6-dash-column pattern)
+        if stripped.startswith("|---|") and stripped.count("|") == 7:
+            new_lines.append("|---|-------|--------|--------|---------|-----------|-------|")
+            continue
+        # Try old-row parse
+        old = _parse_old_row(stripped)
+        if old is not None:
+            idx, name, status, started, completed, notes = old
+            new_lines.append(_make_phase_row(idx, name, status, started, completed, notes))
+            continue
+        # Not a table row — pass through
+        new_lines.append(line)
+    return new_lines
 
 
 # ── Read / write helpers ──────────────────────────────────────────────────────
 
 
 def _read_workflow_lines(project_path: str) -> list[str] | None:
-    """Read workflow.md as lines, stripping trailing newlines from each."""
+    """Read workflow.md as lines, stripping trailing newlines from each.
+
+    If the file is in old 6-column format, transparently migrate to 7-column
+    format and persist the upgrade so subsequent reads are fast.
+    """
     path = os.path.join(get_crabcakes_dir(project_path), "workflow.md")
     if not os.path.isfile(path):
         return None
     try:
         with open(path, encoding="utf-8") as f:
             content = f.read()
-        # splitlines() strips trailing newlines from every line.
-        # This is safe because _write_workflow_lines adds them back via join.
-        return content.splitlines()
+        lines = content.splitlines()
     except OSError:
         return None
 
+    if not lines:
+        return None
+
+    # Auto-migrate old format on read (transparent, persisted)
+    if _is_old_format(lines):
+        lines = _migrate_old_format(lines)
+        _write_workflow_lines(project_path, lines)
+
+    return lines
+
 
 def _write_workflow_lines(project_path: str, lines: list[str]) -> None:
-    """Write lines to workflow.md, each line followed by \n (last line too)."""
+    """Write lines to workflow.md, each line followed by \\n (last line too)."""
     path = os.path.join(get_crabcakes_dir(project_path), "workflow.md")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -96,7 +202,7 @@ def _write_workflow_lines(project_path: str, lines: list[str]) -> None:
 def _find_phase_line_idx(lines: list[str], phase_idx: int, phase_name: str) -> int | None:
     """Find the table row index in lines matching phase by index and name."""
     for i, line in enumerate(lines):
-        m = re.match(r"\|\s*(\d+)\s*\|\s*(\w+)\s*\|", line)
+        m = re.match(rf"\|\s*(\d+)\s*\|\s*({_PHASE_NAME_RE})\s*\|", line)
         if m and int(m.group(1)) == phase_idx and m.group(2) == phase_name:
             return i
     return None
@@ -109,18 +215,20 @@ def _replace_phase_row(
     new_status: str,
     new_completed: str,
 ) -> list[str]:
-    """Find the matching phase row and replace its status + completed columns."""
+    """Find the matching phase row and replace its status + completed columns.
+
+    Assumes 7-column format (post-migration). Preserves started + notes.
+    """
     new_lines = list(lines)
     row_idx = _find_phase_line_idx(lines, phase_idx, phase_name)
     if row_idx is None:
         return new_lines
 
-    line = lines[row_idx].rstrip("\n")
-    parts = [p.strip() for p in line.split("|")]
-    # parts[0]=="" (leading |), parts[1]==idx, parts[2]==name,
-    # parts[3]==status, parts[4]==started, parts[5]==completed, parts[6]==notes
-    started = parts[4]
-    notes = parts[6] if len(parts) > 6 else "..."
+    parsed = _parse_new_row(lines[row_idx])
+    if parsed is None:
+        return new_lines  # unparseable — leave untouched
+
+    _idx, _name, _prompt, _status, started, _completed, notes = parsed
     now_str = new_completed or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     new_lines[row_idx] = _make_phase_row(phase_idx, phase_name, new_status, started, now_str, notes)
     return new_lines
@@ -152,8 +260,8 @@ def get_current_phase(project_path: str) -> str:
         return PHASES[0]
 
     for line in lines:
-        if re.match(r"\|\s*\d+\s*\|\s*\w+\s*\|\s*🔄\s*current\s*\|", line):
-            m = re.search(r"\|\s*\d+\s*\|\s*(\w+)\s*\|\s*🔄\s*current\s*\|", line)
+        if re.search(r"🔄\s*current", line):
+            m = re.match(rf"\|\s*\d+\s*\|\s*({_PHASE_NAME_RE})\s*\|", line)
             if m:
                 return m.group(1)
 
@@ -175,9 +283,10 @@ def is_phase_done(project_path: str, phase_name: str) -> bool:
 
     phase_idx = _PHASE_INDEX.get(phase_name, -1)
     for line in lines:
-        m = re.match(r"\|\s*(\d+)\s*\|\s*(\w+)\s*\|\s*✅\s*done\s*\|", line)
+        m = re.match(rf"\|\s*(\d+)\s*\|\s*({_PHASE_NAME_RE})\s*\|", line)
         if m and int(m.group(1)) == phase_idx and m.group(2) == phase_name:
-            return True
+            if re.search(r"✅\s*done", line):
+                return True
     return False
 
 
