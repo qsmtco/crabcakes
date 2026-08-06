@@ -141,16 +141,11 @@ def _seed_defaults() -> None:
         logger.warning("Cannot create agents directory %s: %s", agents_dir, e)
         return
 
-    # If user already has agents, don't seed defaults — they may have
-    # intentionally removed built-in agents.
-    try:
-        existing = [f for f in os.listdir(agents_dir)
-                    if f.endswith((".yaml", ".yml", ".json"))]
-    except OSError:
-        existing = []
-    if existing:
-        return
-
+    # Per-file seeding: copy each missing built-in default into the user
+    # agents dir. Unrelated user agent files do not suppress seeding of
+    # missing built-ins. The per-file isfile(dst) guard below ensures we
+    # never overwrite an existing user file (including a customized
+    # supervisor.yaml).
     for fname in sorted(os.listdir(src_dir)):
         if fname.endswith((".yaml", ".yml", ".json")):
             src = os.path.join(src_dir, fname)
@@ -442,6 +437,9 @@ def validate_agent_def(agent_def: dict) -> list[str]:
             valid_ids.add(p["name"])
             if p.get("default_model") and "/" in p["default_model"]:
                 valid_ids.add(p["default_model"].split("/")[0])
+        # local-kb is a built-in provider seeded by ensure_kb_provider();
+        # always valid regardless of providers.yaml contents.
+        valid_ids.add("local-kb")
         if display_names and llm_name not in valid_ids:
             errors.append(
                 f"Unknown provider: {llm_name}. Available: {', '.join(sorted(display_names))}"
