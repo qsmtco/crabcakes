@@ -2078,20 +2078,39 @@ class AgentRuntime:
             else:
                 raise ValueError(f"No LLM provider configured for {model}")
 
-        # Use per-agent API key if set, otherwise fall back to provider config
-        effective_api_key = conv.api_key or provider_cfg.api_key
+        # Use per-agent API key if set, otherwise fall back to the LIVE
+        # providers.yaml store. The frozen self._config snapshot (provider_cfg.api_key)
+        # can hold a stale token if the user edited providers in Settings after the
+        # runtime was created (runtimes are cached and never reconfigured on
+        # provider change). Re-reading providers.yaml on every call means a token
+        # update takes effect immediately without requiring an app restart.
+        # (See BUG-fix: "token expired or incorrect" 401 despite a valid key.)
+        effective_api_key = conv.api_key  # per-agent override wins (authoritative)
         if not effective_api_key:
-            # Phase B: providers.yaml is the canonical store for API keys.
-            # Fall back to scanning the yaml file when neither conv.api_key nor
-            # provider_cfg.api_key is set.
             try:
                 from utils.providers_store import load_providers
-                for p in load_providers():
+                # Match live provider by display name (p.name) OR by the
+                # provider-prefix derived from its default_model (e.g. name
+                # 'glm5.2' with default_model 'zai/glm-5.2' → prefix 'zai').
+                # So both provider_name='zai' (model prefix) and a display-name
+                # match resolve to the live key.
+                live_providers = load_providers()
+                for p in live_providers:
                     if p.name == provider_name and p.api_key:
                         effective_api_key = p.api_key
                         break
+                if not effective_api_key:
+                    for p in live_providers:
+                        pm = (p.default_model or "")
+                        live_prefix = pm.split("/")[0] if "/" in pm else pm
+                        if live_prefix == provider_name and p.api_key:
+                            effective_api_key = p.api_key
+                            break
             except Exception as e:
-                logger.warning("Cannot load providers.yaml fallback for %s: %s", provider_name, e)
+                logger.warning("Cannot load providers.yaml for %s: %s", provider_name, e)
+            if not effective_api_key:
+                # Last resort: the (possibly stale) frozen runtime snapshot.
+                effective_api_key = provider_cfg.api_key
         # Use app_title as X-Title header for OpenRouter attribution
         x_title = conv.app_title or ""
 
