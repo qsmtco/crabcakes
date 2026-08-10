@@ -484,6 +484,8 @@ self._agent_to_project = AgentRoutingTable()  # shared with ProjectHandler (writ
 **Phase 1 (ChatHandler) extracted:** `_on_send`, `_on_send_clicked`, `_switch_to_session_tab`, and chat.final routing are now in `ui/handlers/chat_handler.py`.
 **Phase 5 extracted:** `_on_audit_report_card` (FeedHandler.add_audit_report_card), `_on_agent_saved`/`_on_agent_deleted` (AgentRuntimeHandler.reload_agents_and_mcp), `_confirm_delete_agent` (AgentBuilderHandler.delete_agent_with_confirmation), `_register_stub_commands` (CommandHandler auto-registration).
 
+**SPEC-SUPERVISOR-ONBOARDING-REFINEMENTS §2.7 — Project-created System bubble:** `window.py` is the composition root for project-created UI side effects. It wires `ProjectHandler.set_on_project_created(self._on_project_created_system_bubble)` at composition time. The callback defers all widget work through `GLib.idle_add` for main-thread safety. Inside the deferred body it resolves the `project:<name>` chat box, creating the tab first if needed via `MainContent.create_chat_tab()`, then renders a System bubble via `ChatRenderHandler.render_sync("System", text, session_key)` and scrolls. No-ops safely if the chat box is unavailable or the renderer returns `None`. See §4.3a for the full data flow.
+
 **Right-click spell suggestions:** The `_on_input_right_click` closure (defined in `MainWindow._build()`) consumes `InputToolbarHandler.is_spell_enabled()` (FRAGILE-1) and `get_word_at_iter()` (STALE-1) from `InputToolbarHandler`. The closure captures the clicked word's text at right-click time and verifies it at suggestion-click time to avoid replacing a different word if the buffer changed in between. See `SPEC-SPELL-POPOVER-FOLLOWUP.md` for details.
 
 **Project settings bar wiring (Spec PROJECT-SETTINGS-BAR-ENHANCED):** `window.py` wires the settings-bar callbacks in `_build()` (named lifecycle methods registered as ADDITIONAL `set_on_project_opened`/`set_on_project_closed` callbacks — the handler is append-based, so they coexist with the existing feed/crabwatch/review lambdas):
@@ -495,6 +497,7 @@ self._agent_to_project = AgentRoutingTable()  # shared with ProjectHandler (writ
 | `main_content.set_on_autoaccept_cycle` | `_on_autoaccept_cycle_clicked` | `FeedHandler.set_auto_accept_level(next)` — NO optimistic bar rebuild (BUG #4; bar updates post-confirmation) |
 | `project_handler.set_on_solo_target_changed` | `_on_solo_target_changed` | bar refresh, active-project guarded (BUG #3) |
 | `project_handler.set_on_project_opened` | `_on_project_opened` | invalidate in-flight branch worker + re-evaluate bar (Round 4 fix) |
+| `project_handler.set_on_project_created` | `_on_project_created_system_bubble` | SPEC-SUPERVISOR-ONBOARDING-REFINEMENTS: deferred System bubble in `project:<name>` tab instructing user to add Supervisor (§2.7) |
 | `project_handler.set_on_project_closed` | `_on_project_closed` | invalidate in-flight branch worker (Round 3 BUG #1) |
 | `feed_handler.set_on_auto_accept_level_changed` | `_on_auto_accept_level_changed` -> `_refresh_settings_bar_for_active` | bar refresh after async confirmation (BUG #4) |
 
@@ -1330,7 +1333,19 @@ def set_solo_target(project_name, member_session_key): pass
 def set_on_members_changed(cb: Callable): pass
 def set_on_navigate_back(cb: Callable): pass
 def close_project(name: str): pass
+
+def set_on_project_created(cb: Callable[[str, str], None]): pass
+    # SPEC-SUPERVISOR-ONBOARDING-REFINEMENTS §2.6: fired after create_project()
+    # completes open_project(). cb(name, path). Registered ONLY for project
+    # creation, not open_project(). Used by window.py to emit the System bubble
+    # instructing the user to add Supervisor manually.
 ```
+
+**SPEC-SUPERVISOR-ONBOARDING-REFINEMENTS §2.6 — Project-created callback & membership changes:**
+
+- `create_project()` fires `set_on_project_created` callbacks after `open_project()` completes, dispatched via `GLib.idle_add` so the project tab exists before the callback body runs.
+- `_auto_add_onboarding_agents()` constructs `TeamMember` from `SpecialAgentDef` fields (`display_name`, `role`, `can_write`) instead of hardcoding `role="onboarding guide"`.
+- `_save_members()` resolves `special:*` session keys via `get_special_agent()` to backfill `display_name`/`role`/`can_write`. Gateway/unknown keys get blank metadata (display-time resolution). Existing member records are preserved exactly. No implicit git commit on roster writes — snapshot refresh via `build_awareness_snapshot()`/`save_awareness_snapshot()` runs after `save_team()`.
 
 ### 3.20 `ui/handlers/project_list_handler.py` — Project List Handler
 
@@ -2152,7 +2167,14 @@ def reload_registry() -> None   # force reload after create/edit/delete
 
 **Auto-open agents:** Agents with `auto_open=True` (currently only Crabcakes 🦀) get a chat tab created automatically on every app launch. See `ui/window.py` Phase 4.
 
-**Project onboarding agents:** Agents with `auto_add_to_projects=True` are automatically added to every new project's team. See `ui/handlers/project_handler.py` Phase 5.
+**Project onboarding agents:** Agents with `auto_add_to_projects=True` are automatically added to every new project's team. See `ui/handlers/project_handler.py` Phase 5. No current default agent opts into this; Supervisor is deliberately `auto_add_to_projects=False` so the user manually adds it from the Agents tab.
+
+**SPEC-SUPERVISOR-ONBOARDING-REFINEMENTS — Supervisor role:** Supervisor is the built-in project onboarding/orchestration agent. It is **not** auto-added to projects (`auto_add_to_projects: false`); the user adds it manually after project creation. The onboarding-template gate in `utils/prompt_loader.py` is controlled by `agent_role == "supervisor"` plus `is_project_onboarded(project_path) == False` — it does **not** use `get_project_onboarding_agents()` or the old Coder condition. This separation ensures that `auto_add_to_projects` (which controls team membership) and the prompt gate (which controls which agent receives the onboarding interview template) cannot contradict each other. See `docs/specs/SPEC-SUPERVISOR-ONBOARDING-REFINEMENTS.md`.
+
+**Default agents:**
+- **Coder:** Full tool set, `can_write=True`, all SI layers on
+- **Debugger:** Read-only tools, `can_write=False`, context-only SI
+- **Supervisor:** Onboarding/orchestration agent, write-capable tools, `auto_add_to_projects=False`, `auto_open=False`. Role prompt at `prompts/system/supervisor.md`. Receives the separate `prompts/system/project-onboarding.md` template when the project is not yet onboarded.
 
 **Per-agent model:** `llm_name` field specifies the provider card name for this agent (None → global default). `fallback_provider` specifies the KB fallback — when the KB returns `[KB_OUT_OF_SCOPE]`, the runtime retries with this provider. The model is derived from the selected provider card's `default_model` (same derivation as the primary path in `AgentRuntimeHandler._resolve_agent_model()`). Wired through `create_conversation()` → `Conversation` → runtime fallback chain. See `docs/specs/SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md`.
 
@@ -2178,7 +2200,7 @@ def get_available_providers() -> list[dict]     # [{name, base_url, default_mode
 def get_default_si_config(can_write: bool) -> dict  # canonical SI defaults — single source of truth
 ```
 
-**Default seeding:** Copies YAML files from `prompts/default_agents/` that don't already exist in the agents config dir. New default agents (like Crabcakes) are seeded on existing installations.
+**Default seeding (SPEC-SUPERVISOR-ONBOARDING-REFINEMENTS §2.4):** `_seed_defaults()` copies each built-in YAML/JSON file from `prompts/default_agents/` individually — it checks each built-in file independently and copies only when the same destination filename is absent in the user agents directory. This is a per-file missing-copy, not the old all-or-nothing directory guard. Existing user files are never overwritten, even if the built-in changes. This ensures a new default like `supervisor.yaml` reaches existing installations that already have unrelated agent files.
 
 **Validation:** Checks required fields (name, prompts, tools, provider), verifies tool names against `agent/tools.py`, prompt file existence, and provider availability.
 
@@ -3031,6 +3053,7 @@ def get_project_context(project_path: str) -> str
 def get_workflow_content(project_path: str) -> str
 def build_awareness_block(project_path: str, ...) -> str
 def load_custom_identity(project_path: str) -> dict | None
+def clean_manifest_skeleton(project_path: str) -> bool    # SPEC-SUPERVISOR-ONBOARDING-REFINEMENTS §2.8
 ```
 
 **Architecture rules:**
@@ -3049,6 +3072,8 @@ def load_custom_identity(project_path: str) -> dict | None
 3. **`append_project_context` lifecycle:** Supersedes stale "in progress"/"pending" entries (marks `[SUPERSEDED]`) when a "complete"/"done"/"✅" entry is appended. Word-boundary regex matching prevents suffix overmatch (Phase A1 ≠ Phase A10). FIFO eviction at `MAX_CONTEXT_ENTRIES = 50`. Code-block-aware state machine in `_split_entries()` handles `## ` inside triple-backtick fences. Cache key includes SHA1 content fingerprint (mtime + content hash) so same-second writes invalidate correctly. `build_awareness_dict()` returns a shallow copy (`dict(parts)`) so caller mutation cannot poison the cache.
 
 See `docs/specs/SPEC-CONTEXT-MD-SYSTEM-FIX.md` and post-mortem `docs/post-mortems/2026-07-20-CONTEXT-MD-SYSTEM-FIX-POST-MORTEM.md`.
+
+**SPEC-SUPERVISOR-ONBOARDING-REFINEMENTS §2.8 — Manifest skeleton cleanup.** `clean_manifest_skeleton(project_path) -> bool` is a pure helper that removes manifest sections (under `^## ` headings) whose body contains only whitespace and HTML comments. The top-level `# Project` title is always preserved. Each section is evaluated independently — a comment containing `## ` text cannot swallow later sections because the splitter uses real line boundaries, not a whole-file `re.sub(DOTALL)`. Missing/unreadable files are a safe no-op returning `False`. Writes only when content changed. Called from `utils/workflow_state.py:advance_phase()` when `phase_name == "onboarding"` completes, ensuring the manifest left by the onboarding template's skeleton is cleaned of comment-only placeholders before subsequent reads. `build_awareness_dict()` remains read-only and does not invoke this or any write path.
 
 ### 3.27a `utils/project_trust.py` — Per-Project Trust Gate (HIGH-5)
 
@@ -3180,6 +3205,8 @@ def get_workflow_content(project_path: str) -> str
 - May import `utils/config.py` for project path helpers, `utils/project_awareness.py` for directory management
 - No imports from `ui/` or `gateway/`
 
+**SPEC-SUPERVISOR-ONBOARDING-REFINEMENTS §2.9 — Onboarding completion hook.** When `advance_phase(project_path, "onboarding")` is called, the function invokes `clean_manifest_skeleton(project_path)` (lazy import from `utils/project_awareness.py`) to strip comment-only manifest sections left by the onboarding skeleton. Cleanup failures are non-fatal and logged — a successful workflow transition is never blocked by an I/O error in cleanup. The lazy import avoids a circular dependency at module load time. `ValueError` for invalid phase names is preserved.
+
 ---
 
 ### 3.34 `ui/views/chat_input_toolbar.py` — Chat Input Toolbar (View)
@@ -3288,6 +3315,32 @@ User double-clicks project directory
         → for member_key in load_members(name): _agent_to_project.add(member_key, name)
 ```
 
+### 4.3a Project Creation — System Bubble (SPEC-SUPERVISOR-ONBOARDING-REFINEMENTS)
+
+```
+User creates project via ProjectHandler.create_project(name, path)
+  → init_project_config() creates .crabcakes/ skeleton
+  → init_workflow() creates workflow state
+  → git init + initial commit
+  → awareness refresh (build_awareness_snapshot / save_awareness_snapshot)
+  → open_project(name, path) runs (tab creation, routing, opened callbacks)
+  → set_on_project_created callback fires via GLib.idle_add:
+    → window._on_project_created_system_bubble(name, path)
+      → session_key = f"project:{name}"
+      → chat_box = main_content.get_chat_box_for_session(session_key)
+      → if None: create_chat_tab(session_key, "System"), re-resolve
+      → if still None: return (no-op)
+      → bubble = chat_render_handler.render_sync("System", <message>, session_key)
+      → if bubble: chat_box.append(bubble); scroll_chat_to_bottom()
+```
+
+Message text: `New project '<name>' created. Add the Supervisor agent from the
+Agents tab (click the +), then send it a message like 'I'm ready' to begin
+onboarding.`
+
+No Supervisor is auto-added. The `auto_add_to_projects` hook runs during
+`open_project()` but is a no-op for all current default agents.
+
 ### 4.4 Project Group Chat — Fan-Out Send
 
 ```
@@ -3394,11 +3447,19 @@ User clicks +/− button on agent row
     → members = load_members(active_project_name)
     → if session_key in members: members.remove(session_key)
       else: members.append(session_key)
-    → save_members(active_project_name, members)
+    → _save_members(active_project_name, members)
+        → preserve existing TeamMember records
+        → for new special:* keys: get_special_agent(sk) → backfill display_name/role/can_write
+        → for gateway/unknown keys: TeamMember(name="", role="", can_write=False)
+        → save_team(path, team)
+        → build_awareness_snapshot(path) + save_awareness_snapshot(path)  # refresh team_size
+        → NO git commit (removed in SPEC-SUPERVISOR-ONBOARDING-REFINEMENTS)
     → _on_project_members_changed(active_project_name, members)
       → window._on_project_members_changed(name, members)
         → rebuild _agent_to_project for this project
 ```
+
+**SPEC-SUPERVISOR-ONBOARDING-REFINEMENTS §2.6 changes:** `_save_members()` resolves `special:*` session keys through `get_special_agent()` to populate `TeamMember` metadata from the registry (display name, role, write capability). Gateway/unknown keys get blank metadata — the display layer resolves names at render time. No implicit git commit runs on roster writes; only explicit project-create and review-checkpoint commits remain. Awareness snapshot refresh after `save_team()` keeps `awareness.json` team_size current.
 
 ---
 

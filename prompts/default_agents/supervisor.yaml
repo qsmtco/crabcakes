@@ -1,0 +1,26 @@
+# Supervisor — Project onboarding & implementation orchestrator
+# Manually added by the user from the Agents tab (auto_add_to_projects: false).
+# No default provider: user must configure one in Settings → Providers
+name: Supervisor
+emoji: "🎩"
+role: supervisor
+llm_name: local-kb  # placeholder; user configures their own in Settings → Providers
+fallback_provider: openrouter  # cloud fallback when local-kb is unavailable
+prompts:
+  - system/supervisor.md
+tools:
+  - read_file
+  - write_file
+  - edit_file
+  - exec_command
+  - list_files
+  - search_files
+  - file_search
+auto_open: false
+auto_add_to_projects: false  # deliberately manual — user clicks + in the Agents tab
+self_improvement:
+  bug_journal: true
+  project_rules: true
+  enforcement: true
+  structured_feedback: false
+  dream_consolidation: false

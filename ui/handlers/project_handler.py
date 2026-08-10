@@ -74,6 +74,9 @@ class ProjectHandler:
         self._on_project_opened: list[Callable] = []   # window's callbacks
         self._on_project_closed: list[Callable] = []   # window's close callbacks
         self._on_members_changed: Callable | None = None   # window's callback
+        # SOR §2.7: fired after a project is CREATED (not just opened) —
+        # used by window.py for the project-created System bubble.
+        self._on_project_created: Callable[[str, str], None] | None = None
         # /clear command callback — injected by window.py to call
         # AgentRuntimeHandler.clear_conversation(session_key). None means
         # the runtime handler hasn't been wired yet (e.g. test fixtures).
@@ -197,6 +200,14 @@ class ProjectHandler:
 
         # Open the project (creates tab, refreshes agents, fires callbacks)
         self.open_project(name, path)
+
+        # SOR §2.7: notify the composition root AFTER open_project completes,
+        # dispatched via GLib.idle_add so the project tab exists before the
+        # callback body resolves the chat box. Create-only — never fires for
+        # open_project() of an existing project.
+        if self._on_project_created is not None:
+            _cb = self._on_project_created
+            self._dispatch(lambda: _cb(name, path))
 
         return path
 
@@ -406,6 +417,17 @@ class ProjectHandler:
         """Add a callback for when a project is opened. Supports multiple callbacks."""
         self._on_project_opened.append(cb)
 
+    def set_on_project_created(self, cb: Callable[[str, str], None]) -> None:
+        """Register a callback fired after a project is CREATED (not just opened).
+
+        cb(name: str, path: str). Wired by ui/window.py for the System bubble.
+        The callback is invoked AFTER open_project() completes, through the
+        handler's GLib.idle_add dispatch so tab creation has completed before
+        the callback body runs. Only fires for successful create_project(),
+        not for open_project() of an existing project.
+        """
+        self._on_project_created = cb
+
     def set_on_project_closed(self, cb: Callable):
         """Add a callback for when a project is closed. Supports multiple callbacks."""
         self._on_project_closed.append(cb)
@@ -506,8 +528,8 @@ class ProjectHandler:
                 team.add_member(TeamMember(
                     session_key=agent_def.conv_id_prefix,
                     name=agent_def.display_name,
-                    role="onboarding guide",
-                    can_write=True,  # needs write_file for onboarding
+                    role=agent_def.role,
+                    can_write=agent_def.can_write,
                 ))
                 changed = True
                 # Also add to routing table if project is active
@@ -536,18 +558,41 @@ class ProjectHandler:
         path = self._get_project_path(project_name)
         if path and self._awareness:
             from models.team import TeamMember
+            from agent.special_agents import get_special_agent
             team = self._awareness.load_team(path)
             new_members = []
             for sk in members:
                 existing = team.get_member(sk)
-                if existing:
+                if existing is not None:
+                    # Preserve existing member record exactly (order == input)
                     new_members.append(existing)
+                elif sk.startswith("special:"):
+                    agent_def = get_special_agent(sk)
+                    if agent_def is not None:
+                        new_members.append(TeamMember(
+                            session_key=sk,
+                            name=agent_def.display_name,
+                            role=agent_def.role,
+                            can_write=agent_def.can_write,
+                        ))
+                    else:
+                        _logger.warning("special agent not in registry: %s", sk)
+                        new_members.append(TeamMember(session_key=sk, name="", role="", can_write=False))
                 else:
-                    new_members.append(TeamMember(session_key=sk, name=""))
+                    # Gateway/unknown agents have no local registry definition.
+                    new_members.append(TeamMember(session_key=sk, name="", role="", can_write=False))
             team.members = new_members
             self._awareness.save_team(path, team)
-            # Auto-commit team changes
-            self._git_commit_if_available(path, "update team roster")
+            # Refresh awareness snapshot after team save (best-effort, non-fatal).
+            # A snapshot failure must not prevent the roster write from having succeeded.
+            try:
+                snapshot = self._awareness.build_awareness_snapshot(path)
+                self._awareness.save_awareness_snapshot(path, snapshot)
+            except Exception:
+                _logger.exception(
+                    "project_handler: awareness snapshot refresh failed for %s; roster save already succeeded",
+                    path,
+                )
             return
         # Fallback to legacy
         if self._projects:

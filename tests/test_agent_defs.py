@@ -186,8 +186,10 @@ class TestLoadAgentDefs:
         defs = ad.load_agent_defs()
         names = [d["name"] for d in defs]
         assert "Custom" in names
-        # Coder should NOT be seeded — dir was not empty
-        assert "Coder" not in names
+        # Per-file seeding: coder.yaml is a missing built-in and IS now
+        # seeded alongside the unrelated existing custom.yaml, but the
+        # existing custom.yaml itself is never overwritten.
+        assert "Coder" in names
 
     def test_deduplicates_by_name(self, tmp_agents_dir):
         os.makedirs(tmp_agents_dir, exist_ok=True)

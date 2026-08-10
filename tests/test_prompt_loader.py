@@ -68,22 +68,22 @@ class TestComposeSystemPrompt:
             )
             assert "TestProj" in prompt
 
-    def test_onboarding_only_loaded_for_coder(self, tmp_path):
-        """Onboarding template loads for coder agents only, not for gateway/debugger.
+    def test_onboarding_only_loaded_for_supervisor(self, tmp_path):
+        """Onboarding template loads for supervisor agents only, not gateway/debugger/coder.
 
-        Per BUG_REPORT-identity-override.md Bug #2: the onboarding interview
-        should not be injected into every agent's prompt in a fresh project.
+        Per SPEC-SUPERVISOR-ONBOARDING-REFINEMENTS §2.5: the onboarding interview
+        is now gated on the explicit supervisor role, not coder.
         """
         # Helper: does this prompt contain the onboarding template's content?
         def has_onboarding(prompt: str) -> bool:
             return "ONBOARDING phase" in prompt
 
-        # Coder in an unonboarded project → onboarding IS loaded
-        coder_prompt = compose_system_prompt(
-            agent_name="Coder", agent_role="coder", project_path=str(tmp_path),
+        # Supervisor in an unonboarded project → onboarding IS loaded
+        sup_prompt = compose_system_prompt(
+            agent_name="Supervisor", agent_role="supervisor", project_path=str(tmp_path),
         )
-        assert has_onboarding(coder_prompt), (
-            "Coder should get onboarding template in unonboarded project"
+        assert has_onboarding(sup_prompt), (
+            "Supervisor should get onboarding template in unonboarded project"
         )
 
         # Debugger in same project → onboarding is NOT loaded
@@ -91,7 +91,7 @@ class TestComposeSystemPrompt:
             agent_name="Debugger", agent_role="debugger", project_path=str(tmp_path),
         )
         assert not has_onboarding(debugger_prompt), (
-            "Debugger should NOT get onboarding template (Bug #2 fix)"
+            "Debugger should NOT get onboarding template"
         )
 
         # Gateway (empty agent_role) in same project → onboarding is NOT loaded
@@ -99,7 +99,15 @@ class TestComposeSystemPrompt:
             agent_name="Gateway", agent_role="", project_path=str(tmp_path),
         )
         assert not has_onboarding(gateway_prompt), (
-            "Gateway agent should NOT get onboarding template (Bug #2 fix)"
+            "Gateway agent should NOT get onboarding template"
+        )
+
+        # Coder no longer gets onboarding (old behavior reversed)
+        coder_prompt = compose_system_prompt(
+            agent_name="Coder", agent_role="coder", project_path=str(tmp_path),
+        )
+        assert not has_onboarding(coder_prompt), (
+            "Coder should NOT get onboarding template anymore (gate moved to supervisor)"
         )
 
     def test_coder_template_included(self):
@@ -115,6 +123,71 @@ class TestComposeSystemPrompt:
     def test_review_mode_adds_template(self):
         prompt = compose_system_prompt(agent_name="Coder", review_mode="review")
         assert "review" in prompt.lower()
+
+    def test_supervisor_unonboarded_gets_both_prompts(self, tmp_path):
+        """Supervisor in an un-onboarded project gets role prompt + onboarding."""
+        prompt = compose_system_prompt(
+            agent_name="Supervisor", agent_role="supervisor", project_path=str(tmp_path),
+        )
+        assert "orchestrator" in prompt.lower()  # supervisor.md content
+        assert "ONBOARDING phase" in prompt      # project-onboarding.md content
+
+    def test_supervisor_onboarded_gets_only_role_prompt(self, tmp_path):
+        """Supervisor in an onboarded project gets role prompt, NOT onboarding."""
+        from utils.project_awareness import init_project_config
+        init_project_config(str(tmp_path), "TestProj")
+        # Write real manifest content so is_project_onboarded returns True.
+        manifest_path = os.path.join(str(tmp_path), ".crabcakes", "project.md")
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            f.write("# TestProj\n\n## Purpose\n\nA real, non-empty manifest.\n")
+        prompt = compose_system_prompt(
+            agent_name="Supervisor", agent_role="supervisor", project_path=str(tmp_path),
+        )
+        assert "orchestrator" in prompt.lower()      # supervisor.md content
+        assert "ONBOARDING phase" not in prompt      # onboarding template absent
+
+    def test_coder_no_longer_gets_onboarding(self, tmp_path):
+        """Regression guard: coder must NOT get the onboarding template anymore."""
+        prompt = compose_system_prompt(
+            agent_name="Coder", agent_role="coder", project_path=str(tmp_path),
+        )
+        assert "ONBOARDING phase" not in prompt
+
+    def test_non_supervisor_roles_do_not_get_supervisor_prompt(self, tmp_path):
+        """coder/debugger/gateway must not receive the supervisor role prompt."""
+        for role, name, phrase in (
+            ("coder", "Coder", "orchestrator"),
+            ("debugger", "Debugger", "orchestrator"),
+            ("", "Gateway", "orchestrator"),
+        ):
+            prompt = compose_system_prompt(
+                agent_name=name, agent_role=role, project_path=str(tmp_path),
+            )
+            assert "orchestrator" not in prompt.lower(), (
+                f"role={role!r} should NOT get supervisor prompt"
+            )
+
+    def test_onboarding_check_failure_is_non_fatal(self, monkeypatch):
+        """If is_project_onboarded raises, composition still succeeds without onboarding."""
+        import utils.project_awareness as pa
+
+        def _boom(path):
+            raise RuntimeError("project state check failed")
+
+        monkeypatch.setattr(pa, "is_project_onboarded", _boom)
+        prompt = compose_system_prompt(
+            agent_name="Supervisor", agent_role="supervisor", project_path="/nonexistent/proj",
+        )
+        assert isinstance(prompt, str)
+        assert len(prompt) > 0
+        # Onboarding template not present (check failed → skipped non-fatally).
+        assert "ONBOARDING phase" not in prompt
+        # Positive guard: supervisor role template must still load even when
+        # the onboarding check raised (the onboarding except branch must not
+        # swallow the rest of compose_system_prompt).
+        assert "orchestrator" in prompt.lower() or "Plan then delegate" in prompt, \
+            "supervisor.md should still load when the onboarding check fails"
+
 
     def test_tools_included(self):
         prompt = compose_system_prompt(agent_name="Coder", tools=["read_file", "exec_command"])

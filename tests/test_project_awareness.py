@@ -12,11 +12,14 @@ from models.team import ProjectTeam, TeamMember
 from utils.project_awareness import (
     CRABCAKES_DIR_NAME,
     CONTEXT_READ_CAP,
+    _ensure_crabcakes_dir,
     append_project_context,
     build_awareness_block,
     build_awareness_dict,
     build_awareness_snapshot,
+    clean_manifest_skeleton,
     detect_tech_stack,
+    generate_project_skeleton,
     get_crabcakes_dir,
     get_current_task,
     init_project_config,
@@ -516,3 +519,161 @@ class TestAppendProjectContextLifecycle:
         entries = _split_entries(result)
         assert len(entries) == 2, \
             f"Expected 2 entries (code block not split), got {len(entries)}: {entries!r}"
+
+
+class TestCleanManifestSkeleton:
+    """clean_manifest_skeleton removes comment-only sections from project.md.
+
+    Pure-Python read + conditional write. Sections whose body is comment-only
+    (whitespace once HTML comments are removed) are dropped; sections with any
+    real content are preserved verbatim. The '# Title' preamble is never removed.
+    """
+
+    def _write_manifest(self, tmp_path, content):
+        _ensure_crabcakes_dir(str(tmp_path))
+        mp = tmp_path / ".crabcakes" / "project.md"
+        mp.write_text(content, encoding="utf-8")
+        return mp
+
+    def test_removes_comment_only_sections(self, tmp_path):
+        """Skeleton manifest → all 5 comment-only sections removed, title kept."""
+        generate_project_skeleton(str(tmp_path), "Demo")
+        changed = clean_manifest_skeleton(str(tmp_path))
+        assert changed is True
+        result = load_project_manifest(str(tmp_path))
+        # Only the '# Title' line remains — all '## ' sections gone.
+        assert "# Demo" in result
+        assert "## " not in result
+        assert result.startswith("# Demo")
+
+    def test_preserves_sections_with_real_content(self, tmp_path):
+        """A section with real text is preserved VERBATIM (comments intact)."""
+        self._write_manifest(
+            tmp_path,
+            "# T\n"
+            "\n"
+            "## Purpose\n"
+            "<!-- comment only -->\n"
+            "\n"
+            "## Notes\n"
+            "<!-- keep this -->\n"
+            "Real note content\n",
+        )
+        changed = clean_manifest_skeleton(str(tmp_path))
+        assert changed is True
+        result = load_project_manifest(str(tmp_path))
+        # Comment-only section removed; real-content section kept verbatim.
+        assert "## Purpose" not in result
+        assert "<!-- comment only -->" not in result
+        assert "## Notes" in result
+        assert "Real note content" in result
+        assert "<!-- keep this -->" in result  # comments left intact in kept section
+
+    def test_no_change_when_already_clean(self, tmp_path):
+        """Every section has real content → returns False, file unchanged."""
+        original = (
+            "# T\n"
+            "\n"
+            "## Purpose\n"
+            "Real purpose content\n"
+            "\n"
+            "## Notes\n"
+            "<!-- a comment -->\n"
+            "More real content\n"
+        )
+        self._write_manifest(tmp_path, original)
+        changed = clean_manifest_skeleton(str(tmp_path))
+        assert changed is False
+        # Byte-for-byte unchanged.
+        assert load_project_manifest(str(tmp_path)) == original
+
+    def test_hash_inside_comment_not_treated_as_section(self, tmp_path):
+        """'## Notes' inside a comment must NOT start a new section."""
+        self._write_manifest(
+            tmp_path,
+            "# T\n"
+            "\n"
+            "## Purpose\n"
+            "<!-- see ## Notes above -->\n"
+            "\n"
+            "## Notes\n"
+            "real content\n",
+        )
+        changed = clean_manifest_skeleton(str(tmp_path))
+        assert changed is True
+        result = load_project_manifest(str(tmp_path))
+        # Purpose (comment-only, the '## Notes' inside stayed confined) is removed.
+        assert "## Purpose" not in result
+        # The real '## Notes' section survives with its content.
+        assert "## Notes" in result
+        assert "real content" in result
+
+    def test_multiline_comment_spanning_hash_boundary(self, tmp_path):
+        """A multi-line comment containing '## Fake' must not split sections."""
+        self._write_manifest(
+            tmp_path,
+            "# T\n"
+            "\n"
+            "## Purpose\n"
+            "<!-- start of note\n"
+            "## Fake\n"
+            "end -->\n"
+            "\n"
+            "## Real\n"
+            "content\n",
+        )
+        changed = clean_manifest_skeleton(str(tmp_path))
+        assert changed is True
+        result = load_project_manifest(str(tmp_path))
+        # The whole Purpose section (all-comment body) is removed as one unit.
+        assert "## Purpose" not in result
+        assert "## Fake" not in result
+        assert "## Real" in result
+        assert "content" in result
+
+    def test_missing_file_is_noop(self, tmp_path):
+        """No .crabcakes/project.md → returns False, no exception."""
+        changed = clean_manifest_skeleton(str(tmp_path))
+        assert changed is False
+
+    def test_malformed_or_empty_manifest(self, tmp_path):
+        """Empty file or title-only → returns False, no write, no exception."""
+        # Title only — no '## ' sections to clean.
+        self._write_manifest(tmp_path, "# T\n")
+        assert clean_manifest_skeleton(str(tmp_path)) is False
+        # Empty file.
+        self._write_manifest(tmp_path, "")
+        assert clean_manifest_skeleton(str(tmp_path)) is False
+        # Whitespace-only.
+        self._write_manifest(tmp_path, "   \n\n")
+        assert clean_manifest_skeleton(str(tmp_path)) is False
+
+    def test_does_not_touch_title(self, tmp_path):
+        """The '# Title' line is preserved even when all sections are removed."""
+        generate_project_skeleton(str(tmp_path), "MyProject")
+        changed = clean_manifest_skeleton(str(tmp_path))
+        assert changed is True
+        result = load_project_manifest(str(tmp_path))
+        # Title preserved, and no '## ' sections remain.
+        assert result.startswith("# MyProject")
+        assert "## " not in result
+
+
+class TestBuildAwarenessDictReadOnly:
+    """build_awareness_dict must remain read-only (spec §2.8)."""
+
+    def test_build_awareness_dict_does_not_write_snapshot(self, tmp_path):
+        """Calling build_awareness_dict must not write or modify awareness.json."""
+        manifest_dir = tmp_path / ".crabcakes"
+        manifest_dir.mkdir()
+        (manifest_dir / "project.md").write_text(
+            "# Proj\n\n## Purpose\nSome real purpose content.\n",
+            encoding="utf-8",
+        )
+        awareness_path = manifest_dir / "awareness.json"
+        # The snapshot should not exist before OR after the call.
+        assert not awareness_path.exists()
+        build_awareness_dict(str(tmp_path))
+        assert not awareness_path.exists(), (
+            "build_awareness_dict must not create awareness.json (read-only)"
+        )

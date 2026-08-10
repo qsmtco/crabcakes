@@ -65,6 +65,16 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt("Debugger", "/tmp", [])
         assert "Debugger" in prompt  # name appears
 
+    def test_supervisor_role_fallback_from_name(self):
+        """Supervisor role is derived from the name when no explicit role is given.
+
+        Per SPEC-SUPERVISOR-ONBOARDING-REFINEMENTS §2.5: the fallback role
+        derivation must recognize supervisor as defense-in-depth.
+        """
+        prompt = build_system_prompt("Supervisor", "/tmp", [])
+        assert "orchestrator" in prompt.lower()  # supervisor.md content
+
+
     def test_collab_prompt_in_all_agents(self):
         """collab.md is composed into all agents regardless of role."""
         p_coder = build_system_prompt("Coder", "/tmp", [])

@@ -217,6 +217,121 @@ def load_project_manifest(project_path: str) -> str | None:
         return None
 
 
+def _ends_line_in_comment(in_comment: bool, line: str) -> bool:
+    """Return whether ``line`` ends while inside an HTML comment block.
+
+    Tracks ``<!--`` open / ``-->`` close delimiters across a line (both may
+    appear on the same line or on different lines). This mirrors the
+    code-fence tracking in ``_split_entries``: a ``## `` heading inside a
+    comment block must NOT be treated as a section boundary.
+
+    Edge cases handled:
+      - Same-line open+close: ``<!-- foo -->`` → False.
+      - Open without close: ``<!-- foo`` → True.
+      - Open on a prior line, closed here: ``end -->`` → False.
+    """
+    i = 0
+    n = len(line)
+    while i < n:
+        if in_comment:
+            close = line.find("-->", i)
+            if close == -1:
+                return True  # still open at end of line
+            in_comment = False
+            i = close + 3
+        else:
+            open_idx = line.find("<!--", i)
+            if open_idx == -1:
+                return False  # no open marker on the rest of the line
+            in_comment = True
+            i = open_idx + 4
+    return in_comment
+
+
+def clean_manifest_skeleton(project_path: str) -> bool:
+    """Remove comment-only sections from .crabcakes/project.md.
+
+    Splits the manifest into the preamble (before the first ``## `` heading)
+    plus ``## ``-delimited sections using line boundaries. A section is dropped
+    only when its body (after the heading line) is whitespace-only once HTML
+    comments are removed. Sections with any real non-comment, non-whitespace
+    content are preserved VERBATIM (comments left intact).
+
+    Section parsing is comment-aware: a ``## `` line that appears INSIDE a
+    ``<!-- ... -->`` comment block is NOT treated as a section boundary, so a
+    comment like ``<!-- see ## Notes -->`` cannot swallow later sections.
+    This is why cleanup is NOT a whole-file ``re.sub(..., flags=re.DOTALL)``
+    (spec §2.8).
+
+    The top-level ``# Title`` (preamble) is never removed.
+
+    This is a read + conditional write. Missing/unreadable files are a safe
+    no-op returning False (no exception). The file is written only when at
+    least one section is removed; otherwise returns False.
+
+    Args:
+        project_path: Absolute path to the project root.
+
+    Returns:
+        True if the manifest was rewritten (a comment-only section was removed),
+        False otherwise (no change / missing file / nothing to clean).
+    """
+    manifest = load_project_manifest(project_path)
+    if manifest is None:
+        return False
+
+    lines = manifest.split("\n")
+
+    # Group lines into the preamble and sections by '## ' heading boundaries.
+    # A line is a heading only if it starts with '## ' AND we are not inside
+    # an HTML comment block.
+    in_comment = False
+    sections: list[tuple[int, int]] = []  # (start_index, end_index) exclusive
+    current_start: int | None = None
+
+    for i, line in enumerate(lines):
+        is_heading = line.startswith("## ") and not in_comment
+        in_comment = _ends_line_in_comment(in_comment, line)
+        if is_heading:
+            if current_start is not None:
+                # Close the prior section (runs up to, but not including, this heading)
+                sections.append((current_start, i))
+            current_start = i
+    if current_start is not None:
+        sections.append((current_start, len(lines)))
+
+    # Decide which sections to drop: those whose body is whitespace-only once
+    # HTML comments are removed. done per-section on the BODY only (not heading).
+    drops: list[tuple[int, int]] = []
+    for start, end in sections:
+        body = "\n".join(lines[start + 1:end])
+        stripped_body = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL).strip()
+        if not stripped_body:
+            drops.append((start, end))
+
+    if not drops:
+        return False  # nothing to clean — no write
+
+    drop_indices = set()
+    for start, end in drops:
+        drop_indices.update(range(start, end))
+
+    kept_lines = [line for idx, line in enumerate(lines) if idx not in drop_indices]
+    result = "\n".join(kept_lines)
+
+    if result == manifest:
+        return False  # defensive — content unchanged, no write
+
+    path = os.path.join(get_crabcakes_dir(project_path), MANIFEST_FILENAME)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(result)
+    except OSError as e:
+        _logger.error("clean_manifest_skeleton: failed to write %s: %s", path, e)
+        return False
+    return True
+
+
 def is_project_onboarded(project_path: str) -> bool:
     """True if project has been onboarded (has real content in project.md or context.md).
 

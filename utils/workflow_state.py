@@ -17,6 +17,7 @@ Usage:
     phase = get_current_phase("/path/to/project")
 """
 
+import logging
 import os
 import re
 from datetime import datetime, timezone
@@ -318,6 +319,20 @@ def advance_phase(project_path: str, phase_name: str) -> None:
         lines = _replace_phase_row(lines, next_idx, next_name, "🔄 current", "—")
 
     _write_workflow_lines(project_path, lines)
+
+    # SOR §2.9: on onboarding completion, clean comment-only manifest sections.
+    # Lazy import to keep workflow_state's module-level imports stable.
+    # Non-fatal: a cleanup failure must not undo the workflow transition.
+    if phase_name == "onboarding":
+        try:
+            from utils.project_awareness import clean_manifest_skeleton
+            clean_manifest_skeleton(project_path)
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "clean_manifest_skeleton failed for %s; workflow transition unaffected",
+                project_path,
+                exc_info=True,
+            )
 
 
 def get_workflow_content(project_path: str) -> str:

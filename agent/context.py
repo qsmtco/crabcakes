@@ -720,7 +720,8 @@ def build_system_prompt(
         project_path: Absolute path to the project root.
         tools: List of tool names this agent can use.
         review_mode: "off" | "review" — controls write permission awareness.
-        agent_role: Explicit role override (e.g. "coder"). When empty,
+        agent_role: Explicit role override (one of "coder", "debugger",
+            "helper", "supervisor"; or "" for gateway agents). When empty,
             derives from agent_name as a fallback.
         context_mode: Context discovery mode — "auto", "preload", "jit", or "hybrid".
             "auto" resolves based on model_max_tokens at creation time.
@@ -744,7 +745,8 @@ def build_system_prompt(
             agent_name=agent_name,
             agent_role=agent_role or (
                 "coder" if "coder" in agent_name.lower() else
-                "debugger" if "debugger" in agent_name.lower() else ""
+                "debugger" if "debugger" in agent_name.lower() else
+                "supervisor" if "supervisor" in agent_name.lower() else ""
             ),
             project_path=project_path,
             project_awareness=awareness_dict,

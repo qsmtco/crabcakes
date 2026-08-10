@@ -14,7 +14,7 @@ llm_name: local-kb
 fallback_provider: openrouter
 auto_open: true
 api_key_built_in: false
-auto_add_to_projects: true
+auto_add_to_projects: false
 self_improvement:
   bug_journal: false
   project_rules: false

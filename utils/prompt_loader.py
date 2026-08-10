@@ -156,13 +156,14 @@ def compose_system_prompt(
 ) -> str:
     """Compose the full system prompt by loading and merging templates.
 
-    Selection logic:
-    1. Always: default.md
-    2. If project active: project-awareness.md (filled with awareness variables)
-    3. If review_mode != "off": code-review.md
-    4. If agent_role == "coder": coder.md
-    5. If agent_role == "debugger": debugger.md
-    6. If project active + agent_role: {role}-bugs.md, {role}-rules.md (self-improvement)
+    Selection logic (grouped; within a group order matters):
+    - Identity (always): default.md, collab.md, crabcakes-context.md
+    - Project (when active): project-awareness.md, crabcakes-commands.md,
+      project-onboarding.md (only when agent_role == "supervisor" and
+      project not yet onboarded)
+    - Review (when review_mode != "off"): code-review.md
+    - Role (exactly one): coder.md / debugger.md / auxilium.md / supervisor.md
+    - Self-improvement (project active + role): {role}-bugs.md, {role}-rules.md
 
     Templates are concatenated with double-newline separators.
     Missing templates are silently skipped.
@@ -170,7 +171,7 @@ def compose_system_prompt(
 
     Args:
         agent_name: Display name of the agent.
-        agent_role: Explicit role identifier ("coder", "debugger", or "" for gateway agents).
+        agent_role: Explicit role identifier ("coder", "debugger", "helper", "supervisor", or "" for gateway agents).
         project_path: Absolute path to the project root, or None.
         project_awareness: Dict of template variables from build_awareness_dict().
         tools: List of tool names (for agent runtime).
@@ -219,7 +220,7 @@ def compose_system_prompt(
     if project_path:
         try:
             from utils.project_awareness import is_project_onboarded
-            if agent_role == "coder" and not is_project_onboarded(project_path):
+            if agent_role == "supervisor" and not is_project_onboarded(project_path):
                 onboarding = load_prompt_template("project-onboarding")
                 if onboarding:
                     parts.append(onboarding)
@@ -245,6 +246,10 @@ def compose_system_prompt(
         ct = load_prompt_template("auxilium")
         if ct:
             parts.append(ct)
+    elif agent_role == "supervisor":
+        st = load_prompt_template("supervisor")
+        if st:
+            parts.append(st)
 
     # 7. Per-agent self-improvement context files (bug journal + project rules)
     # HIGH-5 (Phase 6): Gate `.crabcakes/` ingestion behind a per-project

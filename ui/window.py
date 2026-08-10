@@ -30,7 +30,7 @@ import gi
 logger = logging.getLogger(__name__)
 # Require GTK 4.0 — must be called before importing Gtk
 gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk, Gdk, Gio
+from gi.repository import Gtk, Gdk, Gio, GLib
 
 # Import UI components
 from ui.toolbar import Toolbar
@@ -520,6 +520,10 @@ class MainWindow(Gtk.ApplicationWindow):
         # callbacks (project_handler supports multiple open/close callbacks).
         self._project_handler.set_on_project_opened(self._on_project_opened)
         self._project_handler.set_on_project_closed(self._on_project_closed)
+        # SOR §2.7: project-created System bubble (composition-root side).
+        # Named handler renders the "add Supervisor manually" instruction into
+        # the new project's chat tab. Create-only — never fires for open_project.
+        self._project_handler.set_on_project_created(self._on_project_created_system_bubble)
 
         # Round 3 BUG #4: after async auto-accept confirmation, refresh the bar.
         self._feed_handler.set_on_auto_accept_level_changed(
@@ -1243,6 +1247,51 @@ class MainWindow(Gtk.ApplicationWindow):
             self._on_feed_bar_update(name, len(members))
         except Exception:
             logger.exception("Failed to re-evaluate settings bar on project open")
+
+    def _on_project_created_system_bubble(self, name: str, path: str) -> None:
+        """Render the project-created System bubble (composition-root side).
+
+        SOR §2.7: fired by ProjectHandler.set_on_project_created AFTER
+        open_project completes (dispatched via the handler's GLib.idle_add).
+        This method defers its widget work through GLib.idle_add so the
+        project tab exists before the callback body resolves the chat box.
+        Create-only — never fires for open_project of an existing project.
+        """
+        def _deferred():
+            session_key = f"project:{name}"
+            try:
+                # Outer catch-all: any unguarded operation in the deferred
+                # body (tab creation, chat box lookup, scroll) must not
+                # escape to the GTK main loop unlogged.
+                chat_box = self._main_content.get_chat_box_for_session(session_key)
+                if chat_box is None:
+                    self._main_content.create_chat_tab(session_key, "System")
+                    chat_box = self._main_content.get_chat_box_for_session(session_key)
+                if chat_box is None:
+                    return False  # chat box unavailable — no-op safely
+                text = (
+                    f"New project '{name}' created. Add the Supervisor agent from the "
+                    f"Agents tab (click the +), then send it a message like "
+                    f"'I'm ready' to begin onboarding."
+                )
+                bubble = None
+                try:
+                    bubble = self._chat_render_handler.render_sync(
+                        "System", text, session_key, tab_key=session_key
+                    )
+                    if bubble is not None:
+                        chat_box.append(bubble)
+                except Exception:
+                    logger.exception(
+                        "Failed to render project-created System bubble for %s", session_key
+                    )
+                self._main_content.scroll_chat_to_bottom()
+            except Exception:
+                logger.exception(
+                    "Failed to process project-created System bubble for %s", session_key
+                )
+            return False  # don't repeat
+        GLib.idle_add(_deferred)
 
     def _on_agent_cycle_clicked(self, current_solo):
         """Cycle agent label: ALL(None) -> member[0] -> ... -> member[N-1] -> ALL(None)."""

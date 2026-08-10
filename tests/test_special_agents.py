@@ -18,8 +18,28 @@ from agent.special_agents import (
 
 
 @pytest.fixture(autouse=True)
-def fresh_registry():
-    """Ensure a fresh registry for each test."""
+def fresh_registry(tmp_path, monkeypatch):
+    """Ensure a fresh, isolated registry for each test.
+
+    Redirects agent dirs to a temp dir BEFORE reload_registry() triggers
+    _seed_defaults(), so the built-in YAMLs are never copied into the real
+    user config dir on every pytest run. The temp source dir holds copies of
+    the real built-in defaults so registry loading reflects production.
+    """
+    import shutil
+    import utils.agent_defs as ad
+
+    # Redirect agent dirs to temp BEFORE reload_registry() triggers _seed_defaults()
+    agents_dir = str(tmp_path / "agents")
+    src_dir = str(tmp_path / "default_agents")
+    os.makedirs(src_dir, exist_ok=True)
+    # Copy the real built-in defaults so registry loading reflects production
+    real_src = ad._get_default_agents_src()
+    for fname in os.listdir(real_src):
+        if fname.endswith((".yaml", ".yml", ".json")):
+            shutil.copy2(os.path.join(real_src, fname), os.path.join(src_dir, fname))
+    monkeypatch.setattr(ad, "_get_agents_dir", lambda: agents_dir)
+    monkeypatch.setattr(ad, "_get_default_agents_src", lambda: src_dir)
     reload_registry()
     yield
     reload_registry()
@@ -204,6 +224,84 @@ class TestRegistry:
         assert [a.display_name for a in agents1] == [a.display_name for a in agents2]
 
 
+class TestSupervisorDef:
+    """Tests for the built-in Supervisor agent definition (SOR Phase 1).
+
+    Supervisor is manually added by the user (auto_add_to_projects: false),
+    is write-capable (write_file/edit_file in tools), and Auxilium no longer
+    auto-adds to projects but remains auto-open.
+    """
+
+    @pytest.fixture
+    def supervisor_def_present(self):
+        """Copy the built-in supervisor.yaml into the agent dir and reload.
+
+        Reload_registry may seed supervisor.yaml depending on test ordering;
+        copy the real built-in YAML directly to guarantee the registry sees it
+        and to refresh any stale user copy to the current built-in (Phase 2
+        changed auxilium.yaml's auto_add_to_projects flag).
+        """
+        import shutil
+        from utils.agent_defs import _get_agents_dir
+
+        agents_dir = _get_agents_dir()
+        os.makedirs(agents_dir, exist_ok=True)
+        defaults = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "prompts", "default_agents",
+        )
+        src = os.path.join(defaults, "supervisor.yaml")
+        dst = os.path.join(agents_dir, "supervisor.yaml")
+        shutil.copy2(src, dst)
+        # Refresh the stale seeded auxilium.yaml so it reflects the current
+        # built-in (auto_add_to_projects flipped to false).
+        aux_src = os.path.join(defaults, "auxilium.yaml")
+        aux_dst = os.path.join(agents_dir, "auxilium.yaml")
+        shutil.copy2(aux_src, aux_dst)
+        reload_registry()
+        yield
+        try:
+            for path in (dst, aux_dst):
+                if os.path.exists(path):
+                    os.remove(path)
+        finally:
+            reload_registry()
+
+    def test_supervisor_loads(self, supervisor_def_present):
+        sup = get_special_agent("special:supervisor")
+        assert sup is not None
+        assert sup.role == "supervisor"
+        assert sup.display_name == "Supervisor"
+        assert sup.auto_add_to_projects is False
+
+    def test_supervisor_can_write_derived_from_tools(self, supervisor_def_present):
+        sup = get_special_agent("special:supervisor")
+        assert sup is not None
+        assert "write_file" in sup.tools
+        assert "edit_file" in sup.tools
+        assert sup.can_write is True
+
+    def test_supervisor_prompt_exists(self, supervisor_def_present):
+        prompt_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "prompts", "system", "supervisor.md",
+        )
+        assert os.path.isfile(prompt_path)
+        with open(prompt_path, encoding="utf-8") as f:
+            content = f.read()
+        assert content.strip() != ""
+
+    def test_auxilium_not_auto_added(self, supervisor_def_present):
+        aux = get_special_agent("special:helper")
+        assert aux is not None
+        assert aux.auto_add_to_projects is False
+
+    def test_auxilium_auto_open_still_true(self, supervisor_def_present):
+        aux = get_special_agent("special:helper")
+        assert aux is not None
+        assert aux.auto_open is True
+
+
 class TestSpecialAgentColorStability:
     """Tests for models/colors.color_for_special_agent() — the stable
     per-role color cache introduced in Phase 1 of SPEC-AGENT-COLOR-STABILITY.
@@ -265,3 +363,93 @@ class TestSpecialAgentColorStability:
         # Color is a real palette entry, not the empty-role default
         assert c1.startswith("#")
         assert len(c1) == 7  # "#RRGGBB"
+
+
+class TestSeedDefaultsPerFile:
+    """Tests for per-file default seeding in utils.agent_defs._seed_defaults.
+
+    _seed_defaults() must copy each missing built-in agent file into the user
+    agents dir independently — an unrelated existing user agent must not
+    suppress seeding of a missing built-in (e.g. supervisor.yaml reaching
+    existing users), and existing user files must never be overwritten.
+    """
+
+    @pytest.fixture
+    def iso_agents_dir(self, monkeypatch, tmp_path):
+        """Redirect the agent defs dir and default source to temp dirs."""
+        import utils.agent_defs as ad
+
+        agents_dir = str(tmp_path / "agents")
+        src_dir = str(tmp_path / "default_agents")
+        os.makedirs(src_dir, exist_ok=True)
+
+        def _write_default(fname, name):
+            with open(os.path.join(src_dir, fname), "w", encoding="utf-8") as f:
+                f.write(
+                    "# built-in\n"
+                    f"name: {name}\n"
+                    f"role: {name.lower()}\n"
+                    "prompts: [system/auxilium.md]\n"
+                    "tools: [read_file]\n"
+                    "llm_name: local-kb\n"
+                    "fallback_provider: openrouter\n"
+                )
+
+        # Populate the default source with the built-in set.
+        _write_default("coder.yaml", "Coder")
+        _write_default("debugger.yaml", "Debugger")
+        _write_default("auxilium.yaml", "Auxilium")
+        _write_default("supervisor.yaml", "Supervisor")
+
+        monkeypatch.setattr(ad, "_get_agents_dir", lambda: agents_dir)
+        monkeypatch.setattr(ad, "_get_default_agents_src", lambda: src_dir)
+        return agents_dir
+
+    def _write_user(self, agents_dir, fname, name):
+        os.makedirs(agents_dir, exist_ok=True)
+        with open(os.path.join(agents_dir, fname), "w", encoding="utf-8") as f:
+            f.write(
+                f"name: {name}\n"
+                f"role: {name.lower()}\n"
+                "prompts: [system/auxilium.md]\n"
+                "tools: [read_file]\n"
+                "llm_name: local-kb\n"
+                "fallback_provider: openrouter\n"
+            )
+
+    def test_seed_with_unrelated_user_agent_copies_supervisor(self, iso_agents_dir):
+        import utils.agent_defs as ad
+
+        # One unrelated user agent exists; supervisor.yaml is missing.
+        self._write_user(iso_agents_dir, "custom.yaml", "Custom")
+        ad._seed_defaults()
+        super_path = os.path.join(iso_agents_dir, "supervisor.yaml")
+        assert os.path.isfile(super_path)
+        # The unrelated file is preserved.
+        assert os.path.isfile(os.path.join(iso_agents_dir, "custom.yaml"))
+
+    def test_seed_does_not_overwrite_existing_user_supervisor(self, iso_agents_dir):
+        import utils.agent_defs as ad
+
+        # User has a customized supervisor.yaml with a distinctive name.
+        self._write_user(iso_agents_dir, "supervisor.yaml", "MySupervisor")
+        ad._seed_defaults()
+        with open(os.path.join(iso_agents_dir, "supervisor.yaml"), encoding="utf-8") as f:
+            content = f.read()
+        # The built-in did NOT overwrite the user's custom file.
+        assert "MySupervisor" in content
+        assert "name: Supervisor" not in content
+
+    def test_seed_preserves_unrelated_user_file(self, iso_agents_dir):
+        import utils.agent_defs as ad
+
+        # Unrelated user file with custom content.
+        self._write_user(iso_agents_dir, "custom.yaml", "Custom")
+        ad._seed_defaults()
+        with open(os.path.join(iso_agents_dir, "custom.yaml"), encoding="utf-8") as f:
+            content = f.read()
+        assert "Custom" in content
+        # Other built-ins (coder/debugger/auxilium) seeded alongside it.
+        for fname in ("coder.yaml", "debugger.yaml", "auxilium.yaml"):
+            assert os.path.isfile(os.path.join(iso_agents_dir, fname)), fname
+

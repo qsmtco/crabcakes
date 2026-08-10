@@ -561,3 +561,268 @@ class TestSetClearChatCallback:
         handler.set_clear_chat_callback(MagicMock())
         handler.set_clear_chat_callback(None)
         assert handler._clear_chat_callback is None
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  SOR §2.6 — ProjectHandler: auto-add metadata, save_members backfill,
+#  created callback. Uses a REAL utils.project_awareness against tmp_path
+#  (matching tests/test_create_project.py) for the awareness fixture.
+# ═══════════════════════════════════════════════════════════════════
+
+def _pa_handler(projects_mod, fake_glib):
+    """Build a ProjectHandler with real utils.project_awareness."""
+    from ui.handlers.project_handler import ProjectHandler
+    from models import AgentRoutingTable
+    import utils.project_awareness as pa
+    return ProjectHandler(
+        left_panel=MagicMock(name="left_panel"),
+        projects_module=projects_mod,
+        agent_to_project=AgentRoutingTable(),
+        GLib_module=fake_glib,
+        awareness_module=pa,
+    )
+
+
+class TestAutoAddOnboardingAgentsMetadata:
+    def test_uses_agent_def_role_and_can_write(self, tmp_path, monkeypatch):
+        """_auto_add_onboarding_agents uses the def's role/can_write, NOT the
+        hardcoded 'onboarding guide'/True."""
+        from agent.special_agents import SpecialAgentDef
+        import utils.project_awareness as pa
+
+        project_path = str(tmp_path)
+        pa.init_project_config(project_path, "demo")
+
+        def _fake_onboarding():
+            return [SpecialAgentDef(
+                conv_id_prefix="special:supervisor",
+                display_name="Supervisor",
+                role="supervisor",
+                emoji="🧭",
+                tools=["read_file", "write_file", "edit_file"],
+                can_write=True,
+            )]
+        monkeypatch.setattr(
+            "agent.special_agents.get_project_onboarding_agents", _fake_onboarding
+        )
+
+        projects_mod = MagicMock()
+        projects_mod._PROJECTS_DIR_REF = [str(tmp_path)]
+        projects_mod.load_projects.return_value = []
+        ph = _pa_handler(projects_mod, FakeGLib())
+
+        ph._auto_add_onboarding_agents(project_path)
+
+        team = pa.load_team(project_path)
+        member = team.get_member("special:supervisor")
+        assert member is not None
+        assert member.name == "Supervisor"
+        assert member.role == "supervisor"
+        assert member.can_write is True
+
+
+class TestSaveMembersBackfill:
+    def _open_active(self, ph, name, path):
+        ph._active_project_name = name
+        ph._active_project_path = path
+
+    def test_backfills_special_metadata(self, tmp_path, monkeypatch):
+        """_save_members resolves special:* metadata via get_special_agent."""
+        from agent.special_agents import SpecialAgentDef
+        import utils.project_awareness as pa
+
+        project_path = str(tmp_path)
+        pa.init_project_config(project_path, "proj")
+
+        def _fake_get(prefix):
+            if prefix == "special:supervisor":
+                return SpecialAgentDef(
+                    conv_id_prefix="special:supervisor",
+                    display_name="Supervisor",
+                    role="supervisor",
+                    emoji="🧭",
+                    tools=["read_file", "write_file"],
+                    can_write=True,
+                )
+            return None
+        monkeypatch.setattr("agent.special_agents.get_special_agent", _fake_get)
+
+        projects_mod = MagicMock()
+        projects_mod._PROJECTS_DIR_REF = [str(tmp_path)]
+        ph = _pa_handler(projects_mod, FakeGLib())
+        self._open_active(ph, "proj", project_path)
+
+        ph._save_members("proj", ["special:supervisor"])
+
+        team = pa.load_team(project_path)
+        member = team.get_member("special:supervisor")
+        assert member is not None
+        assert member.name == "Supervisor"
+        assert member.role == "supervisor"
+        assert member.can_write is True
+
+    def test_gateway_key_stays_blank(self, tmp_path, monkeypatch):
+        """_save_members leaves gateway agent: keys blank (display-time resolution)."""
+        import utils.project_awareness as pa
+
+        project_path = str(tmp_path)
+        pa.init_project_config(project_path, "proj")
+
+        monkeypatch.setattr("agent.special_agents.get_special_agent", lambda _: None)
+
+        projects_mod = MagicMock()
+        projects_mod._PROJECTS_DIR_REF = [str(tmp_path)]
+        ph = _pa_handler(projects_mod, FakeGLib())
+        self._open_active(ph, "proj", project_path)
+
+        ph._save_members("proj", ["agent:qtr:telegram:direct:123"])
+
+        team = pa.load_team(project_path)
+        member = team.get_member("agent:qtr:telegram:direct:123")
+        assert member is not None
+        assert member.name == ""
+        assert member.role == ""
+        assert member.can_write is False
+
+    def test_preserves_existing_member(self, tmp_path):
+        """_save_members preserves an existing member's metadata exactly."""
+        from models.team import ProjectTeam, TeamMember
+        import utils.project_awareness as pa
+
+        project_path = str(tmp_path)
+        pa.init_project_config(project_path, "proj")
+        pa.save_team(project_path, ProjectTeam(members=[
+            TeamMember(session_key="special:supervisor", name="OldName", role="custom", can_write=False),
+        ]))
+
+        projects_mod = MagicMock()
+        projects_mod._PROJECTS_DIR_REF = [str(tmp_path)]
+        ph = _pa_handler(projects_mod, FakeGLib())
+        self._open_active(ph, "proj", project_path)
+
+        ph._save_members("proj", ["special:supervisor"])
+
+        team = pa.load_team(project_path)
+        member = team.get_member("special:supervisor")
+        assert member is not None
+        assert member.name == "OldName"
+        assert member.role == "custom"
+        assert member.can_write is False
+
+    def test_does_not_git_commit(self, tmp_path):
+        """_save_members must NOT make an implicit 'update team roster' commit."""
+        import utils.project_awareness as pa
+
+        project_path = str(tmp_path)
+        pa.init_project_config(project_path, "proj")
+
+        projects_mod = MagicMock()
+        projects_mod._PROJECTS_DIR_REF = [str(tmp_path)]
+        ph = _pa_handler(projects_mod, FakeGLib())
+        self._open_active(ph, "proj", project_path)
+
+        ph._git_commit_if_available = MagicMock()
+
+        ph._save_members("proj", ["agent:x"])
+
+        ph._git_commit_if_available.assert_not_called()
+
+    def test_refreshes_awareness_snapshot(self, tmp_path, monkeypatch):
+        """_save_members refreshes the awareness snapshot after team save."""
+        import utils.project_awareness as pa
+
+        project_path = str(tmp_path)
+        pa.init_project_config(project_path, "proj")
+
+        spy = MagicMock()
+        monkeypatch.setattr("utils.project_awareness.save_awareness_snapshot", spy)
+
+        projects_mod = MagicMock()
+        projects_mod._PROJECTS_DIR_REF = [str(tmp_path)]
+        ph = _pa_handler(projects_mod, FakeGLib())
+        self._open_active(ph, "proj", project_path)
+
+        ph._save_members("proj", ["agent:x"])
+
+        spy.assert_called_once()
+
+    def test_ordering_equals_input(self, tmp_path, monkeypatch):
+        """_save_members preserves input order for existing + new members."""
+        from agent.special_agents import SpecialAgentDef
+        from models.team import ProjectTeam, TeamMember
+        import utils.project_awareness as pa
+
+        project_path = str(tmp_path)
+        pa.init_project_config(project_path, "proj")
+        pa.save_team(project_path, ProjectTeam(members=[
+            TeamMember(session_key="special:coder", name="Coder", role="coder", can_write=True),
+        ]))
+
+        def _fake_get(prefix):
+            if prefix == "special:supervisor":
+                return SpecialAgentDef(
+                    conv_id_prefix="special:supervisor",
+                    display_name="Supervisor",
+                    role="supervisor",
+                    emoji="🧭",
+                    tools=["read_file", "write_file"],
+                    can_write=True,
+                )
+            return None
+        monkeypatch.setattr("agent.special_agents.get_special_agent", _fake_get)
+
+        projects_mod = MagicMock()
+        projects_mod._PROJECTS_DIR_REF = [str(tmp_path)]
+        ph = _pa_handler(projects_mod, FakeGLib())
+        self._open_active(ph, "proj", project_path)
+
+        members = ["special:coder", "agent:qtr:telegram:1", "special:supervisor"]
+        ph._save_members("proj", members)
+
+        team = pa.load_team(project_path)
+        assert team.get_session_keys() == members
+
+
+class TestOnProjectCreatedCallback:
+    def test_fires_for_create_not_open(self, tmp_path, fake_glib):
+        """set_on_project_created fires for create_project but not open_project."""
+        from unittest.mock import MagicMock
+        import utils.project_awareness as pa
+
+        projects_mod = MagicMock()
+        projects_mod._PROJECTS_DIR_REF = [str(tmp_path)]
+        projects_mod.load_projects.return_value = []
+        ph = _pa_handler(projects_mod, fake_glib)
+
+        cb = MagicMock()
+        ph.set_on_project_created(cb)
+
+        result = ph.create_project("myproj")
+        fake_glib.dispatch_all()
+        assert result is not None
+        cb.assert_called_once_with("myproj", result)
+
+        # Open an existing project — callback must NOT fire again
+        ph.open_project("myproj", result)
+        fake_glib.dispatch_all()
+        assert cb.call_count == 1
+
+    def test_callback_deferred_via_glib(self, tmp_path, fake_glib):
+        """The created callback is queued via GLib, not run synchronously."""
+        from unittest.mock import MagicMock
+        import utils.project_awareness as pa
+
+        projects_mod = MagicMock()
+        projects_mod._PROJECTS_DIR_REF = [str(tmp_path)]
+        projects_mod.load_projects.return_value = []
+        ph = _pa_handler(projects_mod, fake_glib)
+
+        cb = MagicMock()
+        ph.set_on_project_created(cb)
+
+        result = ph.create_project("myproj")
+        # Not yet dispatched — queued on fake_glib
+        cb.assert_not_called()
+
+        fake_glib.dispatch_all()
+        cb.assert_called_once_with("myproj", result)
