@@ -43,7 +43,7 @@ from ui.handlers.gateway_handler import GatewayHandler
 from ui.handlers.media_handler import MediaHandler
 from ui.handlers.project_handler import ProjectHandler
 from ui.handlers.activity_handler import ActivityHandler
-from ui.handlers.task_handler import TaskHandler
+from ui.handlers.work_handler import WorkHandler
 from ui.handlers.collab_handler import CollabHandler
 from ui.handlers.session_handler import SessionHandler
 
@@ -51,7 +51,7 @@ from ui.wiring import set_active_project_path, clear_active_project_path
 
 
 from models.task import Task
-from models import task_store
+from models import task_store, work_store
 from datetime import datetime
 
 from utils.config import get_gateway_url, COMMAND_PREFIX
@@ -82,7 +82,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self._agent_to_project = AgentRoutingTable()
 
         # Task handler — owns task command logic (Phase 7)
-        self._task_handler = None
+        self._work_handler = None
         # Collab handler — owns collaboration command logic (Phase 7)
         self._collab_handler = None
         # Session handler — owns session switching logic (Phase 7)
@@ -592,8 +592,14 @@ class MainWindow(Gtk.ApplicationWindow):
             lambda n, m: self._on_feed_bar_update(n, len(m))
         )
         # ── End Feed handler ──────────────────────────────────────────────
-        # Task handler — task commands (Phase 7)
-        self._task_handler = TaskHandler(
+        # Work handler — work unit commands (SPEC-TASK-SYSTEM-FULL-REDESIGN)
+        # Replaces the former TaskHandler. Receives project_handler (for active
+        # project path/name + member lookup), the global work_store, and the
+        # agent_runtime_handler (for /work start → send_to_special_agent).
+        self._work_handler = WorkHandler(
+            project_handler=self._project_handler,
+            work_store=work_store,
+            agent_runtime_handler=self._agent_runtime_handler,
             on_display_card=self._on_command_card,
             on_display_text=self._on_command_text,
             on_feed_card=self._feed_handler.add_card,
@@ -632,7 +638,7 @@ class MainWindow(Gtk.ApplicationWindow):
             on_display_card=self._on_command_card,
             on_display_text=self._on_command_text,
             collab_handler=self._collab_handler,
-            task_handler=self._task_handler,
+            work_handler=self._work_handler,
             review_handler=self._review_handler,
             session_handler=self._session_handler,
         )
@@ -782,6 +788,18 @@ class MainWindow(Gtk.ApplicationWindow):
         )
         self._project_handler.set_on_project_closed(
             lambda name: (self._review_handler.on_project_closed(name))
+        )
+
+        # Work handler lifecycle: load/migrate Work Units on open, release on
+        # close (SPEC-TASK-SYSTEM-FULL-REDESIGN §3.3, §11). Must bind the store
+        # BEFORE any /work command or awareness snapshot can read it.
+        # set_on_project_opened/closed APPEND callbacks, so existing wiring
+        # (feed, review, etc.) is preserved.
+        self._project_handler.set_on_project_opened(
+            lambda n, p: self._work_handler.load_for_project(p)
+        )
+        self._project_handler.set_on_project_closed(
+            lambda name: self._work_handler.close_project()
         )
 
 

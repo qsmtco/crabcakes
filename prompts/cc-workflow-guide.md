@@ -17,12 +17,12 @@ Use this workflow for any project that needs planning. Go through the phases in 
 | 0 | Onboarding | Project creation (auto) | `project.md`, `context.md` |
 | 1 | Discovery | New project, unclear requirements | `requirements.md` |
 | 2 | Architecture | Design before code | `architecture.md` |
-| 3 | Task Planning | Break design into tasks | Tasks in TaskStore, `tasks.md` |
-| 4 | Implementation | Engine runs (no prompt needed) | Code, commits |
+| 3 | Spec Planning | Propose Work Units with required specs | Work Units in `.crabcakes/work.json`, generated `tasks.md` |
+| 4 | Implementation | `/work start #N` triggers the loop (Supervisor) | Code, commits |
 | 5 | Testing | Comprehensive testing after build | Test results |
 | 6 | Ship | Deploy, release, handoff | Release artifacts |
 
-Phases 0–3 are prompts you load from the Prompts tab. Phase 4 is handled by the engine. Phases 5–6 will be addressed in a future proposal.
+Phases 0–3 are prompts you load from the Prompts tab. Phase 4 is triggered manually via `/work start #N`, which hands off to the Supervisor (who loads `prompts/implementationLoop.md`). Phases 5–6 will be addressed in a future proposal.
 
 ---
 
@@ -55,8 +55,8 @@ Reads `project.md` + `requirements.md`, discusses the design with you, produces 
 - API surfaces
 - Error handling
 
-### Task Planning (`cc-task-planning`)
-Reads `project.md` + `requirements.md` + `architecture.md`, proposes a task breakdown, creates tasks via `task add` after you approve.
+### Spec Planning (`cc-spec-planning`)
+Reads `project.md` + `requirements.md` + `architecture.md`, proposes Work Units with required `spec_path`s, creates them via `/work` commands (e.g. `/work "Title"`, `/work assign #N @agent`, `/work priority #N level`, `/work spec-ready #N <path>`) after you approve. `.crabcakes/tasks.md` is generated from `.crabcakes/work.json` — never hand-written.
 
 ---
 
@@ -68,7 +68,7 @@ Each phase ends with a **gate** — the agent must stop and get explicit confirm
 
 1. After onboarding, the agent will suggest loading this guide
 2. Click **cc-workflow-guide** from the Prompts tab to load it
-3. Review the phases and work through them in order — discovery → architecture → task planning → implementation
+3. Review the phases and work through them in order — discovery → architecture → spec planning → implementation
 4. Each phase produces the input for the next
 5. Load each phase prompt from the Prompts tab when you're ready for that step
 6. The agent will **always** stop at the gate and ask before moving to the next phase

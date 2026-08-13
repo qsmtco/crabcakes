@@ -1,6 +1,9 @@
 # models/task.py
 # Task data model + in-memory task store.
 #
+# DEPRECATED: superseded by models/work_unit.py (WorkUnit) as of
+# SPEC-TASK-SYSTEM-FULL-REDESIGN. Kept for import compatibility only.
+#
 # Phase 2 — task commands (`task, `done, `start, `blocked, `cancel,
 # `tasks, `assign, `priority) built on this model.
 #

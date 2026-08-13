@@ -56,7 +56,7 @@ class CommandHandler:
         on_display_card=None,     # callback(card_dict) — render a card in chat
         on_display_text=None,     # callback(session_key, text) — display text in chat
         collab_handler=None,     # CollabHandler — for ask/delegate/stop/tell
-        task_handler=None,       # TaskHandler — for task/done/start/blocked/cancel/tasks/assign/priority
+        work_handler=None,       # WorkHandler — for work/tasks/start/done/blocked/cancel/assign/priority
         review_handler=None,     # ReviewHandler — for review/check/accept/reject
         session_handler=None,    # SessionHandler — for session
     ):
@@ -73,7 +73,7 @@ class CommandHandler:
 
         # Store handler references for command registration
         self._collab_handler = collab_handler
-        self._task_handler = task_handler
+        self._work_handler = work_handler
         self._review_handler = review_handler
         self._session_handler = session_handler
 
@@ -96,29 +96,31 @@ class CommandHandler:
             self.register_command("tell", collab_handler.cmd_tell,
                 help_text="One agent shares information with another: /tell @agent — info")
 
-        # Task — requires TaskHandler
-        if task_handler is not None:
-            self.register_command("task", task_handler.cmd_task, aliases=["t"],
-                help_text="Create a task card assigned to agent")
-            self.register_command("done", task_handler.cmd_done,
-                help_text="Mark task complete",
+        # Work — requires WorkHandler (SPEC-TASK-SYSTEM-FULL-REDESIGN §5.1)
+        # CRITICAL: register every legacy name as a SEPARATE canonical command.
+        # Do NOT use aliases= for any work command — CommandRegistry.get() checks
+        # _commands before _aliases, so registering /work with aliases=["task"]
+        # would orphan the legacy /task command. payload_free=True for all.
+        if work_handler is not None:
+            self.register_command("work", work_handler.cmd_work,
+                help_text="Work units: create, list, start, spec-ready, status, unblock, done, blocked, cancel, assign, priority",
                 payload_free=True)
-            self.register_command("start", task_handler.cmd_start,
-                help_text="Start working on a task",
-                payload_free=True)
-            self.register_command("blocked", task_handler.cmd_blocked,
-                help_text="Report a blocker on a task",
-                payload_free=True)
-            self.register_command("cancel", task_handler.cmd_cancel,
-                help_text="Cancel a task",
-                payload_free=True)
-            self.register_command("tasks", task_handler.cmd_tasks,
-                help_text="Show all tasks",
-                payload_free=True)
-            self.register_command("assign", task_handler.cmd_assign,
-                help_text="Reassign a task to a different agent")
-            self.register_command("priority", task_handler.cmd_priority,
-                help_text="Set task priority")
+            self.register_command("task", work_handler.cmd_work,
+                help_text="Create a Work Unit (legacy alias)", payload_free=True)
+            self.register_command("tasks", work_handler.cmd_work_list,
+                help_text="List Work Units (legacy alias)", payload_free=True)
+            self.register_command("start", work_handler.cmd_work_start,
+                help_text="Start a Work Unit (legacy alias)", payload_free=True)
+            self.register_command("done", work_handler.cmd_work_done,
+                help_text="Complete a Work Unit (legacy alias)", payload_free=True)
+            self.register_command("blocked", work_handler.cmd_work_blocked,
+                help_text="Block a Work Unit (legacy alias)", payload_free=True)
+            self.register_command("cancel", work_handler.cmd_work_cancel,
+                help_text="Cancel a Work Unit (legacy alias)", payload_free=True)
+            self.register_command("assign", work_handler.cmd_work_assign,
+                help_text="Assign a Work Unit (legacy alias)", payload_free=True)
+            self.register_command("priority", work_handler.cmd_work_priority,
+                help_text="Set Work Unit priority (legacy alias)", payload_free=True)
 
         # Review — requires ReviewHandler
         if review_handler is not None:

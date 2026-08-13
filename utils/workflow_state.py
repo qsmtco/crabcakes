@@ -4,7 +4,7 @@ Workflow state tracker for CrabCakes projects.
 Manages .crabcakes/workflow.md — tracks which workflow phases are done,
 which is current, and timestamps.
 
-Phase names: "onboarding", "discovery", "architecture", "task-planning",
+Phase names: "onboarding", "discovery", "architecture", "spec-planning",
 "implementation", "testing", "ship"
 
 Each phase row includes a Prompt column that names the prompt file governing
@@ -30,7 +30,7 @@ PHASES = [
     "onboarding",
     "discovery",
     "architecture",
-    "task-planning",
+    "spec-planning",   # was "task-planning" (SPEC-TASK-SYSTEM-FULL-REDESIGN §7.1)
     "implementation",
     "testing",
     "ship",
@@ -48,7 +48,7 @@ PHASE_PROMPTS = {
     "onboarding":     "`prompts/system/project-onboarding.md`",
     "discovery":      "`prompts/cc-discovery.md`",
     "architecture":   "`prompts/cc-architecture-design.md`",
-    "task-planning":  "`prompts/cc-task-planning.md`",
+    "spec-planning":  "`prompts/cc-spec-planning.md`",   # was task-planning → cc-task-planning.md
     "implementation": "`prompts/implementationLoop.md`",
     "testing":        "`prompts/steelFramedCodeWriter.md`",
     "ship":           "`prompts/cc-workflow-guide.md`",
@@ -188,6 +188,33 @@ def _read_workflow_lines(project_path: str) -> list[str] | None:
     if _is_old_format(lines):
         lines = _migrate_old_format(lines)
         _write_workflow_lines(project_path, lines)
+
+    # SPEC-TASK-SYSTEM-FULL-REDESIGN §7.1: migrate task-planning → spec-planning.
+    # Runs AFTER the 6→7 column migration (which may emit task-planning rows).
+    # Preserves status/started/completed/notes; only the phase-name and prompt
+    # cells are rewritten (via _make_phase_row, which looks up PHASE_PROMPTS).
+    migrated = False
+    for index, line in enumerate(lines):
+        parsed = _parse_new_row(line)
+        if parsed is None or parsed[1] != "task-planning":
+            continue
+        phase_idx, _name, _prompt, status, started, completed, notes = parsed
+        lines[index] = _make_phase_row(
+            phase_idx, "spec-planning", status, started, completed, notes
+        )
+        migrated = True
+    if migrated:
+        _write_workflow_lines(project_path, lines)
+        # Post-migration verification: re-parse every line that looks like a
+        # phase row; a failure is logged (defensive — never crash the read).
+        for line in lines:
+            if line.strip().startswith("| ") and re.match(r"\|\s*\d+\s*\|", line):
+                if _parse_new_row(line.strip()) is None:
+                    logging.getLogger(__name__).warning(
+                        "workflow_state: phase row failed to parse after "
+                        "task-planning→spec-planning migration: %r",
+                        line,
+                    )
 
     return lines
 

@@ -81,7 +81,7 @@ class ReviewHandler:
     def _emit_feed_card(self, card_dict: dict) -> None:
         """Convert git_commit card dict to FeedCardData and fire feed callback.
 
-        Only fires if _on_feed_card is set. Mirrors task_handler._emit_feed_card.
+        Only fires if _on_feed_card is set. Mirrors work_handler._emit_feed_card.
         """
         if not self._on_feed_card:
             return

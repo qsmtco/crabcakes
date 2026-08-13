@@ -12,14 +12,7 @@ All commands start with `/`. Syntax: `/command args`, `@agent` mentions, `#task`
 | `/delegate` | `@agent — task` | Assign work. Alias `/d`. |
 | `/tell` | `@agent — info` | Share info, no response expected. |
 | `/stop` | (none) | Stop current agent. |
-| `/task` | `@agent — desc` | Create task. Alias `/t`. |
-| `/start` | `#task` | Begin task. |
-| `/done` | `#task — notes` | Complete. |
-| `/blocked` | `#task — reason` | Report blocker. |
-| `/cancel` | `#task` | Cancel. |
-| `/tasks` | (none) | List all. |
-| `/assign` | `#task @agent` | Reassign. |
-| `/priority` | `#task level` | Set low/med/high/critical. |
+| `/work` | `subcommand …` | Work Unit commands (see below). |
 | `/review` | (none) | Git checkpoint. |
 | `/check` | (none) | Show diff since checkpoint. |
 | `/accept` | `[--file path]` | Accept changes. |
@@ -29,7 +22,42 @@ All commands start with `/`. Syntax: `/command args`, `@agent` mentions, `#task`
 | `/cost` | (none) | Spending summary. |
 | `/help` | `[command]` | Help. Alias `/?`. |
 
-**Do NOT** attempt `/task add` in a terminal — that command does not exist. `@mentions` in commands route to specific agents; they do NOT trigger @mention notifications.
+## Work Unit commands (`/work`)
+
+Work Units live in `.crabcakes/work.json`; `.crabcakes/tasks.md` is a generated summary, not a source of truth.
+
+| Command | What |
+|---------|------|
+| `/work "Title"` | Create a Work Unit (status `draft`). |
+| `/work list` | List all Work Units. |
+| `/work start #N` | Start a Work Unit — validates its spec file + deps, then hands off to the Supervisor (implementation loop). |
+| `/work done #N — notes` | Complete a Work Unit. |
+| `/work blocked #N — reason` | Block a Work Unit. |
+| `/work unblock #N` | Clear a blocker; restore to spec-ready (PM/Supervisor only). |
+| `/work cancel #N` | Cancel a Work Unit. |
+| `/work assign #N @agent` | Assign supervisor/builder/auditor. |
+| `/work priority #N level` | Set priority (low/med/high/critical). |
+| `/work spec-ready #N <path>` | Validate the spec path and mark ready (PM/Supervisor only). |
+| `/work status #N` | Show a Work Unit's status. |
+
+**Do NOT use `/task add` in a terminal — that command does not exist.** `@mentions` in commands route to specific agents; they do NOT trigger @mention notifications.
+
+### Legacy aliases
+
+The old task-centric commands are still accepted and route to the Work Handler:
+
+| Legacy command | Maps to |
+|----------------|---------|
+| `/task` | `/work` (create) |
+| `/tasks` | `/work list` |
+| `/start` | `/work start` |
+| `/done` | `/work done` |
+| `/blocked` | `/work blocked` |
+| `/cancel` | `/work cancel` |
+| `/assign` | `/work assign` |
+| `/priority` | `/work priority` |
+
+The legacy `/t` alias for `/task` is **gone** (SPEC-TASK-SYSTEM-FULL-REDESIGN §5.1) — use `/work`.
 
 ## Crabcards — Project Feed Cards
 
