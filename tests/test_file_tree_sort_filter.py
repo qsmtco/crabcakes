@@ -264,13 +264,69 @@ class TestStaleRequestGuard:
     """Verify _on_directory_loaded rejects stale background-expand callbacks."""
 
     def test_stale_request_does_not_insert_children(self):
-        """A stale _on_directory_loaded (old request_id) must not insert children."""
-        import inspect
-        source = inspect.getsource(FileTree._on_directory_loaded)
-        assert "request_id" in source
-        assert "self._current_request_id" in source
-        assert "return" in source
-        # The guard must appear BEFORE any child insertion
-        guard_pos = source.find("self._current_request_id")
-        insert_pos = source.find("self._store.insert")
-        assert guard_pos < insert_pos, "stale-request guard must come before child insertion"
+        """A stale _on_directory_loaded (old request_id) must not insert children.
+
+        Discriminating scenario: expand A, expand B, collapse A, re-expand A —
+        all before any scan returns. A's first load is stale (token bumped on
+        re-expand) and must insert nothing; B's load is unaffected and must
+        still receive children. Fails pre-fix (global counter invalidates B).
+        """
+        from unittest.mock import patch
+
+        tree = FileTree()
+        queued = []
+
+        def fake_idle_add(fn, *a):
+            queued.append((fn, a))
+            return 0
+
+        class _SyncThread:
+            def __init__(self, target=None, daemon=None):
+                self._target = target
+
+            def start(self):
+                self._target()
+
+        def fake_scan_dir(path):
+            if path == "/proj/A":
+                return [("a_child.py", "/proj/A/a_child.py", False, 10, 0)]
+            return [("b_child.py", "/proj/B/b_child.py", False, 20, 0)]
+
+        with patch("ui.views.file_tree.GLib.idle_add", side_effect=fake_idle_add), \
+             patch("ui.views.file_tree.scan_directory", side_effect=fake_scan_dir), \
+             patch("ui.views.file_tree.threading.Thread", new=_SyncThread):
+            row_a = FileTreeRow(display_name="A", full_path="/proj/A",
+                                is_dir=True, depth=0, has_children=True)
+            row_b = FileTreeRow(display_name="B", full_path="/proj/B",
+                                is_dir=True, depth=0, has_children=True)
+            tree._store.append(row_a)
+            tree._store.append(row_b)
+
+            def expand(row):
+                tree._on_expander_clicked(row, tree._find_row_index(row))
+
+            # Expand A, expand B, collapse A, re-expand A — all before delivering.
+            expand(row_a)   # A → token 1
+            expand(row_b)   # B → token 1
+            expand(row_a)   # collapse A
+            expand(row_a)   # re-expand A → token 2
+
+            # Deliver ALL queued loads. A's first load (stale token 1) must be
+            # discarded; A's second load and B's load insert children.
+            for fn, args in queued:
+                fn(*args)
+
+            a_children = [
+                tree._store.get_item(i).props.full_path
+                for i in range(tree._store.get_n_items())
+                if tree._store.get_item(i).props.parent_full_path == "/proj/A"
+            ]
+            b_children = [
+                tree._store.get_item(i).props.full_path
+                for i in range(tree._store.get_n_items())
+                if tree._store.get_item(i).props.parent_full_path == "/proj/B"
+            ]
+            # A gets exactly one child (no duplicate from the stale load).
+            assert a_children == ["/proj/A/a_child.py"]
+            # B is unaffected by A's collapse/re-expand.
+            assert b_children == ["/proj/B/b_child.py"]

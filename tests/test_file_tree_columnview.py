@@ -266,7 +266,9 @@ class TestFileTree:
         tree._drawer_paths["/test"] = dummy_row
         tree._loaded_drawers.add("/test")
         tree._last_toggle_per_file["/test"] = 1.0
-        old_request_id = tree._current_request_id
+        # Per-parent tokens (Phase 1 of FILETREE-CONCURRENT-EXPAND):
+        # _clear_all_state must invalidate in-flight loads by clearing tokens.
+        tree._dir_load_requests["/tmp/fake"] = 7
 
         tree._clear_all_state()
 
@@ -274,7 +276,7 @@ class TestFileTree:
         assert len(tree._drawer_paths) == 0
         assert len(tree._loaded_drawers) == 0
         assert len(tree._last_toggle_per_file) == 0
-        assert tree._current_request_id == old_request_id + 1
+        assert tree._dir_load_requests == {}
 
     def test_find_row_index(self):
         """_find_row_index finds a row by object identity."""
@@ -589,3 +591,169 @@ class TestFileTreeRightClick:
                 mock_source_remove.assert_called_once_with(12345)
                 tree._tree_copy_status_label.set_text.assert_called_once_with("Copied path")
                 tree._tree_copy_status_label.set_visible.assert_called_once_with(True)
+
+
+# ── Concurrent Expand Regression Tests (FILETREE-CONCURRENT-EXPAND) ─────
+
+class _SynchronousThread:
+    """Deterministic stand-in for threading.Thread — runs target() in start()."""
+
+    def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+        self._target = target
+        self._args = args
+        self._kwargs = kwargs or {}
+
+    def start(self):
+        self._target(*self._args, **self._kwargs)
+
+
+class TestConcurrentExpand:
+    """Regression tests for per-parent async load tokens (replaces BUG #7 counter).
+
+    Deterministic: idle_add queues callbacks instead of scheduling them; the
+    background thread runs synchronously; scan_directory is a controllable fake.
+    No real timing, no sleep.
+    """
+
+    @pytest.fixture
+    def tree_harness(self):
+        tree = FileTree()
+        queued = []
+
+        def fake_idle_add(fn, *a):
+            queued.append((fn, a))
+            return 0
+
+        with patch("ui.views.file_tree.GLib.idle_add", side_effect=fake_idle_add), \
+             patch("ui.views.file_tree.scan_directory") as fake_scan, \
+             patch("ui.views.file_tree.threading.Thread", new=_SynchronousThread):
+            yield tree, queued, fake_scan
+
+    @staticmethod
+    def _deliver(queued):
+        for fn, args in queued:
+            fn(*args)
+
+    @staticmethod
+    def _children(tree, parent_path):
+        return [
+            tree._store.get_item(i).props.full_path
+            for i in range(tree._store.get_n_items())
+            if tree._store.get_item(i).props.parent_full_path == parent_path
+        ]
+
+    def _expand_row(self, tree, row):
+        idx = tree._find_row_index(row)
+        assert idx is not None
+        tree._on_expander_clicked(row, idx)
+
+    def _collapse_row(self, tree, row):
+        idx = tree._find_row_index(row)
+        assert idx is not None
+        tree._on_expander_clicked(row, idx)
+
+    def test_concurrent_expand_all_dirs_receive_children(self, tree_harness):
+        """Expand A then B before either scan returns → both receive children.
+
+        Fails on the pre-fix global-counter code: the second expand bumps the
+        single counter, so the first directory's load is discarded.
+        """
+        tree, queued, fake_scan = tree_harness
+
+        row_a = FileTreeRow(display_name="A", full_path="/proj/A",
+                            is_dir=True, depth=0, has_children=True)
+        row_b = FileTreeRow(display_name="B", full_path="/proj/B",
+                            is_dir=True, depth=0, has_children=True)
+        tree._store.append(row_a)
+        tree._store.append(row_b)
+
+        def fake_scan_dir(path):
+            if path == "/proj/A":
+                return [("a_child.py", "/proj/A/a_child.py", False, 10, 0)]
+            return [("b_child.py", "/proj/B/b_child.py", False, 20, 0)]
+        fake_scan.side_effect = fake_scan_dir
+
+        # Expand both directories back-to-back (neither scan delivered yet).
+        self._expand_row(tree, row_a)
+        self._expand_row(tree, row_b)
+
+        # Deliver both in-flight loads.
+        self._deliver(queued)
+
+        assert "/proj/A/a_child.py" in self._children(tree, "/proj/A")
+        assert "/proj/B/b_child.py" in self._children(tree, "/proj/B")
+
+    def test_collapse_reexpand_does_not_invalidate_other_dirs(self, tree_harness):
+        """BUG #1 fix: per-parent tokens must not invalidate OTHER dirs' loads.
+
+        Scenario: expand A, expand B, collapse A, re-expand A — all before any
+        scan returns. Pre-fix global counter invalidated B's load (B empty);
+        post-fix B's token is independent (B gets children). MUST fail pre-fix.
+        """
+        tree, queued, fake_scan = tree_harness
+
+        row_a = FileTreeRow(display_name="A", full_path="/proj/A",
+                            is_dir=True, depth=0, has_children=True)
+        row_b = FileTreeRow(display_name="B", full_path="/proj/B",
+                            is_dir=True, depth=0, has_children=True)
+        tree._store.append(row_a)
+        tree._store.append(row_b)
+
+        def fake_scan_dir(path):
+            if path == "/proj/A":
+                return [("a_child.py", "/proj/A/a_child.py", False, 10, 0)]
+            return [("b_child.py", "/proj/B/b_child.py", False, 20, 0)]
+        fake_scan.side_effect = fake_scan_dir
+
+        # Expand A, expand B, collapse A, re-expand A — all before any scan returns.
+        self._expand_row(tree, row_a)
+        self._expand_row(tree, row_b)
+        self._collapse_row(tree, row_a)
+        self._expand_row(tree, row_a)
+
+        # Deliver all queued loads.
+        self._deliver(queued)
+
+        assert "/proj/A/a_child.py" in self._children(tree, "/proj/A")
+        assert "/proj/B/b_child.py" in self._children(tree, "/proj/B")
+
+    def test_collapse_reexpand_no_duplicate_children(self, tree_harness):
+        """Expand→collapse→re-expand before the first load returns → exactly one child."""
+        tree, queued, fake_scan = tree_harness
+
+        row = FileTreeRow(display_name="A", full_path="/proj/A",
+                          is_dir=True, depth=0, has_children=True)
+        tree._store.append(row)
+        fake_scan.return_value = [("child.py", "/proj/A/child.py", False, 10, 0)]
+
+        # Expand (token 1) → collapse → re-expand (token 2), before delivering.
+        self._expand_row(tree, row)
+        self._collapse_row(tree, row)
+        self._expand_row(tree, row)
+
+        # Deliver BOTH queued loads: the first (token 1) is stale and must be
+        # discarded; the second (token 2) inserts exactly one child.
+        self._deliver(queued)
+
+        assert self._children(tree, "/proj/A") == ["/proj/A/child.py"]
+
+    def test_clear_state_discards_inflight_load(self, tree_harness):
+        """Expand → _clear_all_state → deliver load → no rows inserted.
+
+        Note: behavioral outcome matches pre-fix code (global counter also
+        invalidated on clear); the dict assertion pins the new mechanism.
+        """
+        tree, queued, fake_scan = tree_harness
+
+        row = FileTreeRow(display_name="A", full_path="/proj/A",
+                          is_dir=True, depth=0, has_children=True)
+        tree._store.append(row)
+        fake_scan.return_value = [("child.py", "/proj/A/child.py", False, 10, 0)]
+
+        self._expand_row(tree, row)
+        tree._clear_all_state()
+        assert tree._dir_load_requests == {}  # tokens invalidated on clear
+        self._deliver(queued)
+
+        assert tree._store.get_n_items() == 0
+        assert self._children(tree, "/proj/A") == []

@@ -450,7 +450,9 @@ class FileTree(Gtk.Box):
         self._drawer_paths: dict[str, FileTreeRow] = {}  # file_path -> drawer row object
         self._loaded_drawers: set[str] = set()
         self._last_toggle_per_file: dict[str, float] = {}
-        self._current_request_id = 0  # For async guard (BUG #7)
+        # Per-parent async load tokens: parent full_path -> latest request id.
+        # Only the newest load for a given directory may insert children.
+        self._dir_load_requests: dict[str, int] = {}
 
         # Phase 2: Git status stub callback — wired by handler in Phase 4
         self._on_get_git_status = None
@@ -599,8 +601,8 @@ class FileTree(Gtk.Box):
         # Clear filter model reference (will be recreated in _init_sort_filter)
         self._filter_model = None
 
-        # Invalidate any in-flight async requests
-        self._current_request_id += 1
+        # Invalidate any in-flight async requests (per-parent tokens)
+        self._dir_load_requests.clear()
 
     def load_project(self, name, path):
         """Load a project root and show its directory tree."""
@@ -1974,13 +1976,15 @@ class FileTree(Gtk.Box):
         if not row.props.is_dir or row.props.expanded:
             return
 
-        # BUG #7: Increment request ID, capture in closure
-        self._current_request_id += 1
-        request_id = self._current_request_id
+        # Per-parent request token (replaces global BUG #7 counter): only the
+        # newest load for THIS directory may insert children. Other
+        # directories' in-flight loads are unaffected.
+        parent_path = row.props.full_path
+        self._dir_load_requests[parent_path] = self._dir_load_requests.get(parent_path, 0) + 1
+        request_id = self._dir_load_requests[parent_path]
 
         # Mark as expanded immediately for UI feedback
         row.props.expanded = True
-        parent_path = row.props.full_path
         parent_depth = row.props.depth
 
         # BUG #4: Capture parent row OBJECT, not index (sort may move parent)
@@ -2027,8 +2031,10 @@ class FileTree(Gtk.Box):
                 self._store.remove(i)
                 break
 
-        # BUG #7: Ignore stale callbacks
-        if request_id != self._current_request_id:
+        # Per-parent staleness guard: discard unless this is the newest load
+        # for THIS directory (superseded by re-expand, or invalidated by
+        # _clear_all_state).
+        if self._dir_load_requests.get(parent_row_obj.props.full_path) != request_id:
             return
 
         # BUG #4: Re-find parent row by object identity (sort may have moved it)
@@ -2082,9 +2088,6 @@ class FileTree(Gtk.Box):
 
         parent_depth = row.props.depth
         row.props.expanded = False
-
-        # BUG #7: Increment request ID to invalidate any in-flight async loads
-        self._current_request_id += 1
 
         # Remove all descendants with depth > parent_depth
         i = row_index + 1
