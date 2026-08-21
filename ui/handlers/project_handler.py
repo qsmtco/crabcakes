@@ -19,6 +19,7 @@ from models.command import Command, CommandResult
 from models import task_store
 from utils.git_ops import init_repo, stage_all, commit
 from utils.workflow_state import init_workflow
+from utils.project_awareness import seed_project_prompts
 
 _logger = logging.getLogger(__name__)
 
@@ -184,6 +185,13 @@ class ProjectHandler:
             init_workflow(path)
         except Exception:
             pass  # non-fatal
+
+        # Seed per-project prompts library (SPEC-PROJECT-PROMPTS-DIRECTORY
+        # §2.5 — copy-only-if-missing, non-fatal on failure)
+        try:
+            seed_project_prompts(path)
+        except Exception as e:
+            _logger.warning("prompts seed failed for %s: %s", path, e)
 
         # Auto-initialize git repo with initial commit
         result = init_repo(path)

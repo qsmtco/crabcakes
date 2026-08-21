@@ -32,6 +32,7 @@ class InputToolbarHandler:
     ):
         self._mc = main_content
         self._GLib = GLib_module
+        self._project_path: str | None = None  # set via set_project_path()
 
         # -- Spell check --------------------------------------------------------
         self._spell_enabled = False
@@ -402,17 +403,29 @@ class InputToolbarHandler:
             logger.error("OS error writing %s: %s", file_path, e)
             return False
 
+    def set_project_path(self, project_path: str | None) -> None:
+        """Update the active project path ('' or None resets to app fallback).
+
+        Caller is expected to trigger refresh after calling.
+        """
+        self._project_path = project_path or None
+
     def save_as_prompt(self, filename: str) -> str | None:
         """Save input buffer as a .md prompt in the prompts/ directory.
 
         *filename* must NOT include the .md extension.
         Returns the absolute path on success, None on error.
         """
-        from utils.prompts import PROMPTS_DIR
+        from utils.prompt_paths import ensure_project_prompts_dir
 
         buf = self._mc.user_input.get_buffer()
         text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
-        path = os.path.join(PROMPTS_DIR, f"{filename}.md")
+        # Write-side resolver (utils/prompt_paths.ensure_project_prompts_dir):
+        # creates <project>/.crabcakes/prompts/ for unseeded projects so the
+        # first write lands in the project and later reads resolve there.
+        # Falls back to the app dir only when no project is open.
+        prompts_dir = ensure_project_prompts_dir(self._project_path)
+        path = os.path.join(prompts_dir, f"{filename}.md")
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
@@ -453,9 +466,10 @@ class InputToolbarHandler:
         Appends at cursor position.
         Returns True on success, False if the prompt was not found.
         """
-        from utils.prompts import PROMPTS_DIR
+        from utils.prompt_paths import get_project_prompts_dir
 
-        path = os.path.join(PROMPTS_DIR, f"{prompt_name}.md")
+        prompts_dir = get_project_prompts_dir(self._project_path)
+        path = os.path.join(prompts_dir, f"{prompt_name}.md")
         if os.path.isfile(path):
             return self.load_file(path)
         logger.warning("Prompt not found: %s", path)

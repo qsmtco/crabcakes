@@ -38,6 +38,28 @@ Crabcakes is a GTK4 desktop application that connects to an OpenClaw gateway via
 
 - A split-panel UI: left sidebar (Prompts/Agents/Projects notebook) + right main content (chat tabs + input)
 - Prompt library: load `.md` files from the `prompts/` directory (system prompts in `prompts/system/`)
+
+### Per-Project Prompt Library (SPEC-PROJECT-PROMPTS-DIRECTORY)
+
+Crabcakes maintains a **two-tier prompt storage** architecture:
+
+| Tier | Location | Content | Consumers |
+|------|----------|---------|-----------|
+| App-level | `<crabcakes>/prompts/system/` | Agent personality templates (`coder.md`, `debugger.md`, etc.) | `utils/prompt_loader.py` → system prompt composition |
+| Per-project | `<project>/.crabcakes/prompts/` | User-facing prompt library (`README.md`, `steelFramedCodeWriter.md`, subdirs) | `PromptsHandler` tab, `InputToolbarHandler` picker, agent file context |
+
+**Seeding:** `seed_project_prompts(project_path)` (in `utils/project_awareness.py`) copies the app's user-facing prompt library into `<project>/.crabcakes/prompts/` on project create and on first open of legacy projects. Copy-only-if-missing semantics: existing project edits are never overwritten.
+
+**Resolution:** `get_project_prompts_dir(project_path)` (`utils/prompt_paths.py`) returns the per-project dir when it exists, otherwise falls back to the app-level `prompts/` directory. This ensures agents in a project can read `prompts/steelFramedCodeWriter.md` via the sandbox-resolved project path.
+
+**Write-side resolver:** `ensure_project_prompts_dir(project_path)` (also in `utils/prompt_paths.py`) is the write-side counterpart: unseeded-project writes CREATE `<project>/.crabcakes/prompts/` rather than falling back to the app-level library, so a user's saved/imported prompt always lands in the active project (Phase 3 audit BUG #1). Callers: `InputToolbarHandler.save_as_prompt`, `PromptsHandler.import_prompt`.
+
+**Agent file context:** `agent/context.py:_load_project_prompts_context()` injects up to 30 `.md` files (≤20KB each) from `.crabcakes/prompts/` into the agent's file context as `## .crabcakes/prompts/{stem}` sections, appearing after the core `.crabcakes/` docs and before the project tree/key files; the size filter runs BEFORE the 30-file cap so oversized files never consume slots. This makes the prompt library visible to the agent without requiring an explicit `read_file` tool call.
+
+**Favorites:** `utils/favorites.py` keys favorites by **stem** (not full path), so a favorited prompt persists across project switches and re-seeds.
+
+**Out of scope:** `prompts/system/*` (app-level agent personality) and `prompts/claude-code-clean/` (human reference only) are never seeded into projects.
+
 - Agent discovery: connect to gateway, discover agents, open chat tabs per agent
 - Project browser: browse directories from `CRABCAKES_PROJECTS_DIR` via TreeView
 - **Project group chat**: open a project → fan-out message to all project members → responses routed back to the project tab
@@ -184,7 +206,12 @@ crabcakes/
 │
 ├── prompts/                  # System prompt templates and default agent definitions
 │   ├── system/                # Agent system prompt templates (loaded by utils/prompt_loader.py)
+│   │                          #   APP-LEVEL: not seeded per-project; defines agent personality
 │   └── default_agents/        # Default agent YAML definitions
+│
+# NOTE: Per-project prompt library lives at <project>/.crabcakes/prompts/
+# (see §X below). The app-level prompts/ directory above contains system
+# templates only; the user-facing library is per-project.
 │
 ├── tests/                    # Test suite (100 files; see §13 for partial listing)
 │
@@ -213,9 +240,10 @@ crabcakes/
     ├── markdown.py              # format_markdown() — inline markdown → Pango Markup
     ├── mcp_client.py            # MCP client library — asyncio-to-threading bridge, stdio transport, connection pooling, tool discovery/call
     ├── mcp_config.py            # MCP server configuration loader — YAML/JSON deserialization with schema validation
-    ├── project_awareness.py     # Project awareness system — manages .crabcakes/ directory per project (team, workflow, context)
+    ├── project_awareness.py     # Project awareness system — manages .crabcakes/ directory per project (team, workflow, context; seed_project_prompts)
     ├── project_trust.py         # HIGH-5: per-project trust gate for .crabcakes/ rule/bug ingestion
     ├── prompt_loader.py         # System prompt template loader — loads/fills/composes prompts/system/*.md
+    ├── prompt_paths.py          # Per-project prompts dir resolvers (get_project_prompts_dir read-side, ensure_project_prompts_dir write-side)
     ├── prompts.py               # load_prompts() — reads .md from prompts/
     ├── projects.py              # load_projects(), scan_directory() — load project directories; load_members()/save_members() deprecated
     ├── provider_url.py          # validate_provider_url() — https-only for non-loopback hosts (MED-5)

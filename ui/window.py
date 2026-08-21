@@ -48,7 +48,7 @@ from ui.handlers.collab_handler import CollabHandler
 from ui.handlers.session_handler import SessionHandler
 
 from ui.wiring import set_active_project_path, clear_active_project_path
-
+from utils.project_awareness import seed_project_prompts
 
 from models.task import Task
 from models import task_store, work_store
@@ -574,6 +574,15 @@ class MainWindow(Gtk.ApplicationWindow):
                 # (in addition to the home + /tmp fallbacks). Helper lives in
                 # ui/wiring.py so it's testable in isolation.
                 set_active_project_path(p),
+                # PHASE-5: seed per-project prompts, wire handlers, refresh UI
+                # (SPEC-PROJECT-PROMPTS-DIRECTORY §2.4 — lazy-seed on open,
+                # reset to app fallback on close; appended last so a failure
+                # here can never skip pre-existing lifecycle cleanup above)
+                seed_project_prompts(p),
+                self._prompts_handler.set_project_path(p),
+                self._input_toolbar_handler.set_project_path(p),
+                self._prompts_handler.load_prompts(),
+                self._left_panel.refresh_prompts(),
             )
         )
         self._project_handler.set_on_project_closed(
@@ -586,6 +595,12 @@ class MainWindow(Gtk.ApplicationWindow):
                 # LOW-7 wiring: clear the env var when no project is active so
                 # the viewer falls back to home + /tmp only.
                 clear_active_project_path(),
+                # PHASE-5: reset handlers to app-level fallback and refresh UI
+                # (SPEC-PROJECT-PROMPTS-DIRECTORY §2.4)
+                self._prompts_handler.set_project_path(None),
+                self._input_toolbar_handler.set_project_path(None),
+                self._prompts_handler.load_prompts(),
+                self._left_panel.refresh_prompts(),
             )
         )
         self._project_handler.set_on_members_changed(

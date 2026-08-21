@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from fnmatch import fnmatch
@@ -191,6 +192,63 @@ def _read_crabcakes_docs(project_path: str, max_size: int = 50 * 1024) -> str:
     return "\n".join(sections)
 
 
+_PROJECT_PROMPTS_CONTEXT_CAP = 20 * 1024  # 20KB per prompt
+_PROJECT_PROMPTS_MAX_FILES = 30
+
+
+def _load_project_prompts_context(project_path: str) -> str:
+    """
+    Read .crabcakes/prompts/*.md into the agent's file context.
+
+    Each file becomes a ``## .crabcakes/prompts/{stem}`` section, capped at
+    20KB per file and 30 files total. The size filter runs BEFORE the count
+    cap, so oversized files never consume a slot — a project with 30 eligible
+    files always sees all 30 (Phase 7 audit BUG #5). Subdirectories (e.g.
+    default_agents/) are NOT included here — those are loaded by other code
+    paths and including them would double the context size.
+
+    Returns empty string if the directory does not exist.
+    """
+    prompts_dir = os.path.join(project_path, ".crabcakes", "prompts")
+    if not os.path.isdir(prompts_dir):
+        return ""
+    sections: list[str] = []
+    try:
+        files = sorted(
+            f for f in os.listdir(prompts_dir)
+            if f.endswith(".md") and os.path.isfile(os.path.join(prompts_dir, f))
+        )
+    except OSError:
+        return ""
+    # Size filter FIRST, then count cap — oversized files are skipped without
+    # burning one of the 30 slots (Phase 7 audit BUG #5, supervisor override
+    # of the doc-only recommendation).
+    kept: list[str] = []
+    for fname in files:
+        try:
+            if os.path.getsize(
+                os.path.join(prompts_dir, fname)
+            ) <= _PROJECT_PROMPTS_CONTEXT_CAP:
+                kept.append(fname)
+        except OSError as e:
+            # Deleted/unreadable between listdir and stat (TOCTOU) — skip,
+            # but log so the silent-drop window is at least visible.
+            logging.getLogger(__name__).debug(
+                "Skipping prompt %s: %s", fname, e
+            )
+            continue
+    for fname in kept[:_PROJECT_PROMPTS_MAX_FILES]:
+        fpath = os.path.join(prompts_dir, fname)
+        try:
+            if os.path.getsize(fpath) > _PROJECT_PROMPTS_CONTEXT_CAP:
+                continue
+            with open(fpath, encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except OSError:
+            continue
+        sections.append(f"## .crabcakes/prompts/{fname[:-3]}\n\n{content}\n")
+    return "\n".join(sections)
+
 
 # Directories excluded from file context by default.
 # Set CRABCAKES_INCLUDE_DOCS=1 to override.
@@ -261,6 +319,16 @@ def _project_root_mtime(project_path: str) -> float:
             full = os.path.join(project_path, name)
             if os.path.exists(full):
                 m = max(m, os.stat(full).st_mtime)
+        # Per-project prompts directory (SPEC-PROJECT-PROMPTS-DIRECTORY §2.9)
+        prompts_dir = os.path.join(project_path, ".crabcakes", "prompts")
+        if os.path.isdir(prompts_dir):
+            try:
+                for entry in os.listdir(prompts_dir):
+                    full = os.path.join(prompts_dir, entry)
+                    if os.path.isfile(full):
+                        m = max(m, os.stat(full).st_mtime)
+            except OSError:
+                pass
         return m
     except OSError:
         return 0.0
@@ -306,6 +374,13 @@ def build_file_context(
     crab_docs = _read_crabcakes_docs(project_path)
     if crab_docs:
         parts.append(f"## Project docs\n\n{crab_docs}\n\n")
+
+    # Include per-project prompts library (SPEC-PROJECT-PROMPTS-DIRECTORY
+    # §2.9) — project prompt library after the core docs: methodology first,
+    # then reference material, then the tree.
+    prompts_ctx = _load_project_prompts_context(project_path)
+    if prompts_ctx:
+        parts.append(f"## Project prompts\n\n{prompts_ctx}\n\n")
 
     if query:
         # Query mode: find files matching the query string

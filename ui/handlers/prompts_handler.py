@@ -16,8 +16,7 @@ from typing import Callable
 import gi
 gi.require_version('Gtk', '4.0')
 
-# prompts/ directory — resolved relative to this file's parent (project root)
-_PROMPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'prompts')
+from utils.prompt_paths import get_project_prompts_dir
 
 
 class PromptsHandler:
@@ -45,8 +44,10 @@ class PromptsHandler:
         self._on_prompt_loaded = on_prompt_loaded
         self._GLib = GLib_module
 
+        self._project_path: str | None = None   # set via set_project_path(); None = app-level fallback
+
         self._prompts = []          # full list with metadata, refreshed on load
-        self._favorites = set()     # set of filepaths
+        self._favorites = set()     # set of prompt name stems
         self._last_used = {}        # {filename: timestamp}
         self._search_query = ''     # active search filter
 
@@ -74,7 +75,8 @@ class PromptsHandler:
         Triggers UI refresh via on_refresh_ui callback.
         """
         from utils import favorites as fav
-        is_now_fav = fav.toggle_favorite(filepath)
+        stem = os.path.splitext(os.path.basename(filepath))[0]
+        is_now_fav = fav.toggle_favorite(stem)
         self._favorites = fav.load_favorites()
         if self._on_refresh_ui:
             self._on_refresh_ui()
@@ -132,6 +134,13 @@ class PromptsHandler:
         if self._on_prompt_loaded:
             self._on_prompt_loaded(filepath, name, content)
 
+    def set_project_path(self, project_path: str | None) -> None:
+        """Update the active project path ('' or None resets to app fallback).
+
+        Caller is expected to trigger load_prompts()/refresh after calling.
+        """
+        self._project_path = project_path or None
+
     def import_prompt(self, source_path: str) -> str | None:
         """
         Copy a .md file into the prompts directory.
@@ -139,11 +148,14 @@ class PromptsHandler:
         Called by LeftPanel when user selects a file from the import picker.
         """
         import shutil
+        from utils.prompt_paths import ensure_project_prompts_dir
         filename = os.path.basename(source_path)
         if not filename.endswith('.md'):
             return None
-        prompts_dir = self._get_prompts_dir()
-        os.makedirs(prompts_dir, exist_ok=True)
+        # Write-side resolver: creates <project>/.crabcakes/prompts/ for
+        # unseeded projects so the import lands in the project library
+        # (same single-source-of-truth path as save_as_prompt).
+        prompts_dir = ensure_project_prompts_dir(self._project_path)
         dest = os.path.join(prompts_dir, filename)
         if os.path.exists(dest):
             return None  # already exists — don't overwrite
@@ -191,7 +203,7 @@ class PromptsHandler:
         for p in self._prompts:
             name = p['name']
             fpath = p['filepath']
-            is_fav = fpath in self._favorites
+            is_fav = name in self._favorites
             if query and query not in name.lower():
                 continue
             items.append({
@@ -204,5 +216,6 @@ class PromptsHandler:
         return items
 
     def _get_prompts_dir(self) -> str:
-        """Return the prompts directory path."""
-        return _PROMPTS_DIR
+        """Prompts dir for the active project; app-level fallback when no
+        project is wired or the project has no .crabcakes/prompts/ yet."""
+        return get_project_prompts_dir(self._project_path)

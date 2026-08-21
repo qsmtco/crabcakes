@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import time
 from typing import TYPE_CHECKING
 
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
 
 from models.team import ProjectTeam, TeamMember
 from utils.config import get_projects_config_dir
+from utils.prompt_paths import APP_USER_PROMPTS_DIR
 
 _logger = logging.getLogger(__name__)
 
@@ -56,6 +58,12 @@ CONTEXT_FILENAME = "context.md"
 MAX_CONTEXT_SIZE = 50 * 1024  # 50 KB cap for context.md (write side)
 CONTEXT_READ_CAP = 8000       # Max chars injected into agent prompts (read side)
 MAX_CONTEXT_ENTRIES = 50      # Max entries before FIFO eviction
+
+# Per-project prompts library seeding (SPEC-PROJECT-PROMPTS-DIRECTORY §2.1)
+_USER_PROMPTS_SUBDIR = "prompts"
+# Subdirs of <app>/prompts/ seeded into projects. system/ and claude-code-clean/
+# are app-level (see utils.prompt_paths.APP_LEVEL_PROMPTS_SUBDIRS) and excluded.
+_USER_PROMPTS_INCLUDE_SUBDIRS = ("default_agents",)
 
 # ── Awareness mtime cache ─────────────────────────────────────────────────────
 _AWARENESS_CACHE: dict[str, tuple[float, dict, str]] = {}
@@ -168,6 +176,92 @@ def _create_project_manifest(project_path: str, project_name: str) -> None:
     if os.path.isfile(manifest_path):
         return  # Already exists, don't overwrite
     generate_project_skeleton(project_path, project_name)
+
+
+def seed_project_prompts(project_path: str) -> bool:
+    """Copy the app's user-facing prompt library into <project>/.crabcakes/prompts/.
+
+    Copy-only-if-missing: existing project files are NEVER overwritten, so a
+    project that customized a prompt keeps its local copy (the project is
+    effectively branched after first seed — intentional, SPEC §2.1).
+
+    Returns True on success (including no-op when dir exists), False on hard
+    failure (source missing, cannot create dest, empty project_path). Idempotent.
+    """
+    if not project_path:
+        _logger.warning("seed_project_prompts: empty project_path")
+        return False
+    if not os.path.isdir(APP_USER_PROMPTS_DIR):
+        _logger.warning(
+            "seed_project_prompts: app user-prompts dir missing: %s",
+            APP_USER_PROMPTS_DIR,
+        )
+        return False
+
+    dest_dir = os.path.join(get_crabcakes_dir(project_path), _USER_PROMPTS_SUBDIR)
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+    except OSError as e:
+        _logger.warning(
+            "seed_project_prompts: cannot create %s: %s", dest_dir, e
+        )
+        return False
+
+    # Top-level .md files
+    try:
+        entries = os.listdir(APP_USER_PROMPTS_DIR)
+    except OSError as e:
+        _logger.warning(
+            "seed_project_prompts: cannot list %s: %s", APP_USER_PROMPTS_DIR, e
+        )
+        return False
+    for fname in entries:
+        src = os.path.join(APP_USER_PROMPTS_DIR, fname)
+        if os.path.isfile(src) and fname.endswith(".md"):
+            dst = os.path.join(dest_dir, fname)
+            if os.path.isfile(dst):
+                pass  # local copy exists — preserved (copy-only-if-missing)
+            elif os.path.exists(dst):
+                _logger.warning(
+                    "seed: skipping %s — dest exists but is not a file", dst
+                )
+            else:
+                try:
+                    shutil.copy2(src, dst)
+                except OSError as e:
+                    _logger.warning("seed: copy %s failed: %s", src, e)
+
+    # Whitelisted subdirs (one level deep, files only)
+    for sub in _USER_PROMPTS_INCLUDE_SUBDIRS:
+        src_sub = os.path.join(APP_USER_PROMPTS_DIR, sub)
+        if not os.path.isdir(src_sub):
+            continue
+        dst_sub = os.path.join(dest_dir, sub)
+        try:
+            os.makedirs(dst_sub, exist_ok=True)
+        except OSError as e:
+            _logger.warning("seed: cannot create %s: %s", dst_sub, e)
+            continue
+        try:
+            for fname in os.listdir(src_sub):
+                src = os.path.join(src_sub, fname)
+                dst = os.path.join(dst_sub, fname)
+                if os.path.isfile(src):
+                    if os.path.isfile(dst):
+                        pass  # local copy exists — preserved (copy-only-if-missing)
+                    elif os.path.exists(dst):
+                        _logger.warning(
+                            "seed: skipping %s — dest exists but is not a file", dst
+                        )
+                    else:
+                        try:
+                            shutil.copy2(src, dst)
+                        except OSError as e:
+                            _logger.warning("seed: copy %s failed: %s", src, e)
+        except OSError as e:
+            _logger.warning("seed: cannot list %s: %s", src_sub, e)
+
+    return True
 
 
 def generate_project_skeleton(project_path: str, project_name: str) -> None:

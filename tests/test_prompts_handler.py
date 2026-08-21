@@ -40,7 +40,7 @@ class TestSearch:
             {'name': 'alpha', 'filepath': '/p/alpha.md', 'content': '', 'lines': 1, 'size': 10},
             {'name': 'beta', 'filepath': '/p/beta.md', 'content': '', 'lines': 1, 'size': 10},
         ]
-        h._favorites = {'/p/beta.md'}
+        h._favorites = {'beta'}
         result = h.search('')
         assert result[0]['name'] == 'beta'
         assert result[1]['name'] == 'alpha'
