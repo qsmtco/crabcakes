@@ -12,7 +12,7 @@
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Gio', '2.0')
-from gi.repository import Gtk, GLib, Gdk, Gio, GObject
+from gi.repository import Gtk, GLib, Gdk, Gio, GObject, Pango
 
 import os
 import threading
@@ -214,7 +214,15 @@ class FileTreeRowWidget(Gtk.Box):
 
     def set_label(self, display_name: str) -> None:
         """Set label markup. Display name already includes prefix."""
-        self._label.set_markup(escape_for_pango(display_name))
+        markup = escape_for_pango(display_name)
+        # Pre-validate markup to avoid Gtk-WARNING and empty label on parse
+        # failure. Falls back to set_text so content is never lost.
+        # See commit 898062a post-mortem.
+        try:
+            Pango.parse_markup(markup, -1, "\x00")
+            self._label.set_markup(markup)
+        except Exception:
+            self._label.set_text(display_name)
 
     def set_icon(self, icon_name: str, is_dir: bool, is_drawer: bool) -> None:
         """Set icon based on icon_name. Drawer rows hide the icon."""
@@ -1089,7 +1097,15 @@ class FileTree(Gtk.Box):
         self._back_btn.set_visible(True)
         self._folder_icon.set_visible(True)
         safe_name = escape_for_pango(name)
-        self._title_lbl.set_markup(f"<b>{safe_name}</b>")
+        title_markup = f"<b>{safe_name}</b>"
+        # Pre-validate markup to avoid Gtk-WARNING and empty label on parse
+        # failure. Falls back to set_text so content is never lost.
+        # See commit 898062a post-mortem.
+        try:
+            Pango.parse_markup(title_markup, -1, "\x00")
+            self._title_lbl.set_markup(title_markup)
+        except Exception:
+            self._title_lbl.set_text(name)
         self._title_lbl.set_use_markup(True)
         self._title_lbl.set_hexpand(True)
         # Phase 2: search visible in both modes

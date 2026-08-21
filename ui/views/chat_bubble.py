@@ -388,7 +388,15 @@ def _build_code_from_markup(lang: str, code_markup: str, raw_content: str) -> Gt
     content.add_css_class("code-block-content")
 
     code_label = Gtk.Label()
-    code_label.set_markup(code_markup)
+    # Pre-validate markup before set_markup to avoid Gtk-WARNING terminal spam
+    # and empty-label content loss. If Pango rejects the markup, fall back to
+    # set_text so the raw text is visible. See commit 898062a post-mortem:
+    # docs/post-mortems/2026-07-31-PANGO-MARKUP-GUARD-POST-MORTEM.md
+    try:
+        Pango.parse_markup(code_markup, -1, "\x00")
+        code_label.set_markup(code_markup)
+    except Exception:
+        code_label.set_text(raw_content)
     code_label.set_xalign(0)
     code_label.set_selectable(True)
     code_label.set_can_focus(False)
