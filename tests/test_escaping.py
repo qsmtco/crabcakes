@@ -300,3 +300,56 @@ class TestPangoCaseSensitivity:
         # Belt-and-suspenders: try set_markup to confirm Pango accepts it.
         lbl = Gtk.Label()
         lbl.set_markup(final)  # would log Gtk-WARNING if malformed
+
+
+class TestSpanAttributeValidation:
+    """Phase 1: unknown attributes on known Pango tags must be rejected."""
+
+    def test_span_with_unknown_attr_escaped(self):
+        """JSX classname attribute on <span> is not a valid Pango attr."""
+        result = escape_for_pango('<span classname="x">t</span>')
+        assert '<span' not in result or '&lt;span' in result, f"Got: {result!r}"
+
+    def test_span_with_jsx_style_attr_escaped(self):
+        """JSX style attribute on <span> is not a valid Pango attr."""
+        result = escape_for_pango('<span style={{ color: "red" }}>hi</span>')
+        assert '<span' not in result or '&lt;span' in result, f"Got: {result!r}"
+
+    def test_span_with_valid_attrs_preserved(self):
+        """Valid Pango span attrs must survive (regression guard)."""
+        result = escape_for_pango('<span foreground="#ff0000">t</span>')
+        assert result == '<span foreground="#ff0000">t</span>', f"Got: {result!r}"
+
+    def test_b_with_any_attr_escaped(self):
+        """<b> (and other non-span tags) takes no attributes at all."""
+        result = escape_for_pango('<b class="x">t</b>')
+        assert '&lt;b' in result, f"Got: {result!r}"
+
+    def test_uppercase_classname_normalized_then_rejected(self):
+        """Uppercase attr names are lowercased before validation."""
+        result = escape_for_pango('<span ClassName="x">t</span>')
+        assert '&lt;span' in result, f"Got: {result!r}"
+
+    def test_span_bg_attr_escaped(self):
+        """Pango rejects 'bg' (not a valid span attr); only 'background' is."""
+        result = escape_for_pango('<span bg="red">x</span>')
+        assert '&lt;span' in result, f"Got: {result!r}"
+
+    def test_span_color_deprecated_alias_preserved(self):
+        """'color' is Pango's deprecated alias for foreground, still accepted."""
+        result = escape_for_pango("<span color='#10b981'>x</span>")
+        assert '<span color=\'#10b981\'>' in result, f"Got: {result!r}"
+
+    def test_valid_name_invalid_value_preserved_guard_handles(self):
+        """Name-valid tags with malformed values are preserved by the escaper
+        because it validates attribute NAMES, not VALUE shapes.
+
+        The downstream Pango.parse_markup guard (feed_card.py, chat_bubble.py)
+        handles the resulting parse failure. For composite markup (diff lines)
+        the per-line fallback isolates the failure; for single text blocks
+        set_text() is an acceptable last-resort fallback.
+        """
+        result = escape_for_pango('<span foreground=noquotes>t</span>')
+        # Name 'foreground' is valid → tag preserved; value shape will be
+        # caught downstream by the parse_markup guard.
+        assert '<span foreground=noquotes>' in result, f"Got: {result!r}"

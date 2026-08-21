@@ -42,6 +42,24 @@ _PANGO_KNOWN_TAGS: frozenset[str] = frozenset({
     # reaches format_markdown or Gtk.Label.set_markup.
 })
 
+# Attribute names permitted on <span> per Pango markup reference.
+# All other known tags (b, i, u, s, tt, big, small, sub, sup, o) take
+# NO attributes. If any attribute name on a known tag is NOT in this
+# allowlist, the ENTIRE tag is escaped as literal text.
+_SPAN_ALLOWED_ATTRS: frozenset[str] = frozenset({
+    # Pango-deprecated alias for foreground; still accepted by the parser
+    # and used by ui/views/diff_card.py templates.
+    "color",
+    "foreground", "background", "alpha", "bgalpha",
+    "underline", "underline_color",
+    "rise", "strikethrough", "strikethrough_color", "fallback", "lang",
+    "font", "font_desc", "font_family", "face", "size", "font_size",
+    "font_weight", "weight", "font_style",
+    "font_stretch", "stretch", "font_variant", "variant",
+    "font_features", "gravity", "gravity_hint", "letter_spacing",
+    "show", "insert_hyphens", "allow_breaks", "line_height",
+})
+
 # Void elements — HTML elements with no closing tag. Kept for reference /
 # future use but NOT auto-preserved (see comment above).
 _PANGO_VOID_TAGS: frozenset[str] = frozenset({
@@ -189,10 +207,14 @@ def escape_for_pango(text: str) -> str:
 
                 if tag_name in _PANGO_KNOWN_TAGS:
                     # Known Pango tag — preserve and track on stack.
-                    # Escape bare & in attribute values (e.g. URLs like
-                    # href="http://example.com?a=1&b=2") to prevent XML parse
-                    # errors in Gtk.Label.set_markup(). Only escape & not
-                    # already part of an entity by checking for ; following &.
+                    # Validate attribute names against the per-tag allowlist.
+                    # <span> permits a specific set; all other known tags take
+                    # NO attributes. If any attribute is invalid, escape the
+                    # ENTIRE tag as literal text (same treatment as unknown tags).
+                    # Escape bare & in attribute values (e.g.
+                    # font="Sans 10&amp;bold") to prevent XML parse errors
+                    # in Gtk.Label.set_markup(). Only escape & not already
+                    # part of an entity by checking for ; following &.
                     # Lowercase attribute NAMES (Pango is case-sensitive on
                     # attrs too). Preserve attribute VALUES exactly.
                     if attrs.strip():
@@ -203,6 +225,21 @@ def escape_for_pango(text: str) -> str:
                             _lower_attr_names,
                             attrs,
                         )
+                        # Extract lowered attribute names and validate
+                        _attr_re = re.compile(
+                            r'\s+([a-zA-Z][a-zA-Z0-9_.-]*)=',
+                        )
+                        attr_names = set(_attr_re.findall(lowered_attrs))
+                        if tag_name == "span":
+                            valid = _SPAN_ALLOWED_ATTRS
+                        else:
+                            valid = frozenset()  # no attrs allowed on b, i, u, ...
+                        if not attr_names.issubset(valid):
+                            # Invalid attribute found — escape the lowercased
+                            # tag (consistent with how known tags are processed).
+                            result.append(html.escape(f"<{tag_name}{lowered_attrs}>"))
+                            i += match.end()
+                            continue
                         # Escape bare ampersands in attribute values
                         def _escape_attr_ampersands(m):
                             amp = m.group(0)

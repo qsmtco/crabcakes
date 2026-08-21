@@ -139,7 +139,19 @@ def _render_text_body(text: str, mono: bool) -> Gtk.Widget:
 
     escaped = escape_for_pango(text)
     label = Gtk.Label()
-    label.set_markup(escaped)
+    # Pre-validate markup before set_markup to avoid Gtk-WARNING terminal spam
+    # and empty-label content loss. If Pango rejects the markup (unknown attrs
+    # from JSX/TSX that escape_for_pango intentionally escaped), fall back to
+    # set_text so the raw text is visible. See commit 898062a post-mortem:
+    # docs/post-mortems/2026-07-31-PANGO-MARKUP-GUARD-POST-MORTEM.md
+    try:
+        Pango.parse_markup(escaped, -1, "\x00")
+        label.set_markup(escaped)
+    except Exception:
+        # Trade-off: for a single text block (not composite markup), falling
+        # back to set_text is acceptable — we lose Pango formatting but the
+        # content is still readable and not silently destroyed.
+        label.set_text(text)
     label.set_xalign(0)
     label.set_wrap(True)
     label.set_wrap_mode(1)  # Pango.WrapMode.WORD_CHAR
@@ -316,11 +328,20 @@ def build_context_panel(
             for line in snapshot.diff_text.split("\n"):
                 escaped = escape_for_pango(line)
                 if line.startswith("+") and not line.startswith("+++"):
-                    markup_lines.append(f'<span foreground="#6a9955"><tt>{escaped}</tt></span>')
+                    line_markup = f'<span foreground="#6a9955"><tt>{escaped}</tt></span>'
                 elif line.startswith("-") and not line.startswith("---"):
-                    markup_lines.append(f'<span foreground="#f44747"><tt>{escaped}</tt></span>')
+                    line_markup = f'<span foreground="#f44747"><tt>{escaped}</tt></span>'
                 else:
-                    markup_lines.append(f'<tt>{escaped}</tt>')
+                    line_markup = f'<tt>{escaped}</tt>'
+                # Validate each diff line individually so one malformed line
+                # cannot cascade and erase color markup on valid lines.
+                # If a line fails Pango.parse_markup, fall back to the raw
+                # escaped text (loss of color styling for that line only).
+                try:
+                    Pango.parse_markup(line_markup, -1, "\x00")
+                    markup_lines.append(line_markup)
+                except Exception:
+                    markup_lines.append(escaped)
             diff_markup = "\n".join(markup_lines)
 
             diff_label = Gtk.Label()
