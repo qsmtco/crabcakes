@@ -4,6 +4,7 @@
 # on success and emit nothing on failure.
 
 import threading
+import time
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -18,6 +19,34 @@ class MockGLib:
     def idle_add(self, fn, *args, **kwargs):
         fn(*args, **kwargs)
         return 0
+
+
+class DeferredGLib:
+    """GLib double that RECORDS idle_add callbacks without running them.
+
+    Mirrors production timing: GLib.idle_add schedules the callback for the
+    main loop, which runs it AFTER the scheduling frame (including any
+    except block) has exited. Running recorded callbacks in the test body
+    reproduces that timing — synchronously-run mocks mask deferred-callback
+    bugs because the closure still sees in-scope variables.
+    """
+
+    def __init__(self):
+        self.pending = []
+
+    def idle_add(self, fn, *args, **kwargs):
+        self.pending.append((fn, args, kwargs))
+        return 0
+
+
+def _wait_until(cond, timeout=5.0, poll=0.01):
+    """Poll cond() until truthy or timeout. Returns True on success."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if cond():
+            return True
+        time.sleep(poll)
+    return cond()
 
 
 # ── Mock git result ──────────────────────────────────────────────────────────
