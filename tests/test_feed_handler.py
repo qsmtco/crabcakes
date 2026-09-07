@@ -3585,3 +3585,32 @@ class TestAutoAcceptLevel:
             refresh.reset_mock()
             warned2["on_cancel"]()
             assert refresh.call_count == 1
+
+
+class TestUpdateCardNotFound:
+    """A2 (SPEC-AUDIT-CLEANUP-1): update_card() for an unknown card id
+    logged via a bare `logger` name, but the module defines `_logger`.
+    The NameError crashed the caller (AgentRuntimeHandler Phase D card
+    updates) instead of warning and returning."""
+
+    def test_unknown_card_id_warns_and_returns_without_crash(
+        self, feed_handler, caplog
+    ):
+        import logging
+
+        card = FeedCardData(
+            card_type="tool_call", source="agent", title="result",
+            body="", author="Coder",
+            timestamp=datetime.now(timezone.utc), project_name="proj",
+        )
+        with caplog.at_level(logging.WARNING, logger="ui.handlers.feed_handler"):
+            feed_handler.update_card("nonexistent-card-id", card)
+            # was: NameError: name 'logger' is not defined
+
+        assert any(
+            "update_card" in r.getMessage() and "nonexistent-card-id" in r.getMessage()
+            for r in caplog.records
+        ), f"Expected not-found warning, got: {[r.getMessage() for r in caplog.records]}"
+        # Guard must return before any widget/feed-tab work
+        assert feed_handler._feed_tab.cards == []
+        assert "nonexistent-card-id" not in feed_handler._cards
