@@ -1,3 +1,17 @@
+# tests/test_render_error_callbacks.py
+# Regression tests for A4/A5 (SPEC-AUDIT-CLEANUP-1 Class A):
+# ChatRenderHandler deferred error callbacks closed over the bare
+# except-variable `exc`, which Python deletes at except-block exit.
+
+from unittest.mock import patch
+
+import gi
+gi.require_version('Gtk', '4.0')
+from gi.repository import Gtk  # noqa: F401 — import must precede handler import
+
+from ui.handlers.chat_render_handler import ChatRenderHandler
+
+
 class DeferredGLib:
     """GLib double that RECORDS idle_add callbacks without running them.
 
