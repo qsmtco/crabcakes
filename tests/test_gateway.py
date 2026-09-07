@@ -144,3 +144,34 @@ class TestLazyIdentityLoading:
             "A-1 VIOLATION: _id must be {} before start(). "
             "Even module-level preload must not populate client._id on construction."
         )
+
+
+class TestLoadIdentitySchemaCheck:
+    """A1 (SPEC-AUDIT-CLEANUP-1): the LOW-6 device-auth.json schema check
+    logged via a bare `logger` name, but the module defines `_logger`.
+    When device-auth.json parsed as JSON but lacked required keys, the
+    NameError crashed before the intended RuntimeError was raised."""
+
+    def test_missing_required_keys_raises_runtimeerror_and_warns(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        import json
+        import logging
+        import os
+        import gateway.client as gc
+
+        identity_dir = tmp_path / ".openclaw" / "identity"
+        identity_dir.mkdir(parents=True)
+        auth_path = identity_dir / "device-auth.json"
+        auth_path.write_text(json.dumps({"unexpected": "value"}))
+        os.chmod(str(auth_path), 0o600)  # pass the real MED-6 ownership check
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        with caplog.at_level(logging.WARNING, logger="gateway.client"):
+            with pytest.raises(RuntimeError, match="missing required keys"):
+                gc._load_identity()  # was: NameError: name 'logger' is not defined
+
+        assert any(
+            "LOW-6" in r.getMessage() and "missing keys" in r.getMessage()
+            for r in caplog.records
+        ), f"Expected LOW-6 schema warning, got: {[r.getMessage() for r in caplog.records]}"
