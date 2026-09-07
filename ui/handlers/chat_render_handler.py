@@ -278,7 +278,7 @@ class ChatRenderHandler:
             except Exception as exc:
                 self._reentrancy.remove(session_key)
                 if on_error:
-                    self._dispatch(lambda: on_error(str(exc)))
+                    self._dispatch(lambda err=exc: on_error(str(err)))
 
         self._pool.submit(_process_off_thread)
 
@@ -311,7 +311,7 @@ class ChatRenderHandler:
             except Exception as exc:
                 self._reentrancy.remove(session_key)
                 if on_error:
-                    self._dispatch(lambda: on_error(str(exc)))
+                    self._dispatch(lambda err=exc: on_error(str(err)))
 
         self._dispatch(_build)
 
