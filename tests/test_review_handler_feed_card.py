@@ -186,6 +186,49 @@ class TestAcceptChangesFeedCard:
         # commit() should NOT have been called
         mock_git_ops.commit.assert_not_called()
 
+    @patch("ui.handlers.review_handler.git_ops")
+    def test_accept_diff_read_failure_survives_deferred_callback(self, mock_git_ops):
+        """T2-RL2 BUG #3 (A3): the error-report callback is scheduled via
+        idle_add but references the bare except-variable `e`, which Python
+        deletes when the except block exits. With production timing (callback
+        runs on the main loop AFTER _do() returns), the error-report path
+        itself raised NameError and the user never saw the failure.
+
+        Regression test uses a deferring GLib double and runs the recorded
+        callback after accept_changes() returns — exactly when production
+        runs it. Must surface the error text, not raise NameError.
+        """
+        glib = DeferredGLib()
+        handler = _make_handler()
+        handler._GLib = glib
+        _setup_active_session(handler)
+
+        mock_git_ops.stage_all.return_value = MockGitResult(success=True)
+        mock_git_ops.commit.return_value = MockGitResult(success=True)  # shouldn't be called
+
+        # Mock git.Repo to raise when index.diff() is called
+        import sys
+        mock_git_module = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.index.diff.side_effect = Exception("corrupt index")
+        mock_git_module.Repo.return_value = mock_repo
+        with patch.dict(sys.modules, {"git": mock_git_module}):
+            handler.accept_changes("testproject", "approved")
+        # _do() runs on a daemon thread — wait for it to schedule the callback
+        assert _wait_until(lambda: len(glib.pending) >= 2), (
+            f"expected error-report + reset callbacks, got {len(glib.pending)} pending"
+        )
+        # Except block has exited by now — bare `e` is deleted. Running the
+        # recorded callback must NOT raise NameError.
+        for fn, args, kwargs in glib.pending:
+            fn(*args, **kwargs)  # was: NameError: name 'e' is not defined
+
+        text_calls = [str(c) for c in handler._on_display_text.call_args_list]
+        assert any("Failed to read diff" in c and "corrupt index" in c
+                   for c in text_calls), (
+            f"Expected error text with exception details, got: {text_calls}"
+        )
+
 
 class TestRejectChangesFeedCard:
     """reject_changes should emit a git_commit feed card on success."""
