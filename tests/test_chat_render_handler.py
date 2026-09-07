@@ -5,7 +5,6 @@ import pytest
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
-from unittest.mock import patch
 from ui.handlers.chat_render_handler import ChatRenderHandler
 from utils.escaping import escape_for_pango
 from utils.markdown import format_markdown
