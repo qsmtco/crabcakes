@@ -420,3 +420,63 @@ class FakeChatBox:
         get_next_sibling on each CHILD widget, not on the container.)
         """
         return None
+
+
+class DeferredGLib:
+    """GLib double that RECORDS idle_add callbacks without running them.
+
+    Mirrors production timing: callbacks scheduled from inside an except
+    block run on the main loop AFTER the block exits — at which point
+    Python has deleted the bare except-variable. Running the recorded
+    callbacks in the test body reproduces that timing.
+    """
+
+    def __init__(self):
+        self.pending = []
+
+    def idle_add(self, fn, *args, **kwargs):
+        self.pending.append((fn, args, kwargs))
+        return 0
+
+
+class TestDeferredErrorCallbacks:
+    """A4/A5 (SPEC-AUDIT-CLEANUP-1): on_error is dispatched via a lambda
+    that closes over the bare except-variable `exc`. Python deletes `exc`
+    at except-block exit, so the deferred callback raised NameError instead
+    of reporting the error. Regression tests defer callback execution to
+    AFTER the scheduling call returns — the sync path (GLib_module=None)
+    would run the callback inside the except block and pass vacuously."""
+
+    def _make_handler(self):
+        glib = DeferredGLib()
+        return ChatRenderHandler(GLib_module=glib), glib
+
+    def test_render_async_process_error_reaches_on_error(self):
+        """A4: process_segments() raising must deliver the error via the
+        deferred on_error callback, not NameError."""
+        handler, glib = self._make_handler()
+        errors = []
+        with patch("ui.handlers.chat_render_handler.process_segments",
+                   side_effect=Exception("render exploded")):
+            handler.render_async("Agent", "text", "sk-async",
+                                 on_bubble_ready=lambda w: None,
+                                 on_error=lambda msg: errors.append(msg))
+        assert len(glib.pending) == 1, "error callback should be scheduled once"
+        for fn, args, kwargs in glib.pending:
+            fn(*args, **kwargs)  # was: NameError: name 'exc' is not defined
+        assert errors == ["render exploded"]
+
+    def test_render_build_error_reaches_on_error(self):
+        """A5: build_role_bubble() raising must deliver the error via the
+        deferred on_error callback, not NameError."""
+        handler, glib = self._make_handler()
+        errors = []
+        with patch("ui.handlers.chat_render_handler.build_role_bubble",
+                   side_effect=Exception("bubble exploded")):
+            handler.render("Agent", "text", "sk-sync",
+                           on_bubble_ready=lambda w: None,
+                           on_error=lambda msg: errors.append(msg))
+        assert len(glib.pending) == 1, "error callback should be scheduled once"
+        for fn, args, kwargs in glib.pending:
+            fn(*args, **kwargs)  # was: NameError: name 'exc' is not defined
+        assert errors == ["bubble exploded"]
