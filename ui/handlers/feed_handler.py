@@ -975,7 +975,7 @@ class FeedHandler:
         Thread-safe: GTK operations via GLib.idle_add().
         """
         if card_id not in self._cards:
-            logger.warning("update_card: card %s not found", card_id)
+            _logger.warning("update_card: card %s not found", card_id)
             return
 
         # Update in-memory data
