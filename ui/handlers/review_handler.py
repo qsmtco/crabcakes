@@ -296,7 +296,7 @@ class ReviewHandler:
                 except Exception as e:
                     # Real error reading the diff — report to user, reset state.
                     self._GLib.idle_add(lambda sk=sk, err=e: self._on_display_text(
-                        sk, f"❌ Failed to read diff: {type(e).__name__}: {e}"
+                        sk, f"❌ Failed to read diff: {type(err).__name__}: {err}"
                     ))
                     def _reset_state(sk=sk):
                         state.checkpoint_sha = None
