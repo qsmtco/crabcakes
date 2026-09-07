@@ -115,7 +115,7 @@ def _load_identity():
     _REQUIRED_AUTH_KEYS = {"deviceId", "tokens"}
     _auth_missing = _REQUIRED_AUTH_KEYS - set(auth.keys())
     if _auth_missing:
-        logger.warning(
+        _logger.warning(
             "LOW-6: device-auth.json missing keys %s — regenerating identity",
             _auth_missing,
         )
