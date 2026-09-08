@@ -49,15 +49,19 @@ All Class B sites are inside **quoted or `from __future__ import annotations`** 
 
 ---
 
-## Bug 2 — Activity-label drift (fixes a live divergence)
+## Bug 2 — Activity label/duration drift (fixes a live divergence + a None-crash)
 
-`ui/views/activity_drawer.py:26` defines a local `_type_label()` whose docstring says "See models/activity.py._type_label for full docstring" — a keep-in-sync duplicate that **has already drifted**: per the simplification audit §5, the drawer copy omits `lifecycle_end` / `tool_*` mappings and a None guard that `models/activity.py:179` has. (Both copies verified present 2026-09-07.)
+**Verified 2026-09-07 — drift is broader than originally specced:**
+- `ui/views/activity_drawer.py:26` `_type_label` misses 4 mappings the models version has (`lifecycle_end`, `tool_start`, `tool_end`, `tool_error`) → drawer renders raw `tool_error` strings.
+- `ui/views/activity_drawer.py:41` `_format_duration` lacks the models version's None guard (`if ms is None or ms <= 0: return ""`) → **TypeError on `None`** (models :218 has it).
 
 **Fix:**
-1. Delete the local `_type_label` from `activity_drawer.py`.
-2. Import from the model layer: `from models.activity import _type_label` — models must not import ui (architecture rule), ui importing models is correct direction. If the underscore bothers you, promote `models/activity.py._type_label` to a public `activity_type_label()` first, keep a thin `_type_label = activity_type_label` alias for any other in-file uses, and update both call sites.
-3. `ui/views/activity_drawer.py:428` fallback (`row.get("type_label", "") or _type_label(...)`) keeps working via the import.
-4. **Tests:** `tests/test_activity_drawer.py:106 test_type_label_mapping` — verify it still passes against the single implementation; extend it to cover the mappings the drifted copy was missing (`lifecycle_end`, `tool_start`, `tool_end`, `tool_error`, None guard) so the drift can't recur.
+1. Promote `models/activity.py` helpers to **public names**: `activity_type_label()` (from `_type_label`, :179) and `format_duration()` (from `_format_duration`, :216). Bodies unchanged from today's models versions. Update the internal call site (:163 `"type_label": _type_label(self.type)`).
+2. Delete BOTH local copies in `activity_drawer.py`; import the public names from `models.activity`. The `:428` fallback keeps working via the import — update it to the public name.
+3. Update the stale "keep in sync" / "Mirrors the helper in ui/views/activity_drawer.py" docstrings in both files.
+4. **Tests:** extend `tests/test_activity_drawer.py` `test_type_label_mapping` to cover all 9 mappings + unknown-type passthrough + None guard — red-before-green: the 4 missing mappings and `format_duration(None)` must FAIL on the current drawer code first.
+
+**Why public names:** the drawer is a view (ui importing models is the correct direction), but importing an underscore-private name across modules is a smell and `from models.activity import _type_label` invites the next drift copy.
 
 ---
 
