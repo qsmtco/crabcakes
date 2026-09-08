@@ -1760,8 +1760,9 @@ class ToolCallStatus(str, Enum): PENDING = "pending" | EXECUTING = "executing" |
     def _count_char_tokens() -> tuple[int, int]  # shared char counter for estimate + breakdown
     def get_token_breakdown(model_max_tokens) -> dict  # Phase CB-4: tiktoken when available (BUG #5 fix)
         # Phase CB-1 additions: trimmed_this_turn (bool), messages_remaining (int), messages_removed_this_turn (int)
-    def trim_to_token_limit(max_tokens)  # §4.10: injects summary of trimmed messages when 8+ msgs remain
-    def _last_exchange_summary() -> str  # compact summary of prior user turns
+    # Trim/prune/summary lives in agent/context_strategy.DefaultContextStrategy
+    # (compact/_summary) — the Conversation trim/summary shims were removed in
+    # SPEC-AUDIT-CLEANUP-2 Phase 4 (models→agent layer rule).
 ```
 
 

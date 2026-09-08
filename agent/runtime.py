@@ -561,8 +561,10 @@ class AgentRuntime:
         ])
 
         # §0: Pluggable context management strategy.
-        # DefaultContextStrategy is the extracted trim_to_token_limit algorithm
-        # (Phase 1). Future: configurable via AgentConfig.context_strategy.
+        # DefaultContextStrategy owns the trim/prune/summary algorithm
+        # (extracted from the former Conversation trim/summary shims,
+        # removed in SPEC-AUDIT-CLEANUP-2 Phase 4). Future: configurable
+        # via AgentConfig.context_strategy.
         from agent.context_strategy import DefaultContextStrategy
         self._context_strategy = DefaultContextStrategy()
 
@@ -1327,9 +1329,9 @@ class AgentRuntime:
                     logger.debug("[tool-loop] sk=%s iteration=%d/%d", session_key, iteration, max_iter)
 
                     # §0: Pluggable context strategy — compaction before each LLM call.
-                    # The strategy lives in agent/context_strategy.py and replaces the
-                    # old conv.trim_to_token_limit() call. The delegation shim on
-                    # Conversation remains for backward compat with tests.
+                    # The strategy lives in agent/context_strategy.py; the former
+                    # Conversation trim/summary delegation shim was removed in
+                    # SPEC-AUDIT-CLEANUP-2 Phase 4 (strategy is the sole owner).
                     #
                     # _compute_compaction_threshold returns (soft_ceiling, hard_ceiling)
                     # where soft_ceiling = int(hard_ceiling * threshold) and

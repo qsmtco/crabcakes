@@ -319,7 +319,8 @@ class Conversation:
         (the trim loop calls this once per iteration; without caching, a 100K-char
         system prompt makes each call take ~6s).
 
-        Used for context-window management (see trim_to_token_limit).
+        Used for context-window management (see
+        DefaultContextStrategy.compact in agent/context_strategy.py).
         """
         encoding = _tiktoken_encoding_for(self.model)
         if encoding is None:
@@ -400,71 +401,6 @@ class Conversation:
             "remaining_tokens": max(0, model_max_tokens - total_used),
             "usage_percent": round(total_used / model_max_tokens * 100, 1) if model_max_tokens > 0 else 0,
         }
-
-    def trim_to_token_limit(
-        self,
-        max_tokens: int,
-        *,
-        keep_first: int = 2,                # noqa: ARG002 — Phase 4 wires this
-        protect_is_summary: bool = True,    # noqa: ARG002 — Phase 4 wires this
-    ) -> None:
-        """
-        Trim oldest messages to stay under token limit.
-
-        .. deprecated:: 2026-06-26
-            Use :class:`agent.context_strategy.DefaultContextStrategy.compact`
-            instead. This shim delegates to the strategy for backward
-            compatibility with existing tests. See
-            ``docs/specs/SPEC-CONTEXT-MANAGEMENT-ROADMAP.md`` §0 for the
-            full rationale and ``§2.1.2`` for the original algorithm.
-
-        Keeps:
-        - The system prompt (never removed — stored separately in Conversation)
-        - The most recent exchange intact (user + assistant + optional tool_result
-          + final assistant)
-
-        Tool call/result pairs are removed together as a unit. Only removes when
-        at least one full user→assistant exchange can be preserved.
-
-        §4.10 (Summary on trim): After trimming, if any messages were removed
-        and at least 4 messages remain, a compact summary of the trimmed user
-        messages is injected as an assistant message before the preserved tail.
-        This prevents the model from losing context of what was accomplished in
-        the removed exchanges.
-        """
-        # Deferred import: ``agent/context_strategy.py`` imports from
-        # ``models/conversation.py``. Importing it at module level would
-        # create a circular import. The shim is the one place that crosses
-        # the models→agent boundary.
-        from agent.context_strategy import DefaultContextStrategy
-        strategy = DefaultContextStrategy()
-        strategy.compact(
-            self,
-            max_tokens,
-            keep_first=keep_first,
-            protect_is_summary=protect_is_summary,
-        )
-
-    def _last_exchange_summary(self, *, max_tokens: int = 0, keep_first: int = 2) -> str:
-        """
-        Generate a summary of the oldest trimmed user messages.
-
-        .. deprecated:: 2026-06-26
-            Use :class:`agent.context_strategy.DefaultContextStrategy._summary`
-            instead. This shim delegates to the strategy for backward
-            compatibility with existing tests.
-
-        Called after trim_to_token_limit removes old exchanges.
-        The summary is injected as an assistant message before the preserved
-        tail so the model doesn't lose context of what was accomplished.
-
-        Returns empty string when the conversation is too short to summarize
-        meaningfully (< 4 messages) or when no user messages remain to capture.
-        """
-        # Deferred import (see trim_to_token_limit shim above for rationale).
-        from agent.context_strategy import DefaultContextStrategy
-        strategy = DefaultContextStrategy()
-        return strategy._summary(self, max_tokens, keep_first)
 
     # ── Cost tracking ─────────────────────────────────────────────────────────
 

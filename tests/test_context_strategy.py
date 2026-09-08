@@ -896,3 +896,271 @@ class TestMultiToolCallOrphanRegression:
             signal.alarm(0)
         # Wire format MUST be valid even if budget not met
         assert _count_orphan_tool_results(conv) == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Migrations from tests/test_conversation.py + tests/test_phase4.py
+#  (SPEC-AUDIT-CLEANUP-2 Phase 4: the Conversation trim/summary shims were
+#  removed; these assert the same behavior through DefaultContextStrategy
+#  directly — the pre-deletion owner of the logic.)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestCompactNoOpUnderBudget:
+    """Migrated from TestConversationTrim.test_trim_does_nothing_when_under_limit."""
+
+    def test_compact_does_nothing_when_under_limit(self):
+        """Under budget: no messages removed."""
+        conv = Conversation(agent_name="test", model="test/x")
+        conv.add_user_message("hi")
+        conv.add_assistant_message("hello", [])
+        strategy = DefaultContextStrategy()
+        strategy.compact(conv, token_budget=100)
+        assert len(conv.messages) == 2
+
+
+class TestCompactPreservesSystemPrompt:
+    """Migrated from TestConversationTrim.test_trim_keeps_system_prompt."""
+
+    def test_compact_never_touches_system_prompt(self):
+        """system_prompt is stored separately — trim must never alter it."""
+        conv = Conversation(agent_name="test", model="test/x",
+                            system_prompt="x" * 400)
+        conv.add_user_message("x" * 400)
+        strategy = DefaultContextStrategy()
+        strategy.compact(conv, token_budget=50)
+        assert conv.system_prompt == "x" * 400
+
+
+class TestCompactNeverRemovesMostRecent:
+    """Migrated from TestConversationTrim.test_trim_never_removes_most_recent_user_message
+    + TestTrimFallbackIncludesOldest.test_fallback_does_not_remove_most_recent."""
+
+    def test_compact_never_removes_most_recent_user_message(self):
+        """tail_preserve=4 keeps the last message — identity intact post-compact."""
+        conv = Conversation(agent_name="test", model="test/x")
+        for _ in range(5):
+            conv.add_user_message("x" * 200)
+        most_recent = conv.messages[-1]
+        strategy = DefaultContextStrategy()
+        strategy.compact(conv, token_budget=10)
+        assert conv.messages[-1] == most_recent
+
+    def test_compact_fallback_never_removes_most_recent_exchange(self):
+        """Tail content survives a genuine trim (middle exchanges removed)."""
+        conv = Conversation(agent_name="test", model="test/x")
+        conv.add_user_message("OLD USER " + "x" * 400)
+        conv.add_assistant_message("OLD ASSISTANT " + "y" * 400, [])
+        for i in range(15):
+            conv.add_user_message(f"middle user {i} " + "x" * 400)
+            conv.add_assistant_message(f"middle assistant {i} " + "y" * 400)
+        conv.add_user_message("MOST RECENT USER " + "z" * 400)
+        conv.add_assistant_message("MOST RECENT ASSISTANT " + "w" * 400, [])
+        over_budget = conv.get_token_estimate()
+        strategy = DefaultContextStrategy()
+        strategy.compact(conv, token_budget=500)
+        assert conv.get_token_estimate() < over_budget  # trim actually fired
+        assert "MOST RECENT USER" in conv.messages[-2].content
+
+
+class TestCompactProtectsPreservedTail:
+    """Migrated from TestTrimFallbackIncludesOldest.test_fallback_still_protects_preserved_tail."""
+
+    def test_compact_leaves_last_four_messages_untouched(self):
+        """The last 4 messages are never removed or modified by compaction."""
+        conv = Conversation(agent_name="test", model="test/x")
+        conv.add_assistant_message("oldest assistant " + "x" * 400, [])
+        for i in range(15):
+            conv.add_user_message(f"middle user {i} " + "x" * 400)
+            conv.add_assistant_message(f"middle assistant {i} " + "y" * 400)
+        tail_before = [m.content[:30] for m in conv.messages[-4:]]
+        strategy = DefaultContextStrategy()
+        strategy.compact(conv, token_budget=500)
+        tail_after = [m.content[:30] for m in conv.messages[-4:]]
+        assert tail_before == tail_after, (
+            f"preserved tail was modified:\n  before: {tail_before}\n  after:  {tail_after}"
+        )
+
+
+class TestCompactTrimsToTarget:
+    """Migrated from TestTrimFallbackIncludesOldest.test_fallback_removes_oldest_when_middle_is_all_assistant."""
+
+    def test_compact_makes_progress_on_alternating_user_assistant(self):
+        """40 alternating USER/ASSISTANT messages trim to a small tail, not a stall."""
+        conv = Conversation(agent_name="test", model="test/x")
+        for i in range(20):
+            conv.add_user_message(f"turn {i}: " + "x" * 400)
+            conv.add_assistant_message("y" * 400, [])
+        assert len(conv.messages) == 40
+        strategy = DefaultContextStrategy()
+        strategy.compact(conv, token_budget=500)
+        assert len(conv.messages) < 8, (
+            f"trim stalled at {len(conv.messages)} messages; expected <8"
+        )
+
+
+class TestSummaryEmptyCases:
+    """Migrated from TestLastExchangeSummary (test_phase4.py)."""
+
+    def test_empty_conversation_returns_empty(self):
+        assert DefaultContextStrategy()._summary(
+            Conversation(agent_name="test", model="test/x")) == ""
+
+    def test_short_conversation_returns_empty(self):
+        """Fewer than tail_preserve+1 messages → nothing to summarize."""
+        conv = Conversation(agent_name="test", model="test/x")
+        conv.add_user_message("task 1")
+        conv.add_assistant_message("done", [])
+        assert DefaultContextStrategy()._summary(conv) == ""
+
+    def test_no_user_messages_returns_empty(self):
+        """All-assistant head → no user content to summarize."""
+        conv = Conversation(agent_name="test", model="test/x")
+        for i in range(5):
+            conv.add_assistant_message(f"response {i}", [])
+        assert DefaultContextStrategy()._summary(conv) == ""
+
+
+class TestSummaryContentFormat:
+    """Migrated from TestLastExchangeSummary content-format assertions.
+
+    Content sizes are chosen so the conversation genuinely exceeds the
+    tail_preserve=4 floor when the legacy (token_budget=0) slice is applied —
+    otherwise _summary() returns "" vacuously.
+    """
+
+    def test_summary_lists_user_messages_with_header(self):
+        """Header line + 'prior turns' + earliest task content present."""
+        conv = Conversation(agent_name="test", model="test/x")
+        for i in range(10):
+            conv.add_user_message(f"Task {i+1}: do something " + "x" * 60)
+            conv.add_assistant_message(f"Done {i+1} " + "y" * 60, [])
+        summary = DefaultContextStrategy()._summary(conv)
+        assert summary != ""  # non-vacuous: head exists to summarize
+        assert "Conversation so far" in summary
+        assert "prior turns" in summary
+        assert "Task 1" in summary
+
+    def test_summary_caps_at_5_items(self):
+        """>5 user turns → shows first 5 + '… and N more turns'."""
+        conv = Conversation(agent_name="test", model="test/x")
+        for i in range(10):
+            conv.add_user_message(f"Task {i+1} " + "x" * 60)
+            conv.add_assistant_message("ok " + "y" * 60, [])
+        summary = DefaultContextStrategy()._summary(conv)
+        assert summary != ""
+        assert "… and" in summary
+        assert "more turns" in summary
+
+    def test_summary_truncates_long_content(self):
+        """Long user messages truncate to 100 chars with an ellipsis."""
+        conv = Conversation(agent_name="test", model="test/x")
+        conv.add_user_message("A" * 200)
+        conv.add_assistant_message("ok", [])
+        for i in range(3):
+            conv.add_user_message(f"filler {i} " + "x" * 60)
+            conv.add_assistant_message("ok " + "y" * 60, [])
+        summary = DefaultContextStrategy()._summary(conv)
+        assert summary != ""
+        assert "…" in summary
+        assert "A" * 200 not in summary
+
+    def test_summary_excludes_tail_messages(self):
+        """The last tail_preserve=4 messages never appear in the summary."""
+        conv = Conversation(agent_name="test", model="test/x")
+        conv.add_user_message("old task " + "x" * 60)
+        conv.add_assistant_message("old done " + "y" * 60, [])
+        conv.add_user_message("tail task")
+        conv.add_assistant_message("tail done", [])
+        conv.add_user_message("tail task 2")
+        conv.add_assistant_message("tail done 2", [])
+        summary = DefaultContextStrategy()._summary(conv)
+        assert summary != ""
+        assert "old task" in summary
+        assert "tail task" not in summary
+
+
+class TestSummaryInjectionOnCompact:
+    """Migrated from TestTrimSummaryInjection (test_phase4.py)."""
+
+    def test_summary_message_injected_on_long_conversation(self):
+        """Removing messages injects an is_summary ASSISTANT message.
+
+        Setup tuned so the fitted summary fits: the post-trim floor
+        conversation (~330 tokens with this content) must leave budget
+        headroom or _fit_summary returns None and no message is injected —
+        correct behavior, not a failure. Budget 360 > 330 leaves room.
+        """
+        conv = Conversation(agent_name="test", model="test/x")
+        for i in range(10):
+            conv.add_user_message(f"Task {i+1}: " + "u" * 100)
+            conv.add_assistant_message(f"Done {i+1}: " + "r" * 100, [])
+        strategy = DefaultContextStrategy()
+        strategy.compact(conv, token_budget=360)
+        summaries = [m for m in conv.messages if m.is_summary]
+        assert len(summaries) >= 1, (
+            f"Expected summary, got {len(summaries)} summaries"
+        )
+        for s in summaries:
+            assert s.role == MessageRole.ASSISTANT
+            assert s.is_summary is True
+
+    def test_no_summary_on_short_conversation(self):
+        """Conversation under min_messages → no summary injected."""
+        conv = Conversation(agent_name="test", model="test/x")
+        conv.add_user_message("task")
+        conv.add_assistant_message("done", [])
+        conv.add_user_message("task 2")
+        conv.add_assistant_message("done 2", [])
+        strategy = DefaultContextStrategy()
+        strategy.compact(conv, token_budget=150)
+        assert [m for m in conv.messages if m.is_summary] == []
+
+    def test_repeated_compacts_converge(self):
+        """Repeated compact calls must not oscillate in message count."""
+        conv = Conversation(agent_name="test", model="test/x")
+        for i in range(10):
+            conv.add_user_message(f"Task {i+1}: " + "x" * 60)
+            conv.add_assistant_message(f"Done " + "y" * 60, [])
+        counts = []
+        strategy = DefaultContextStrategy()
+        for _ in range(5):
+            strategy.compact(conv, token_budget=150)
+            counts.append(len(conv.messages))
+        assert counts[-3:] and len(set(counts[-3:])) == 1, (
+            f"Oscillation detected: {counts}"
+        )
+
+    def test_compact_converges_across_budgets(self):
+        """Tokens must not grow after repeated compaction at various budgets."""
+        strategy = DefaultContextStrategy()
+        for budget in [200, 300, 500]:
+            conv = Conversation(agent_name="test", model="test/x")
+            for i in range(15):
+                conv.add_user_message(f"Task {i+1}: " + "x" * 60)
+                conv.add_assistant_message("Done " + "y" * 60, [])
+            strategy.compact(conv, token_budget=budget)
+            first_tokens = conv.get_token_estimate()
+            assert first_tokens > 0
+            strategy.compact(conv, token_budget=budget)
+            second_tokens = conv.get_token_estimate()
+            assert second_tokens <= first_tokens, (
+                f"Budget {budget}: tokens grew after 2nd compact "
+                f"({first_tokens} → {second_tokens})"
+            )
+
+    def test_summary_content_references_trimmed_tasks(self):
+        """Injected summary mentions tasks from the trimmed portion.
+
+        Content sized (chars//4 model, 100-char bodies) and budget (160)
+        chosen so the fitted summary is the real preview text, not the
+        too-large stub, and does not collapse to the tail.
+        """
+        conv = Conversation(agent_name="test", model="test/x")
+        for i in range(10):
+            conv.add_user_message(f"Implement auth module {i+1}" + "x" * 100)
+            conv.add_assistant_message(f"Auth done {i+1}" + "y" * 100, [])
+        strategy = DefaultContextStrategy()
+        strategy.compact(conv, token_budget=160)
+        summaries = [m for m in conv.messages if m.is_summary]
+        assert summaries, "expected a summary to be injected on trim"
+        assert "auth" in summaries[0].content.lower()

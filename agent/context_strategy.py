@@ -129,8 +129,9 @@ class DefaultContextStrategy:
     ) -> None:
         """Compact the conversation to fit within ``token_budget``.
 
-        Phase 1: mechanical extraction of ``Conversation.trim_to_token_limit()``.
-        ``self`` → ``conv`` throughout. No behavior changes.
+        Phase 1: extracted from the former Conversation trim/summary shims
+        (removed in SPEC-AUDIT-CLEANUP-2 Phase 4). ``self`` → ``conv``
+        throughout. No behavior changes.
         """
         # Audit-Fix-31 (Bug #8): guard against non-positive budgets. A
         # token_budget <= 0 would cause the trim loop to aggressively
@@ -706,8 +707,10 @@ class DefaultContextStrategy:
             )
             split = max(keep_first, min(split, len(conv.messages) - tail_preserve))
         else:
-            # Legacy shim compatibility: when called via _last_exchange_summary()
-            # with no max_tokens, fall back to messages[:-tail_preserve]. The smart
+            # Legacy-path compatibility: when _summary() is called with no
+            # token_budget (the pre-strategy Conversation summary contract,
+            # kept for direct strategy callers), fall back to
+            # messages[:-tail_preserve]. The smart
             # split uses conv.get_token_estimate() to size the tail, but with small
             # conversations (where all messages fit in half of total tokens),
             # _find_split_index lands at keep_first — producing an empty head.
