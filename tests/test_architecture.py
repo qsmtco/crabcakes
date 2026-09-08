@@ -12,6 +12,14 @@ def test_handlers_do_not_import_each_other():
     AST guard: handlers must NOT import other handlers.
     window.py importing handlers is correct and expected.
     This guard ensures handlers stay decoupled.
+
+    TYPE_CHECKING-aware: imports inside an `if TYPE_CHECKING:` block are
+    annotation-only (never evaluated at runtime) and are NOT violations,
+    but any runtime import still is; the else-branch keeps the parent
+    flag since it runs at runtime. Walks with an explicit flag instead of
+    ast.walk because ast.walk loses parent context. (Same false-positive
+    class as Debugger 2a BUG #1 in the views→handlers guard — flagged by
+    Coder during the b4ab39a fix.)
     """
     handlers_dir = os.path.join(os.path.dirname(__file__), "..", "ui", "handlers")
     if not os.path.isdir(handlers_dir):
@@ -24,26 +32,46 @@ def test_handlers_do_not_import_each_other():
     ]
 
     violations = []
+
+    def _flag_imports(node, in_type_checking, basename, our_name):
+        """Recurse with the TYPE_CHECKING flag; flag runtime ui.handlers imports."""
+        if isinstance(node, ast.If):
+            guarded = isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING"
+            for child in node.body:
+                _flag_imports(child, in_type_checking or guarded, basename, our_name)
+            for child in node.orelse:
+                _flag_imports(child, in_type_checking, basename, our_name)
+            return
+        if isinstance(node, ast.ImportFrom):
+            if (
+                node.module
+                and node.module.startswith("ui.handlers.")
+                and not in_type_checking
+            ):
+                imported = node.module.split(".")[-1]
+                if imported != our_name:  # same handler can import itself
+                    violations.append(
+                        f"{basename} imports ui.handlers.{imported}"
+                    )
+            return
+        if isinstance(node, ast.Import):
+            if not in_type_checking:
+                for alias in node.names:
+                    if alias.name.startswith("ui.handlers."):
+                        imported = alias.name.split(".")[-1]
+                        violations.append(
+                            f"{basename} imports {alias.name}"
+                        )
+            return
+        for child in ast.iter_child_nodes(node):
+            _flag_imports(child, in_type_checking, basename, our_name)
+
     for filepath in handler_files:
         with open(filepath, "r") as f:
             tree = ast.parse(f.read(), filename=os.path.basename(filepath))
 
         our_name = os.path.basename(filepath)[:-3]  # e.g. "chat_handler"
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                if node.module and node.module.startswith("ui.handlers."):
-                    imported = node.module.split(".")[-1]
-                    if imported != our_name:  # same handler can import itself
-                        violations.append(
-                            f"{os.path.basename(filepath)} imports ui.handlers.{imported}"
-                        )
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name.startswith("ui.handlers."):
-                        imported = alias.name.split(".")[-1]
-                        violations.append(
-                            f"{os.path.basename(filepath)} imports {alias.name}"
-                        )
+        _flag_imports(tree, False, os.path.basename(filepath), our_name)
 
     assert not violations, "Handler isolation violated:\n  " + "\n  ".join(violations)
 
