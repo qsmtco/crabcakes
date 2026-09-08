@@ -51,9 +51,8 @@ from ui.wiring import set_active_project_path, clear_active_project_path
 from utils.project_awareness import seed_project_prompts
 
 from models import work_store
-from datetime import datetime
 
-from utils.config import get_gateway_url, COMMAND_PREFIX
+from utils.config import COMMAND_PREFIX
 
 
 class MainWindow(Gtk.ApplicationWindow):

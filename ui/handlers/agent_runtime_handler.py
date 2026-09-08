@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from gi.repository import GLib
-    from agent.config import AgentConfig
 
 logger = logging.getLogger(__name__)
 

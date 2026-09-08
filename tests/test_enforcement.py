@@ -570,7 +570,8 @@ class TestCheckEndToEnd:
         This guarantees backward compatibility for existing callers.
         """
         config = _make_config()
-        # Create a markdown file that matches DEFAULT_SKIP_PATTERNS
+        # Create a markdown file that matches EnforcementConfig.skip_patterns
+        # (agent/config.py) — the default skip-pattern list.
         md_path = tmp_path / "README.md"
         md_path.write_text("# Title\n")
 

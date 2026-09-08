@@ -1109,10 +1109,3 @@ def build_welcome_bubble() -> Gtk.Widget | None:
     except Exception:
         return None
 
-
-def html_escape(text: str) -> str:
-    """Simple HTML escaping for code blocks (no Pango markup)."""
-    return (text
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;"))

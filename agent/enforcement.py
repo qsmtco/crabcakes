@@ -120,19 +120,8 @@ class EnforcementResult:
 
 
 # ── Skip patterns — applied to basename, fnmatch-style ──────────────────────
-
-DEFAULT_SKIP_PATTERNS: list[str] = [
-    "*.md", "*.txt", "*.rst", "*.adoc",
-    "*.json", "*.yaml", "*.yml", "*.toml",
-    "*.cfg", "*.ini", "*.conf",
-    "*.css", "*.scss", "*.less",
-    "*.html", "*.htm", "*.xml", "*.svg",
-    "*.png", "*.jpg", "*.jpeg", "*.gif", "*.ico", "*.webp",
-    "*.woff", "*.woff2", "*.ttf", "*.eot",
-    "*.lock", "*.map",
-    "LICENSE*", "README*",
-]
-
+# The default skip-pattern list lives in EnforcementConfig.skip_patterns
+# (agent/config.py). Per-project overrides merge additively in check().
 
 def _is_skipped(file_path: str, skip_patterns: list[str]) -> bool:
     """Return True if the file matches any skip pattern."""

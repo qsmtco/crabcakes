@@ -18,18 +18,16 @@ import hashlib
 import json
 import logging
 import os
-import re
 import threading
-import time
 import uuid
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Iterator, TypedDict
+from typing import TYPE_CHECKING, Any, Callable, TypedDict
 
 if TYPE_CHECKING:
     from models.conversation import Conversation
     from agent.config import LLMProviderConfig
 
-from agent.audit import AuditEntry, AuditLog
+from agent.audit import AuditLog
 # Typed callback protocols (Phase 1 — SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION
 # §2.1). The handler's `_on_*` methods already satisfy these structurally;
 # the type hints in `__init__` document the contract.
@@ -55,7 +53,6 @@ from agent.persistence import (
     conversations_dir,
     load_conversation_from_disk,
     migrate_conversation_files,
-    resolve_api_key_for_conversation,
     resolve_session_workspace,
     save_conversation_to_disk,
 )
@@ -187,7 +184,6 @@ class TurnResult:
 from agent.llm.cost import cost_for_model
 
 # ── Anthropic converters (extracted to agent/llm/convert.py, Phase B2) ──────
-from agent.llm.convert import convert_messages_for_anthropic, convert_tools_for_anthropic
 
 # ── LLM providers (extracted to agent/llm/, Phase B4) ───────────────────────
 # Re-exported under legacy names for backward compatibility.
@@ -260,22 +256,8 @@ _RESPONSE_FORMAT: dict[str, str] = {
 # ── SSE streaming helpers (extracted to agent/llm/streaming.py, Phase B5) ──
 from agent.llm.streaming import (
     SSEEvent,
-    sse_lines,
-    parse_sse_line,
-    parse_sse_delta,
-    first_choice,
-    urlopen_with_ssl_retry,
     stream_with_ssl_retry,
-    is_retryable_ssl_error,
-    friendly_error_message,
-    RETRYABLE_SSL_ERRORS,
-    RETRYABLE_OSERROR_TYPES,
-    MAX_SSL_RETRIES,
-    SSL_RETRY_BASE_MS,
 )
-
-import urllib.error
-import urllib.request
 
 
 # ── Stream functions (moved to provider classes, Phase B6) ──────────────────
@@ -560,9 +542,6 @@ class AgentRuntime:
         # Audit-Fix-8: Guard _compaction_events against concurrent append+truncate.
         self._compaction_lock = threading.Lock()
 
-        # MED-1: Per-instance approval callback (takes precedence over global)
-        self._approval_callback: Callable[[str, str, dict], bool] | None = None
-
         # A-4: Audit log for tool executions
         self._audit_log = AuditLog()
 
@@ -588,10 +567,6 @@ class AgentRuntime:
         self._context_strategy = DefaultContextStrategy()
 
     # ── Dispatch helpers ───────────────────────────────────────────────────────
-
-    def set_approval_callback(self, cb: Callable[[str, str, dict], bool] | None) -> None:
-        """Set per-instance approval callback (MED-1). Takes precedence over global."""
-        self._approval_callback = cb
 
     def _dispatch(self, callback: Callable | None, *args: Any, _turn_token: object = None, **kwargs: Any) -> None:
         """Dispatch a callback thread-safely via GLib.idle_add or directly.
@@ -1419,7 +1394,6 @@ class AgentRuntime:
 
                     # Build API messages AFTER compact so the wire payload reflects
                     # the trimmed conversation. Bug fix: was captured before compact().
-                    from models.conversation import MessageRole
 
                     # Pre-call budget guard: if the conversation still exceeds
                     # the model's context window after compaction, raise a clear
@@ -2666,7 +2640,6 @@ class AgentRuntime:
                 conv.system_prompt = original_sp
 
         ev = strat.last_result
-        tokens_after = conv.get_token_estimate()
         if ev is None:
             return {
                 "messages_removed": 0,

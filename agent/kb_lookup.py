@@ -17,7 +17,6 @@
 #   KBChunk            — dataclass for a single retrieval result
 #   kb_lookup()        — embed a question, return top-K chunks above min_score
 #   is_index_available — bool, True if the index files exist on disk
-#   get_index_path()   — Path to the index directory
 #
 # Usage:
 #   from agent.kb_lookup import kb_lookup
@@ -80,11 +79,6 @@ class KBChunk:
 
 
 # ── Path helpers ───────────────────────────────────────────────────────────────
-
-def get_index_path() -> Path:
-    """Path to the index directory (knowledge/.index/)."""
-    return _INDEX_DIR
-
 
 def is_index_available() -> bool:
     """True if both chunks.json and embeddings.npy exist on disk."""

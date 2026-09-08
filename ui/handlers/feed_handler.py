@@ -8,7 +8,6 @@ from __future__ import annotations
 # Window wires cross-handler communication via callbacks set in constructor.
 # No GTK calls from background threads — always via GLib.idle_add().
 
-from dataclasses import dataclass
 import logging
 import re
 from typing import TYPE_CHECKING, Callable
@@ -26,7 +25,6 @@ from ui.views.feed_card import build_feed_card, update_card_badge
 from utils import git_ops
 from utils import feed_store
 from utils import conversation_store
-from models.conversation_snapshot import ConversationSnapshot
 
 if TYPE_CHECKING:
     from gi.repository import Gtk

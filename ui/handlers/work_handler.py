@@ -21,7 +21,6 @@ from models.command import Command, CommandResult
 from models.feed_card import FeedCardData
 from models.work_unit import (
     WorkUnit,
-    WorkUnitStore,
     WORK_PRIORITIES,
     WORK_PRIORITY_LABELS,
     WORK_STATUS_LABELS,

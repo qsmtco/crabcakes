@@ -208,9 +208,3 @@ def _on_project_selected(popover, row, on_select):
     popover.unparent()
     # row._target_key is None for All, session_key for a member
     on_select(row._target_key)
-
-
-def display_name_from_row(row) -> str:
-    """Extract the display text from a menu row's label."""
-    label = row.get_child()
-    return label.get_text() if label else ""

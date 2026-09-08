@@ -691,28 +691,6 @@ def build_file_context_with_core_files(
     return "\n".join(core_sections) + "\n\n" + file_index
 
 
-def _load_crabcakes_doc(doc_name: str, project_path: str, max_size: int = 50 * 1024) -> str | None:
-    """
-    Read a single .crabcakes/ doc. Returns content or None if missing/large.
-
-    Reserved for future use by ``utils/prompt_loader`` when the system prompt
-    needs individual doc injection (per ARCHITECTURE.md §4.4a).
-    Currently unused but kept for API completeness — do not remove.
-    """
-    crab_dir = os.path.join(project_path, ".crabcakes")
-    file_path = os.path.join(crab_dir, doc_name)
-    if not os.path.isfile(file_path):
-        return None
-    try:
-        size = os.path.getsize(file_path)
-        if size > max_size:
-            return None
-        with open(file_path, encoding="utf-8", errors="replace") as f:
-            return f.read()
-    except OSError:
-        return None
-
-
 def _find_matching_files(
     project_path: str,
     query: str,
