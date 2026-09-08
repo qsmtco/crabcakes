@@ -1985,7 +1985,6 @@ def build_file_index(project_path, max_entries=200, include_line_counts=True) ->
 def resolve_context_mode(explicit_mode: str, model_max_tokens: int | None) -> str  # P10: resolves "auto" → preload|hybrid|jit
 def _find_matching_files(project_path, query, patterns, max_files=20) -> list[str]  # P10: filename search for file_search tool
 def _read_crabcakes_docs(project_path) -> str               # §4.4a — always include project docs in context
-def _load_crabcakes_doc(doc_name, project_path) -> str | None  # individual doc access
 def load_custom_system_prompt(project_path) -> str | None  # .crabcakes/agent-system-prompt.md → AGENTS.md → None
 ```
 
@@ -2121,7 +2120,6 @@ class KBChunk:
 def kb_lookup(question: str, top_k: int = 3, min_score: float = 0.3,
               model_name: str = "BAAI/bge-small-en-v1.5") -> list[KBChunk]
 def is_index_available() -> bool   # True if knowledge/.index/{chunks.json, embeddings.npy} exist
-def get_index_path() -> Path       # knowledge/.index/
 def reset_cache() -> None          # clears module-level state (for tests)
 ```
 
