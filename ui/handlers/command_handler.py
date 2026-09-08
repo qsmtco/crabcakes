@@ -27,7 +27,7 @@
 import re
 from typing import Callable
 
-from models.command import Command, CommandResult, CommandRegistry
+from models.command import Command, CommandResult, CommandRegistry, MentionResolution
 from utils.config import COMMAND_PREFIX   # BUG #9 fix: config is source of truth
 from utils.quoting import _parse_quoted_payload, _PAYLOAD_MAX_CHARS   # A2A_QUOTED_PAYLOAD_SPEC §5.1
 

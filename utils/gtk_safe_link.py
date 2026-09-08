@@ -24,9 +24,13 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from gi.repository import Gtk
 
 
 # Must match utils/markdown._ALLOWED_LINK_SCHEMES

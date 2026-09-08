@@ -20,6 +20,7 @@ from gi.repository import Gtk
 
 from models.providers import ProviderConfig
 if TYPE_CHECKING:
+    from ui.handlers.settings_handler import SettingsHandler
     from utils.provider_test import TestResult
 
 logger = logging.getLogger(__name__)

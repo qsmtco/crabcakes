@@ -24,9 +24,12 @@ import threading
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from models.providers import ProviderConfig
 
 
 # ── State machine types ──────────────────────────────────────────────────────

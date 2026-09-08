@@ -23,6 +23,7 @@
 #       Synchronous version — only call from the main thread.
 
 import logging
+from typing import TYPE_CHECKING, Callable
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -35,6 +36,9 @@ from utils.gtk_safe_link import make_safe_label  # HIGH-6: activate-link guard
 from concurrent.futures import ThreadPoolExecutor
 
 from ui.views.chat_bubble import build_role_bubble, process_segments, _clear_crabcards_registry
+
+if TYPE_CHECKING:
+    from models.feed_card import FeedCardData
 
 _logger = logging.getLogger(__name__)
 

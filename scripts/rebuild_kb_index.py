@@ -28,6 +28,10 @@ import logging
 import re
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
 
 # Project root: scripts/rebuild_kb_index.py is one level deep.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent

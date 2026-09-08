@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 import re
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 import threading
 import time
 
@@ -27,6 +27,9 @@ from utils import git_ops
 from utils import feed_store
 from utils import conversation_store
 from models.conversation_snapshot import ConversationSnapshot
+
+if TYPE_CHECKING:
+    from gi.repository import Gtk
 
 _logger = logging.getLogger(__name__)
 

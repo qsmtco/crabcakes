@@ -8,11 +8,17 @@ import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gio, GLib, Gdk
 
+from typing import TYPE_CHECKING
+
 from utils.projects import load_members
 from utils.icons import render_agent_icon
 from ui.handlers.file_tree_handler import FileTreeHandler
 from ui.views.file_tree import FileTree
 from ui.views.session_menu import show_session_menu
+
+if TYPE_CHECKING:
+    from ui.views.feed_tab import FeedTab
+
 
 class LeftPanel(Gtk.Box):
     """

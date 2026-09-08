@@ -14,12 +14,15 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from utils.config import get_config_dir
 
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from mcp import StdioServerParameters
 
 
 # MED-12: Only forward these environment variables to MCP servers.

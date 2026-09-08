@@ -15,8 +15,12 @@ import json
 import logging
 import os
 import re
+from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from models.conversation import Conversation
 
 
 # ── Conversation persistence ──────────────────────────────────────────────────
