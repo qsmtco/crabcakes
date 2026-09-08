@@ -67,3 +67,48 @@ class TestAuditLog:
         for t in threads:
             t.join()
         assert len(log.entries) == 500  # no lost entries
+
+
+class TestAuditLogCap:
+    """Bug 3 (SPEC-AUDIT-CLEANUP-1): AuditLog._entries must be FIFO-capped at
+    MAX_ENTRIES so a long session cannot grow memory unbounded. Oldest entries
+    are dropped when the cap is exceeded."""
+
+    def _record_n(self, log, n):
+        for i in range(n):
+            log.record("tool", {"i": i}, approved=True, user=f"u{i}")
+
+    def test_cap_drops_oldest_beyond_max(self):
+        from agent import audit as audit_mod
+        from agent.audit import AuditLog
+        log = AuditLog()
+        self._record_n(log, audit_mod.MAX_ENTRIES + 500)
+        entries = log.entries
+        assert len(entries) == audit_mod.MAX_ENTRIES, (
+            f"expected cap at MAX_ENTRIES={audit_mod.MAX_ENTRIES}, got {len(entries)}"
+        )
+        # Oldest 500 dropped — first surviving entry is the 501st recorded.
+        assert entries[0].user == "u500"
+        # Newest intact, timestamp order preserved oldest→newest.
+        assert entries[-1].user == f"u{audit_mod.MAX_ENTRIES + 499}"
+        timestamps = [e.timestamp for e in entries]
+        assert timestamps == sorted(timestamps), "entries must stay in timestamp order"
+
+    def test_cap_exact_no_drop(self):
+        """Boundary: len == MAX_ENTRIES exactly → nothing dropped."""
+        from agent import audit as audit_mod
+        from agent.audit import AuditLog
+        log = AuditLog()
+        self._record_n(log, audit_mod.MAX_ENTRIES)
+        assert len(log.entries) == audit_mod.MAX_ENTRIES
+        assert log.entries[0].user == "u0"  # oldest kept at the exact boundary
+
+    def test_cap_over_by_one_drops_exactly_one(self):
+        """Boundary: MAX_ENTRIES + 1 → exactly one (the oldest) dropped."""
+        from agent import audit as audit_mod
+        from agent.audit import AuditLog
+        log = AuditLog()
+        self._record_n(log, audit_mod.MAX_ENTRIES + 1)
+        assert len(log.entries) == audit_mod.MAX_ENTRIES
+        assert log.entries[0].user == "u1"
+        assert log.entries[-1].user == f"u{audit_mod.MAX_ENTRIES}"

@@ -29,12 +29,26 @@ class AuditEntry:
         self.exit_code = exit_code
 
 
+# Bug 3 (SPEC-AUDIT-CLEANUP-1): FIFO cap on the in-memory entry buffer.
+# A long session previously grew _entries unbounded; the runtime now also
+# auto-flushes at every terminal turn (see agent/runtime.py _terminate_turn).
+MAX_ENTRIES = 2000
+
+
 class AuditLog:
     """In-memory audit log for tool executions (A-4).
 
     Defense-in-depth: records tool name, args hash (not raw args),
     approval decision, user identity, timestamp, and result hash.
     In-memory by default; flush to disk via flush_audit_log().
+
+    Bug 3 (SPEC-AUDIT-CLEANUP-1):
+      * FIFO-capped at MAX_ENTRIES — record() drops the oldest entries
+        beyond the cap, so a long session no longer grows memory unbounded.
+      * Auto-flushed at every terminal turn by agent/runtime.py
+        `_terminate_turn` (try/except there — an audit flush must never
+        break the turn). flush_audit_log() clears the buffer after a
+        successful write.
     """
 
     def __init__(self):
@@ -43,7 +57,7 @@ class AuditLog:
 
     def record(self, tool_name: str, args: dict, approved: bool | None,
                user: str, result: str = "", exit_code: int | None = None) -> None:
-        """Record a tool execution in the audit log."""
+        """Record a tool execution in the audit log (capped at MAX_ENTRIES)."""
         args_hash = hashlib.sha256(json.dumps(args, sort_keys=True).encode()).hexdigest()[:16]
         result_hash = hashlib.sha256(result.encode()).hexdigest()[:16] if result else ""
         entry = AuditEntry(
@@ -57,6 +71,9 @@ class AuditLog:
         )
         with self._lock:
             self._entries.append(entry)
+            excess = len(self._entries) - MAX_ENTRIES
+            if excess > 0:
+                del self._entries[:excess]
 
     def flush_audit_log(self, path: str | None = None) -> str | None:
         """Flush audit log to disk as JSON lines.

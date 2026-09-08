@@ -29,6 +29,27 @@ def _uniq():
     return f"rt{uuid.uuid4().hex[:8]}"
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _hermetic_audit_flush(request):
+    """Bug 3 hermeticity guard (SPEC-AUDIT-CLEANUP-1).
+
+    _terminate_turn now auto-flushes each runtime's AuditLog; tests that
+    exercise the tool loop (TestToolLoop, TestStreaming, ...) record real
+    audit entries, so without this guard a full-suite run would append
+    test data to the REAL ~/.config/crabcakes/audit-log.jsonl (the
+    favorites.json lesson). Narrow intercept: patch AuditLog.flush_audit_log
+    for this module only — no global conftest autouse.
+
+    Manual patch/restore instead of monkeypatch: monkeypatch is
+    function-scoped and cannot be used inside a module-scoped fixture.
+    """
+    from agent.audit import AuditLog
+    original = AuditLog.flush_audit_log
+    AuditLog.flush_audit_log = unittest.mock.MagicMock(return_value=None)
+    yield
+    AuditLog.flush_audit_log = original
+
+
 def _resp(content="Done.", tool_calls=None):
     msg = {"content": content}
     if tool_calls:
@@ -5146,6 +5167,60 @@ class TestTurnStateMachine:
             assert mock_save.call_count == 1, (
                 f"Expected 1 auto_save call when persist=True; got {mock_save.call_count}"
             )
+
+    def test_terminate_turn_flushes_audit_log_on_completed_and_failed(self):
+        """Bug 3 (SPEC-AUDIT-CLEANUP-1): _terminate_turn must flush the audit
+        log on EVERY terminal outcome — COMPLETED and FAILED at minimum (the
+        shared terminal path). The flush is monkeypatched — hermeticity: the
+        real flush_audit_log() writes ~/.config/crabcakes/audit-log.jsonl.
+        """
+        from agent.runtime import TurnResult, TurnStatus
+        rt = AgentRuntime(_make_cfg(), GLib=None)
+        calls = []
+        with unittest.mock.patch.object(
+            rt._audit_log, "flush_audit_log",
+            side_effect=lambda *a, **kw: calls.append(1),
+        ):
+            for status, error, text in (
+                (TurnStatus.COMPLETED, None, "done"),
+                (TurnStatus.FAILED, "boom", ""),
+            ):
+                sk = _uniq()
+                tk = object()
+                rt._turn_tokens[sk] = tk
+                rt._turn_state[(sk, tk)] = TurnStatus.RUNNING
+                rt._terminate_turn(TurnResult(
+                    status=status, session_key=sk, turn_token=tk,
+                    text=text, error=error,
+                ))
+        assert len(calls) == 2, (
+            f"flush_audit_log must fire once per terminal turn (got {len(calls)}); "
+            "statuses driven: COMPLETED + FAILED"
+        )
+
+    def test_terminate_turn_flushes_audit_log_on_cancelled_too(self):
+        """Bug 3: CANCELLED is also a terminal outcome — the flush must fire
+        there as well (it sits on the shared terminal path, outside the
+        persist gate). Monkeypatched — no real disk write.
+        """
+        from agent.runtime import TurnResult, TurnStatus
+        rt = AgentRuntime(_make_cfg(), GLib=None)
+        calls = []
+        with unittest.mock.patch.object(
+            rt._audit_log, "flush_audit_log",
+            side_effect=lambda *a, **kw: calls.append(1),
+        ):
+            sk = _uniq()
+            tk = object()
+            rt._turn_tokens[sk] = tk
+            rt._turn_state[(sk, tk)] = TurnStatus.RUNNING
+            rt._terminate_turn(TurnResult(
+                status=TurnStatus.CANCELLED,
+                session_key=sk, turn_token=tk, error="cancelled",
+            ))
+        assert len(calls) == 1, (
+            f"flush_audit_log must fire on CANCELLED too (got {len(calls)})"
+        )
 
     # ── Group 3: _run_loop state transitions (4 tests) ──────────────
 

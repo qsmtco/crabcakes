@@ -766,6 +766,16 @@ class AgentRuntime:
                     sk, result.status,
                 )
 
+        # Bug 3 (SPEC-AUDIT-CLEANUP-1): auto-flush the audit log on EVERY
+        # terminal outcome — deliberately OUTSIDE `if should_persist:` and
+        # outside the state lock, so CANCELLED turns flush too and a slow
+        # flush never blocks other state transitions. An audit flush must
+        # never break the turn, hence the blanket except.
+        try:
+            self._audit_log.flush_audit_log()
+        except Exception:
+            logger.exception("_terminate_turn: audit flush failed for %s", sk)
+
         # Clean up stuck-detection history on terminal transitions.
         # Previously only `cancel()` did this; moved here so FAILED and
         # COMPLETED also reset the detector for the next turn.
