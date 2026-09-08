@@ -146,6 +146,9 @@ class TestToDrawerRow:
         assert format_duration(None) == ""
         assert format_duration(0) == ""
         assert format_duration(-5) == ""
+        # Envelope (Debugger 2b obs): non-numeric external input → "", no crash.
+        assert format_duration("") == ""
+        assert format_duration([]) == ""
         # Sanity: positive values still format per the documented rules.
         assert format_duration(847) == "847ms"
         assert format_duration(1247) == "1.2s"

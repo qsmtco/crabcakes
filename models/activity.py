@@ -211,12 +211,12 @@ def format_duration(ms: int) -> str:
     longer a duplicated copy in ui/views/activity_drawer.py.
 
     Rules:
-    - ms is None / <= 0 → "" (no duration to show)
+    - ms is None, non-numeric (fail-safe for external input garbage), or <= 0 → ""
     - ms < 1000      → "Nms"            (e.g. "847ms")
     - ms < 60_000    → "N.Ns"           (e.g. "1.2s")
     - ms >= 60_000   → "Nm Ns"          (e.g. "1m 23s")
     """
-    if ms is None or ms <= 0:
+    if ms is None or not isinstance(ms, (int, float)) or ms <= 0:
         return ""
     if ms < 1000:
         return f"{ms}ms"
