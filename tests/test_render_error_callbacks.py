@@ -69,7 +69,7 @@ class TestDeferredErrorCallbacks:
                 "render_async worker never scheduled the error callback"
             )
             for fn, args, kwargs in glib.pending:
-                fn(*args, **kwargs)  # was: NameError: name 'exc' is not defined
+                fn(*args, **kwargs)  # was: NameError: cannot access free variable 'exc' where it is not associated with a value in enclosing scope
         assert errors == ["render exploded"], (
             f"A4 NameError masked by _dispatch: expected error text, got {errors}"
         )
@@ -86,7 +86,7 @@ class TestDeferredErrorCallbacks:
                            on_bubble_ready=lambda w: None,
                            on_error=lambda msg: errors.append(msg))
             for fn, args, kwargs in glib.pending:
-                fn(*args, **kwargs)  # was: NameError: name 'exc' is not defined
+                fn(*args, **kwargs)  # was: NameError: cannot access free variable 'exc' where it is not associated with a value in enclosing scope
         assert errors == ["bubble exploded"], (
             f"A5 NameError masked by _dispatch: expected error text, got {errors}"
         )
