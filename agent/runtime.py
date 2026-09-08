@@ -1779,10 +1779,15 @@ class AgentRuntime:
                                            (tool_name in ("write_file", "edit_file") and
                                             agent_tools_module.is_sensitive_path(args.get("path", ""))))
                         per_call_cb = (lambda *a: True) if bypass_approval else None
-                        # LOW-2: resolve workspace before use; raises ValueError if project_path is empty
-                        workspace = resolve_session_workspace(conv.project_path, session_key)
+                        # LOW-2: validate the session workspace. The return value
+                        # is unread (dead binding removed) — the required side
+                        # effects are the LOW-2 validation (raises ValueError if
+                        # project_path is empty or session_key is malformed) and
+                        # the per-session scratch-dir creation with 0o700
+                        # permissions (.crabcakes/tmp/<session>/).
+                        resolve_session_workspace(conv.project_path, session_key)
                         # project_path is the sandbox base for all tools AND exec_command cwd.
-                        # scratch_dir (workspace) is resolved for future use but no longer
+                        # The scratch dir above exists for future use but no longer
                         # overrides exec_command CWD — see exec-cwd-fix spec.
                         # Allowed-tools enforcement gate (§3.21n).
                         # Forward conv.allowed_tools so execute_tool can deny tools the agent
