@@ -250,8 +250,6 @@ def _make_status_cmd(session_key: str = "project:myproj"):
     """Build a /status command issued from the given session key."""
     from models.command import Command
     return Command(name="status", source_session_key=session_key)
-    """Build a /status command issued inside a project tab."""
-    return Command(name="status", source_session_key="project:myproj")
 
 
 class TestCmdStatus:
@@ -323,7 +321,7 @@ class TestCmdStatus:
             assert line == "Work units: 3 pending, 2 active, 0 blocked, 1 done"
         finally:
             self._teardown(created)
-        assert ws.get("9900001") is None  # teardown actually cleaned up
+        assert ws.get("99000001") is None  # teardown deleted the seeded draft unit
 
     def test_non_member_units_excluded(self, handler, fake_projects):
         """Units assigned to a non-member builder are not counted."""
