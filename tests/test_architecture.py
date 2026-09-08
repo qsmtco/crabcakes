@@ -139,10 +139,49 @@ def test_agent_does_not_import_ui_or_gtk():
 
 
 def test_views_do_not_import_handlers():
-    """Layer guard: ui/views/ must not import from ui/handlers/."""
+    """Layer guard: ui/views/ must not import from ui/handlers/.
+
+    AST-based and TYPE_CHECKING-aware: imports inside an
+    `if TYPE_CHECKING:` block are annotation-only (never evaluated at
+    runtime) and are NOT violations — but any runtime import
+    (module level or function-local) still is. The else-branch of
+    `if TYPE_CHECKING:` runs at runtime, so it keeps the parent flag.
+
+    (Debugger 2a BUG #1: the previous line-scan flagged the
+    annotation-only import in ui/views/settings_dialog.py — inside
+    `if TYPE_CHECKING:` — as a false positive.)
+    """
     violations = []
     root_dir = os.path.dirname(os.path.dirname(__file__))
     subdir = os.path.join(root_dir, "ui", "views")
+
+    def _flag_imports(node, in_type_checking, rel):
+        """Recursively flag runtime ui.handlers imports; skip TYPE_CHECKING bodies."""
+        if isinstance(node, ast.If):
+            guarded = isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING"
+            for child in node.body:
+                _flag_imports(child, in_type_checking or guarded, rel)
+            for child in node.orelse:
+                _flag_imports(child, in_type_checking, rel)
+            return
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if not in_type_checking:
+                if isinstance(node, ast.ImportFrom):
+                    if node.module and (
+                        node.module == "ui.handlers"
+                        or node.module.startswith("ui.handlers.")
+                    ):
+                        names = ", ".join(a.name for a in node.names)
+                        violations.append(
+                            f"{rel}:{node.lineno}: from {node.module} import {names}")
+                else:
+                    for alias in node.names:
+                        if alias.name == "ui.handlers" or alias.name.startswith("ui.handlers."):
+                            violations.append(f"{rel}:{node.lineno}: import {alias.name}")
+            return
+        for child in ast.iter_child_nodes(node):
+            _flag_imports(child, in_type_checking, rel)
+
     for fpath, dirs, files in os.walk(subdir):
         dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__pycache__"]
         for fname in files:
@@ -151,13 +190,9 @@ def test_views_do_not_import_handlers():
             full_path = os.path.join(fpath, fname)
             rel = os.path.relpath(full_path, root_dir)
             with open(full_path) as f:
-                content = f.read()
-            for lineno, line in enumerate(content.splitlines(), 1):
-                stripped = line.strip()
-                if stripped.startswith("#"):
-                    continue
-                if "from ui.handlers" in line or "import ui.handlers" in line:
-                    violations.append(f"{rel}:{lineno}: {stripped}")
+                tree = ast.parse(f.read(), filename=full_path)
+            _flag_imports(tree, False, rel)
+
     assert not violations, "views→handlers layer isolation violated:\n  " + "\n  ".join(violations)
 
 
