@@ -76,7 +76,7 @@ class TestToDrawerRow:
         assert re.match(r"^\d{2}:\d{2}:\d{2}$", ts), f"timestamp {ts!r} is not HH:MM:SS"
 
     def test_duration_formatting(self):
-        """_format_duration rules: <1000ms → Nms; <60_000ms → N.Ns; >=60_000ms → Nm Ns; <=0 → ''."""
+        """format_duration rules: <1000ms → Nms; <60_000ms → N.Ns; >=60_000ms → Nm Ns; <=0 → ''."""
         from models.activity import ActivityBubble
         # 1247ms → "1.2s"
         b1 = ActivityBubble(type="tool_end", session_key="sk-1", duration_ms=1247)
@@ -104,11 +104,18 @@ class TestToDrawerRow:
         assert b3.to_drawer_row()["exit_code"] == 127
 
     def test_type_label_mapping(self):
-        """command_output → 'exec', lifecycle_start → 'lifecycle', plan → 'plan', etc."""
+        """command_output → 'exec', lifecycle_start → 'lifecycle', plan → 'plan', etc.
+
+        Bug 2 (SPEC-AUDIT-CLEANUP-1): the label mapping has ONE home —
+        models.activity.activity_type_label — covering all 9 gateway event
+        types, and the drawer must use it (see the behavioral drawer test in
+        TestActivityDrawer).
+        """
         from models.activity import ActivityBubble
         cases = [
             ("command_output", "exec"),
             ("lifecycle_start", "lifecycle"),
+            ("lifecycle_end", "lifecycle"),
             ("plan", "plan"),
             ("approval_request", "approval"),
             ("patch", "patch"),
@@ -120,6 +127,29 @@ class TestToDrawerRow:
             b = ActivityBubble(type=activity_type, session_key="sk-1")
             assert b.to_drawer_row()["type_label"] == expected_label, \
                 f"{activity_type} should map to {expected_label!r}"
+        # Direct: the public single-source-of-truth helper (Bug 2 rename).
+        from models.activity import activity_type_label
+        for activity_type, expected_label in cases:
+            assert activity_type_label(activity_type) == expected_label, \
+                f"activity_type_label({activity_type!r}) should be {expected_label!r}"
+        # Unknown types pass through verbatim; empty string maps to empty string.
+        assert activity_type_label("unknown_type") == "unknown_type"
+        assert activity_type_label("") == ""
+
+    def test_format_duration_none_and_zero_guard(self):
+        """Bug 2: format_duration must return '' for None / 0 / negative.
+
+        The drawer's old local copy raised TypeError on None (no guard);
+        the single models implementation must keep the guard.
+        """
+        from models.activity import format_duration
+        assert format_duration(None) == ""
+        assert format_duration(0) == ""
+        assert format_duration(-5) == ""
+        # Sanity: positive values still format per the documented rules.
+        assert format_duration(847) == "847ms"
+        assert format_duration(1247) == "1.2s"
+        assert format_duration(60000) == "1m 0s"
 
 
 # ── Class 2: TestActivityDrawer — drawer state mutation tests ────
@@ -244,6 +274,71 @@ class TestActivityDrawer:
         assert drawer._list.append.call_count == 2
         assert drawer._total_count == 2
         assert drawer._last_row_key == ("Coder", "plan")
+
+    def test_summary_uses_single_label_mapping(self, drawer, monkeypatch):
+        """Bug 2 (SPEC-AUDIT-CLEANUP-1): the drawer must render the SAME
+        labels as models.activity for ALL 9 gateway event types.
+
+        Red pre-fix: the drawer's local _type_label copy missed
+        lifecycle_end/tool_start/tool_end/tool_error and fell through to the
+        raw string (e.g. "tool_error" rendered verbatim instead of "tool").
+        """
+        captured = []
+        monkeypatch.setattr(
+            "ui.views.activity_drawer.ActivityDrawer._build_row_widget",
+            lambda self, row, count: captured.append(
+                self._format_summary(row, count=count)) or MagicMock(),
+        )
+        for activity_type, expected_label in [
+            ("command_output", "exec"),
+            ("lifecycle_start", "lifecycle"),
+            ("lifecycle_end", "lifecycle"),
+            ("plan", "plan"),
+            ("approval_request", "approval"),
+            ("patch", "patch"),
+            ("tool_start", "tool"),
+            ("tool_end", "tool"),
+            ("tool_error", "tool"),
+            ("unknown_type", "unknown_type"),  # passthrough
+            ("", ""),                          # empty → empty
+        ]:
+            row = {
+                "agent": "Coder",
+                "activity_type": activity_type,
+                "type_label": "",  # force the fallback path that was drifted
+                "icon": "",
+            }
+            summary = drawer._format_summary(row, count=1)
+            parts = summary.split("  ")
+            assert expected_label in parts, (
+                f"summary for {activity_type!r} must contain label "
+                f"{expected_label!r}; got parts {parts}"
+            )
+
+    def test_counter_summary_survives_none_duration(self, drawer, monkeypatch):
+        """Bug 2: the models format_duration None-guard must hold on the
+        drawer's counter-summary path (on_agent_end), where the old local
+        _format_duration copy raised TypeError on None.
+        """
+        captured_text = []
+        monkeypatch.setattr(
+            "ui.views.activity_drawer.ActivityDrawer._build_separator_widget",
+            lambda self, text: captured_text.append(text) or MagicMock(),
+        )
+        # Draw the None through the same call the drawer makes: int() of a
+        # missing counter value would be a TypeError — exercise the helper
+        # exactly as on_agent_end does, including a None total.
+        from ui.views.activity_drawer import format_duration
+        assert format_duration(None) == ""
+        # And the end-to-end path: a counter with total_duration_ms=None.
+        drawer._agent_counters["Coder"] = {"count": 2, "total_duration_ms": None}
+        drawer.on_agent_end("sk-1", "Coder")
+        assert len(captured_text) == 1
+        assert "2 events" in captured_text[0], (
+            f"summary {captured_text[0]!r} should report 2 events even with a "
+            f"None total_duration_ms (Bug 2 None-guard)"
+        )
+        assert "ended" not in captured_text[0]
 
     def test_filter_drop_unmatched(self, drawer):
         """When _visible_agents = {'Coder'}, an event with agent='Debugger' is dropped (not appended)."""

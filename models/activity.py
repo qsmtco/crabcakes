@@ -160,13 +160,13 @@ class ActivityBubble:
             "session_key": self.session_key,
             "activity_type": self.type,
             "icon": self.icon,
-            "type_label": _type_label(self.type),
+            "type_label": activity_type_label(self.type),
             "title": self.title,
             "command": self.command,
             "file_path": self.file_path,
             "output": self.output,
             "exit_code": self.exit_code if self.type == "command_output" else None,
-            "duration": _format_duration(self.duration_ms) if self.duration_ms else "",
+            "duration": format_duration(self.duration_ms),
             "duration_ms": self.duration_ms,
             "timestamp": ts,
             "raw_text": self.raw_text,
@@ -176,12 +176,13 @@ class ActivityBubble:
         }
 
 
-def _type_label(activity_type: str) -> str:
+def activity_type_label(activity_type: str) -> str:
     """
     Map an ActivityType literal to a short human label for the drawer row.
 
-    Mirrors the helper in ui/views/activity_drawer.py — both modules use the
-    same logic. Keep in sync if you change one.
+    Single source of truth for activity type labels (Bug 2,
+    SPEC-AUDIT-CLEANUP-1) — the drawer imports this directly; there is no
+    longer a duplicated copy in ui/views/activity_drawer.py.
 
     Returns the input verbatim if no mapping exists.
     """
@@ -201,18 +202,19 @@ def _type_label(activity_type: str) -> str:
     return mapping.get(activity_type, activity_type)
 
 
-def _format_duration(ms: int) -> str:
+def format_duration(ms: int) -> str:
     """
     Format a duration in milliseconds as a short human string.
 
-    Mirrors the helper in ui/views/activity_drawer.py — both modules use the
-    same logic. Keep in sync if you change one.
+    Single source of truth for duration formatting (Bug 2,
+    SPEC-AUDIT-CLEANUP-1) — the drawer imports this directly; there is no
+    longer a duplicated copy in ui/views/activity_drawer.py.
 
     Rules:
+    - ms is None / <= 0 → "" (no duration to show)
     - ms < 1000      → "Nms"            (e.g. "847ms")
     - ms < 60_000    → "N.Ns"           (e.g. "1.2s")
     - ms >= 60_000   → "Nm Ns"          (e.g. "1m 23s")
-    - ms <= 0        → ""               (no duration to show)
     """
     if ms is None or ms <= 0:
         return ""

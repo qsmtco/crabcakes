@@ -17,35 +17,11 @@ import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import GLib, Gtk, Pango
 
-
-# ── Module-level helpers (mirrored from models/activity.py) ──────
-# These are duplicated here to avoid a circular import between
-# ui/views/ and models/ when only the type label / duration formatter
-# is needed. Both modules use the SAME logic — keep in sync.
-
-def _type_label(activity_type: str) -> str:
-    """See models/activity.py._type_label for full docstring."""
-    if activity_type == "command_output":
-        return "exec"
-    if activity_type == "lifecycle_start":
-        return "lifecycle"
-    if activity_type == "plan":
-        return "plan"
-    if activity_type == "approval_request":
-        return "approval"
-    if activity_type == "patch":
-        return "patch"
-    return activity_type
-
-
-def _format_duration(ms: int) -> str:
-    """See models/activity.py._format_duration for full docstring."""
-    if ms < 1000:
-        return f"{ms}ms"
-    if ms < 60_000:
-        return f"{ms / 1000:.1f}s"
-    minutes, secs = divmod(ms // 1000, 60)
-    return f"{minutes}m {secs}s"
+# Bug 2 (SPEC-AUDIT-CLEANUP-1): label/duration formatting has ONE home —
+# models.activity. The previous local copies here had drifted (4 missing
+# type mappings, no None-guard) — they were deleted in favor of these
+# imports. ui→models is the correct dependency direction per ARCHITECTURE.md.
+from models.activity import activity_type_label, format_duration
 
 
 class ActivityDrawer(Gtk.Box):
@@ -308,9 +284,12 @@ class ActivityDrawer(Gtk.Box):
 
         counter = self._agent_counters.pop(agent_name, None)
         if counter is not None and counter.get("count", 0) > 0:
+            # Bug 2: total_duration_ms may be missing/None — format_duration's
+            # guard handles both (the old int(..., 0) wrapper crashed on None).
+            total_ms = counter.get("total_duration_ms") or 0
             summary = (
                 f"\u2500\u2500 {agent_name}: {counter['count']} events in "
-                f"{_format_duration(int(counter.get('total_duration_ms', 0)))} \u2500\u2500\u2500\u2500"
+                f"{format_duration(int(total_ms))} \u2500\u2500\u2500\u2500"
             )
         else:
             summary = f"\u2500\u2500 {agent_name}: ended \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
@@ -425,7 +404,7 @@ class ActivityDrawer(Gtk.Box):
         icon = row.get("icon", "")
         if icon:
             parts.append(icon)
-        type_label = row.get("type_label", "") or _type_label(row.get("activity_type", ""))
+        type_label = row.get("type_label", "") or activity_type_label(row.get("activity_type", ""))
         parts.append(type_label)
         if count > 1:
             parts.append(f"\u00d7{count}")
