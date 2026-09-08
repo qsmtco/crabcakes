@@ -41,11 +41,11 @@ All Class B sites are inside **quoted or `from __future__ import annotations`** 
 | B8 | `utils/gtk_safe_link.py:84` | `Gtk.Label` (quoted return annotation; GTK import is deliberately deferred to :119) | `gi.repository` | TYPE_CHECKING import — do NOT add a top-level runtime GTK import; the deferred-import design is intentional (utils purity). |
 | B9 | `utils/mcp_config.py:51` | `StdioServerParameters` (quoted; real import deferred at :60) | `mcp` SDK | TYPE_CHECKING import — same deferred-import rationale. |
 
-### Class C — script crash (1 site)
+### Class C — script annotation (1 site) — reclassified 2026-09-07 after verification
 
 | # | Site | Bug | Fix |
 |---|---|---|---|
-| C1 | `scripts/rebuild_kb_index.py:170` | `np` used, numpy never imported → NameError at that line. | Add `import numpy as np` at top **if** numpy is already a project dependency (check `requirements*.txt` / imports elsewhere); otherwise rewrite the single `np.` call in stdlib. Grep the file for all `np.` uses first. |
+| C1 | `scripts/rebuild_kb_index.py:170` | **Originally misdiagnosed as a runtime crash.** Verification: line 170 is the *quoted return annotation* `-> "np.ndarray"` on `embed_chunks`; the real numpy uses (:173, :234) are function-local imports that work fine. Quoted annotation is never evaluated → no crash; pyflakes flags it because `np` has no module scope. | `from typing import TYPE_CHECKING` + `if TYPE_CHECKING: import numpy as np` at module top. Numpy IS a project dependency (`agent/kb_lookup.py` imports it), but TYPE_CHECKING makes the fix zero-runtime-cost and pyflakes-clean. Do NOT add a module-level runtime import. |
 
 ---
 
