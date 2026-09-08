@@ -50,8 +50,7 @@ from ui.handlers.session_handler import SessionHandler
 from ui.wiring import set_active_project_path, clear_active_project_path
 from utils.project_awareness import seed_project_prompts
 
-from models.task import Task
-from models import task_store, work_store
+from models import work_store
 from datetime import datetime
 
 from utils.config import get_gateway_url, COMMAND_PREFIX
@@ -608,7 +607,8 @@ class MainWindow(Gtk.ApplicationWindow):
         )
         # ── End Feed handler ──────────────────────────────────────────────
         # Work handler — work unit commands (SPEC-TASK-SYSTEM-FULL-REDESIGN)
-        # Replaces the former TaskHandler. Receives project_handler (for active
+        # Replaces the former flat-task command handler (retired in
+        # SPEC-AUDIT-CLEANUP-2 Phase 2). Receives project_handler (for active
         # project path/name + member lookup), the global work_store, and the
         # agent_runtime_handler (for /work start → send_to_special_agent).
         self._work_handler = WorkHandler(

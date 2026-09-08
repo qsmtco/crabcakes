@@ -17,7 +17,6 @@ from .colors import (
 from .command import Command, CommandResult, CommandRegistry
 from .routing import AgentRoutingTable
 from .streaming import StreamingBubble
-from .task import Task, TaskStore, TASK_STATUS_LABELS, PRIORITY_LABELS
 from .work_unit import WorkUnit, WorkUnitStore, WORK_STATUS_LABELS, WORK_PRIORITY_LABELS
 from .feed_card import FeedCardData
 from .activity import ActivityBubble, ToolStatus
@@ -26,7 +25,6 @@ from .conversation_snapshot import ConversationSnapshot, SnapshotMessage
 from .review_state import ReviewState
 from .team import TeamMember, ProjectTeam
 
-task_store = TaskStore()
 work_store = WorkUnitStore()
 
 __all__ = [
@@ -59,12 +57,6 @@ __all__ = [
     # team
     "TeamMember",
     "ProjectTeam",
-    # task
-    "Task",
-    "TaskStore",
-    "task_store",
-    "TASK_STATUS_LABELS",
-    "PRIORITY_LABELS",
     # work unit
     "WorkUnit",
     "WorkUnitStore",

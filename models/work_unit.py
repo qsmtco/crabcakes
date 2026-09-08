@@ -14,9 +14,8 @@ from typing import Iterable
 
 
 # ── Module-level sequential counter ─────────────────────────────────────────
-# Mirrors models/task.py (_task_next_num / _task_next_id). Shared by
-# WorkUnit.default_factory. The persistence layer calls _work_init_counter()
-# after loading units from disk to avoid restart collisions.
+# Shared by WorkUnit.default_factory. The persistence layer calls
+# _work_init_counter() after loading units from disk to avoid restart collisions.
 _work_next_num: int = 1
 
 

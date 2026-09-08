@@ -389,8 +389,8 @@ class TestAwarenessCaps:
         # so that CURRENT_STATE exceeds 1000 chars
         import utils.project_awareness as pa
         orig_snapshot = pa.build_awareness_snapshot
-        def long_snapshot(project_path, task_store=None):
-            snap = orig_snapshot(project_path, task_store)
+        def long_snapshot(project_path, work_store=None):
+            snap = orig_snapshot(project_path, work_store)
             snap["project_name"] = "X" * 1200
             return snap
         pa.build_awareness_snapshot = long_snapshot

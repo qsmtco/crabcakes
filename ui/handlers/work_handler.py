@@ -1,5 +1,6 @@
 # ui/handlers/work_handler.py
-# Work Unit command implementations — replaces ui/handlers/task_handler.py.
+# Work Unit command implementations — supersedes the retired flat-task
+# command handler (SPEC-AUDIT-CLEANUP-2 Phase 2).
 #
 # Spec: SPEC-TASK-SYSTEM-FULL-REDESIGN §4 (Work Commands and Handler), Phase 3.
 # Architecture: GTK-free command handler. May import models.work_unit,
