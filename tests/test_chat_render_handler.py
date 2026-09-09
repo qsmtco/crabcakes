@@ -1,6 +1,8 @@
 # tests/test_chat_render_handler.py
 # Tests for ui/handlers/chat_render_handler.py
 
+import time
+
 import pytest
 import gi
 gi.require_version('Gtk', '4.0')
@@ -420,4 +422,115 @@ class FakeChatBox:
         get_next_sibling on each CHILD widget, not on the container.)
         """
         return None
+
+
+class TestStreamingPerfGuard:
+    """AC3 Phase 1 Part B — render throttle + unchanged-skip guard.
+
+    Guards three perf behaviors on update_streaming():
+      1. _stream_throttle_sec bounds set_text frequency (0.5s window).
+      2. Identical consecutive delta text produces ZERO additional set_text
+         (plain_text still updates — invariant 2: completion reads it).
+      3. The [STREAM] skip diagnostic goes to _logger.debug, not stdout.
+    """
+
+    def setup_method(self):
+        self.handler = ChatRenderHandler(GLib_module=None)
+        self.fake_box = FakeChatBox()
+        self.set_text_calls = []
+
+    def _start_with_counting_label(self, session_key: str = "agent:1"):
+        """Start a streaming session whose label counts set_text calls.
+
+        Instance attribute assignment (not class patching) — the label and
+        wrapper die with the per-test handler, so nothing leaks.
+        """
+        self.handler.start_streaming(session_key, self.fake_box, "Agent")
+        sb = self.handler._streaming_bubbles[session_key]
+        sb.label.set_text = lambda t: self.set_text_calls.append(t)
+        return sb
+
+    def test_throttle_constant_is_500ms(self):
+        """Spec B1: throttle window widened 0.15s → 0.5s."""
+        assert self.handler._stream_throttle_sec == 0.5
+
+    def test_throttle_bounds_set_text_calls(self, monkeypatch):
+        """Spec B2: deltas inside the throttle window produce exactly one
+        set_text per window (monotonic clock stubbed, no sleeps, no FP-boundary
+        dependence — 0.05s spacing keeps every delta well inside one window)."""
+        sb = self._start_with_counting_label()
+        clock = {"t": 100.0}
+        monkeypatch.setattr(time, "monotonic", lambda: clock["t"])
+
+        # 6 deltas, one per 0.05s of fake time (0.3s total — one window)
+        for i in range(6):
+            clock["t"] += 0.05
+            self.handler.update_streaming("agent:1", f"delta {i}")
+        assert len(self.set_text_calls) == 1, (
+            f"all 6 deltas fall inside one 0.5s window — only the first may "
+            f"render, got {len(self.set_text_calls)}: {self.set_text_calls!r}"
+        )
+
+        # Window long expired → next delta renders
+        clock["t"] += 0.6
+        self.handler.update_streaming("agent:1", "delta 6")
+        assert len(self.set_text_calls) == 2
+
+    def test_identical_consecutive_text_zero_set_text(self):
+        """Spec B2: identical consecutive text → zero additional set_text.
+
+        The gateway's cumulative-delta protocol makes exact repeats rare in
+        production, but the skip guard must still short-circuit them (and
+        tests in test_agent_runtime.py replay cumulative text directly).
+        """
+        self._start_with_counting_label()
+        # First call renders (cold cache); second call is byte-identical.
+        self.handler.update_streaming("agent:1", "same text")
+        self.handler.update_streaming("agent:1", "same text")
+        self.handler.update_streaming("agent:1", "same text")
+
+        assert len(self.set_text_calls) == 1, (
+            f"identical consecutive text must skip set_text, got "
+            f"{len(self.set_text_calls)} calls: {self.set_text_calls!r}"
+        )
+
+    def test_plain_text_still_updates_when_set_text_skipped(self, monkeypatch):
+        """Invariant 2: sb.plain_text updates BEFORE any skip path — the
+        completion path reads plain_text even when the label was not redrawn."""
+        self._start_with_counting_label()
+        monkeypatch.setattr(time, "monotonic", lambda: 0.0)  # freeze clock → throttle-skipped
+        self.handler.update_streaming("agent:1", "stale visible")
+        self.handler.update_streaming("agent:1", "latest cumulative text")
+
+        sb = self.handler._streaming_bubbles["agent:1"]
+        assert sb.plain_text == "latest cumulative text"
+        # set_text fired at most once (first call, cold cache) — second was skipped
+        assert all(t != "latest cumulative text" for t in self.set_text_calls)
+
+    def test_end_streaming_clears_last_rendered_text(self):
+        """Spec B4: end_streaming clears the skip cache so a NEW streaming
+        session with identical text still renders (no stale skip inheritance)."""
+        self._start_with_counting_label()
+        self.handler.update_streaming("agent:1", "repeated across sessions")
+        calls_after_first_session = len(self.set_text_calls)
+        assert calls_after_first_session == 1
+
+        self.handler.end_streaming("agent:1")  # render=True default builds final bubble
+        # New session, same text
+        self._start_with_counting_label()
+        self.handler.update_streaming("agent:1", "repeated across sessions")
+
+        assert len(self.set_text_calls) == 2, (
+            "end_streaming must clear _last_rendered_text — second session's "
+            "first delta must render, not be skipped"
+        )
+
+    def test_skip_diagnostic_uses_logger_not_print(self, capsys):
+        """Spec B3: unknown-session diagnostic goes through _logger.debug,
+        not print (stdout must stay clean for the gateway protocol)."""
+        self.handler.update_streaming("agent:missing", "text")
+        captured = capsys.readouterr()
+        assert captured.out == "", (
+            f"update_streaming printed to stdout: {captured.out!r}"
+        )
 

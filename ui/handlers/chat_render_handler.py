@@ -206,7 +206,10 @@ class ChatRenderHandler:
         self._project_name = ""
         # Streaming throttle: avoid redundant set_text on every delta
         self._last_stream_update: dict[str, float] = {}  # session_key → monotonic timestamp
-        self._stream_throttle_sec = 0.15  # min 150ms between UI updates
+        self._stream_throttle_sec = 0.5  # min 500ms between UI updates
+        # AC3 Phase 1 Part B: last RENDERED text per session — identical
+        # consecutive delta text skips the set_text call entirely.
+        self._last_rendered_text: dict[str, str] = {}  # session_key → plain text
 
     # ── Thread pool for off-main-thread processing ──────────────────
     _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="crabcakes-render")
@@ -497,16 +500,20 @@ class ChatRenderHandler:
         all text accumulated so far). Use delta_text directly — do NOT append
         to the stored plain text, as that would double-accumulate.
 
-        Throttled: UI updates are limited to every 150ms to avoid freezing the
+        Throttled: UI updates are limited to every 500ms to avoid freezing the
         main thread with set_text on every delta. The latest text is always
-        stored so the final update is never lost.
+        stored so the final update is never lost. Identical consecutive text
+        is skipped entirely (no set_text at all).
 
         Safe to call from the GTK main thread only (caller is responsible for
         dispatching via GLib.idle_add). After Fix 2, set_text is called directly
         instead of through self._dispatch.
         """
         if session_key not in self._streaming_bubbles:
-            print(f"[STREAM] update_streaming: SKIP sk={session_key!r} not in _streaming_bubbles")
+            _logger.debug(
+                "update_streaming: SKIP sk=%r not in _streaming_bubbles",
+                session_key,
+            )
             return
 
         sb = self._streaming_bubbles[session_key]
@@ -514,7 +521,15 @@ class ChatRenderHandler:
         # Always store latest text (even if throttled) so final render is correct
         sb.plain_text = delta_text
 
-        # Throttle: skip UI update if less than 150ms since last one
+        # Unchanged-skip: identical cumulative text means nothing new to draw.
+        # Compare STORED plain text (not the cursor'd display string) — the
+        # label shows text + " ▍". Skipping here also bypasses the throttle
+        # bookkeeping, which is correct: nothing was rendered, so the window
+        # should stay open for the next real change.
+        if delta_text == self._last_rendered_text.get(session_key):
+            return
+
+        # Throttle: skip UI update if less than 500ms since last one
         import time
         now = time.monotonic()
         last = self._last_stream_update.get(session_key, 0)
@@ -527,6 +542,7 @@ class ChatRenderHandler:
         # applied in end_streaming → build_role_bubble. We are already on the
         # main thread (caller dispatched via GLib.idle_add), so no _dispatch needed.
         sb.label.set_text(sb.plain_text + " ▍")
+        self._last_rendered_text[session_key] = sb.plain_text
 
     def _render_plain_text(self, role: str, text: str, on_forward_click=None, agent_name: str = None, agent_color: str = None):
         """
@@ -625,6 +641,7 @@ class ChatRenderHandler:
 
         # Clean up throttle state
         self._last_stream_update.pop(session_key, None)
+        self._last_rendered_text.pop(session_key, None)
 
         sb = self._streaming_bubbles.pop(session_key)
 
