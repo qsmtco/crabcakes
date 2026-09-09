@@ -5548,3 +5548,190 @@ class TestTurnStateMachine:
         )
         rt.stop()
 
+
+# ═══════════════════════════════════════════════════════════════════
+#  SPEC-AUDIT-CLEANUP-3 Phase 1 Part A — producer-side delta coalescing
+# ═══════════════════════════════════════════════════════════════════
+
+class _QueueGLib:
+    """Test double for GLib: idle_add queues; drain() runs callbacks FIFO.
+
+    Mimics the real main loop's ordering guarantee (callbacks scheduled
+    earlier run earlier) so producer→idle→completion ordering is testable.
+    """
+
+    def __init__(self):
+        self.queue = []
+
+    def idle_add(self, fn, *args, **kwargs):
+        self.queue.append((fn, args, kwargs))
+        return len(self.queue)
+
+    def source_remove(self, timer_id):
+        pass
+
+    def timeout_add(self, *args, **kwargs):
+        return 1
+
+    def timeout_add_seconds(self, *args, **kwargs):
+        return 1
+
+    def drain(self, max_steps=10000):
+        """Run queued callbacks FIFO, including ones re-scheduled while draining."""
+        ran = 0
+        while self.queue and ran < max_steps:
+            fn, args, kwargs = self.queue.pop(0)
+            fn(*args, **kwargs)
+            ran += 1
+        return ran
+
+
+class TestDeltaCoalescing:
+    """SPEC-AUDIT-CLEANUP-3 Phase 1 Part A — producer-side coalescing.
+
+    Invariants under test (spec §Correctness invariants):
+    1. accumulation always complete        → test_accumulation_complete_*
+    3. ended/token guards vs deferred dispatches → test_mismatched_*, test_delta_after_session_ended_*
+    4. empty-delta skip preserved          → test_empty_delta_still_reaches_main_thread
+    5. producer→idle→completion ordering   → test_completion_ordering_*
+    6. trailing guarantee                  → test_trailing_dispatch_pending_for_last_delta
+    """
+
+    def _make(self):
+        from ui.handlers.agent_runtime_handler import AgentRuntimeHandler
+        glib = _QueueGLib()
+        crh = MagicMock()
+        crh.is_streaming.return_value = False
+        mc = MagicMock()
+        handler = AgentRuntimeHandler(
+            main_content=mc, chat_render_handler=crh, GLib_module=glib
+        )
+        chat_box = MagicMock()
+        handler._resolve_chat_box = MagicMock(return_value=chat_box)
+        return handler, crh, glib
+
+    def test_rapid_deltas_coalesce_dispatches(self):
+        """(a) 100 rapid deltas → ≤ deltas/20 + 2 _do_text_delta invocations.
+
+        RED on pre-change code: every delta scheduled its own idle_add →
+        100 invocations.
+        """
+        handler, crh, glib = self._make()
+        deltas = [f"chunk{i} " for i in range(100)]
+        calls = {"n": 0}
+        orig = handler._do_text_delta
+
+        def counting(sk, text, token=None, **kw):
+            calls["n"] += 1
+            return orig(sk, text, token, **kw)
+
+        handler._do_text_delta = counting
+        for d in deltas:
+            handler._on_text_delta("special:coder", d)
+        glib.drain()
+
+        assert calls["n"] <= len(deltas) // 20 + 2, (
+            f"coalescing broken: {calls['n']} _do_text_delta invocations for "
+            f"{len(deltas)} deltas (pre-change code fires one per delta)"
+        )
+
+    def test_accumulation_complete_no_loss_no_duplication(self):
+        """(b)+(1) final accumulated text == exact concatenation of every delta."""
+        handler, crh, glib = self._make()
+        deltas = [f"chunk{i} " for i in range(100)]
+        for d in deltas:
+            handler._on_text_delta("special:coder", d)
+        expected = "".join(deltas)
+        glib.drain()
+        assert handler._streaming_text["special:coder"] == expected
+
+    def test_trailing_dispatch_pending_for_last_delta(self):
+        """(c)+(6) after the first coalesced dispatch drains, a trailing
+        dispatch is pending for the deltas that arrived while it was pending;
+        the final update_streaming carries the complete text."""
+        handler, crh, glib = self._make()
+        for i in range(100):
+            handler._on_text_delta("special:coder", f"chunk{i} ")
+        # drain exactly ONE dispatch (the first coalesced one)
+        glib.drain(max_steps=1)
+        assert "special:coder" in handler._delta_dispatch_pending, (
+            "trailing guarantee broken: no pending dispatch after the first "
+            "coalesced dispatch drained, although deltas arrived while it "
+            "was pending"
+        )
+        glib.drain()
+        expected = "".join(f"chunk{i} " for i in range(100))
+        assert crh.update_streaming.call_count >= 1
+        last_call = crh.update_streaming.call_args_list[-1]
+        assert last_call.args[1] == expected, (
+            f"trailing dispatch must render the complete accumulated text; "
+            f"got {last_call.args[1]!r}"
+        )
+
+    def test_mismatched_token_delta_dropped_no_corruption(self):
+        """(d)+(3) a delta carrying a stale token while a dispatch is pending
+        is dropped and does not corrupt accumulation."""
+        handler, crh, glib = self._make()
+        stale = object()
+        current = object()
+        handler._turn_tokens["special:coder"] = current
+        handler._on_text_delta("special:coder", "good ", current)
+        handler._on_text_delta("special:coder", "STALE ", stale)
+        glib.drain()
+        assert handler._streaming_text["special:coder"] == "good "
+        assert "STALE" not in handler._streaming_text.get("special:coder", "")
+
+    def test_delta_after_session_ended_dropped_no_new_bubble(self):
+        """(e)+(3) a delta arriving after _ended_sessions is set is dropped —
+        no start_streaming, no new bubble, no accumulation resurrection."""
+        handler, crh, glib = self._make()
+        handler._ended_sessions.add("special:coder")
+        handler._on_text_delta("special:coder", "late delta")
+        glib.drain()
+        crh.start_streaming.assert_not_called()
+        assert "special:coder" not in handler._streaming_text
+
+    def test_empty_delta_still_reaches_main_thread(self):
+        """(4) empty-delta skip preserved: the runtime's BUG #21 turn-start
+        signal (_on_text_delta(sk, "")) still dispatches to the main thread,
+        and the empty delta still returns before accumulation."""
+        handler, crh, glib = self._make()
+        handler._on_text_delta("special:coder", "")
+        assert len(glib.queue) == 1, "empty delta must still be dispatched"
+        glib.drain()
+        assert "special:coder" not in handler._streaming_text
+
+    def test_completion_ordering_and_byte_identity(self):
+        """(1)+(5) full streaming session: accumulated text is byte-identical
+        to the delta concatenation, and the delta dispatches run BEFORE
+        completion's end_streaming (producer→idle→completion ordering)."""
+        handler, crh, glib = self._make()
+        deltas = ["Hel", "lo ", "wor", "ld"]
+        expected = "".join(deltas)
+        order = []
+
+        crh.update_streaming.side_effect = (
+            lambda sk, text: order.append(("update", text))
+        )
+        crh.end_streaming.side_effect = lambda *a, **k: order.append(("end", None))
+
+        for d in deltas:
+            handler._on_text_delta("special:coder", d)
+        glib.drain()
+        assert handler._streaming_text["special:coder"] == expected, (
+            "accumulated text must be byte-identical to the delta concatenation"
+        )
+
+        # completion (what the runtime dispatches last, with the authoritative text)
+        crh.is_streaming.return_value = True
+        crh.get_streaming_text.return_value = expected
+        handler._do_response_complete("special:coder", expected)
+
+        kinds = [k for k, _ in order]
+        assert "update" in kinds and kinds.index("update") < kinds.index("end"), (
+            f"producer→idle→completion ordering broken: {order}"
+        )
+        # byte identity: completion overwrites plain_text with the exact
+        # delta concatenation (set_streaming_text is the authoritative write)
+        crh.set_streaming_text.assert_called_with("special:coder", expected)
+

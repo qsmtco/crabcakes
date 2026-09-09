@@ -78,6 +78,17 @@ class AgentRuntimeHandler:
         # throttled to at most 20 calls/sec per session.
         self._last_delta_dispatch: dict[str, float] = {}
         self._delta_throttle_sec = 0.05  # 50ms — at most 20 throttle-pass updates/sec
+        # AC3 Part A — producer-side coalescing state.
+        # _delta_dispatch_pending: session_keys with a dispatch already queued
+        # on the main loop. Added by the producer thread, cleared in
+        # _do_text_delta's finally (main thread); add/discard on a set are
+        # atomic under the GIL, so no lock is needed.
+        self._delta_dispatch_pending: set[str] = set()
+        # _delta_dirty: session_keys whose latest accumulated text is NOT
+        # covered by an already-queued dispatch (producer suppressed by
+        # pending/throttle). Consumed by _do_text_delta's finally, which then
+        # schedules exactly one unconditional trailing dispatch.
+        self._delta_dirty: set[str] = set()
         # Pending approval cards: approval_id (card_id) → {session_key, tool_name, args}
         # Used by Phase E to resolve approvals when PM clicks Approve/Deny.
         self._pending_approvals: dict[str, dict] = {}
@@ -995,20 +1006,103 @@ class AgentRuntimeHandler:
         """
         AgentRuntime text delta callback.
         → Start or update a streaming bubble in the UI.
+
+        AC3 Part A — producer-side coalescing. Runs on the runtime thread:
+        accumulates text immediately (per-session single producer makes this
+        race-free; GIL-atomic str assignment) and schedules at most one
+        main-thread dispatch per _delta_throttle_sec, with an unconditional
+        trailing re-schedule so the last batch is never dropped.
         """
-        if self._GLib is not None:
-            self._GLib.idle_add(self._do_text_delta, session_key, text, _turn_token)
+        # Empty deltas bypass coalescing entirely: the runtime fires a
+        # turn-start signal via _on_text_delta(sk, "") (agent/runtime.py
+        # BUG #21) whose ONLY job is to reach _do_text_delta on the main
+        # thread (the start-bubble path clears _ended_sessions for tool-only
+        # turns). Coalescing an empty delta would drop that signal.
+        if not text:
+            if self._GLib is not None:
+                self._GLib.idle_add(self._do_text_delta, session_key, "", _turn_token)
+            else:
+                self._do_text_delta(session_key, "", _turn_token)
+            return
+        if self._crh is None:
+            return  # no render pipeline — nothing to accumulate or schedule
+        # Producer-side stale guards (moved with the accumulation): a delta
+        # for an ended session or from a previous turn must neither corrupt
+        # the accumulated text nor schedule work. _turn_token=None (legacy
+        # 2-arg callers) is never stale. The ended flag is cleared by
+        # send_to_special_agent when a NEW turn starts.
+        if session_key in self._ended_sessions:
+            logger.debug(
+                "_on_text_delta: dropping delta for ended session %s", session_key,
+            )
+            return
+        if _turn_token is not None:
+            current = self._turn_tokens.get(session_key)
+            if _turn_token is not current:
+                logger.debug(
+                    "_on_text_delta: dropping stale delta (token mismatch) for %s",
+                    session_key,
+                )
+                return
+        # Producer-side accumulation (was per-delta on the main thread — an
+        # O(n) copy per delta flooding the main loop; audit finding #2).
+        self._streaming_text[session_key] = self._streaming_text.get(session_key, "") + text
+        now = time.monotonic()
+        if (session_key not in self._delta_dispatch_pending
+                and now - self._last_delta_dispatch.get(session_key, 0.0) >= self._delta_throttle_sec):
+            # Schedule with the CURRENT turn token, not the delta's: the
+            # dispatch may outlive several deltas and must carry the turn it
+            # will render. _do_text_delta_inner still guards a mid-batch
+            # mismatch the same way as before.
+            self._delta_dispatch_pending.add(session_key)
+            self._last_delta_dispatch[session_key] = now
+            self._delta_dirty.discard(session_key)
+            current_token = self._turn_tokens.get(session_key)
+            if self._GLib is not None:
+                self._GLib.idle_add(self._do_text_delta, session_key, "", current_token)
+            else:
+                self._do_text_delta(session_key, "", current_token)
         else:
-            self._do_text_delta(session_key, text, _turn_token)
+            # Not scheduling: this delta's text is not covered by any queued
+            # dispatch — mark dirty so the in-flight dispatch's finally
+            # schedules an unconditional trailing dispatch for it.
+            self._delta_dirty.add(session_key)
 
-    def _do_text_delta(self, session_key: str, text: str, delta_token: object = None) -> None:
-        """Main-thread portion of _on_text_delta.
+    def _do_text_delta(self, session_key: str, text: str = "", delta_token: object = None) -> None:
+        """Main-thread portion of _on_text_delta (AC3 Part A: coalesced).
 
-        AgentRuntime sends incremental SSE chunks. ChatRenderHandler expects
-        cumulative text (same contract as gateway). Accumulate here.
+        Text is accumulated on the PRODUCER thread (see _on_text_delta); this
+        dispatch renders the producer-accumulated text. The `text` parameter
+        is retained for legacy direct callers and the empty-delta turn-start
+        signal (empty `text` returns before any rendering, exactly as before).
 
-        Throttled: the stored text is ALWAYS updated (final render is correct),
-        but the expensive rendering pipeline is limited to ~20 calls/sec per session.
+        _delta_dispatch_pending is cleared on EVERY return path (finally). If
+        deltas arrived while this dispatch was in flight (dirty flag), exactly
+        one UNCONDITIONAL trailing dispatch is re-scheduled — the last delta
+        batch always produces a final update_streaming before completion reads
+        the text.
+        """
+        try:
+            self._do_text_delta_inner(session_key, text, delta_token)
+        finally:
+            self._delta_dispatch_pending.discard(session_key)
+            if session_key in self._delta_dirty:
+                self._delta_dirty.discard(session_key)
+                self._delta_dispatch_pending.add(session_key)
+                self._last_delta_dispatch[session_key] = time.monotonic()
+                current_token = self._turn_tokens.get(session_key)
+                if self._GLib is not None:
+                    self._GLib.idle_add(self._do_text_delta, session_key, "", current_token)
+                else:
+                    self._do_text_delta(session_key, "", current_token)
+
+    def _do_text_delta_inner(self, session_key: str, text: str, delta_token: object = None) -> None:
+        """Render body of _do_text_delta (guards + bubble-start + render).
+
+        The throttle lives entirely in the producers (the scheduler in
+        _on_text_delta and the trailing scheduler in _do_text_delta's
+        finally): every dispatch that reaches this method was already gated,
+        so it renders unconditionally.
         """
         if self._crh is None:
             return
@@ -1016,7 +1110,7 @@ class AgentRuntimeHandler:
         # finish_reason:"error". Starting a streaming bubble on empty text
         # creates a flickering empty box that is immediately replaced by
         # the error message.
-        if not text:
+        if not text and not self._streaming_text.get(session_key):
             return
         # RACE-FIX: If this session has already completed (response_complete
         # or error set _ended_sessions), drop the delta. This prevents stale
@@ -1028,7 +1122,7 @@ class AgentRuntimeHandler:
                 "_do_text_delta: dropping delta for ended session %s", session_key,
             )
             return
-        # RACE-FIX v4: If this delta's turn token doesn't match the current
+        # RACE-FIX v4: If this dispatch's turn token doesn't match the current
         # turn token, it's from a previous turn (stale). Drop it.
         # delta_token=None means a 2-arg caller (backward-compat tests) —
         # treat as current turn (never stale).
@@ -1042,9 +1136,6 @@ class AgentRuntimeHandler:
                     session_key,
                 )
                 return
-        # Always accumulate text — ensures final output is complete
-        self._streaming_text[session_key] = self._streaming_text.get(session_key, "") + text
-
         if not self._crh.is_streaming(session_key):
             chat_box = self._resolve_chat_box(session_key)
             if chat_box is not None:
@@ -1064,15 +1155,9 @@ class AgentRuntimeHandler:
                     agent_name_dl = agent_def_dl.display_name if agent_def_dl else "Agent"
                     self._on_drawer_lifecycle(session_key, agent_name_dl, "start")
 
-        # Throttle check: skip expensive rendering if we recently dispatched.
-        # The text has already been accumulated above, so the final render
-        # will be correct. The first call always passes (last defaults to 0.0,
-        # so now - 0.0 >= 0.05 on first token).
-        now = time.monotonic()
-        last = self._last_delta_dispatch.get(session_key, 0.0)
-        if now - last >= self._delta_throttle_sec:
-            self._last_delta_dispatch[session_key] = now
-            self._crh.update_streaming(session_key, self._streaming_text[session_key])
+        # Render the producer-accumulated text unconditionally (the throttle
+        # was applied by the scheduler before this dispatch was queued).
+        self._crh.update_streaming(session_key, self._streaming_text.get(session_key, ""))
 
     def _on_tool_call_start(
         self, session_key: str, name: str, args: dict[str, Any]
@@ -1498,6 +1583,10 @@ class AgentRuntimeHandler:
         # Clear accumulated streaming text — no longer needed
         self._streaming_text.pop(session_key, None)
         self._last_delta_dispatch.pop(session_key, None)
+        # AC3 Part A: drop any pending coalesced dispatch + dirty flag — the
+        # turn is over; leftovers would suppress scheduling on the next turn.
+        self._delta_dispatch_pending.discard(session_key)
+        self._delta_dirty.discard(session_key)
 
         was_streaming = self._crh.is_streaming(session_key)
         project_name = self._active_project[0] if self._active_project else None
@@ -1840,6 +1929,10 @@ class AgentRuntimeHandler:
         logger.debug("[handler] _do_error: sk=%s msg=%s", session_key, message)
         self._streaming_text.pop(session_key, None)
         self._last_delta_dispatch.pop(session_key, None)
+        # AC3 Part A: drop any pending coalesced dispatch + dirty flag — the
+        # turn is over; leftovers would suppress scheduling on the next turn.
+        self._delta_dispatch_pending.discard(session_key)
+        self._delta_dirty.discard(session_key)
         # When the runtime passes a raw exception object (not a string),
         # translate it to a user-friendly message for display while keeping
         # the exception stored in _last_error_exception for context enrichment.
