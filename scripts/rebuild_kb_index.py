@@ -23,6 +23,7 @@ Idempotency: re-running on unchanged KB produces byte-identical output
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import logging
 import re
@@ -173,9 +174,7 @@ def chunk_kb_dir(kb_dir: Path) -> list[dict]:
 
 def embed_chunks(chunks: list[dict], model_name: str) -> "np.ndarray":
     """Embed all chunk texts with the configured model. Returns (N, D) array."""
-    try:
-        import numpy as np
-    except ImportError:
+    if importlib.util.find_spec("numpy") is None:
         log.error("numpy is required: pip install numpy")
         sys.exit(1)
 
