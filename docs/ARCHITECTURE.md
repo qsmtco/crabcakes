@@ -200,9 +200,7 @@ crabcakes/
 │   └── troubleshooting.md    # Common problems and solutions
 │
 ├── scripts/                  # Standalone utility scripts
-│   ├── rebuild_kb_index.py    # offline indexer — builds knowledge/.index/ from knowledge/*.md
-│   ├── audit_attack_scenarios.py  # streaming security audit scenarios
-│   └── audit_streaming_scenarios.py # streaming audit helper
+│   └── rebuild_kb_index.py    # offline indexer — builds knowledge/.index/ from knowledge/*.md
 │
 ├── prompts/                  # System prompt templates and default agent definitions
 │   ├── system/                # Agent system prompt templates (loaded by utils/prompt_loader.py)
@@ -4363,8 +4361,6 @@ crabcakes/
 │       └── cost.py               # Cost tables + model_id + cost_for_model
 │
 ├── scripts/
-│   ├── audit_attack_scenarios.py  # streaming security audit scenarios
-│   ├── audit_streaming_scenarios.py # streaming audit helper
 │   └── rebuild_kb_index.py       # offline indexer — builds knowledge/.index/ from knowledge/*.md
 │
 ├── ui/
