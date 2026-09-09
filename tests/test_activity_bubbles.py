@@ -10,6 +10,8 @@
 import gi
 gi.require_version('Gtk', '4.0')
 
+import time
+
 import pytest
 from unittest.mock import MagicMock
 
@@ -1061,3 +1063,227 @@ class TestSystemBubbleCSS:
         classes = self._walk_css_classes(widget)
         assert "chat-bubble-you" in classes
         assert "chat-bubble-System" not in classes
+
+class TestActivityPerfGuard:
+    """AC3 Phase 1 Part C — single 250ms status ticker + skip-when-unchanged.
+
+    Guards three perf behaviors on ActivityHandler:
+      1. One GLib timer drives both live-update and idle-pulse production
+         (250ms), not two 200ms timers.
+      2. Consecutive ticks with unchanged state/phase/hops/elapsed-bucket skip
+         the _update_feedbar markup rebuild AND _streaming_label construction.
+      3. _resolve_agent_name fires at most ONCE per gateway event, resolved
+         lazily — per-delta assistant events must pay zero resolution cost.
+
+    NOTE (flagged, not fixed here — outside Phase 1 scope): ActivityHandler
+    .__init__ never initializes _agent_to_project; set_agent_routing() is the
+    only setter. window.py wires set_agent_routing at build time, so
+    production is safe, but a handler constructed without it crashes with
+    AttributeError in _is_ui_active. Known trigger: any direct _set_state
+    call in a fresh handler (pre-existing; not introduced by Part C).
+    """
+
+    def _make_handler(self, fake_glib):
+        from ui.handlers.activity_handler import ActivityHandler
+        mc = MagicMock()
+        mc.get_current_session_key.return_value = "sk-1"  # _is_ui_active guard
+        h = ActivityHandler(
+            feedbar=MagicMock(), main_content=mc, GLib_module=fake_glib
+        )
+        # _is_ui_active reads _agent_to_project.get_project(sk); a bare MagicMock
+        # would auto-return a truthy mock and fail the project-tab comparison.
+        routing = MagicMock()
+        routing.get_project.return_value = None
+        h.set_agent_routing(routing)
+        return h
+
+    # ── Single ticker ──────────────────────────────────────────────────
+
+    def test_single_ticker_started_at_250ms(self, fake_glib):
+        """Entering an active state arms exactly ONE 250ms timer."""
+        h = self._make_handler(fake_glib)
+        armed = fake_glib.armed
+        h._set_state("streaming", "sk-1")
+        assert len(armed) == 1
+        source_id, delay_ms, _cb = armed[0]
+        assert delay_ms == 250
+
+    def test_state_transition_restarts_single_ticker(self, fake_glib):
+        """Spec C1/C4: transitioning streaming → tool_use stops the old ticker
+        and arms a new one (public _stop_live_update/_stop_idle_pulse semantics
+        preserved: the net effect of both stops plus one start)."""
+        h = self._make_handler(fake_glib)
+        h._set_state("streaming", "sk-1")
+        id_after_streaming = set(fake_glib.armed_ids)
+        h._set_state("tool_use", "sk-1")
+        # Old ticker source was removed, exactly one new timer armed
+        assert id_after_streaming.isdisjoint(set(fake_glib.armed_ids))
+        assert len(fake_glib.armed) == 2  # one per _set_state call
+
+    def test_idle_transition_uses_single_ticker(self, fake_glib):
+        """Idle state also arms the single ticker (pulse branch), at 250ms.
+        Transition from an active state first — the handler STARTS in idle and
+        same-state transitions early-return without re-arming."""
+        h = self._make_handler(fake_glib)
+        h._set_state("streaming", "sk-1")
+        h._set_state("idle", "sk-1")
+        assert len(fake_glib.armed) == 2  # one ticker per transition
+        assert fake_glib.armed[-1][1] == 250
+
+    def test_stop_live_update_stops_single_ticker(self, fake_glib):
+        """Spec C4: _stop_live_update keeps its public behavior — it now stops
+        the single ticker (source removed, attribute cleared)."""
+        h = self._make_handler(fake_glib)
+        h._set_state("streaming", "sk-1")
+        source_id = h._live_update_timer
+        assert source_id is not None
+        assert source_id in fake_glib.armed_ids  # ticker armed before stop
+        h._stop_live_update()
+        assert source_id not in fake_glib.armed_ids  # source_remove was called
+        assert h._live_update_timer is None
+
+    def test_stop_idle_pulse_stops_single_ticker_and_pulse(self, fake_glib):
+        """Spec C4: _stop_idle_pulse keeps its public behavior — stops the
+        single ticker AND clears the feedbar pulse flag."""
+        h = self._make_handler(fake_glib)
+        h._set_state("streaming", "sk-1")  # leave initial idle first
+        h._set_state("idle", "sk-1")       # arm the idle branch of the ticker
+        source_id = h._idle_pulse_timer
+        assert source_id is not None
+        assert source_id in fake_glib.armed_ids  # ticker armed before stop
+        h._stop_idle_pulse()
+        assert source_id not in fake_glib.armed_ids  # source_remove was called
+        assert h._idle_pulse_timer is None
+        h._feedbar.set_progress_pulse.assert_called_with(False)
+
+    def test_live_update_tick_returns_true_when_active(self, fake_glib):
+        """The tick callable keeps the GLib contract: True = keep ticking while
+        state is active, False = stop."""
+        h = self._make_handler(fake_glib)
+        h._set_state("streaming", "sk-1")
+        tick = fake_glib.armed[0][2]
+        assert tick() is True  # streaming state → live-update branch continues
+        h._set_state("done", "sk-1")
+        assert tick() is False  # no longer active → tick out
+
+    # ── Skip-when-unchanged (live-update branch) ───────────────────────
+
+    def test_two_unchanged_ticks_skip_feedbar_rebuild(self, fake_glib, monkeypatch):
+        """Spec C2: two consecutive ticks with unchanged state/phase/hops/
+        elapsed-bucket → no _update_feedbar markup rebuild, no
+        _streaming_label construction."""
+        h = self._make_handler(fake_glib)
+        monkeypatch.setattr(time, "monotonic", lambda: 1000.0)  # frozen clock
+        h._set_state("streaming", "sk-1")  # tick 0: transition itself renders
+        h._feedbar.set_status_text.reset_mock()
+        tick = fake_glib.armed[0][2]
+
+        tick()  # first tick: renders (cold skip-cache)
+        assert h._feedbar.set_status_text.call_count == 1
+        tick()  # second tick: nothing changed → must skip
+        assert h._feedbar.set_status_text.call_count == 1, (
+            "unchanged second tick must not rebuild feedbar markup"
+        )
+
+    def test_tick_with_changed_hops_rebuilds(self, fake_glib, monkeypatch):
+        """A hop-count change (gateway event progress) must rebuild the markup."""
+        h = self._make_handler(fake_glib)
+        monkeypatch.setattr(time, "monotonic", lambda: 1000.0)
+        h._set_state("reasoning", "sk-1")
+        h._feedbar.set_status_text.reset_mock()
+        tick = fake_glib.armed[0][2]
+        tick()
+        assert h._feedbar.set_status_text.call_count == 1
+        h._event_hop_count["sk-1"] = 5  # progress moved
+        tick()
+        assert h._feedbar.set_status_text.call_count == 2, (
+            "changed hop count must rebuild the feedbar markup"
+        )
+
+    def test_streaming_label_not_constructed_on_unchanged_tick(self, fake_glib, monkeypatch):
+        """Spec C2 explicitly: _streaming_label() must not even be CONSTRUCTED
+        on an unchanged tick (spy via monkeypatched instance attribute)."""
+        h = self._make_handler(fake_glib)
+        monkeypatch.setattr(time, "monotonic", lambda: 1000.0)
+        h._set_state("streaming", "sk-1")
+        tick = fake_glib.armed[0][2]
+        label_calls = []
+        original = h._streaming_label
+        h._streaming_label = lambda: (label_calls.append(1), original())[1]
+
+        tick()
+        assert len(label_calls) == 1
+        tick()  # unchanged
+        assert len(label_calls) == 1, (
+            "unchanged tick must not construct the streaming label"
+        )
+
+    def test_idle_pulse_still_fires_every_tick(self, fake_glib):
+        """The idle-pulse branch is an ANIMATION — it must keep pulsing on
+        every tick even when nothing else changed (never skip-gated)."""
+        h = self._make_handler(fake_glib)
+        h._set_state("streaming", "sk-1")  # leave initial idle first
+        h._set_state("idle", "sk-1")
+        tick = fake_glib.armed[-1][2]
+        tick()
+        tick()
+        tick()
+        assert h._feedbar.pulse_progress.call_count == 3
+
+    # ── Hoisted agent-name resolution ──────────────────────────────────
+
+    def test_resolve_agent_name_at_most_once_per_event(self, fake_glib):
+        """Spec C3: on_gateway_event resolves the agent name at most once —
+        _resolve_agent_name must not fire per activity-bubble branch."""
+        h = self._make_handler(fake_glib)
+        resolve_calls = []
+        original = h._resolve_agent_name
+        h._resolve_agent_name = lambda p: (resolve_calls.append(1), original(p))[1]
+
+        payload = {
+            "sessionKey": "sk-1",
+            "stream": "item",
+            "data": {"kind": "tool", "phase": "start", "name": "read_file",
+                     "agentName": "Coder"},
+        }
+        h.on_gateway_event("agent", payload)
+        assert len(resolve_calls) <= 1, (
+            f"_resolve_agent_name fired {len(resolve_calls)}x for one event"
+        )
+        assert resolve_calls, "a tool bubble needs a resolved agent name"
+
+    def test_assistant_delta_event_pays_no_resolution_cost(self, fake_glib):
+        """Spec C3 laziness clause: per-delta assistant events must NOT call
+        _resolve_agent_name (they are the highest-frequency event type)."""
+        h = self._make_handler(fake_glib)
+        resolve_calls = []
+        original = h._resolve_agent_name
+        h._resolve_agent_name = lambda p: (resolve_calls.append(1), original(p))[1]
+
+        payload = {
+            "sessionKey": "sk-1",
+            "stream": "assistant",
+            "data": {"text": "some streaming text"},
+        }
+        h.on_gateway_event("agent", payload)
+        assert len(resolve_calls) == 0, (
+            "assistant deltas must not resolve agent names (hot path)"
+        )
+
+    def test_tool_bubble_still_carries_resolved_name(self, fake_glib):
+        """Behavior preservation: the tool-start bubble still receives the
+        gateway agentName after the hoist (single resolution, same value)."""
+        h = self._make_handler(fake_glib)
+        bubbles = []
+        h.set_on_activity_bubble(lambda b: bubbles.append(b))
+
+        payload = {
+            "sessionKey": "sk-1",
+            "stream": "item",
+            "data": {"kind": "tool", "phase": "start", "name": "read_file",
+                     "agentName": "Coder"},
+        }
+        h.on_gateway_event("agent", payload)
+        assert len(bubbles) == 1
+        assert bubbles[0].agent_name == "Coder"
+        assert bubbles[0].type == "tool_start"

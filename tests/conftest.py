@@ -79,23 +79,44 @@ def test_handlers_do_not_import_each_other():
                     if imported != our_name:  # same handler can import itself
                         violations.append(f"{os.path.basename(filepath)} imports ui.handlers.{imported}")
 
-    assert violations == [], f"Handler coupling violations:\n  " + "\n  ".join(violations)
+    assert violations == [], "Handler coupling violations:\n  " + "\n  ".join(violations)
 
 
 @pytest.fixture
 def fake_glib():
     """Provide a GLib-like object for handler tests that need it.
-    Provides timeout_add and source_remove with immediate execution (no delay).
+
+    timeout_add/timeout_add_seconds record (source_id, delay_ms, callback) in
+    `armed` (and the source_id in `armed_ids`) and return source IDs starting
+    at 2 — armed timers NEVER fire automatically. Tests that need a timer's
+    effect call the recorded callback directly:
+        source_id, delay_ms, cb = fake_glib.armed[0]; cb()
+
+    source_remove discards the ID from `armed_ids` — a source ID still present
+    in `armed_ids` is armed; one that vanished was stopped.
     """
     class FakeGLib:
-        def timeout_add(self, *args, **kwargs):
-            return 1
+        def __init__(self):
+            self._next_source_id = 2
+            self.armed = []   # (source_id, delay_ms, callback)
+            self.armed_ids = set()
 
-        def timeout_add_seconds(self, *args, **kwargs):
-            return 1
+        def timeout_add(self, delay_ms, fn, *args, **kwargs):
+            source_id = self._next_source_id
+            self._next_source_id += 1
+            self.armed.append((source_id, delay_ms, fn))
+            self.armed_ids.add(source_id)
+            return source_id
+
+        def timeout_add_seconds(self, seconds, fn, *args, **kwargs):
+            source_id = self._next_source_id
+            self._next_source_id += 1
+            self.armed.append((source_id, seconds * 1000, fn))
+            self.armed_ids.add(source_id)
+            return source_id
 
         def source_remove(self, timer_id):
-            pass
+            self.armed_ids.discard(timer_id)
 
         def idle_add(self, fn, *args, **kwargs):
             fn(*args)

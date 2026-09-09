@@ -27,6 +27,10 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
+# AC3 Phase 1 Part C: sentinel for the per-event agent-name cache — distinct
+# from any real resolved name (including "" and None).
+_AGENT_NAME_UNRESOLVED = object()
+
 
 class ActivityHandler:
     _STATES = ("idle", "sending", "reasoning", "streaming", "tool_use", "done")
@@ -44,8 +48,15 @@ class ActivityHandler:
         self._current_tool_name = ""
 
         # Timers (GLib source IDs) — _done_flash_timers is per-session
-        self._live_update_timer = None
-        self._idle_pulse_timer = None
+        # AC3 Phase 1 Part C: ONE 250ms ticker (_status_ticker_id) drives both
+        # the live-update branch (reasoning/streaming/tool_use) and the
+        # idle-pulse branch (idle). _live_update_timer / _idle_pulse_timer are
+        # kept as aliases maintained by _stop_live_update/_stop_idle_pulse so
+        # existing call sites keep working.
+        self._status_ticker_id: int | None = None
+        self._live_update_timer = None   # alias for _status_ticker_id
+        self._idle_pulse_timer = None    # alias for _status_ticker_id
+        self._last_tick_signature: tuple | None = None  # skip-when-unchanged cache
         self._done_flash_timers: dict[str, int] = {}  # session_key → GLib source ID
         self._send_initiated_timers: dict[str, int] = {}  # session_key → pre-flight timeout
 
@@ -71,6 +82,10 @@ class ActivityHandler:
         # PHASE 6: AgentManager for session_key → agent_name fallback when the
         # gateway payload's data.agentName is empty (SPEC §2.4 fallback chain).
         self._agent_mgr = None
+        # AC3 Phase 1 Part C: one-shot agent-name cache, reset at the top of
+        # every on_gateway_event. Guarantees ≤1 _resolve_agent_name call per
+        # event and zero calls on events that never need the name.
+        self._resolved_agent_name: object = _AGENT_NAME_UNRESOLVED
 
     # ── Public entry points (called from gateway event handlers in window) ──
 
@@ -266,6 +281,22 @@ class ActivityHandler:
                 pass  # AgentManager may not be ready; fall through
         return ""
 
+    def _agent_name_for_event(self, payload: dict) -> str:
+        """Resolve the agent name at most ONCE per gateway event (AC3 Phase 1 Part C).
+
+        Lazily delegates to _resolve_agent_name on first access within an
+        event; subsequent accesses reuse the cached value. The cache is reset
+        at the top of on_gateway_event, so the cost profile is:
+          - events that never need the name (assistant deltas, res, tick…): 0 calls
+          - events that need it once or more (item/plan/approval/patch/lifecycle): exactly 1 call
+
+        DO NOT call from outside on_gateway_event's dynamic extent — the cache
+        has no TTL and would go stale across events.
+        """
+        if self._resolved_agent_name is _AGENT_NAME_UNRESOLVED:
+            self._resolved_agent_name = self._resolve_agent_name(payload)
+        return self._resolved_agent_name
+
     def on_send_initiated(self, session_key: str):
         """Send button pressed — enter pre-flight (sending) state with 30s timeout.
 
@@ -304,6 +335,10 @@ class ActivityHandler:
         session_key = payload.get("sessionKey", "") or ""
         sk = self._get_progress_session(session_key)
 
+        # AC3 Phase 1 Part C: reset the one-shot agent-name cache — every
+        # event gets exactly one resolution budget, spent lazily.
+        self._resolved_agent_name = _AGENT_NAME_UNRESOLVED
+
         # Phase 2: every event hops the bar (skip idle/done — round is over)
         if self._phase.get(sk, 1) == 2 and self._state not in ("idle", "done"):
             self._event_hop_count[sk] = self._event_hop_count.get(sk, 0) + 1
@@ -330,7 +365,7 @@ class ActivityHandler:
                 phase = self._safe_data(payload).get("phase", "")
                 # Resolve agent name with AgentManager fallback (SPEC-activity-drawer §2.4 / PHASE 6).
                 # When the gateway's data.agentName is empty, fall back to AgentManager.
-                _agent_name = self._resolve_agent_name(payload)
+                _agent_name = self._agent_name_for_event(payload)
                 # Track lifecycle end for missing-message recovery.
                 # Cleanup runs on both end and error — fixes memory leak.
                 if phase in ("end", "error"):
@@ -378,7 +413,7 @@ class ActivityHandler:
                 # SPEC-activity-drawer §2.4: tool bubbles carry agent_name with
                 # AgentManager fallback (PHASE 6). When the gateway's data.agentName
                 # is empty on stream=item kind=tool events, fall back to AgentManager.
-                _agent_name = self._resolve_agent_name(payload)
+                _agent_name = self._agent_name_for_event(payload)
                 sk = payload.get("sessionKey", "") or session_key
 
                 if kind == "tool" and self._activity_bubble_callback:
@@ -413,7 +448,7 @@ class ActivityHandler:
                 # fallback chain used by the item/branch (PHASE 6). The plan,
                 # approval, and patch branches are siblings of `item`, so they
                 # need their own resolution — _agent_name is not in scope here.
-                _agent_name = self._resolve_agent_name(payload)
+                _agent_name = self._agent_name_for_event(payload)
                 if title and self._activity_bubble_callback:
                     from models.activity import ActivityBubble, ToolStatus
                     bubble = ActivityBubble(type="plan", session_key=sk, icon="📋", title=title, steps=steps, agent_name=_agent_name)
@@ -427,7 +462,7 @@ class ActivityHandler:
                     approval_id = data.get("approvalId", "") or ""
                     sk = payload.get("sessionKey", "") or session_key
                     # SPEC-activity-drawer §2.4: see plan/branch comment.
-                    _agent_name = self._resolve_agent_name(payload)
+                    _agent_name = self._agent_name_for_event(payload)
                     if cmd and self._activity_bubble_callback:
                         from models.activity import ActivityBubble, ToolStatus
                         bubble = ActivityBubble(type="approval_request", session_key=sk, icon="🔒", command=cmd, reason=reason, approval_id=approval_id, agent_name=_agent_name)
@@ -442,7 +477,7 @@ class ActivityHandler:
                     deleted = len(data.get("deleted", []) or [])
                     sk = payload.get("sessionKey", "") or session_key
                     # SPEC-activity-drawer §2.4: see plan/branch comment.
-                    _agent_name = self._resolve_agent_name(payload)
+                    _agent_name = self._agent_name_for_event(payload)
                     if name and self._activity_bubble_callback:
                         from models.activity import ActivityBubble, ToolStatus
                         bubble = ActivityBubble(type="patch", session_key=sk, tool_name=name, added=added, modified=modified, deleted=deleted, icon="✏️", agent_name=_agent_name)
@@ -467,7 +502,7 @@ class ActivityHandler:
                     command = data.get("title", "") or ""
                     sk = payload.get("sessionKey", "") or session_key
                     # SPEC-activity-drawer §2.4: see plan/branch comment.
-                    _agent_name = self._resolve_agent_name(payload)
+                    _agent_name = self._agent_name_for_event(payload)
                     if name and self._activity_bubble_callback:
                         from models.activity import ActivityBubble, ToolStatus
                         # BUGFIX-1 audit: honor both exit_code AND status.
@@ -581,6 +616,7 @@ class ActivityHandler:
         if state == self._state:
             # Even if already in this state, still update the feedbar for live counters
             if state in ("reasoning", "streaming", "tool_use"):
+                self._last_tick_signature = None  # manual render invalidates the tick cache
                 self._update_feedbar()
             return
 
@@ -599,11 +635,13 @@ class ActivityHandler:
         # Apply state to FeedBar
         self._update_feedbar()
 
-        # Start timers for new state
-        if state in ("reasoning", "streaming", "tool_use"):
-            self._live_update_timer = self._GLib.timeout_add(200, self._live_update)
-        elif state == "idle":
-            self._start_idle_pulse()
+        # Start the single 250ms status ticker for the new state (AC3 Phase 1
+        # Part C). The tick branches on self._state: active states run the
+        # live-update branch, idle runs the pulse branch.
+        self._status_ticker_id = self._GLib.timeout_add(250, self._status_tick)
+        # Keep aliases in sync — _stop_live_update/_stop_idle_pulse read them
+        self._live_update_timer = self._status_ticker_id
+        self._idle_pulse_timer = self._status_ticker_id
         # done: flash timer started by caller
 
     def _update_feedbar(self):
@@ -686,20 +724,54 @@ class ActivityHandler:
 
     # ── Timer callbacks ────────────────────────────────────────────────────
 
+    def _status_tick(self):
+        """Single 250ms tick for the whole status machine (AC3 Phase 1 Part C).
+
+        Branches on self._state:
+          reasoning/streaming/tool_use → live-update branch (counters).
+          idle                         → idle-pulse branch (progress pulse).
+        Returns GLib's keep-alive contract: True while the current state needs
+        ticking, False when the state no longer matches (timer dies).
+        """
+        if self._state in ("reasoning", "streaming", "tool_use"):
+            self._live_update()
+            return True
+        if self._state == "idle":
+            self._idle_pulse()
+            return True
+        return False
+
     def _live_update(self):
-        """Called every 200ms during reasoning/streaming/tool_use — update counters."""
+        """Live-update branch — update counters during reasoning/streaming/tool_use.
+
+        Skip-when-unchanged: if (state, phase, hop bucket, elapsed bucket) is
+        identical to the last rendered tick, skip both the _update_feedbar
+        markup rebuild and the _streaming_label() construction.
+        """
         if self._state not in ("reasoning", "streaming", "tool_use"):
             return False
+        sk = self._active_session()
+        signature = (
+            self._state,
+            self._phase.get(self._get_progress_session(None), 1),
+            self._event_hop_count.get(self._get_progress_session(None), 0),
+            # Elapsed bucket: 0.5s granularity — labels update at most twice
+            # per second for pure time drift; hop/state changes rebuild sooner.
+            int((time.monotonic() - self._agent_start_time.get(sk, time.monotonic())) / 0.5),
+        )
+        if signature == self._last_tick_signature:
+            return True  # nothing changed since the last rendered tick
+
+        self._last_tick_signature = signature
         self._update_feedbar()
         return True
 
-    def _start_idle_pulse(self):
-        """Start the idle pulse animation on the progress bar."""
-        self._feedbar.set_progress_pulse(True)
-        self._idle_pulse_timer = self._GLib.timeout_add(200, self._idle_pulse)
-
     def _idle_pulse(self):
-        """Tick for idle pulse — pulse the progress bar."""
+        """Idle-pulse branch — pulse the progress bar.
+
+        ANIMATION: never skip-gated. The pulse must advance on every tick even
+        when state/phase/hops are unchanged (a skipped pulse is a frozen bar).
+        """
         if self._state != "idle":
             return False
         self._feedbar.pulse_progress()

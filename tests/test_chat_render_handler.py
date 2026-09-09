@@ -458,7 +458,7 @@ class TestStreamingPerfGuard:
         """Spec B2: deltas inside the throttle window produce exactly one
         set_text per window (monotonic clock stubbed, no sleeps, no FP-boundary
         dependence — 0.05s spacing keeps every delta well inside one window)."""
-        sb = self._start_with_counting_label()
+        self._start_with_counting_label()
         clock = {"t": 100.0}
         monkeypatch.setattr(time, "monotonic", lambda: clock["t"])
 
