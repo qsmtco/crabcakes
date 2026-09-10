@@ -28,6 +28,10 @@ Thumbs.db
 .env.*
 secrets/
 
+# Virtual environments (created in-repo by knowledge/install.md)
+.venv/
+venv/
+
 # Whisper models (large binary)
 *.bin
 .crabcakes/

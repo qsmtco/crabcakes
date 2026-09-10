@@ -49,8 +49,22 @@ class CrabcakesApp(Gtk.Application):
         win = MainWindow(application=app)  # Pass app as the application instance
         win.present()  # Show the window (GTK4 uses present() instead of show_all())
 
+
+def main():
+    """
+    Console entry point.
+
+    Referenced by [project.scripts] in pyproject.toml, which is what makes
+    the `crabcakes` command exist after `pip install -e .`. Kept separate from
+    the __main__ guard below so the same code path serves both
+    `crabcakes` and `python3 main.py`.
+    """
+    app = CrabcakesApp()  # Create application instance
+    return app.run(None)  # Run the application (None = use default sys.argv)
+
+
 # Standard Python entry point guard
 # Runs only when this file is executed directly (not imported)
 if __name__ == "__main__":
-    app = CrabcakesApp()  # Create application instance
-    sys.exit(app.run(None))  # Run the application (None = use default sys.argv)
+    sys.exit(main())
+
