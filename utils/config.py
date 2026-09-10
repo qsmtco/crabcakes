@@ -65,6 +65,22 @@ def get_identity_dir() -> str:
     return os.path.join(os.path.expanduser("~"), ".openclaw", "identity")
 
 
+def get_project_root() -> str:
+    """Return the CrabCakes repository root (the directory containing main.py).
+
+    Derived from this file's location (utils/config.py -> parent of utils/), so
+    it is correct regardless of the current working directory and regardless of
+    where the checkout lives. Use this instead of hardcoding an absolute path
+    to the repo when locating bundled assets (icons/, prompts/, knowledge/).
+
+    Note: an editable install (pip install -e .) keeps the repo layout, so this
+    resolves to the checkout. A non-editable install resolves to the installed
+    package directory, where bundled data files are only present if declared as
+    package data.
+    """
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 # Command system configuration
 # Backtick prefix — triggers command parsing in ChatHandler.on_send().
 # Zero collision with gateway commands (/approve, /status, etc.) which use /.

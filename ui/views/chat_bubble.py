@@ -36,6 +36,7 @@ gi.require_version('Pango', '1.0')
 from gi.repository import Gtk, Pango, Gdk
 
 from utils.escaping import escape_for_pango, xml_escape_text, xml_template
+from utils.config import get_project_root
 from utils.markdown import format_markdown
 from utils.block_parser import extract_blocks
 from utils.crabcard_parser import is_crabcards_placeholder, get_placeholder_index as _get_placeholder_index
@@ -460,7 +461,7 @@ def _add_action_buttons(bubble: Gtk.Box, raw_text: str, on_forward_click, sessio
     copy_btn.set_opacity(0.3)
     try:
         copy_btn.set_child(Gtk.Image.new_from_file(
-            "/home/q/projects/crabcakes/ui/icons/copy.svg"))
+            os.path.join(get_project_root(), "ui", "icons", "copy.svg")))
     except Exception:
         copy_btn.set_label("📋")
     copy_btn.connect("clicked", lambda _, t=raw_text: _copy_to_clipboard(t))
@@ -476,7 +477,7 @@ def _add_action_buttons(bubble: Gtk.Box, raw_text: str, on_forward_click, sessio
     fwd_btn.set_opacity(0.3)
     try:
         fwd_btn.set_child(Gtk.Image.new_from_file(
-            "/home/q/projects/crabcakes/ui/icons/forward.svg"))
+            os.path.join(get_project_root(), "ui", "icons", "forward.svg")))
     except Exception:
         fwd_btn.set_label("↗")
     if on_forward_click:
@@ -1075,7 +1076,7 @@ def build_welcome_bubble() -> Gtk.Widget | None:
     Shows the CrabCakes logo with rounded corners. Scrolled away naturally
     as messages arrive. Returns None if the logo file is not found.
     """
-    logo_path = "/home/q/projects/crabcakes/icons/logo-rounded.png"
+    logo_path = os.path.join(get_project_root(), "icons", "logo-rounded.png")
     if not os.path.isfile(logo_path):
         return None
     try:

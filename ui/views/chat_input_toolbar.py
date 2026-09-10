@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 import gi
 
@@ -16,6 +17,7 @@ gi.require_version("Gio", "2.0")
 from gi.repository import Gtk, Gdk, GLib, Gio
 
 from utils.prompts import load_prompts
+from utils.config import get_project_root
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +123,7 @@ class ChatInputToolbar(Gtk.Box):
         spell_btn.set_tooltip_text("Spell Check")
         spell_btn.add_css_class("flat")
         spell_img = Gtk.Image.new_from_file(
-            "/home/q/projects/crabcakes/icons/emoji/spellcheck.png"
+            os.path.join(get_project_root(), "icons", "emoji", "spellcheck.png")
         )
         spell_img.set_pixel_size(16)
         spell_btn.set_child(spell_img)

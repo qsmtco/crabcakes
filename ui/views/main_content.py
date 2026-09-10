@@ -7,6 +7,7 @@ import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gdk, GLib, Gio
 import logging
+import os
 from typing import Callable
 
 _logger = logging.getLogger(__name__)
@@ -16,6 +17,7 @@ _logger = logging.getLogger(__name__)
 from ui.views.chat_input_toolbar import ChatInputToolbar
 from ui.views.session_menu import show_session_menu, show_project_menu
 from utils.escaping import escape_for_pango
+from utils.config import get_project_root
 
 class MainContent(Gtk.Box):
     """
@@ -217,7 +219,7 @@ class MainContent(Gtk.Box):
 
         prompt_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         mic_img = Gtk.Image.new_from_file(
-            "/home/q/projects/crabcakes/icons/emoji/mic_modern.png"
+            os.path.join(get_project_root(), "icons", "emoji", "mic_modern.png")
         )
         mic_img.set_pixel_size(16)
         self._prompt_mic_img = mic_img

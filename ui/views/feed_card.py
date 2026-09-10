@@ -13,10 +13,12 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Pango
 
 from typing import Callable
+import os
 
 from models.feed_card import FeedCardData, CardType
 from models.conversation_snapshot import ConversationSnapshot
 from utils.escaping import escape_for_pango, xml_template
+from utils.config import get_project_root
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -52,7 +54,7 @@ def _make_feed_card_header(
     copy_btn.set_opacity(0.3)
     try:
         copy_btn.set_child(Gtk.Image.new_from_file(
-            "/home/q/projects/crabcakes/ui/icons/copy.svg"))
+            os.path.join(get_project_root(), "ui", "icons", "copy.svg")))
     except Exception:
         copy_btn.set_label("📋")
     copy_motion = Gtk.EventControllerMotion()
