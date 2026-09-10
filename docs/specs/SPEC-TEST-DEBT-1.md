@@ -30,7 +30,7 @@
 
 **Problem.** Tool-only turns (LLM streams zero text deltas) never get a turn-start signal that works: the runtime's empty-delta signal dies at `_do_text_delta_inner`'s empty-return, so the streaming bubble, progress bar, and drawer separator never start, and the previous turn's `_ended_sessions` flag suppresses the new turn's tool_starts (2 baseline failures). Additionally, three `end_streaming` callers can render an empty header bubble on tool-only turns (BUG #22 class), and `_started_turn_sessions` is dead code.
 
-**Solution.** Replace the overloaded empty-delta signal with a dedicated `on_turn_start` callback dispatched at the top of `_run_loop`. The handler's `_do_turn_start` starts the streaming bubble + lifecycle for EVERY turn, guarded against the two out-of-order cases (stale token, terminal-event-first). The flag lifecycle stays exactly as RACE-FIX v4 designed it: `_ended_sessions` is cleared ONLY by `send_to_special_agent`. Add the BUG #22 render-guard to the three unguarded `end_streaming` callers. Delete the dead `_started_turn_sessions` set. Rewrite/replace the 4 affected tests, add 6 new ones.
+**Solution.** Replace the overloaded empty-delta signal with a dedicated `on_turn_start` callback dispatched at the top of `_run_loop`. The handler's `_do_turn_start` starts the streaming bubble + lifecycle for EVERY turn, guarded against the two out-of-order cases (stale token, terminal-event-first). The flag lifecycle stays exactly as RACE-FIX v4 designed it: `_ended_sessions` is cleared ONLY by `send_to_special_agent`. Add the BUG #22 render-guard to the three unguarded `end_streaming` callers. Delete the dead `_started_turn_sessions` set. Rewrite/replace the 4 affected tests, add 6 new ones, and update 2 existing tests (the BUG-21 docstring in `test_empty_delta_still_reaches_main_thread`; the 9→10 Protocol-count in `test_callbacks_module_exports_protocols`, Debugger audit BUG #1).
 
 **Scope.**
 
@@ -457,12 +457,12 @@ All tests below live in `TestLocalAgentDrawerEmissions` unless noted. Line numbe
 
 **Edit G — `TestDeltaCoalescing::test_empty_delta_still_reaches_main_thread` (:5695-5705):** update the DOCSTRING only (assertions unchanged, traced still-green): "(4) empty-delta bypass preserved: provider-sent empty deltas still dispatch to the main thread uncoalesced, and the empty delta still returns before accumulation. (The runtime's turn-start signal moved to on_turn_start.)"
 
-**Edit H — UPDATE `TestRuntimeStructure::test_callbacks_module_exports_protocols` (:5488) (Debugger audit BUG #1):** the test hard-codes the 9-Protocol count in two places. Add `OnTurnStart` to BOTH the `from agent.callbacks import (...)` list and the `for cls in (...)` tuple (alphabetical position after `OnTextDelta`), and update the docstring "all 9 callback Protocols" → "all 10 callback Protocols". The import list's `AgentRuntimeCallbacks` entry stays last.
+**Edit H (§2.4 test update — disambiguates from §2.3 handler Edit H) — UPDATE `TestRuntimeStructure::test_callbacks_module_exports_protocols` (:5488) (Debugger audit BUG #1):** the test hard-codes the 9-Protocol count in two places. Add `OnTurnStart` to BOTH the `from agent.callbacks import (...)` list and the `for cls in (...)` tuple (alphabetical position after `OnTextDelta`), and update the docstring "all 9 callback Protocols" → "all 10 callback Protocols". The import list's `AgentRuntimeCallbacks` entry stays last.
 
 ### 2.5 `docs/ARCHITECTURE.md`
 
 - **:1797** (runtime ctor signature): add `on_turn_start` to the documented parameter list.
-- **§3.21m.3 (:1890-1912):** "9 Protocol classes" → "10 Protocol classes" (two places: Responsibility line and Owns line); add `OnTurnStart` to both name lists; update the Public API comment "All 9 protocols" → "All 10"; optionally add `OnTurnStart` to the sample block.
+- **§3.21m.3 (:1890-1912):** "9 Protocol classes" → "10 Protocol classes" (three sites: Responsibility line, Owns line, and Public API comment); add `OnTurnStart` to both name lists; update the Public API comment "All 9 protocols" → "All 10"; optionally add `OnTurnStart` to the sample block.
 - Grep-verified: ARCHITECTURE.md contains no "BUG #21" or empty-delta-mechanism prose to correct beyond these.
 
 **Files NOT changed (Rule 8):**
