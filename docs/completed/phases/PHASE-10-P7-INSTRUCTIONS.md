@@ -72,7 +72,7 @@ if __name__ == "__main__":
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 - Do NOT import from `ui.*` or `agent.*` (this script must be runnable without GTK/agent imports)
 - Do NOT add any new dependencies — use only stdlib + existing project imports
 - The script must be **idempotent** (re-running is safe)
@@ -82,21 +82,21 @@ if __name__ == "__main__":
 ## Verification (mandatory — paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 test -f scripts/migrate_provider_caller.py && echo "EXISTS" || echo "MISSING"
 wc -l scripts/migrate_provider_caller.py
 # Expect: ~50 lines
 ```
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 scripts/migrate_provider_caller.py --dry-run
 ```
 
 Expect: shows each provider with the caller that would be set, or "already set" / "No migration needed".
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify idempotency: run --dry-run twice, expect same output
 python3 scripts/migrate_provider_caller.py --dry-run > /tmp/run1.txt
 python3 scripts/migrate_provider_caller.py --dry-run > /tmp/run2.txt
@@ -104,7 +104,7 @@ diff /tmp/run1.txt /tmp/run2.txt && echo "IDEMPOTENT" || echo "NOT IDEMPOTENT"
 ```
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the script is executable
 test -x scripts/migrate_provider_caller.py && echo "EXECUTABLE" || echo "NOT EXECUTABLE (may need chmod +x)"
 ```

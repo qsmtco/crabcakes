@@ -10,7 +10,7 @@
 
 ### Automated tests (run first)
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/test_command_models.py tests/test_command_handler.py -v
 ```
 **Expected:** 56+ tests pass — Command/CommandResult data models, prefix detection, @mention resolution, flag parsing, registry.
@@ -209,7 +209,7 @@ python3 -m pytest tests/test_tasks.py tests/test_projects.py -v
 
 Run everything:
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/ -x -q
 ```
 **Expected:** 518 passed in ~3s

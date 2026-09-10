@@ -399,7 +399,7 @@ class TestStatusHasVerified:
 ## Verification commands (run between sub-phases AND at the end)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 4.1: compile + import check
 python3 -c "from ui.handlers.settings_handler import SettingsHandler; print('imports ok')"

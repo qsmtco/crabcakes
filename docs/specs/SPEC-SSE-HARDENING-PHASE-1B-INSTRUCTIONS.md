@@ -97,7 +97,7 @@ Use the same variable names (`caller_key`, `model`) that the streaming branch us
 ## Verification commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. _on_error call sites — verify at least one passes exc object not str(exc)
 grep -n '_on_error.*str(exc)\|_on_error.*exc)' agent/runtime.py

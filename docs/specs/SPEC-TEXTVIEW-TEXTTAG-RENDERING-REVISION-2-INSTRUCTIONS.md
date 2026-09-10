@@ -1,7 +1,7 @@
 # Spec Revision Instructions: SPEC-TEXTVIEW-TEXTTAG-RENDERING (Round 2)
 
 **To:** Coder
-**Task:** Revise the spec at `/home/q/projects/crabcakes/docs/specs/SPEC-TEXTVIEW-TEXTTAG-RENDERING.md` based on adversarial audit + supervisor verification. Load `prompts/steelFramedSpecWriter.md` fresh again — Rule 1 (read every file before referencing) and Rule 3 (verify every signature) were violated in round 1.
+**Task:** Revise the spec at `/path/to/projects/crabcakes/docs/specs/SPEC-TEXTVIEW-TEXTTAG-RENDERING.md` based on adversarial audit + supervisor verification. Load `prompts/steelFramedSpecWriter.md` fresh again — Rule 1 (read every file before referencing) and Rule 3 (verify every signature) were violated in round 1.
 
 **Your round-1 spec had fabricated line counts, a wrong ARCHITECTURE.md section reference, and silently omitted two pipeline stages.** This is exactly what steelFramedSpecWriter exists to prevent. Re-read the source files and correct the numbers.
 

@@ -72,7 +72,7 @@ Run `head -20 ui/views/agent_builder.py` to see the existing imports. If Provide
 
 After the fix, run:
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # Should crash with TypeError, not AttributeError
 python3 -c "

@@ -11,7 +11,7 @@
 
 ## Step 1: Create `agent/context_strategy.py`
 
-Create a new file at `/home/q/projects/crabcakes/agent/context_strategy.py`.
+Create a new file at `/path/to/projects/crabcakes/agent/context_strategy.py`.
 
 The file must contain:
 
@@ -293,7 +293,7 @@ def _last_exchange_summary(self, *, max_tokens: int = 0, keep_first: int = 2) ->
 After making changes, run:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Module imports cleanly
 python3 -c "from agent.context_strategy import DefaultContextStrategy, ContextStrategy, CompactionEvent; print('imports OK')"

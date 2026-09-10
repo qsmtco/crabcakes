@@ -250,7 +250,7 @@ def _classify_paragraph(para: str) -> list[dict]:
 ## Verification commands (run these, paste the output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. BUG #1 fix: interleaved heading+text+heading
 python3 -c "

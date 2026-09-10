@@ -7,8 +7,8 @@ Fix three bugs in `_stream_anthropic_events` (lines 667–775):
 3. **W4**: Wrong type annotation on `_sse_lines` (`list[bytes]` should be `Iterator[bytes]`)
 
 ## Files to Read First
-- `/home/q/projects/crabcakes/agent/runtime.py` (lines 400–430, 667–775)
-- `/home/q/projects/crabcakes/docs/specs/SPEC-RUNTIME-HARDENING-AUDIT.md` (W2, W3, W4)
+- `/path/to/projects/crabcakes/agent/runtime.py` (lines 400–430, 667–775)
+- `/path/to/projects/crabcakes/docs/specs/SPEC-RUNTIME-HARDENING-AUDIT.md` (W2, W3, W4)
 
 ## Step 1 — Fix `_sse_lines` Return Type (W4)
 
@@ -58,7 +58,7 @@ Also remove the inline `build_system_prompt` call that currently exists in the f
 ## Verification
 After editing, run:
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "from agent.runtime import AgentRuntime; print('import ok')"
 ```
 

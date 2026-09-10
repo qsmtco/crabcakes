@@ -84,8 +84,8 @@ Also update the fake-app fixture if needed for tests 5–6 (additive only).
 ## Verification (paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_seed_project_prompts.py -v -p no:cacheprovider
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_prompt_paths.py tests/test_project_awareness.py -q -p no:cacheprovider
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_seed_project_prompts.py -v -p no:cacheprovider
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_prompt_paths.py tests/test_project_awareness.py -q -p no:cacheprovider
 ```
 
 COMPLETENESS:

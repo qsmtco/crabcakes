@@ -421,26 +421,26 @@ Numbered for one developer to execute sequentially. Each step has a verification
 3. Extend the docstring with the new `allowed_tools` parameter description (see §2.1.1).
 4. Insert the gate after `if entry is None: ...` and before `defn, handler = entry` (line 1211, see §2.1.2).
 5. **Verify:** `python3 -c "import inspect; from agent.tools import execute_tool; print(inspect.signature(execute_tool))"` — must show `allowed_tools=None` as the last parameter.
-6. **Verify:** `cd /home/q/projects/crabcakes && python3 -m pytest tests/test_tools.py -x -q` — all existing tests still pass (back-compat default).
+6. **Verify:** `cd /path/to/projects/crabcakes && python3 -m pytest tests/test_tools.py -x -q` — all existing tests still pass (back-compat default).
 
 ### Step 2 — `agent/runtime.py` caller
 1. Open `agent/runtime.py`.
 2. Update line 2296 to pass `allowed_tools=conv.allowed_tools` (see §2.2.2).
-3. **Verify:** `cd /home/q/projects/crabcakes && grep -n "execute_tool(" agent/runtime.py` — should show the kwarg.
-4. **Verify:** `cd /home/q/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py -x -q` — runtime tests pass.
+3. **Verify:** `cd /path/to/projects/crabcakes && grep -n "execute_tool(" agent/runtime.py` — should show the kwarg.
+4. **Verify:** `cd /path/to/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py -x -q` — runtime tests pass.
 
 ### Step 3 — `tests/test_tools.py` new tests
 1. Append `class TestAllowedToolsGate` block at end of file (after `class TestApprovalCallback`).
-2. **Verify:** `cd /home/q/projects/crabcakes && python3 -m pytest tests/test_tools.py::TestAllowedToolsGate -v` — all 8 new tests pass.
-3. **Verify:** `cd /home/q/projects/crabcakes && python3 -m pytest tests/test_tools.py -q` — full test_tools.py still passes.
+2. **Verify:** `cd /path/to/projects/crabcakes && python3 -m pytest tests/test_tools.py::TestAllowedToolsGate -v` — all 8 new tests pass.
+3. **Verify:** `cd /path/to/projects/crabcakes && python3 -m pytest tests/test_tools.py -q` — full test_tools.py still passes.
 
 ### Step 4 — `docs/ARCHITECTURE.md` §3.21n
 1. Update the Public API block (line ~1582) per §2.3 Change A.
 2. Append the new subsection after the Blocklist paragraph (after line ~1604) per §2.3 Change B.
-3. **Verify:** `cd /home/q/projects/crabcakes && grep -n "allowed_tools" docs/ARCHITECTURE.md` — must show the new signature and the new subsection.
+3. **Verify:** `cd /path/to/projects/crabcakes && grep -n "allowed_tools" docs/ARCHITECTURE.md` — must show the new signature and the new subsection.
 
 ### Step 5 — Full regression sweep
-1. Run the full test suite: `cd /home/q/projects/crabcakes && python3 -m pytest -x -q`.
+1. Run the full test suite: `cd /path/to/projects/crabcakes && python3 -m pytest -x -q`.
 2. Capture the full pytest output for the completion report (Rule 10 §2).
 3. Pattern sweep (Rule 10 §3): `grep -rn "execute_tool(" agent/ ui/ utils/ gateway/ --include="*.py" | grep -v "test_" | grep -v "def execute_tool"` — must show exactly one call site, and that call must include `allowed_tools=`.
 4. Confirm no call site was missed.
@@ -584,7 +584,7 @@ If any box is unchecked, work is not complete.
 ### 10.2 Test suite output (paste verbatim after running)
 
 ```
-$ cd /home/q/projects/crabcakes && python3 -m pytest tests/test_tools.py tests/test_agent_runtime.py -v
+$ cd /path/to/projects/crabcakes && python3 -m pytest tests/test_tools.py tests/test_agent_runtime.py -v
 ```
 
 Include the full output. If a test fails, fix it; do not summarize.
@@ -592,7 +592,7 @@ Include the full output. If a test fails, fix it; do not summarize.
 ### 10.3 Pattern sweep
 
 ```
-$ grep -rn "execute_tool(" /home/q/projects/crabcakes --include="*.py" | grep -v "test_" | grep -v "__pycache__" | grep -v "def execute_tool"
+$ grep -rn "execute_tool(" /path/to/projects/crabcakes --include="*.py" | grep -v "test_" | grep -v "__pycache__" | grep -v "def execute_tool"
 ```
 
 Expected: exactly one line, from `agent/runtime.py`, containing `allowed_tools=`.

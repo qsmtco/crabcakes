@@ -7,7 +7,7 @@
 
 **Spec:** `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED-FIX-3.md` §5
 **Audit prompt to load:** `prompts/adversarialDebugger.md`
-**Working dir:** `/home/q/projects/crabcakes`
+**Working dir:** `/path/to/projects/crabcakes`
 
 ## Mission
 

@@ -74,7 +74,7 @@ Fix in this order (Bug 1 is CRITICAL — blocks tests):
 
 After ALL fixes:
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/ -q --no-header 2>&1 | tail -5
 python3 -m pytest tests/test_agent_command_handler.py::TestAuditReportProcessing -v 2>&1 | tail -10
 ```

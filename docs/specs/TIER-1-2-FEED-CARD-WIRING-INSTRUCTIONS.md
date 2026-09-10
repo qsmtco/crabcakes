@@ -1,7 +1,7 @@
 # PHASE 1 of 1 — Tier 1.2: Wire `ReviewHandler` to emit git_commit feed cards
 
-**Master spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-FEED-CARD-WIRING-FIX.md` — read this in full before doing anything.
-**Prompt template:** `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md` — use its Discovery/Design/Tests/Risks/Files structure for your report.
+**Master spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-FEED-CARD-WIRING-FIX.md` — read this in full before doing anything.
+**Prompt template:** `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md` — use its Discovery/Design/Tests/Risks/Files structure for your report.
 **Word marker:** "please write" (required in your acknowledgment)
 
 This is **one phase, one focused change**. Do not split it. Do not silently expand scope.
@@ -108,12 +108,12 @@ Create this file with at least these 3 tests. Follow the existing patterns in `t
 
 Run these commands and paste the **full output** (not a summary):
 
-1. `cd /home/q/projects/crabcakes && python3 -c "from ui.handlers.review_handler import ReviewHandler; print('import OK')"` — confirms the file imports cleanly
-2. `cd /home/q/projects/crabcakes && pytest tests/test_review_handler_feed_card.py -v` — runs the new tests
-3. `cd /home/q/projects/crabcakes && pytest tests/test_review_handler.py tests/test_feed_handler.py -v` — confirms existing tests still pass
-4. `cd /home/q/projects/crabcakes && grep -n "on_feed_card" ui/handlers/review_handler.py ui/window.py` — confirms the wiring is in place
-5. `cd /home/q/projects/crabcakes && grep -n "_emit_feed_card" ui/handlers/review_handler.py` — confirms the helper exists
-6. `cd /home/q/projects/crabcakes && wc -l ui/handlers/review_handler.py ui/window.py` — show the line counts
+1. `cd /path/to/projects/crabcakes && python3 -c "from ui.handlers.review_handler import ReviewHandler; print('import OK')"` — confirms the file imports cleanly
+2. `cd /path/to/projects/crabcakes && pytest tests/test_review_handler_feed_card.py -v` — runs the new tests
+3. `cd /path/to/projects/crabcakes && pytest tests/test_review_handler.py tests/test_feed_handler.py -v` — confirms existing tests still pass
+4. `cd /path/to/projects/crabcakes && grep -n "on_feed_card" ui/handlers/review_handler.py ui/window.py` — confirms the wiring is in place
+5. `cd /path/to/projects/crabcakes && grep -n "_emit_feed_card" ui/handlers/review_handler.py` — confirms the helper exists
+6. `cd /path/to/projects/crabcakes && wc -l ui/handlers/review_handler.py ui/window.py` — show the line counts
 
 ---
 
@@ -123,7 +123,7 @@ Use this exact section structure. Do not omit any section.
 
 ### 1. Diff per file
 
-Run `cd /home/q/projects/crabcakes && git diff --stat` and show the stat. Then for each modified file, show the actual hunk diff (`git diff ui/handlers/review_handler.py`).
+Run `cd /path/to/projects/crabcakes && git diff --stat` and show the stat. Then for each modified file, show the actual hunk diff (`git diff ui/handlers/review_handler.py`).
 
 ### 2. Test outputs
 
@@ -159,11 +159,11 @@ Describe the path you traced to confirm the wiring works end-to-end (e.g., "I tr
 
 ## Reference files
 
-- Master spec: `/home/q/projects/crabcakes/docs/specs/SPEC-FEED-CARD-WIRING-FIX.md`
-- Proposal: `/home/q/projects/crabcakes/docs/proposals/PROPOSAL-feed-card-wiring.md`
-- Pattern to mirror: `/home/q/projects/crabcakes/ui/handlers/task_handler.py:51-84` (`on_feed_card` ctor param + `_emit_feed_card` helper)
-- Test patterns: `/home/q/projects/crabcakes/tests/test_review_handler.py` and `/home/q/projects/crabcakes/tests/test_chat_handler.py`
-- Prompt template: `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Master spec: `/path/to/projects/crabcakes/docs/specs/SPEC-FEED-CARD-WIRING-FIX.md`
+- Proposal: `/path/to/projects/crabcakes/docs/proposals/PROPOSAL-feed-card-wiring.md`
+- Pattern to mirror: `/path/to/projects/crabcakes/ui/handlers/task_handler.py:51-84` (`on_feed_card` ctor param + `_emit_feed_card` helper)
+- Test patterns: `/path/to/projects/crabcakes/tests/test_review_handler.py` and `/path/to/projects/crabcakes/tests/test_chat_handler.py`
+- Prompt template: `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 
 ---
 

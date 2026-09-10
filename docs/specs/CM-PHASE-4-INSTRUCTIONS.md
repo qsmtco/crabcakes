@@ -393,7 +393,7 @@ class TestLastResult:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. New tests pass
 python3 -m pytest tests/test_context_strategy.py -v --tb=short

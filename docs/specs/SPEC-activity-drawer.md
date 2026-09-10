@@ -1947,7 +1947,7 @@ Run these before declaring complete:
 [ ] tests/test_activity_drawer.py — NEW FILE
 
 # 2. Test suite — paste actual pytest output
-cd /home/q/projects/crabcakes && python -m pytest tests/test_activity_bubbles.py tests/test_activity_drawer.py -v
+cd /path/to/projects/crabcakes && python -m pytest tests/test_activity_bubbles.py tests/test_activity_drawer.py -v
 
 # 3. Pattern sweep — grep for remaining old patterns
 grep -rn "render_activity" ui/  # should be ZERO matches

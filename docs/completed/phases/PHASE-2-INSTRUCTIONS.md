@@ -151,7 +151,7 @@ Replace with:
 ## Verification commands (run between sub-phases AND at the end)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 2.1: agent/config.py changes
 python3 -c "from agent.config import LLMProviderConfig, load_agent_config; p = LLMProviderConfig(name='t', base_url='u', api_key='k', default_model='m'); print('enabled:', p.enabled, 'last_verified_at:', p.last_verified_at, 'last_error:', p.last_error)"

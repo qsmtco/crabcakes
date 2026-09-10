@@ -1,7 +1,7 @@
 # PHASE 1 of 1 — Tier 1.3: Agent-Role Gating for Project Onboarding
 
-**Master spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-AGENT-ROLE-GATING-FIX.md` — read this in full before doing anything.
-**Prompt template:** `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md` — use its Discovery/Design/Tests/Risks/Files structure for your report.
+**Master spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-AGENT-ROLE-GATING-FIX.md` — read this in full before doing anything.
+**Prompt template:** `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md` — use its Discovery/Design/Tests/Risks/Files structure for your report.
 **Word marker:** "please write" (required in your acknowledgment)
 
 This is **one phase, one focused change**. One line in one production file. One new test.
@@ -89,12 +89,12 @@ Add this test to the existing `TestComposeSystemPrompt` class. The natural inser
 
 Run these commands and paste the **full output** (not a summary):
 
-1. `cd /home/q/projects/crabcakes && python3 -c "from utils.prompt_loader import compose_system_prompt; print('import OK')"` — confirms the file imports cleanly
-2. `cd /home/q/projects/crabcakes && pytest tests/test_prompt_loader.py::TestComposeSystemPrompt::test_onboarding_only_loaded_for_coder -v` — runs the new test
-3. `cd /home/q/projects/crabcakes && pytest tests/test_prompt_loader.py -v` — confirms all prompt_loader tests pass
-4. `cd /home/q/projects/crabcakes && pytest tests/test_context.py -v` — confirms context tests (which call compose_system_prompt transitively) pass
-5. `cd /home/q/projects/crabcakes && grep -n "agent_role == .coder. and not is_project_onboarded" utils/prompt_loader.py` — confirms the gating is in place
-6. `cd /home/q/projects/crabcakes && wc -l utils/prompt_loader.py tests/test_prompt_loader.py` — show the line counts
+1. `cd /path/to/projects/crabcakes && python3 -c "from utils.prompt_loader import compose_system_prompt; print('import OK')"` — confirms the file imports cleanly
+2. `cd /path/to/projects/crabcakes && pytest tests/test_prompt_loader.py::TestComposeSystemPrompt::test_onboarding_only_loaded_for_coder -v` — runs the new test
+3. `cd /path/to/projects/crabcakes && pytest tests/test_prompt_loader.py -v` — confirms all prompt_loader tests pass
+4. `cd /path/to/projects/crabcakes && pytest tests/test_context.py -v` — confirms context tests (which call compose_system_prompt transitively) pass
+5. `cd /path/to/projects/crabcakes && grep -n "agent_role == .coder. and not is_project_onboarded" utils/prompt_loader.py` — confirms the gating is in place
+6. `cd /path/to/projects/crabcakes && wc -l utils/prompt_loader.py tests/test_prompt_loader.py` — show the line counts
 
 ---
 
@@ -102,7 +102,7 @@ Run these commands and paste the **full output** (not a summary):
 
 ### 1. Diff per file
 
-Run `cd /home/q/projects/crabcakes && git diff utils/prompt_loader.py tests/test_prompt_loader.py` and show the actual diff. The diff for `utils/prompt_loader.py` should be exactly 1 line. The diff for `tests/test_prompt_loader.py` should add the new test (one hunk with the function definition + preceding blank line).
+Run `cd /path/to/projects/crabcakes && git diff utils/prompt_loader.py tests/test_prompt_loader.py` and show the actual diff. The diff for `utils/prompt_loader.py` should be exactly 1 line. The diff for `tests/test_prompt_loader.py` should add the new test (one hunk with the function definition + preceding blank line).
 
 ### 2. Test outputs
 
@@ -136,12 +136,12 @@ Trace the path you verified to confirm the fix works:
 
 ## Reference files
 
-- Master spec: `/home/q/projects/crabcakes/docs/specs/SPEC-AGENT-ROLE-GATING-FIX.md`
-- Proposal: `/home/q/projects/crabcakes/docs/proposals/PROPOSAL-project-onboarding.md`
-- Bug report: `/home/q/projects/crabcakes/docs/bugs/BUG_REPORT-identity-override.md` (Bug #2, lines 47-49)
-- Existing test class to extend: `/home/q/projects/crabcakes/tests/test_prompt_loader.py` (`TestComposeSystemPrompt` class)
-- Existing call sites: `/home/q/projects/crabcakes/agent/context.py:418-421`, `/home/q/projects/crabcakes/utils/prompt_loader.py:117-200`
-- Prompt template: `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Master spec: `/path/to/projects/crabcakes/docs/specs/SPEC-AGENT-ROLE-GATING-FIX.md`
+- Proposal: `/path/to/projects/crabcakes/docs/proposals/PROPOSAL-project-onboarding.md`
+- Bug report: `/path/to/projects/crabcakes/docs/bugs/BUG_REPORT-identity-override.md` (Bug #2, lines 47-49)
+- Existing test class to extend: `/path/to/projects/crabcakes/tests/test_prompt_loader.py` (`TestComposeSystemPrompt` class)
+- Existing call sites: `/path/to/projects/crabcakes/agent/context.py:418-421`, `/path/to/projects/crabcakes/utils/prompt_loader.py:117-200`
+- Prompt template: `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 
 ---
 

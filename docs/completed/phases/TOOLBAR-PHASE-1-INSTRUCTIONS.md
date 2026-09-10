@@ -1,6 +1,6 @@
 # PHASE 1 of 7 — Verify + Test `utils/spellcheck.py`
 
-**Spec:** `/home/q/projects/crabcakes/docs/specs/SPEC_CHAT_INPUT_TOOLBAR.md` Section 2.1
+**Spec:** `/path/to/projects/crabcakes/docs/specs/SPEC_CHAT_INPUT_TOOLBAR.md` Section 2.1
 **Target file:** `utils/spellcheck.py` (already exists — 100 lines)
 **Test file to create:** `tests/test_spellcheck.py`
 
@@ -84,10 +84,10 @@ After writing tests and any fixes:
 
 ```bash
 # Run the new tests
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_spellcheck.py -v --tb=short
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_spellcheck.py -v --tb=short
 
 # Run the full suite to check for regressions
-cd /home/q/projects/crabcakes && python3 -m pytest tests/ -q --tb=short
+cd /path/to/projects/crabcakes && python3 -m pytest tests/ -q --tb=short
 
 # Verify the file has no GTK or network imports
 grep -n "import gi\|from gi\|import gtk\|urllib\|requests\|socket" utils/spellcheck.py

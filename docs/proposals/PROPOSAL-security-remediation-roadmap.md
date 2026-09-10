@@ -248,7 +248,7 @@ Wrap every project-sourced text block (bug journal, rules, `project.md`, `contex
 
 #### 6.1 HIGH-6 — allowlist `http`/`https`/`mailto` for rendered links
 
-**Still real for solo use.** A prompt-injected agent can plant `[click here](file:///home/q/.ssh/id_rsa)` in its output. You'll click it. The default GTK handler will try to open the file with the system's default app for that scheme. On a Linux box, `file://` to `.ssh/id_rsa` opens in your text editor. The data exfiltration vector is "you click and the agent learns the contents" via a subsequent read. Real risk.
+**Still real for solo use.** A prompt-injected agent can plant `[click here](file://~/.ssh/id_rsa)` in its output. You'll click it. The default GTK handler will try to open the file with the system's default app for that scheme. On a Linux box, `file://` to `.ssh/id_rsa` opens in your text editor. The data exfiltration vector is "you click and the agent learns the contents" via a subsequent read. Real risk.
 
 **Fix:** In `format_markdown()` and `escape_for_pango()`: emit non-allowlisted links as escaped text, not `<a>` tags. Add an `activate-link` guard in `chat_bubble.py` and `feed_card.py` as defense-in-depth.
 

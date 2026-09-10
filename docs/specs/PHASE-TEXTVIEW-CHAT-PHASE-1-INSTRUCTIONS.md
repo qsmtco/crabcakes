@@ -14,31 +14,31 @@ All references verified against current tree on 2026-07-16.
 
 ### Files read (full content)
 
-- `/home/q/projects/crabcakes/utils/escaping.py` (302 lines)
+- `/path/to/projects/crabcakes/utils/escaping.py` (302 lines)
   - Public API: `escape_for_pango(text: str) -> str` (line 96), `xml_escape_text(text: str) -> str` (line 251), `xml_template(template: str, **kwargs: str) -> str` (line 274).
   - `escape_for_pango` is the regex-based parser we are replacing for the chat path; kept for app-controlled text outside this proposal's scope.
-- `/home/q/projects/crabcakes/utils/markdown.py` (338 lines)
+- `/path/to/projects/crabcakes/utils/markdown.py` (338 lines)
   - Public API: `format_markdown(text: str) -> str` (line 81).
   - **Deleted in Phase 4**, untouched in Phase 1.
-- `/home/q/projects/crabcakes/utils/block_parser.py` (310 lines)
+- `/path/to/projects/crabcakes/utils/block_parser.py` (310 lines)
   - Public API: `extract_blocks(text: str) -> list[dict]` (line 31).
   - **Reused.** Produces dicts with `type` ∈ `text`, `code`, `quote`, `terminal`, `heading`, `task`, `table`. Phase 1 wraps these into `Segment` dataclasses; Phase 2 replaces the dict-returning pipeline entirely.
-- `/home/q/projects/crabcakes/utils/gtk_safe_link.py`
+- `/path/to/projects/crabcakes/utils/gtk_safe_link.py`
   - Reused verbatim in Phase 2+. Not touched in Phase 1.
-- `/home/q/projects/crabcakes/ui/views/chat_bubble.py` (relevant excerpt)
+- `/path/to/projects/crabcakes/ui/views/chat_bubble.py` (relevant excerpt)
   - Public API: `process_segments(text: str) -> list[dict]` (line 131).
   - **Not modified in Phase 1.** The 17 call sites listed in the proposal are real: 11 in `chat_bubble.py` (lines 197–803) + 1 in `chat_render_handler.py` (lines 471–472). These collapse to one helper call each in Phase 3.
-- `/home/q/projects/crabcakes/ui/handlers/chat_render_handler.py`
+- `/path/to/projects/crabcakes/ui/handlers/chat_render_handler.py`
   - Streaming path at lines 466–472 imports `escape_for_pango` + `format_markdown` lazily inside `_update()`. Phase 1 leaves this path untouched.
-- `/home/q/projects/crabcakes/pyproject.toml`
+- `/path/to/projects/crabcakes/pyproject.toml`
   - `[tool.setuptools.packages.find]` includes only `ui/*`, `gateway/*`, `agent/*`, `utils/*`, `models/*`, `prompts/*`. **`chat/` is NOT included** — must be added in Phase 1.
   - No `mistune` dependency currently declared.
-- `/home/q/projects/crabcakes/docs/ARCHITECTURE.md`
+- `/path/to/projects/crabcakes/docs/ARCHITECTURE.md`
   - §6 establishes package layering: `chat/ → utils/` (correct direction); `ui/ → chat/ + utils/` (correct direction); `agent/ → utils/` only. The new `chat/` package obeys this.
-- `/home/q/projects/crabcakes/tests/test_markdown.py` (95 test definitions/classes — **count is 95, not the 49 cited in the proposal**; the proposal undercounts because it predates test additions; the migration corpus is "everything in `test_markdown.py`")
-- `/home/q/projects/crabcakes/tests/test_escaping.py` (65 test definitions/classes — also higher than the 32 cited in the proposal; same drift)
-- `/home/q/projects/crabcakes/tests/test_gtk_safe_link.py` (42 tests — HIGH-6 regression suite, preserved verbatim)
-- `/home/q/projects/crabcakes/prompts/steelFramedSpecWriter.md`
+- `/path/to/projects/crabcakes/tests/test_markdown.py` (95 test definitions/classes — **count is 95, not the 49 cited in the proposal**; the proposal undercounts because it predates test additions; the migration corpus is "everything in `test_markdown.py`")
+- `/path/to/projects/crabcakes/tests/test_escaping.py` (65 test definitions/classes — also higher than the 32 cited in the proposal; same drift)
+- `/path/to/projects/crabcakes/tests/test_gtk_safe_link.py` (42 tests — HIGH-6 regression suite, preserved verbatim)
+- `/path/to/projects/crabcakes/prompts/steelFramedSpecWriter.md`
   - Rule 1: read every referenced file before writing. ✅
   - Rule 2: trace every code path in samples before including. ✅ (the `SegmentRenderer` sample in proposal §4.1 traced; `process_segments` traced; the streaming throttle traced)
   - Mandatory discovery block at start of spec. ✅ (this section)
@@ -100,7 +100,7 @@ Order: place near the top of the deps list so it's visible. Alphabetical is not 
 
 **Verification:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 pip install -e .
 python -c "import mistune; print(mistune.__version__)"
 # Expect: 3.x.x
@@ -123,7 +123,7 @@ Place `"chat/*"` after `"agent/*"` and before `"utils/*"` to mirror the architec
 ```bash
 pip install -e .
 python -c "import chat; print(chat.__file__)"
-# Expect: /home/q/projects/crabcakes/chat/__init__.py
+# Expect: /path/to/projects/crabcakes/chat/__init__.py
 ```
 
 ### Step 3: Create `chat/__init__.py`
@@ -278,7 +278,7 @@ __all__ = [
 
 **Verification:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python -c "from chat.segments import TextSeg, CodeBlock, Segment, InlineNode; seg = TextSeg('hi', (InlineNode(kind='bold', text='hi'),)); print(seg)"
 # Expect: TextSeg(text='hi', inline=(InlineNode(kind='bold', text='hi', href=None),))
 ```
@@ -499,7 +499,7 @@ def parse_message(text: str) -> list[Segment]:
 
 **Verification:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python -c "from chat.parser import parse_message; segs = parse_message('# Hello\n\n**bold** text'); print(segs)"
 # Expect: [Heading(level=1, text='Hello', inline=()), TextSeg(text='bold text', inline=(...))]
 ```
@@ -532,7 +532,7 @@ Then at the **top** of `def escape_for_pango` (currently at line 96), insert as 
 
 **Verification:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python -W error::DeprecationWarning -c "from utils.escaping import escape_for_pango; escape_for_pango('hi')"
 # Expect: DeprecationWarning (treated as error → traceback)
 
@@ -756,7 +756,7 @@ class TestSegmentImmutability:
 
 **Verification:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python -m pytest tests/test_chat_parser.py -v
 # Expect: all tests pass
 ```
@@ -766,7 +766,7 @@ python -m pytest tests/test_chat_parser.py -v
 The existing `tests/test_markdown.py` and `tests/test_escaping.py` MUST continue to pass. The deprecation warning does not fail tests by default (pytest treats `DeprecationWarning` as `WARNING` unless `-W error` is passed).
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python -m pytest tests/test_markdown.py tests/test_escaping.py tests/test_gtk_safe_link.py -v
 # Expect: all tests pass (deprecation warnings may appear in output)
 ```

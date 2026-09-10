@@ -67,8 +67,8 @@ Update existing tests to stem semantics AND add:
 ## Verification (paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_favorites.py -v -p no:cacheprovider
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_prompts_handler.py tests/test_prompts_project_resolution.py tests/test_prompt_paths.py -q -p no:cacheprovider
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_favorites.py -v -p no:cacheprovider
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_prompts_handler.py tests/test_prompts_project_resolution.py tests/test_prompt_paths.py -q -p no:cacheprovider
 grep -n "is_fav" ui/handlers/prompts_handler.py
 ```
 

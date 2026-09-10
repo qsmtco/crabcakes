@@ -1,6 +1,6 @@
 # Phase 2 Instructions — Empty-Assistant-Message Fix (Write-Side Guard)
 
-**Master spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md`
+**Master spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md`
 **Phase:** 2 of 4
 **File scope:** 1 file (`agent/runtime.py`)
 **Estimated delta:** +4 lines net
@@ -89,8 +89,8 @@ Phase 2 ships the **write-side** guard: at the create-site (`agent/runtime.py:22
 ### V1. Confirm the pattern is gone and replaced
 
 ```
-cd /home/q/projects/crabcakes && grep -n 'add_assistant_message("", \[\])' agent/runtime.py
-cd /home/q/projects/crabcakes && grep -n 'add_assistant_message' agent/runtime.py
+cd /path/to/projects/crabcakes && grep -n 'add_assistant_message("", \[\])' agent/runtime.py
+cd /path/to/projects/crabcakes && grep -n 'add_assistant_message' agent/runtime.py
 ```
 
 Expected: line 2214 (the old pattern) returns 0 hits. The new call appears once at the expected location with the descriptive placeholder.
@@ -98,8 +98,8 @@ Expected: line 2214 (the old pattern) returns 0 hits. The new call appears once 
 ### V2. Confirm the new placeholder string exists exactly once
 
 ```
-cd /home/q/projects/crabcakes && grep -n '"\[LLM returned no choices and no content' agent/runtime.py
-cd /home/q/projects/crabcakes && grep -c '"\[LLM returned no choices and no content' agent/runtime.py
+cd /path/to/projects/crabcakes && grep -n '"\[LLM returned no choices and no content' agent/runtime.py
+cd /path/to/projects/crabcakes && grep -c '"\[LLM returned no choices and no content' agent/runtime.py
 ```
 
 Expected: `count` = 1, line near 2214.
@@ -107,7 +107,7 @@ Expected: `count` = 1, line near 2214.
 ### V3. Confirm surrounding code is unchanged
 
 ```
-cd /home/q/projects/crabcakes && sed -n '2208,2225p' agent/runtime.py
+cd /path/to/projects/crabcakes && sed -n '2208,2225p' agent/runtime.py
 ```
 
 Expected: `logger.warning(...)` line is intact, `self._dispatch(self._on_error, ...)` is intact, `self._auto_save(...)` is intact, `return` is intact. Only the `conv.add_assistant_message(...)` call has changed.
@@ -115,7 +115,7 @@ Expected: `logger.warning(...)` line is intact, `self._dispatch(self._on_error, 
 ### V4. Pattern sweep across the whole project (Phase 1 + Phase 2 effect)
 
 ```
-cd /home/q/projects/crabcakes && grep -rn 'add_assistant_message("", \[\])' agent/ models/ tests/
+cd /path/to/projects/crabcakes && grep -rn 'add_assistant_message("", \[\])' agent/ models/ tests/
 ```
 
 Expected: 0 hits. The pre-fix pattern was only at `agent/runtime.py:2214` and it is now gone.
@@ -123,7 +123,7 @@ Expected: 0 hits. The pre-fix pattern was only at `agent/runtime.py:2214` and it
 ### V5. Existing test suite still passes
 
 ```
-cd /home/q/projects/crabcakes && pytest tests/test_conversation.py -v 2>&1 | tail -10
+cd /path/to/projects/crabcakes && pytest tests/test_conversation.py -v 2>&1 | tail -10
 ```
 
 Expected: 60 passed.
@@ -131,7 +131,7 @@ Expected: 60 passed.
 ### V6. Live simulation: prove the new placeholder is what gets persisted
 
 ```python
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import sys; sys.path.insert(0, '.')
 from models.conversation import Conversation, MessageRole
 
@@ -159,11 +159,11 @@ Expected: `PASS:`. The new placeholder is a non-empty string, so `not msg.conten
 ### V7. Live simulation: verify the user still sees the error
 
 ```python
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 # We cannot run the full _on_error dispatch without a session_key + agent runtime,
 # but we can confirm that the _dispatch call is unchanged in the file.
 import subprocess
-r = subprocess.run(['grep', '-n', '_dispatch(self._on_error', '/home/q/projects/crabcakes/agent/runtime.py'], capture_output=True, text=True)
+r = subprocess.run(['grep', '-n', '_dispatch(self._on_error', '/path/to/projects/crabcakes/agent/runtime.py'], capture_output=True, text=True)
 print(r.stdout)
 assert '2214' not in r.stdout or 'self._dispatch' in r.stdout
 print('PASS: _on_error dispatch still called')
@@ -175,7 +175,7 @@ Expected: `self._dispatch(self._on_error, session_key, ...)` is present in the f
 ### V8. Full project grep for any remaining empty-assistant create-sites
 
 ```
-cd /home/q/projects/crabcakes && grep -rn 'add_assistant_message' agent/ models/
+cd /path/to/projects/crabcakes && grep -rn 'add_assistant_message' agent/ models/
 ```
 
 Expected: every line is either `add_assistant_message(<non-empty string>, ...)` or `add_assistant_message(<variable>, [tc])` where the variable is text content from the LLM. **No call has both empty string literal AND empty list literal.**

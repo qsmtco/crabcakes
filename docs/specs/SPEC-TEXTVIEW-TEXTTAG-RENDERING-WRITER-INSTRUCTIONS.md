@@ -2,8 +2,8 @@
 
 **To:** Coder (spec writer this round)
 **Prompt:** Load `prompts/steelFramedSpecWriter.md` fresh. Follow every rule. This is a SPEC-WRITING task, not a code-writing task — but the steel-framed rules about reading source, verifying signatures, and tracing code paths apply identically.
-**Source proposal:** `/home/q/projects/crabcakes/docs/proposals/PROPOSAL-textview-texttag-rendering.md` (already read by supervisor)
-**Target output:** `/home/q/projects/crabcakes/docs/specs/SPEC-TEXTVIEW-TEXTTAG-RENDERING.md` (NEW — verify with `ls` before writing; do NOT overwrite)
+**Source proposal:** `/path/to/projects/crabcakes/docs/proposals/PROPOSAL-textview-texttag-rendering.md` (already read by supervisor)
+**Target output:** `/path/to/projects/crabcakes/docs/specs/SPEC-TEXTVIEW-TEXTTAG-RENDERING.md` (NEW — verify with `ls` before writing; do NOT overwrite)
 
 ---
 
@@ -125,7 +125,7 @@ Each phase must be independently shippable and independently verifiable.
 
 ## Deliverable
 
-Write the spec to `/home/q/projects/crabcakes/docs/specs/SPEC-TEXTVIEW-TEXTTAG-RENDERING.md`. Report back with:
+Write the spec to `/path/to/projects/crabcakes/docs/specs/SPEC-TEXTVIEW-TEXTTAG-RENDERING.md`. Report back with:
 
 1. The DISCOVERY block output (what you learned from each file)
 2. The 5 issue resolutions (your chosen answer + justification for each)

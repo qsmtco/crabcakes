@@ -80,8 +80,8 @@ Use `tmp_path` fixture, `monkeypatch` where patching is needed. Aim to break the
 ## Verification (paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_prompt_paths.py -v -p no:cacheprovider
-cd /home/q/projects/crabcakes && python3 -c "from utils.prompt_paths import get_project_prompts_dir, APP_USER_PROMPTS_DIR; print(APP_USER_PROMPTS_DIR); print(get_project_prompts_dir(None)); print(get_project_prompts_dir('/nonexistent'))"
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_prompt_paths.py -v -p no:cacheprovider
+cd /path/to/projects/crabcakes && python3 -c "from utils.prompt_paths import get_project_prompts_dir, APP_USER_PROMPTS_DIR; print(APP_USER_PROMPTS_DIR); print(get_project_prompts_dir(None)); print(get_project_prompts_dir('/nonexistent'))"
 ```
 
 ## Report back

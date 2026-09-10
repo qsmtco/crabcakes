@@ -123,22 +123,22 @@ If `_make_cfg` and `_uniq` are not defined in your test file, you can copy the p
 
 **Step 3a — Run the new test class:**
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py::TestEmptyChoicesResponse -v 2>&1
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py::TestEmptyChoicesResponse -v 2>&1
 ```
 
 **Step 3b — Run full test_agent_runtime.py (regression check):**
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py -v -k "not test_exec_with_approval" 2>&1
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py -v -k "not test_exec_with_approval" 2>&1
 ```
 
 **Step 3c — Pattern sweep:**
 ```bash
-cd /home/q/projects/crabcakes && grep -n "LLM returned no choices" agent/runtime.py
+cd /path/to/projects/crabcakes && grep -n "LLM returned no choices" agent/runtime.py
 ```
 Expected: 1 match.
 
 ```bash
-cd /home/q/projects/crabcakes && grep -c "response.get..choices" agent/runtime.py
+cd /path/to/projects/crabcakes && grep -c "response.get..choices" agent/runtime.py
 ```
 Expected: at least 1 match.
 

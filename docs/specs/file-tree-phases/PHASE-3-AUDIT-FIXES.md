@@ -246,7 +246,7 @@ Adapt as needed — the key is to create REAL SortListModel/FilterListModel inst
 ## Verification (run ALL)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Comparators have 3 params
 python3 -c "

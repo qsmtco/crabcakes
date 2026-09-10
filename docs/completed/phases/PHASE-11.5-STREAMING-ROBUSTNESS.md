@@ -24,7 +24,7 @@ The PHASE-11 adversarial audit found two issues:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 timeout 240 python3 -m pytest tests/ -q --no-header --tb=no 2>&1 | tail -3
 ```
 

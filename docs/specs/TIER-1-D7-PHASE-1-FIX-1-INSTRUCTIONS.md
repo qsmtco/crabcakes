@@ -57,7 +57,7 @@ Use `copy.deepcopy` because the dicts inside `WizardState` are also mutable. A s
 
 ```bash
 # 1. Re-run the failing probe
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 from pathlib import Path
 import tempfile
 from ui.handlers.auxilium_wizard_handler import AuxiliumWizardHandler, WizardStep
@@ -74,10 +74,10 @@ with tempfile.TemporaryDirectory() as tmp:
 "
 
 # 2. Confirm all architecture tests still pass
-cd /home/q/projects/crabcakes && pytest tests/test_architecture.py tests/test_kb_lookup.py -q 2>&1 | tail -3
+cd /path/to/projects/crabcakes && pytest tests/test_architecture.py tests/test_kb_lookup.py -q 2>&1 | tail -3
 
 # 3. Re-run the full install-check smoke from Phase 1
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 from pathlib import Path
 from ui.handlers.auxilium_wizard_handler import AuxiliumWizardHandler
 h = AuxiliumWizardHandler(config_dir=Path.home() / '.config' / 'crabcakes', on_complete=lambda: None, on_error=lambda msg: None)

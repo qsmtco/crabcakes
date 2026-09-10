@@ -3,7 +3,7 @@
 **To:** Coder
 **Task:** Fix 3 bugs found in round-5 audit (BUG #29, #30, #31). All small, targeted. This should be the final revision before sign-off.
 
-**Output:** Revise `/home/q/projects/crabcakes/docs/specs/SPEC-TEXTVIEW-TEXTTAG-RENDERING.md` in place.
+**Output:** Revise `/path/to/projects/crabcakes/docs/specs/SPEC-TEXTVIEW-TEXTTAG-RENDERING.md` in place.
 
 ---
 

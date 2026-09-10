@@ -1,6 +1,6 @@
 # Phase T2-1 — Add `agent_role` to `Conversation` dataclass
 
-**Spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-auxilium-tier-2.md` §2.1, §2.3
+**Spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-auxilium-tier-2.md` §2.1, §2.3
 **Target:** main
 **Risk:** Low
 **Lines:** +2 (one field, one propagation line)

@@ -4,8 +4,8 @@
 Remove the dead second pop of `_pending_stuck_messages` in `_call_llm_streaming`.
 
 ## Files to Read First
-- `/home/q/projects/crabcakes/agent/runtime.py` (lines 1915–1960, 2027–2060)
-- `/home/q/projects/crabcakes/docs/specs/SPEC-RUNTIME-HARDENING-AUDIT.md` (W12)
+- `/path/to/projects/crabcakes/agent/runtime.py` (lines 1915–1960, 2027–2060)
+- `/path/to/projects/crabcakes/docs/specs/SPEC-RUNTIME-HARDENING-AUDIT.md` (W12)
 
 ## Step 1 — Locate Both Pops
 
@@ -13,7 +13,7 @@ Remove the dead second pop of `_pending_stuck_messages` in `_call_llm_streaming`
 
 Search for `_pending_stuck_messages.pop` in the file:
 ```bash
-grep -n "_pending_stuck_messages.pop" /home/q/projects/crabcakes/agent/runtime.py
+grep -n "_pending_stuck_messages.pop" /path/to/projects/crabcakes/agent/runtime.py
 ```
 
 You should find two occurrences:
@@ -42,7 +42,7 @@ If the `finally` block becomes empty (only `pass`), remove the `finally: pass` b
 ## Step 4 — Verify
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "from agent.runtime import AgentRuntime; print('import ok')"
 python3 -m py_compile agent/runtime.py && echo "syntax ok"
 grep -n "_pending_stuck_messages.pop" agent/runtime.py

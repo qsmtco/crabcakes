@@ -170,13 +170,13 @@ If you add `@pytest.mark.gtk` to GTK tests, ensure `pytest.ini` has the right co
 
 ```bash
 # Run with xvfb for GTK tests
-cd /home/q/projects/crabcakes && xvfb-run -a pytest tests/test_auxilium_tier1.py -v 2>&1 | tail -20
+cd /path/to/projects/crabcakes && xvfb-run -a pytest tests/test_auxilium_tier1.py -v 2>&1 | tail -20
 
 # If xvfb-run is not available, run just the non-GTK tests
-cd /home/q/projects/crabcakes && pytest tests/test_auxilium_tier1.py -v -m "not gtk" 2>&1 | tail -10
+cd /path/to/projects/crabcakes && pytest tests/test_auxilium_tier1.py -v -m "not gtk" 2>&1 | tail -10
 
 # Architecture + KB + new tests all pass
-cd /home/q/projects/crabcakes && xvfb-run -a pytest tests/test_architecture.py tests/test_kb_lookup.py tests/test_auxilium_tier1.py -q 2>&1 | tail -5
+cd /path/to/projects/crabcakes && xvfb-run -a pytest tests/test_architecture.py tests/test_kb_lookup.py tests/test_auxilium_tier1.py -q 2>&1 | tail -5
 ```
 
 ---

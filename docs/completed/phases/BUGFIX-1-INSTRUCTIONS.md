@@ -184,21 +184,21 @@ def test_command_output_delta_does_not_fire(self, fake_glib):
 After implementation, run and paste the FULL output of:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/test_activity_bubbles.py -q --tb=short
 ```
 
 Also run and paste:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "command_output" ui/handlers/activity_handler.py
 ```
 
 Also run and paste:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "command_output" tests/test_activity_bubbles.py
 ```
 

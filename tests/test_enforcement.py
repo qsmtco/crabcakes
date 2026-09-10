@@ -514,16 +514,29 @@ class TestCheckEndToEnd:
         venv activation is handled exclusively by _detect_venv_prefix() → venv_prefix.
         Combining both would produce '. .venv/bin/activate && . .venv/bin/activate && ...'.
         """
-        # Verify crabwatch enforcement.json has no activate in command
+        # Verify crabwatch enforcement.json has no activate in command.
+        # crabwatch is a separate repo used as a real-world fixture here, so
+        # the test skips when it isn't present rather than failing on a
+        # hardcoded path. Override with $CRABWATCH_ENFORCEMENT_JSON.
         import json
-        with open("/home/q/projects/crabwatch/.crabcakes/enforcement.json") as f:
+        crabwatch_cfg = os.environ.get(
+            "CRABWATCH_ENFORCEMENT_JSON",
+            os.path.join(
+                os.path.expanduser("~"), "projects", "crabwatch",
+                ".crabcakes", "enforcement.json",
+            ),
+        )
+        if not os.path.isfile(crabwatch_cfg):
+            pytest.skip(f"crabwatch enforcement.json not found at {crabwatch_cfg}")
+        with open(crabwatch_cfg) as f:
             cfg = json.load(f)
         cmd = cfg["test"]["command"]
         assert "activate" not in cmd, f"crabwatch command contains 'activate': {cmd}"
         assert cmd == "python3 -m pytest {test_file} -v --tb=short"
 
         # Verify template also has no activate
-        import os
+        # (os is imported at module level; no local import here, or it would
+        # shadow the module-level name and break earlier uses in this function)
         template_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "docs", "templates", "enforcement-template.json"

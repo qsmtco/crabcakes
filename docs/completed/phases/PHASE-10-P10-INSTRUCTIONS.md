@@ -15,7 +15,7 @@
 **Step 1 — Run the full test suite to confirm zero regressions:**
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 timeout 240 python3 -m pytest tests/ -q --no-header --tb=no > /tmp/p10_test.txt 2>&1
 tail -3 /tmp/p10_test.txt
 ```
@@ -25,7 +25,7 @@ Expect: `13 failed, 1383 passed, 1 skipped` (13 failures are ALL pre-existing on
 **Step 2 — Stage and commit all Phase 10 changes:**
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 git add agent/config.py agent/runtime.py models/providers.py
 git add ui/handlers/agent_runtime_handler.py ui/handlers/settings_handler.py
 git add ui/views/settings_dialog.py
@@ -132,7 +132,7 @@ All 6 acceptance criteria from the master spec are met:
 
 ## Rules
 
-- Use the implementationSupervisor prompt at `/home/q/projects/crabcakes/prompts/implementationSupervisor.md`
+- Use the implementationSupervisor prompt at `/path/to/projects/crabcakes/prompts/implementationSupervisor.md`
 - The commit message should reference PHASE-10
 - Do NOT commit the phase instruction files (they are ephemeral scaffolding)
 - The post-mortem file goes in `docs/specs/` (alongside the spec)
@@ -141,31 +141,31 @@ All 6 acceptance criteria from the master spec are met:
 ## Verification (mandatory — paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 git status --short
 ```
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 git diff --stat HEAD
 ```
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the new test file is staged
 git ls-files --modified | grep test_runtime_caller_resolution
 ```
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the migration script is executable
 test -x scripts/migrate_provider_caller.py && echo "EXECUTABLE" || echo "NOT EXECUTABLE"
 ```
 
 ```bash
-cd /home/q/.openclaw/workspace/qaster
+cd ~/.openclaw/workspace/qaster
 # Save the post-mortem to the crabcakes specs dir
-ls -la /home/q/projects/crabcakes/docs/specs/PHASE-10-POST-MORTEM.md
+ls -la /path/to/projects/crabcakes/docs/specs/PHASE-10-POST-MORTEM.md
 ```
 
 ## Report

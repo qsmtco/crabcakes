@@ -1,10 +1,10 @@
 PHASE 5 of 6 — Documentation: update ARCHITECTURE.md to drop `fallback_model` references
 
 Files to change:
-1. `/home/q/projects/crabcakes/docs/ARCHITECTURE.md` — update 4 references to drop `fallback_model`
+1. `/path/to/projects/crabcakes/docs/ARCHITECTURE.md` — update 4 references to drop `fallback_model`
 
 Spec reference:
-- Read the master spec at `/home/q/projects/crabcakes/docs/specs/SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md` §2.10 for the exact diff.
+- Read the master spec at `/path/to/projects/crabcakes/docs/specs/SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md` §2.10 for the exact diff.
 - The spec gives line numbers, but treat them as approximate — the file may have drifted. Use grep to locate the actual lines.
 
 Target edits (use grep to find the exact text, then edit with the apply_patch tool):
@@ -51,9 +51,9 @@ Rules:
 - After all 4 edits, grep the file to confirm zero live `fallback_model` references remain (only the new comment from edit C is expected).
 
 Verification commands (run all and paste output):
-1. `cd /home/q/projects/crabcakes && grep -n "fallback_model" docs/ARCHITECTURE.md` — expect only the new comment line from edit C, and possibly the spec reference in edit D
-2. `cd /home/q/projects/crabcakes && wc -l docs/ARCHITECTURE.md` — should be approximately the same as before (4 small edits, net 0 to +2 lines)
-3. `cd /home/q/projects/crabcakes && git diff docs/ARCHITECTURE.md | head -60` — visually verify the 4 edits are correct (line-by-line)
+1. `cd /path/to/projects/crabcakes && grep -n "fallback_model" docs/ARCHITECTURE.md` — expect only the new comment line from edit C, and possibly the spec reference in edit D
+2. `cd /path/to/projects/crabcakes && wc -l docs/ARCHITECTURE.md` — should be approximately the same as before (4 small edits, net 0 to +2 lines)
+3. `cd /path/to/projects/crabcakes && git diff docs/ARCHITECTURE.md | head -60` — visually verify the 4 edits are correct (line-by-line)
 
 Report back with:
 - All three verification command outputs

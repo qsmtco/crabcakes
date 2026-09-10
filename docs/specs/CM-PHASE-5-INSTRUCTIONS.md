@@ -251,7 +251,7 @@ class TestPruneToolOutputs:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. New P4 tests pass
 python3 -m pytest tests/test_context_strategy.py::TestPruneToolOutputs -v --tb=short

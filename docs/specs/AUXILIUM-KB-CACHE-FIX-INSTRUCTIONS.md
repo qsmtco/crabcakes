@@ -235,31 +235,31 @@ After all 3 edits:
 
 1. **Run the new test file:**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -m pytest tests/test_auxilium_tier2.py -v
+   cd /path/to/projects/crabcakes && python3 -m pytest tests/test_auxilium_tier2.py -v
    ```
    Expect: **17 passed** (15 existing + 2 new). The 2 new tests must show as `test_kb_lookup_cached_when_returns_empty_chunks` and `test_kb_lookup_cached_when_raises`.
 
 2. **Run the full test suite:**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -m pytest -x -q
+   cd /path/to/projects/crabcakes && python3 -m pytest -x -q
    ```
    Expect: no new failures. Pre-existing failures (if any) must be attributed correctly.
 
 3. **Removal check (Edit 1 verification):**
    ```bash
-   cd /home/q/projects/crabcakes && grep -n "if chunks:" agent/runtime.py
+   cd /path/to/projects/crabcakes && grep -n "if chunks:" agent/runtime.py
    ```
    Expect: 0 matches inside `_prepare_kb_synthesis`. Other functions may still use `if chunks:`; that's expected and fine.
 
 4. **Docstring check (Edit 2 verification):**
    ```bash
-   cd /home/q/projects/crabcakes && grep -A 6 "kb_lookup is invoked at most" agent/runtime.py
+   cd /path/to/projects/crabcakes && grep -A 6 "kb_lookup is invoked at most" agent/runtime.py
    ```
    Expect: 6 lines of docstring text matching the new wording.
 
 5. **New test count check (Edit 3 verification):**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -m pytest tests/test_auxilium_tier2.py --collect-only -q | grep "test_kb_lookup_cached"
+   cd /path/to/projects/crabcakes && python3 -m pytest tests/test_auxilium_tier2.py --collect-only -q | grep "test_kb_lookup_cached"
    ```
    Expect: 2 matches (the 2 new test methods).
 

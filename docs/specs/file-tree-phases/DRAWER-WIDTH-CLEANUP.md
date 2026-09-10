@@ -18,7 +18,7 @@
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -A1 "_drawer_paths.clear" ui/views/file_tree.py | head -4
 python3 -m pytest tests/test_file_icons.py tests/test_projects.py tests/test_git_ops.py tests/test_file_tree_helpers.py tests/test_file_tree_sort_filter.py tests/test_file_tree_handler.py -q
 ```

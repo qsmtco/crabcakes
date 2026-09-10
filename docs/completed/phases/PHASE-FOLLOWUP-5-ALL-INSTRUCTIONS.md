@@ -10,7 +10,7 @@
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 - Read both files completely before writing any code
 - The `__all__` list should include symbols that are imported by other modules:
   - `AgentRuntime` (the main class)

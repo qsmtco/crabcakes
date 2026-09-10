@@ -83,7 +83,7 @@ If §2.7 doesn't exist or doesn't have a bullet list, skip this edit.
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 - Read `docs/ARCHITECTURE.md` lines 3030-3260 COMPLETELY before editing
 - Read `docs/ARCHITECTURE.md` lines 60-200 to find §2.7 before editing
 - Make ONLY the 4 edits described above
@@ -93,7 +93,7 @@ If §2.7 doesn't exist or doesn't have a bullet list, skip this edit.
 ## Verification (mandatory — paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "^## 12\|^## 13\|^## 14" docs/ARCHITECTURE.md
 ```
 
@@ -105,21 +105,21 @@ LINE:## 14. Principles to Preserve
 ```
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "_resolve_caller_key\|provider_cfg.caller\|caller.*per-provider" docs/ARCHITECTURE.md
 ```
 
 Expect: at least 3 matches showing the new content is in place.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify §2.7 has the new bullet (or that §2.7 doesn't exist and we skipped)
 grep -n "## 2.7" docs/ARCHITECTURE.md
 ```
 
 If the line exists, verify the bullet was added:
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -A 5 "## 2.7" docs/ARCHITECTURE.md | head -10
 ```
 

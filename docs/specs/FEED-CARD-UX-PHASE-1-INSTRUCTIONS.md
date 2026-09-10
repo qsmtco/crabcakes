@@ -1,6 +1,6 @@
 # Phase 1 of 5 — Card Type Button Policy + Color Palette
 
-**Master spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-FEED-CARD-UX.md` (1216 lines — read it in full before starting, especially the "Spec Revision History" at the top and the relevant section 2 sub-sections below)
+**Master spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-FEED-CARD-UX.md` (1216 lines — read it in full before starting, especially the "Spec Revision History" at the top and the relevant section 2 sub-sections below)
 
 **Scope of this phase:** Section 2.1 + 2.2 + 2.3 of the spec (3 files). Foundation work that all other phases depend on.
 
@@ -162,13 +162,13 @@ Add the `TestIsActionable`, `TestIsInformational`, and `TestActionableInformatio
 
 1. **Import sanity:**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -c "import models.feed_card; import ui.views.feed_card; import ui.styles; print('OK')"
+   cd /path/to/projects/crabcakes && python3 -c "import models.feed_card; import ui.views.feed_card; import ui.styles; print('OK')"
    ```
    Expect: `OK`
 
 2. **New methods exist with correct signatures:**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -c "
+   cd /path/to/projects/crabcakes && python3 -c "
    from models.feed_card import FeedCardData
    import inspect
    print('is_actionable signature:', inspect.signature(FeedCardData.is_actionable))
@@ -182,25 +182,25 @@ Add the `TestIsActionable`, `TestIsInformational`, and `TestActionableInformatio
 
 3. **New tests pass:**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -m pytest tests/test_feed_card.py -v
+   cd /path/to/projects/crabcakes && python3 -m pytest tests/test_feed_card.py -v
    ```
    Expect: all existing tests pass + new TestIsActionable + TestIsInformational + TestActionableInformationalMutuallyExclusive tests pass
 
 4. **CSS was appended:**
    ```bash
-   cd /home/q/projects/crabcakes && grep -c "feed-card-approval" ui/styles.py
+   cd /path/to/projects/crabcakes && grep -c "feed-card-approval" ui/styles.py
    ```
    Expect: ≥ 1 (definition in CSS block)
 
 5. **No accidental scope creep:**
    ```bash
-   cd /home/q/projects/crabcakes && git diff HEAD --stat
+   cd /path/to/projects/crabcakes && git diff HEAD --stat
    ```
    Expect: only `models/feed_card.py`, `ui/views/feed_card.py`, `ui/styles.py`, `tests/test_feed_card.py` changed. No other files.
 
 6. **Full test suite (sanity — should be no new failures):**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -m pytest -x -q
+   cd /path/to/projects/crabcakes && python3 -m pytest -x -q
    ```
    Expect: 1662 passed, 1 skipped, 4 warnings (or whatever the new baseline is after adding the new tests)
 

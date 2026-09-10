@@ -1200,12 +1200,12 @@ class TestBatchAccept:
 
 After EACH phase:
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_feed_card.py tests/test_feed_handler.py -v
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_feed_card.py tests/test_feed_handler.py -v
 ```
 
 After ALL phases:
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest -x -q
+cd /path/to/projects/crabcakes && python3 -m pytest -x -q
 ```
 
 Expect: 1662 passed + new tests passed, 1 skipped, 4 warnings (or whatever the new count is).

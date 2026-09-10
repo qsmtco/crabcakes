@@ -47,12 +47,12 @@ import ui.constants
 
 **Verification:**
 ```bash
-cd /home/q/projects/crabcakes && grep -n "STREAMING_ENABLED" ui/handlers/chat_handler.py
+cd /path/to/projects/crabcakes && grep -n "STREAMING_ENABLED" ui/handlers/chat_handler.py
 ```
 Expect: 1 import line `import ui.constants`, plus 1 reference to `ui.constants.STREAMING_ENABLED` in code (line 580). No bare `STREAMING_ENABLED` reads in code.
 
 ```bash
-cd /home/q/projects/crabcakes && grep -n "^from ui.constants" ui/handlers/chat_handler.py
+cd /path/to/projects/crabcakes && grep -n "^from ui.constants" ui/handlers/chat_handler.py
 ```
 Expect: 0 matches (the `from` form is gone).
 
@@ -79,7 +79,7 @@ import ui.constants
 
 **Verification:**
 ```bash
-cd /home/q/projects/crabcakes && grep -n "STREAMING_ENABLED" ui/toolbar.py
+cd /path/to/projects/crabcakes && grep -n "STREAMING_ENABLED" ui/toolbar.py
 ```
 Expect: 1 import line `import ui.constants`, plus 3 references to `ui.constants.STREAMING_ENABLED` (1 read at construction, 1 write in toggle, 1 read in label-update). No `ui_constants` aliasing.
 
@@ -104,19 +104,19 @@ The constants file is fine. The bug is in the consumer's import style, not in th
 
 1. **No `from ui.constants` imports anywhere:**
    ```bash
-   cd /home/q/projects/crabcakes && grep -rn "^from ui.constants" ui/ --include="*.py"
+   cd /path/to/projects/crabcakes && grep -rn "^from ui.constants" ui/ --include="*.py"
    ```
    Expect: 0 matches.
 
 2. **All STREAMING_ENABLED reads use module reference:**
    ```bash
-   cd /home/q/projects/crabcakes && grep -rn "STREAMING_ENABLED" ui/ --include="*.py"
+   cd /path/to/projects/crabcakes && grep -rn "STREAMING_ENABLED" ui/ --include="*.py"
    ```
    Expect: matches in `ui/constants.py` (definition), `ui/handlers/chat_handler.py` (`import ui.constants` + `ui.constants.STREAMING_ENABLED` reads), `ui/toolbar.py` (`import ui.constants` + `ui.constants.STREAMING_ENABLED` reads/writes). No bare `STREAMING_ENABLED` reads in chat_handler.py or toolbar.py.
 
 3. **Runtime behavior test (the actual bug):**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -c "
+   cd /path/to/projects/crabcakes && python3 -c "
    import sys; sys.path.insert(0, '.')
    import ui.constants
    import ui.handlers.chat_handler as ch
@@ -132,7 +132,7 @@ The constants file is fine. The bug is in the consumer's import style, not in th
 
 4. **Full test suite (sanity — fix should be behavior-preserving for tests):**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -m pytest -x -q
+   cd /path/to/projects/crabcakes && python3 -m pytest -x -q
    ```
    Expect: 1662 passed, 1 skipped, 4 warnings (same as Phase A baseline).
 

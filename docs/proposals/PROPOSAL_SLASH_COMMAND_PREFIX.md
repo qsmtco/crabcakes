@@ -34,7 +34,7 @@ CrabCakes uses the backtick (`` ` ``) as its command prefix. This was a reasonab
 | Universal convention | ✅ Every chat app on earth | **Excellent** |
 | Learning curve | ✅ Zero — `/help`, `/status` are universal | **Excellent** |
 | Conflict with markdown | ❌ No conflict — slash is not a markdown delimiter | **Excellent** |
-| Conflict with file paths | ⚠️ `/home/q/...` exists, but users don't start chat messages with file paths; unknown commands pass through | **Acceptable** |
+| Conflict with file paths | ⚠️ `/home/user/...` exists, but users don't start chat messages with file paths; unknown commands pass through | **Acceptable** |
 | Conflict with code | ⚠️ `// comment` in code, but agents put code in fenced blocks, not bare text | **Acceptable** |
 | Visual distinctiveness | ✅ `/command` is clearly a command at a glance | **Good** |
 | Config already exists | ✅ `set_prefix()` method + `COMMAND_PREFIX` config already implemented | **No plumbing needed** |
@@ -296,7 +296,7 @@ These files/areas are **not affected** by this migration:
 - [ ] Markdown backticks for code rendering work unchanged
 - [ ] `/help` command displays correct output
 - [ ] `/ask @Agent "payload"` routes correctly
-- [ ] Unknown `/` inputs (e.g. `/home/q/...`) pass through as `handled=False`
+- [ ] Unknown `/` inputs (e.g. `/home/user/...`) pass through as `handled=False`
 - [ ] `ARCHITECTURE.md` updated with slash prefix references
 
 ---

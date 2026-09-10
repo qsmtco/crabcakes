@@ -170,7 +170,7 @@ will restore the full placeholder when search goes live.)
 ## Verification (run ALL)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. BUG #1 — callback wired
 grep -n "set_on_get_git_status" ui/window.py

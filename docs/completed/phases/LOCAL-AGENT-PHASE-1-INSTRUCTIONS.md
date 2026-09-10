@@ -208,26 +208,26 @@ def test_inline_mention_to_special_agent_does_not_call_gw(self):
 
 **Step 4a — Run the new test class:**
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_chat_handler.py::TestInlineMentionRouting -v 2>&1
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_chat_handler.py::TestInlineMentionRouting -v 2>&1
 ```
 
 Expected: 4 passed, 0 failed.
 
 **Step 4b — Run the full chat_handler test file (regression check):**
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_chat_handler.py -v 2>&1
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_chat_handler.py -v 2>&1
 ```
 
 Expected: all tests pass (existing + 4 new).
 
 **Step 4c — Pattern sweep (confirm zero broken-pattern remnants):**
 ```bash
-cd /home/q/projects/crabcakes && grep -n "is_special" ui/handlers/chat_handler.py | wc -l
+cd /path/to/projects/crabcakes && grep -n "is_special" ui/handlers/chat_handler.py | wc -l
 ```
 Expected: at least 6 matches (4 in the existing slash + DM + fan-out paths, plus 2 new in the inline @mention paths).
 
 ```bash
-cd /home/q/projects/crabcakes && grep -n "for target in resolution.broadcast_targets" ui/handlers/chat_handler.py
+cd /path/to/projects/crabcakes && grep -n "for target in resolution.broadcast_targets" ui/handlers/chat_handler.py
 ```
 Expected: 1 match (the new fixed line).
 

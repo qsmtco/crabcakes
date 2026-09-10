@@ -116,7 +116,7 @@ In `force_llm_compact` (around line 3053), there are two unused variables:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Syntax
 python3 -c "import ast; [ast.parse(open(f).read()) for f in ['agent/runtime.py', 'agent/context_strategy.py', 'ui/handlers/agent_runtime_handler.py']]; print('SYNTAX OK')"

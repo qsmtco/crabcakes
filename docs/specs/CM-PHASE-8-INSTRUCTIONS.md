@@ -415,7 +415,7 @@ class TestCompactionEvent:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. New runtime compaction tests pass
 python3 -m pytest tests/test_runtime_compaction.py -v --tb=short

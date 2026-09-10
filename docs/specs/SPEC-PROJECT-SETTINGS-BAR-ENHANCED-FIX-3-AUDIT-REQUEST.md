@@ -4,7 +4,7 @@
 **Previous spec (for diff):** `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED-FIX-2.md`
 **Round 3 findings to verify addressed:** `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED-FIX-2-FINDINGS.md` (7 bugs: 1 CRIT, 3 HIGH, 3 MED)
 **Audit prompt to load:** `prompts/adversarialDebugger.md`
-**Working dir:** `/home/q/projects/crabcakes`
+**Working dir:** `/path/to/projects/crabcakes`
 
 This is the **Round 4 re-audit**. Coder produced FIX-3.md to address the 7 Round 3 findings. The Coder claims 24 code blocks all pass `ast.parse()` with zero errors.
 

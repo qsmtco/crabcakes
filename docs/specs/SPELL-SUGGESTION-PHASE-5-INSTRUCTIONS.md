@@ -93,7 +93,7 @@ def test_show_suggestions_menu_backward_compatible_no_parent_widget():
 
 Run:
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/test_input_toolbar_handler.py tests/test_chat_input_toolbar.py -q --tb=short
 ```
 

@@ -211,7 +211,7 @@ or `_on_get_sort_mode` yet — those are Phase 3/4.
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Module imports cleanly (GTK available)
 python3 -c "

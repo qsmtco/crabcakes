@@ -131,7 +131,7 @@ Add a thin public method on AgentRuntime:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Syntax
 python3 -c "import ast; [ast.parse(open(f).read()) for f in ['ui/handlers/project_handler.py', 'ui/handlers/command_handler.py', 'ui/handlers/agent_runtime_handler.py', 'ui/window.py', 'agent/runtime.py']]; print('SYNTAX OK')"

@@ -234,7 +234,7 @@ Variables available to all system prompt templates:
 |----------|--------|---------|
 | `{{AGENT_NAME}}` | Agent display name | `"Qaster"` |
 | `{{PROJECT_NAME}}` | `.crabcakes/project.md` | `"CrabCakes"` |
-| `{{PROJECT_PATH}}` | Project directory | `"/home/q/projects/crabcakes"` |
+| `{{PROJECT_PATH}}` | Project directory | `"/path/to/projects/crabcakes"` |
 | `{{TEAM_ROSTER}}` | `.crabcakes/team.json` | Formatted member list |
 | `{{CURRENT_STATE}}` | `.crabcakes/awareness.json` | Git SHA, tasks, review mode |
 | `{{PROJECT_MEMORY}}` | `.crabcakes/context.md` | Cross-session notes (may be empty) |

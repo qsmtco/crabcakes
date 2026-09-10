@@ -262,11 +262,11 @@ New spec should be authored before implementation. Recommend `docs/specs/SPEC-CO
 
 ## 6. Files for reference
 
-- `/home/q/projects/crabcakes/agent/runtime.py` — runtime loop; line 2214 is the empty-message append path; lines 875–888 and 942–955 have the HTTPError body logger (already in place)
-- `/home/q/projects/crabcakes/models/conversation.py` — `to_api_messages` at lines 221–273; `add_assistant_message` at lines 193–207; `add_tool_result` at lines 210–218
-- `/home/q/projects/crabcakes/agent/context_strategy.py` — `compact()` does NOT create empty ASSISTANT messages (verified); only the summary injection path creates new ASSISTANT messages and it guards with `if fitted is not None`
-- `/home/q/projects/crabcakes/docs/specs/SPEC-CODER-400-STALE-MESSAGES-AND-HTTPERROR-BODY.md` — both spec'd bugs are already fixed
-- `/home/q/projects/crabcakes/docs/specs/SPEC-COMPACTION-MULTI-TOOL-RESULT-ORPHAN.md` — all 4 changes applied; not relevant to this new bug
+- `/path/to/projects/crabcakes/agent/runtime.py` — runtime loop; line 2214 is the empty-message append path; lines 875–888 and 942–955 have the HTTPError body logger (already in place)
+- `/path/to/projects/crabcakes/models/conversation.py` — `to_api_messages` at lines 221–273; `add_assistant_message` at lines 193–207; `add_tool_result` at lines 210–218
+- `/path/to/projects/crabcakes/agent/context_strategy.py` — `compact()` does NOT create empty ASSISTANT messages (verified); only the summary injection path creates new ASSISTANT messages and it guards with `if fitted is not None`
+- `/path/to/projects/crabcakes/docs/specs/SPEC-CODER-400-STALE-MESSAGES-AND-HTTPERROR-BODY.md` — both spec'd bugs are already fixed
+- `/path/to/projects/crabcakes/docs/specs/SPEC-COMPACTION-MULTI-TOOL-RESULT-ORPHAN.md` — all 4 changes applied; not relevant to this new bug
 - `~/.config/crabcakes/conversations/special:supervisor.json` — contains the corrupt message at conv[262]; timestamp 2026-07-04 17:47 PDT
 
 ## 7. Self-audit answers to your frustration

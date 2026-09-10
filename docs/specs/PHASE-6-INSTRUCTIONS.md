@@ -5,8 +5,8 @@ Extract the duplicated MiniMax SSE delta parsing into a shared helper so that
 `_stream_minimax_events` and `_stream_openai_events` share the same code.
 
 ## Files to Read First
-- `/home/q/projects/crabcakes/agent/runtime.py` (lines 473–545, 547–665)
-- `/home/q/projects/crabcakes/docs/specs/SPEC-RUNTIME-HARDENING-AUDIT.md` (W11)
+- `/path/to/projects/crabcakes/agent/runtime.py` (lines 473–545, 547–665)
+- `/path/to/projects/crabcakes/docs/specs/SPEC-RUNTIME-HARDENING-AUDIT.md` (W11)
 
 ## Step 1 — Study the Two Stream Functions
 
@@ -98,7 +98,7 @@ is not part of the shared helper.
 ## Step 5 — Verify
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "from agent.runtime import AgentRuntime; print('import ok')"
 python3 -m py_compile agent/runtime.py && echo "syntax ok"
 ```

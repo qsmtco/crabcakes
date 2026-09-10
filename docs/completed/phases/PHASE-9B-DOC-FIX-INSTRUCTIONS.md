@@ -59,7 +59,7 @@ You may add this as a new section 1.1 or as a footnote in the executive summary.
 ## Verification commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # Verify line 6 now has the correct number
 sed -n '6p' docs/specs/PHASE-9-COMPLETION-REPORT.md

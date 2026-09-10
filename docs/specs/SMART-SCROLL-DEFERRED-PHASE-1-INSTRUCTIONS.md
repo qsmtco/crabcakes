@@ -12,7 +12,7 @@
 
 - **Use the `steelFramedCodeWriter` prompt at `prompts/steelFramedCodeWriter.md`**
 - **READ ALL FILES BEFORE STARTING** — read every file you touch in full before writing any code
-- Run: `cd /home/q/projects/crabcakes && python3 -m pytest tests/test_feed_handler.py -q --tb=short` and paste the output
+- Run: `cd /path/to/projects/crabcakes && python3 -m pytest tests/test_feed_handler.py -q --tb=short` and paste the output
 - For any removals: run `grep` and confirm output is 0
 - Report: files changed with line numbers, test results, any issues
 - At the end, include a COMPLETENESS checklist

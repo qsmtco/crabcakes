@@ -25,7 +25,7 @@ Change to:
 Supervisor live reproduction (CONFIRMED BROKEN):
 ```python
 from utils.project_awareness import get_current_task
-get_current_task('/home/q/projects/crabcakes')  # '026-07-20 — In-flight loops' (WRONG)
+get_current_task('/path/to/projects/crabcakes')  # '026-07-20 — In-flight loops' (WRONG)
 ```
 
 After fix, expected: `'2026-07-20 — In-flight loops'`
@@ -239,7 +239,7 @@ class TestAwarenessCacheFixes:
 ## Verification (paste full output)
 
 1. `grep -n "headings\[-1\]" utils/project_awareness.py` — expect `[3:]` not `[4:]`
-2. `python3 -c "from utils.project_awareness import get_current_task; print(repr(get_current_task('/home/q/projects/crabcakes')))"` — expect starts with `'2026-` (the leading `2`)
+2. `python3 -c "from utils.project_awareness import get_current_task; print(repr(get_current_task('/path/to/projects/crabcakes')))"` — expect starts with `'2026-` (the leading `2`)
 3. `grep -n "cached\[2\] == _content_fp\|tuple\[float, dict, int\]\|_content_fp" utils/project_awareness.py` — expect 3+ matches
 4. `grep -n "return dict(parts)" utils/project_awareness.py` — expect 1 match
 5. `python3 -m pytest tests/test_project_awareness.py -v 2>&1 | tail -15` — all tests pass (28 existing + 5 new + 2 optional)

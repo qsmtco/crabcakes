@@ -77,7 +77,7 @@ def is_auxilium_wizard_needed(config_dir: Path) -> bool:
 
 ```bash
 # 1. Re-run the failing probe — wizard_needed in an empty dir must be True
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import tempfile
 from pathlib import Path
 from ui.handlers.auxilium_wizard_handler import is_auxilium_wizard_needed
@@ -90,7 +90,7 @@ with tempfile.TemporaryDirectory() as tmp:
 "
 
 # 2. Real config dir (currently has providers.yaml) — wizard not needed
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 from pathlib import Path
 from ui.handlers.auxilium_wizard_handler import is_auxilium_wizard_needed
 result = is_auxilium_wizard_needed(Path.home() / '.config' / 'crabcakes')
@@ -99,10 +99,10 @@ print('  (expected False because providers.yaml exists from prior tests)')
 "
 
 # 3. Existing tests still pass
-cd /home/q/projects/crabcakes && pytest tests/test_architecture.py tests/test_kb_lookup.py -q 2>&1 | tail -3
+cd /path/to/projects/crabcakes && pytest tests/test_architecture.py tests/test_kb_lookup.py -q 2>&1 | tail -3
 
 # 4. Module still imports cleanly
-cd /home/q/projects/crabcakes && python3 -c "from ui.handlers.auxilium_wizard_handler import is_auxilium_wizard_needed; print('imports OK')"
+cd /path/to/projects/crabcakes && python3 -c "from ui.handlers.auxilium_wizard_handler import is_auxilium_wizard_needed; print('imports OK')"
 ```
 
 ---

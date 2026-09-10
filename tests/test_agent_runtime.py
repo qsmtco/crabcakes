@@ -25,6 +25,11 @@ from agent.llm.extractors import (
 )
 
 
+# Repo root, derived from this file's location (tests/ -> parent), so the
+# source-inspection tests below work from any checkout, not just one machine.
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 def _uniq():
     return f"rt{uuid.uuid4().hex[:8]}"
 
@@ -1910,7 +1915,7 @@ class TestStreamingSignature:
         )
 
         # 3. Verify the production caller passes all required parameters
-        with open("/home/q/projects/crabcakes/agent/runtime.py") as f:
+        with open(os.path.join(REPO_ROOT, "agent", "runtime.py")) as f:
             runtime_source = f.read()
         # Find the call site: `self._call_llm_streaming(`
         call_site_match = runtime_source.find("self._call_llm_streaming(")
@@ -1924,7 +1929,7 @@ class TestStreamingSignature:
             )
 
         # 4. Verify the TestStreaming patches use _make_streaming_lambda fixture (PHASE-FOLLOWUP-4)
-        with open("/home/q/projects/crabcakes/tests/test_agent_runtime.py") as f:
+        with open(os.path.abspath(__file__)) as f:
             test_source = f.read()
         # Verify no patches use old rt_module pattern
         rt_module_calls = test_source.count("rt_module._call_llm_streaming(") - 1  # -1 for the count line
@@ -2967,10 +2972,10 @@ class TestRebuildConversationContext:
         original_prompt = conv.system_prompt
 
         # Act
-        rt._rebuild_conversation_context(sk, "/home/q/projects/new", "debugger")
+        rt._rebuild_conversation_context(sk, "/path/to/projects/new", "debugger")
 
         conv = rt.get_conversation(sk)
-        assert conv.project_path == "/home/q/projects/new"
+        assert conv.project_path == "/path/to/projects/new"
         # The rebuild must produce a new prompt (not no-op). With a different
         # project_path, the awareness block changes → prompt changes.
         # build_awareness_dict puts the project basename into PROJECT_NAME
@@ -2987,12 +2992,12 @@ class TestRebuildConversationContext:
         rt = _make_runtime()
         sk = rt.create_conversation(
             agent_name="Debugger", session_key="special:debugger",
-            project_path="/home/q/projects/active",
+            project_path="/path/to/projects/active",
         )
         # Snapshot the current system_prompt — rebuild should leave it untouched
         original_prompt = rt.get_conversation(sk).system_prompt
 
-        rt._rebuild_conversation_context(sk, "/home/q/projects/active", "debugger")
+        rt._rebuild_conversation_context(sk, "/path/to/projects/active", "debugger")
         assert rt.get_conversation(sk).system_prompt == original_prompt, (
             "idempotent rebuild must not touch system_prompt when already in sync"
         )
@@ -3005,9 +3010,9 @@ class TestRebuildConversationContext:
         rt = _make_runtime()
         sk = rt.create_conversation(
             agent_name="Debugger", session_key="special:debugger",
-            project_path="/home/q/projects/old",
+            project_path="/path/to/projects/old",
         )
-        assert rt.get_conversation(sk).project_path == "/home/q/projects/old"
+        assert rt.get_conversation(sk).project_path == "/path/to/projects/old"
 
         rt._rebuild_conversation_context(sk, None, "debugger")
         assert rt.get_conversation(sk).project_path is None
@@ -3675,7 +3680,7 @@ class TestSSEFrameShapeHardening:
         import subprocess
         result = subprocess.run(
             ["grep", "-n", 'd\.get("choices", [{}])[0]', "agent/runtime.py"],
-            capture_output=True, text=True, cwd="/home/q/projects/crabcakes",
+            capture_output=True, text=True, cwd=REPO_ROOT,
         )
         assert result.stdout == "", (
             f"Unguarded [0] indexing found:\n{result.stdout}"
@@ -3697,7 +3702,7 @@ class TestSSEFrameShapeHardening:
         for f in files:
             result = subprocess.run(
                 ["grep", "-c", "first_choice", f],
-                capture_output=True, text=True, cwd="/home/q/projects/crabcakes",
+                capture_output=True, text=True, cwd=REPO_ROOT,
             )
             if result.stdout.strip():
                 total += int(result.stdout.strip())

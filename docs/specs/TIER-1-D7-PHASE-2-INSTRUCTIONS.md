@@ -134,7 +134,7 @@ The class has just `__init__`. Everything else is internal (`_poll_gateway`, `_o
 
 ```bash
 # 1. Does the module import?
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
@@ -143,7 +143,7 @@ print('imports OK')
 " 2>&1
 
 # 2. Does the class instantiate (with stub handler)?
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
@@ -175,10 +175,10 @@ print('PASS')
 " 2>&1
 
 # 3. Existing tests still pass (architecture + KB)
-cd /home/q/projects/crabcakes && pytest tests/test_architecture.py tests/test_kb_lookup.py -q 2>&1 | tail -3
+cd /path/to/projects/crabcakes && pytest tests/test_architecture.py tests/test_kb_lookup.py -q 2>&1 | tail -3
 
 # 4. G_DEBUG=fatal-criticals smoke — does the wizard instantiate without GTK warnings?
-cd /home/q/projects/crabcakes && G_DEBUG=fatal-criticals python3 -c "
+cd /path/to/projects/crabcakes && G_DEBUG=fatal-criticals python3 -c "
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk

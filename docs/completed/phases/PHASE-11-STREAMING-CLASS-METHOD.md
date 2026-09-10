@@ -38,7 +38,7 @@ This eliminates:
 
 After all 3 phases:
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 timeout 240 python3 -m pytest tests/ -q --no-header --tb=no
 ```
 

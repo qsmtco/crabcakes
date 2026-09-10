@@ -88,7 +88,7 @@ class TestAutoLinkAttributeProtection:
 ## Verification commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. New orphan tag tests
 python3 -m pytest tests/test_escaping.py::TestOrphanTagSweep -v

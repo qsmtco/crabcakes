@@ -197,7 +197,7 @@ Remove the duplicate `@staticmethod` decorator (keep only one).
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Drawer parent_full_path matches file's parent (not file's path)
 grep -A2 "parent_full_path=file_row" ui/views/file_tree.py

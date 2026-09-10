@@ -38,7 +38,7 @@ Search for `result.append("<")` in `utils/escaping.py` and change each to `resul
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # BUG #1
 python3 -c "

@@ -395,7 +395,7 @@ class TestAgentBuilderGetValuesPhaseC:
 ## Verification commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 8.1: imports still ok after agent/config.py changes
 python3 -c "from agent.config import load_agent_config, ensure_providers_yaml_exists, _load_providers_from_yaml_or_fallback; print('imports ok')"

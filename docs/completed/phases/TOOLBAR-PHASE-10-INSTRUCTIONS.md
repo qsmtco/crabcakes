@@ -90,7 +90,7 @@ Expected output: **empty** (no matches). If any other file references `_control_
 ## Verification Commands (run all of these)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. main_content.py: _control_bar gone, _toolbar present
 echo "=== _control_bar in main_content.py (should be 0) ==="
@@ -117,7 +117,7 @@ xvfb-run -a python3 -c "from ui.window import MainWindow; print('imports OK')"
 
 # 6. App launches with no Gtk-CRITICAL
 G_DEBUG=fatal-criticals xvfb-run -a python3 -c "
-import sys; sys.path.insert(0, '/home/q/projects/crabcakes')
+import sys; sys.path.insert(0, '/path/to/projects/crabcakes')
 from ui.window import MainWindow
 m = MainWindow(application=None)
 m.present()
@@ -130,7 +130,7 @@ xvfb-run -a python3 -m pytest tests/test_chat_input_toolbar.py tests/test_input_
 
 # 8. Behavioral repro: the new property returns the same toolbar the old one did
 xvfb-run -a timeout 10 python3 -c "
-import sys; sys.path.insert(0, '/home/q/projects/crabcakes')
+import sys; sys.path.insert(0, '/path/to/projects/crabcakes')
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, GLib

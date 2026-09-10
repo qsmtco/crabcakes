@@ -81,8 +81,8 @@ Replace with:
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
-- Use the adversarialDebugger prompt at `/home/q/projects/crabcakes/prompts/adversarialDebugger.md` to verify the fix is correct before reporting done
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the adversarialDebugger prompt at `/path/to/projects/crabcakes/prompts/adversarialDebugger.md` to verify the fix is correct before reporting done
 - Make ONLY the 3 edits described above
 - Do NOT touch the `_call_llm_streaming` body beyond the 1-line fix
 - Do NOT change the test's other patches or assertions
@@ -91,7 +91,7 @@ Replace with:
 ## Verification (mandatory — paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify BUG-1 fix
 grep -n "ev.data\[.index.\]\|ev.data.get..index" agent/runtime.py
 ```
@@ -99,7 +99,7 @@ grep -n "ev.data\[.index.\]\|ev.data.get..index" agent/runtime.py
 Expect: 1 match, using `ev.data.get("index", 0)`. Zero matches for `ev.data["index"]`.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify new test exists
 grep -n "def test_tool_call_delta_without_index_defaults_to_zero" tests/test_agent_runtime.py
 ```
@@ -107,7 +107,7 @@ grep -n "def test_tool_call_delta_without_index_defaults_to_zero" tests/test_age
 Expect: 1 match.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify new test passes
 timeout 30 python3 -m pytest tests/test_agent_runtime.py::TestStreaming::test_tool_call_delta_without_index_defaults_to_zero -v 2>&1 | tail -8
 ```
@@ -115,7 +115,7 @@ timeout 30 python3 -m pytest tests/test_agent_runtime.py::TestStreaming::test_to
 Expect: 1 passed.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the 4 existing TestStreaming tests still pass
 timeout 30 python3 -m pytest tests/test_agent_runtime.py::TestStreaming -v 2>&1 | tail -10
 ```
@@ -123,7 +123,7 @@ timeout 30 python3 -m pytest tests/test_agent_runtime.py::TestStreaming -v 2>&1 
 Expect: 5 passed (4 original + 1 new).
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the regression test catches the bug
 # Temporarily revert the fix and confirm the test fails
 cp agent/runtime.py /tmp/saved_runtime.py
@@ -136,7 +136,7 @@ echo "Restored fix"
 Expect: 1 FAILED (KeyError: 'index'). After restore: 1 passed.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify ARCHITECTURE.md §3.21m update
 grep -n "OpenAI.*MiniMax.*Anthropic.*OpenRouter.*ZAI" docs/ARCHITECTURE.md
 ```
@@ -144,7 +144,7 @@ grep -n "OpenAI.*MiniMax.*Anthropic.*OpenRouter.*ZAI" docs/ARCHITECTURE.md
 Expect: 1 match in the updated §3.21m line.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Full test suite
 timeout 240 python3 -m pytest tests/ -q --no-header --tb=no 2>&1 | tail -3
 ```
@@ -154,7 +154,7 @@ Expect: 13 failed, 1385 passed, 1 skipped (+1 from new test, 0 regressions).
 ## Commit
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 git add agent/runtime.py tests/test_agent_runtime.py docs/ARCHITECTURE.md
 git commit -m "fix: PHASE-11.5 KeyError on missing 'index' in tool_call_delta + doc update
 

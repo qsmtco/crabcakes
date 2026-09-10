@@ -646,7 +646,7 @@ Tied to H4 (race condition). The spec needs `self._current_request_id = 0` in `_
 
 ## Verification Methodology
 
-I followed the adversarial debugger prompt (`/home/q/projects/crabcakes/prompts/adversarialDebugger.md`):
+I followed the adversarial debugger prompt (`/path/to/projects/crabcakes/prompts/adversarialDebugger.md`):
 
 1. **Destroyed assumptions**: I assumed the spec was "exhaustive discovery verified against source" and tried to disprove that by checking every cited line number, function signature, and import statement.
 2. **Found concrete bugs**: Of 49 issues, ~40 are verifiable against actual source code. Examples: line number offsets, missing imports, missing `super().__init__()`, race conditions in threading model, signature contradictions, missing active-review gating.

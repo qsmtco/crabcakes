@@ -59,7 +59,7 @@ class TestStreamingSignature:
         )
 
         # 3. Verify the production caller passes all required parameters
-        with open("/home/q/projects/crabcakes/agent/runtime.py") as f:
+        with open("/path/to/projects/crabcakes/agent/runtime.py") as f:
             runtime_source = f.read()
         # Find the call site: `self._call_llm_streaming(`
         call_site_match = runtime_source.find("self._call_llm_streaming(")
@@ -73,7 +73,7 @@ class TestStreamingSignature:
             )
 
         # 4. Verify the 4 TestStreaming patches all use the method on `rt`, not the module
-        with open("/home/q/projects/crabcakes/tests/test_agent_runtime.py") as f:
+        with open("/path/to/projects/crabcakes/tests/test_agent_runtime.py") as f:
             test_source = f.read()
         rt_module_calls = test_source.count("rt_module._call_llm_streaming(")
         rt_method_calls = test_source.count("rt._call_llm_streaming(")
@@ -92,7 +92,7 @@ After adding the test, run the full suite. Then commit all Phase 11 changes (1 s
 
 ## Rules
 
-- Use the adversarialDebugger prompt at `/home/q/projects/crabcakes/prompts/adversarialDebugger.md` to find weak spots in the new test before committing. The test should be adversarial: it should fail if the signature drifts, if the production caller drifts, or if the test patches drift back to the old pattern.
+- Use the adversarialDebugger prompt at `/path/to/projects/crabcakes/prompts/adversarialDebugger.md` to find weak spots in the new test before committing. The test should be adversarial: it should fail if the signature drifts, if the production caller drifts, or if the test patches drift back to the old pattern.
 - Read `tests/test_agent_runtime.py` lines 740-760 to find the insertion point
 - Do NOT change the existing 4 `TestStreaming` tests
 - Do NOT change `agent/runtime.py` (no more code changes — P11.1 and P11.2 already landed)
@@ -102,7 +102,7 @@ After adding the test, run the full suite. Then commit all Phase 11 changes (1 s
 ## Verification (mandatory — paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the new test class exists
 grep -n "class TestStreamingSignature\|def test_streaming_method_signature_matches_caller_interface" tests/test_agent_runtime.py
 ```
@@ -110,7 +110,7 @@ grep -n "class TestStreamingSignature\|def test_streaming_method_signature_match
 Expect: exactly 1 match for the class, 1 match for the method.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the new test passes
 timeout 30 python3 -m pytest tests/test_agent_runtime.py::TestStreamingSignature -v 2>&1 | tail -10
 ```
@@ -118,7 +118,7 @@ timeout 30 python3 -m pytest tests/test_agent_runtime.py::TestStreamingSignature
 Expect: 1 passed.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the new test actually fails when the signature drifts
 python3 -c "
 import re
@@ -144,7 +144,7 @@ echo "Restored original test file"
 Expect: the adversarial run shows 1 FAILED (with "signature mismatch" message). After restore, the test passes again.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Full test suite
 timeout 240 python3 -m pytest tests/ -q --no-header --tb=no 2>&1 | tail -3
 ```
@@ -156,7 +156,7 @@ Expect: 13 failed, 1384 passed, 1 skipped (+1 from the new test, 0 regressions).
 Stage and commit all changes:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 git add agent/runtime.py tests/test_agent_runtime.py
 git commit -m "refactor: PHASE-11 promote _call_llm_streaming to AgentRuntime method
 

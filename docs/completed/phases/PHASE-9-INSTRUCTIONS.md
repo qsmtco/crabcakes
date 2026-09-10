@@ -37,7 +37,7 @@ Output a DISCOVERY block listing each file read and what you learned.
 Run the following verification and document the results:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # These files must have NO modifications (untracked is OK; modification is not)
 for f in agent/enforcement.py agent/context.py agent/tools.py ui/views/left_panel.py; do
@@ -91,7 +91,7 @@ Do this for all six flows.
 For each row in the §4 table, verify the file exists and matches the expected change type. Use `git status` and `ls` to confirm:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # New files
 for f in models/providers.py utils/providers_store.py utils/provider_test.py \
@@ -197,7 +197,7 @@ For each edge case in §7, write a short status:
 Run the full test suite and capture the final result:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/ -q --tb=line 2>&1 | tail -10
 ```
 
@@ -281,7 +281,7 @@ The completion report `PHASE-9-COMPLETION-REPORT.md` should follow this structur
 After completing the report, you may organize the work into clean commits. The recommendation:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # Option A: one big commit per phase (most readable history)
 git add agent/config.py agent/runtime.py agent/special_agents.py \
@@ -345,7 +345,7 @@ If the user prefers per-phase commits, alternative: 9 commits, one per phase. **
 ## Verification commands for the audit
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 9.1: §2.16 verification
 echo "=== 9.1 §2.16 files unchanged ==="

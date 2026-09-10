@@ -58,7 +58,7 @@ Use exactly this implementation (matches the spec §2.4):
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 - Read `agent/runtime.py` lines 1280–1360 (the `_call_llm` method) and the TYPE_CHECKING block (lines 27–28) COMPLETELY before editing
 - Make ONLY the two changes: TYPE_CHECKING import addition + new static method. Do NOT modify `_call_llm` yet — that's P3b.
 - Do NOT touch `_PROVIDER_CALLERS`, `_PROVIDER_STREAMERS`, or any other code
@@ -69,7 +69,7 @@ Use exactly this implementation (matches the spec §2.4):
 Run ALL of these and paste full output:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "
 from agent.config import LLMProviderConfig
 from agent.runtime import AgentRuntime
@@ -100,14 +100,14 @@ print('Test 5 OK: None provider_cfg + no slash returns model as-is')
 ```
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/test_agent_runtime.py -q 2>&1 | tail -6
 ```
 
 ## Grep proof
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "_resolve_caller_key\|LLMProviderConfig" agent/runtime.py
 ```
 

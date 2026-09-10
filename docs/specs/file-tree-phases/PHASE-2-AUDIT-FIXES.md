@@ -75,7 +75,7 @@ grep -n "if self._project_path is not None" ui/views/file_tree.py
 ## Verification (run ALL)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. os imported
 python3 -c "import ui.views.file_tree as ft; print('os' in dir(ft))"

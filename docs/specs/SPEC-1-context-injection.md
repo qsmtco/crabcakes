@@ -306,7 +306,7 @@ For each agent prompt that has a fix/debug protocol, add a bug journal reference
 
 Populate the crabwatch project's `.crabcakes/coder-bugs.md` with the 3 real bugs from task 5:
 
-**File:** `/home/q/projects/crabwatch/.crabcakes/coder-bugs.md`
+**File:** `/path/to/projects/crabwatch/.crabcakes/coder-bugs.md`
 
 ```markdown
 # Coder Bug Journal — crabwatch
@@ -352,7 +352,7 @@ Populate the crabwatch project's `.crabcakes/coder-bugs.md` with the 3 real bugs
 ---
 ```
 
-**File:** `/home/q/projects/crabwatch/.crabcakes/coder-rules.md`
+**File:** `/path/to/projects/crabwatch/.crabcakes/coder-rules.md`
 
 ```markdown
 # Coder Rules — crabwatch

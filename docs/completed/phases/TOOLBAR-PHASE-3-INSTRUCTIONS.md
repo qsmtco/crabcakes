@@ -1,6 +1,6 @@
 # PHASE 3 of 7 — Verify + Test `ui/views/chat_input_toolbar.py`
 
-**Spec:** `/home/q/projects/crabcakes/docs/specs/SPEC_CHAT_INPUT_TOOLBAR.md` Section 2.3
+**Spec:** `/path/to/projects/crabcakes/docs/specs/SPEC_CHAT_INPUT_TOOLBAR.md` Section 2.3
 **Target file:** `ui/views/chat_input_toolbar.py` (already exists — 549 lines)
 **Test file to create:** `tests/test_chat_input_toolbar.py`
 
@@ -146,10 +146,10 @@ from gi.repository import Gtk
 
 ```bash
 # Run the new tests
-cd /home/q/projects/crabcakes && GDK_BACKEND=headless python3 -m pytest tests/test_chat_input_toolbar.py -v --tb=short
+cd /path/to/projects/crabcakes && GDK_BACKEND=headless python3 -m pytest tests/test_chat_input_toolbar.py -v --tb=short
 
 # Run the full suite
-cd /home/q/projects/crabcakes && python3 -m pytest tests/ -q --tb=short
+cd /path/to/projects/crabcakes && python3 -m pytest tests/ -q --tb=short
 
 # Verify no handler imports
 grep -n "from ui.handlers\|import ui.handlers" ui/views/chat_input_toolbar.py

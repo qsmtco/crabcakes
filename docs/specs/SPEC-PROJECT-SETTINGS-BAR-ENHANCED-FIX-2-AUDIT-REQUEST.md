@@ -4,7 +4,7 @@
 **Previous specs (for diff context):** `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED-FIX-1.md`, `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED.md`
 **Round 2 findings to verify addressed:** `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED-FIX-1-FINDINGS.md` (7 bugs: 1 CRITICAL, 3 HIGH, 3 MEDIUM)
 **Audit prompt to load:** `prompts/adversarialDebugger.md`
-**Working dir:** `/home/q/projects/crabcakes`
+**Working dir:** `/path/to/projects/crabcakes`
 
 This is the **Round 3 re-audit**. The Coder produced FIX-2.md to address the 7 Round 2 findings. Your job:
 

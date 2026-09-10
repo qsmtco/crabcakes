@@ -11,10 +11,10 @@ before approving each phase.
 
 ## Files to Read Before Starting
 
-1. `/home/q/projects/crabcakes/docs/specs/SPEC-RUNTIME-HARDENING-AUDIT.md`
-2. `/home/q/projects/crabcakes/docs/specs/SUPERVISOR-QTR-LOOP.md` (this file)
-3. `/home/q/projects/crabcakes/agent/runtime.py` (full file — already read)
-4. `/home/q/projects/crabcakes/docs/ARCHITECTURE.md` (already read)
+1. `/path/to/projects/crabcakes/docs/specs/SPEC-RUNTIME-HARDENING-AUDIT.md`
+2. `/path/to/projects/crabcakes/docs/specs/SUPERVISOR-QTR-LOOP.md` (this file)
+3. `/path/to/projects/crabcakes/agent/runtime.py` (full file — already read)
+4. `/path/to/projects/crabcakes/docs/ARCHITECTURE.md` (already read)
 
 ---
 

@@ -1381,7 +1381,7 @@ _PROVIDER_CALLERS: dict[str, Any] = {
 
 ```bash
 grep -rn "_PROVIDER_STREAMERS\|_stream_openai_events\|_stream_minimax_events\|_stream_anthropic_events" \
-    --include="*.py" /home/q/projects/crabcakes/ | \
+    --include="*.py" /path/to/projects/crabcakes/ | \
     grep -v "tests/generate_synthetic_conversations.py\|_call_minimax"
 ```
 
@@ -1398,7 +1398,7 @@ function named `_call_minimax` (not an import of the runtime alias).
 
 ```bash
 grep -rn "from agent.runtime import.*\(_call_openai\|_call_minimax\|_call_anthropic\)\|agent\.runtime\._call_openai\|agent\.runtime\._call_minimax\|agent\.runtime\._call_anthropic" \
-    --include="*.py" /home/q/projects/crabcakes/ | \
+    --include="*.py" /path/to/projects/crabcakes/ | \
     grep -v "tests/generate_synthetic_conversations.py"
 ```
 
@@ -2420,7 +2420,7 @@ The implementer MUST verify each item before declaring done. The verification co
 - [ ] Provider alias debt removed (with consumer migration per BUG #8)
   - Verify: `python3 -c "import agent.runtime; assert not hasattr(agent.runtime, '_call_openai'); assert not hasattr(agent.runtime, '_stream_openai_events'); assert not hasattr(agent.runtime, '_PROVIDER_STREAMERS'); print('OK')"`
   - Expected: `OK`
-  - Verify: `grep -rn "_stream_openai_events\|_stream_minimax_events\|_stream_anthropic_events\|_PROVIDER_STREAMERS" --include='*.py' /home/q/projects/crabcakes/ | grep -v "tests/generate_synthetic_conversations.py"` shows 0 matches (the audit found 14+ matches in `tests/test_agent_runtime.py` and `scripts/audit_*.py`; these must be migrated).
+  - Verify: `grep -rn "_stream_openai_events\|_stream_minimax_events\|_stream_anthropic_events\|_PROVIDER_STREAMERS" --include='*.py' /path/to/projects/crabcakes/ | grep -v "tests/generate_synthetic_conversations.py"` shows 0 matches (the audit found 14+ matches in `tests/test_agent_runtime.py` and `scripts/audit_*.py`; these must be migrated).
 
 - [ ] All 18 new tests pass (the audit expanded the test count from 15 to 18-21; the implementation should run all of groups 1, 2, 3, 3a, 3b, 3c, 4, 5, 6)
   - Verify: `python3 -m pytest tests/test_agent_runtime.py -q -k "turn_status or turn_result or terminate_turn or run_loop_starts or run_loop_transitions or run_loop_terminates or test_runtime_no_longer_exposes or test_callbacks_module_exports or rejects_stale_token or persistence_uses_separate_session_keys or cancelled_with_persist_metadata_saves or send_message_rotates_turn_token" | tail -3`

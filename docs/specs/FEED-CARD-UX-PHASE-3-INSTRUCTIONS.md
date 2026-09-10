@@ -1,6 +1,6 @@
 # Phase 3 of 5 — Sequence Numbers on Cards (+ Migration for Existing feed.json)
 
-**Master spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-FEED-CARD-UX.md` (read it in full, especially the "Spec Revision History" at the top and Section 2.5/2.6/2.7)
+**Master spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-FEED-CARD-UX.md` (read it in full, especially the "Spec Revision History" at the top and Section 2.5/2.6/2.7)
 
 **Phase 1 status:** COMPLETE (model helpers + button logic + sub-state CSS + 28 tests, 1694 passed baseline)
 **Phase 2 status:** COMPLETE (decision badges on git_commit + approval cards, 4 new tests, no scope creep)
@@ -174,7 +174,7 @@ Split the tests between the two test files:
 
 1. **`FeedCardData.seq_num` field exists:**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -c "
+   cd /path/to/projects/crabcakes && python3 -c "
    from models.feed_card import FeedCardData
    from dataclasses import fields
    field_names = [f.name for f in fields(FeedCardData)]
@@ -186,25 +186,25 @@ Split the tests between the two test files:
 
 2. **`_project_seq` counter exists in FeedHandler:**
    ```bash
-   cd /home/q/projects/crabcakes && grep -n "self._project_seq" ui/handlers/feed_handler.py
+   cd /path/to/projects/crabcakes && grep -n "self._project_seq" ui/handlers/feed_handler.py
    ```
    Expect: ≥ 4 matches (init, add_card, project open, clear_project)
 
 3. **Seq badge CSS was added:**
    ```bash
-   cd /home/q/projects/crabcakes && grep -c "feed-card-seq" ui/styles.py
+   cd /path/to/projects/crabcakes && grep -c "feed-card-seq" ui/styles.py
    ```
    Expect: ≥ 1 (the CSS definition; note the search term also matches the view code that uses the class, so ≥ 2 is fine)
 
 4. **Seq badge display in header:**
    ```bash
-   cd /home/q/projects/crabcakes && grep -n "feed-card-seq" ui/views/feed_card.py
+   cd /path/to/projects/crabcakes && grep -n "feed-card-seq" ui/views/feed_card.py
    ```
    Expect: ≥ 1 match in `_make_feed_card_header` (the `seq_label.add_css_class("feed-card-seq")` line)
 
 5. **Serialization round-trip:**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -c "
+   cd /path/to/projects/crabcakes && python3 -c "
    from models.feed_card import FeedCardData
    from datetime import datetime, timezone
    card = FeedCardData(
@@ -222,19 +222,19 @@ Split the tests between the two test files:
 
 6. **New tests pass:**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -m pytest tests/test_feed_card.py tests/test_feed_handler.py -v
+   cd /path/to/projects/crabcakes && python3 -m pytest tests/test_feed_card.py tests/test_feed_handler.py -v
    ```
    Expect: all existing tests + new TestSeqNum tests pass
 
 7. **Full test suite (sanity — should be no new failures):**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -m pytest -x -q
+   cd /path/to/projects/crabcakes && python3 -m pytest -x -q
    ```
    Expect: ≥ 1694 passed (Phase 1+2 baseline) + new Phase 3 tests, 1 skipped, 4 warnings
 
 8. **No accidental scope creep:**
    ```bash
-   cd /home/q/projects/crabcakes && git diff HEAD --stat | grep -v "Phase 1\|Phase 2"
+   cd /path/to/projects/crabcakes && git diff HEAD --stat | grep -v "Phase 1\|Phase 2"
    ```
    Expect: only Phase 3 changes are NEW in this commit. Phase 1+2 changes from prior phases are present but were not re-modified.
 

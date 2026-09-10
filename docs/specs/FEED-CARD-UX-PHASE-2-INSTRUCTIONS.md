@@ -1,6 +1,6 @@
 # Phase 2 of 5 — Persistent Decision Badges on ALL Card Types
 
-**Master spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-FEED-CARD-UX.md` (read it in full, especially the "Spec Revision History" at the top and Section 2.4)
+**Master spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-FEED-CARD-UX.md` (read it in full, especially the "Spec Revision History" at the top and Section 2.4)
 
 **Phase 1 status:** COMPLETE (committed working tree, 1694 passed, 1 skipped, 4 warnings). The model has `is_actionable()` and `is_informational()` static methods, the view uses them for button visibility, and sub-state CSS for `agent_action` cards is in place.
 
@@ -146,37 +146,37 @@ Add the `TestPersistentBadges` test class from spec section 9 (Phase 2 Tests). T
 
 1. **`_add_git_card` sets `accepted`:**
    ```bash
-   cd /home/q/projects/crabcakes && grep -n "accepted=accepted" ui/handlers/feed_handler.py
+   cd /path/to/projects/crabcakes && grep -n "accepted=accepted" ui/handlers/feed_handler.py
    ```
    Expect: ≥ 1 match inside `_add_git_card`
 
 2. **`approve_exec` sets `card.accepted`:**
    ```bash
-   cd /home/q/projects/crabcakes && grep -n "card.accepted = approved" ui/handlers/agent_runtime_handler.py
+   cd /path/to/projects/crabcakes && grep -n "card.accepted = approved" ui/handlers/agent_runtime_handler.py
    ```
    Expect: 1 match inside the `if self._fh is not None:` block
 
 3. **New tests pass:**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -m pytest tests/test_feed_handler.py -v
+   cd /path/to/projects/crabcakes && python3 -m pytest tests/test_feed_handler.py -v
    ```
    Expect: all existing tests pass + new TestPersistentBadges tests pass
 
 4. **Import sanity:**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -c "import ui.handlers.feed_handler; import ui.handlers.agent_runtime_handler; print('OK')"
+   cd /path/to/projects/crabcakes && python3 -c "import ui.handlers.feed_handler; import ui.handlers.agent_runtime_handler; print('OK')"
    ```
    Expect: `OK`
 
 5. **No accidental scope creep:**
    ```bash
-   cd /home/q/projects/crabcakes && git diff HEAD --stat
+   cd /path/to/projects/crabcakes && git diff HEAD --stat
    ```
    Expect: only `ui/handlers/feed_handler.py`, `ui/handlers/agent_runtime_handler.py`, `tests/test_feed_handler.py` changed (plus any unrelated changes from previous sessions that are not from this phase). Phase 1 changes should still be present but not modified.
 
 6. **Full test suite (sanity — should be no new failures):**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -m pytest -x -q
+   cd /path/to/projects/crabcakes && python3 -m pytest -x -q
    ```
    Expect: ≥ 1694 passed (Phase 1 + Phase 2 new tests), 1 skipped, 4 warnings
 

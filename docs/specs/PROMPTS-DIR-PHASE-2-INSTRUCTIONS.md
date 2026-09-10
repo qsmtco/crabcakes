@@ -70,9 +70,9 @@ Required cases:
 ## Verification (paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_seed_project_prompts.py -v -p no:cacheprovider
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_prompt_paths.py -q -p no:cacheprovider
-cd /home/q/projects/crabcakes && python3 - <<'EOF'
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_seed_project_prompts.py -v -p no:cacheprovider
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_prompt_paths.py -q -p no:cacheprovider
+cd /path/to/projects/crabcakes && python3 - <<'EOF'
 import tempfile, os
 from utils.project_awareness import seed_project_prompts
 with tempfile.TemporaryDirectory() as d:

@@ -96,7 +96,7 @@ Currently this assertion does not exist in the test.
 
 **Reproduction:**
 ```bash
-ls /home/q/projects/crabcakes/tests/test_prompt_loader_budget.py
+ls /path/to/projects/crabcakes/tests/test_prompt_loader_budget.py
 # → No such file or directory
 ```
 

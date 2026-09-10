@@ -56,7 +56,7 @@ class TestStaleRequestGuard:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -c "is row.props.is_drawer" ui/views/file_tree.py | head -5  # should not match in sort_name
 grep "raise ValueError" ui/views/file_tree.py  # 2 matches in _toggle_drawer
 python3 -m pytest tests/test_file_icons.py tests/test_projects.py tests/test_git_ops.py tests/test_file_tree_helpers.py tests/test_file_tree_sort_filter.py tests/test_file_tree_handler.py -q

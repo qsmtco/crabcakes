@@ -107,7 +107,7 @@ Add `caller_key=caller_key` (the `caller_key` variable is already in scope from 
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 - Read `agent/runtime.py` lines 553-580, 1355-1380 COMPLETELY before editing
 - Make ONLY the 3 edits described above
 - Do NOT add a `provider_cfg` parameter to `_call_llm_streaming` (would require more callers to update)
@@ -118,7 +118,7 @@ Add `caller_key=caller_key` (the `caller_key` variable is already in scope from 
 ## Verification (mandatory — paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "
 import inspect
 from agent.runtime import _call_llm_streaming
@@ -133,7 +133,7 @@ print('P10.5a source check: caller_key parameter added in correct position')
 ```
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the call site passes caller_key
 grep -A 1 "_call_llm_streaming(" agent/runtime.py | head -15
 ```
@@ -141,7 +141,7 @@ grep -A 1 "_call_llm_streaming(" agent/runtime.py | head -15
 Expect: the call site shows `caller_key=caller_key,` (or similar) as a keyword argument.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the streamer lookup uses caller_key
 grep -n "_PROVIDER_STREAMERS.get" agent/runtime.py
 ```
@@ -149,14 +149,14 @@ grep -n "_PROVIDER_STREAMERS.get" agent/runtime.py
 Expect: exactly 1 match, using `caller_key` (not `provider_name`).
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 timeout 30 python3 -m pytest tests/test_agent_runtime.py -q 2>&1 | tail -5
 ```
 
 Expect: 53 passed (no regressions to the existing tests).
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 timeout 30 python3 -m pytest tests/test_runtime_caller_resolution.py -v 2>&1 | tail -12
 ```
 

@@ -154,7 +154,7 @@ Option B is what the spec §1 "Phase 1.1" originally envisioned (`default_max_to
 **Attack vector:** Search the entire codebase for `default_max_tokens`.
 **Reproduction:**
 ```bash
-$ grep -rn "default_max_tokens" --include="*.py" /home/q/projects/crabcakes
+$ grep -rn "default_max_tokens" --include="*.py" /path/to/projects/crabcakes
 models/providers.py:25:    default_max_tokens: int = 0
 utils/providers_store.py:47:        "default_max_tokens": p.default_max_tokens,
 utils/providers_store.py:65:    default_max_tokens=d.get("default_max_tokens", 0),

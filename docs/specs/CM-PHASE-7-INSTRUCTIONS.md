@@ -164,7 +164,7 @@ class TestDynamicPromptBudget:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. New P7 tests pass
 python3 -m pytest tests/test_context_strategy.py::TestDynamicPromptBudget -v --tb=short

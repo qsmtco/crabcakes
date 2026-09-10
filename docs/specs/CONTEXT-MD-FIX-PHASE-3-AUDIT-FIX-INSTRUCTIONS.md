@@ -25,7 +25,7 @@ Replace the substring matching in `_mark_superseded` with **word-boundary regex 
 
 **File:** `utils/project_awareness.py` only.
 
-**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh** from `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`. Read it in full, activate it, begin with Discovery Phase block.
+**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh** from `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`. Read it in full, activate it, begin with Discovery Phase block.
 
 Read `utils/project_awareness.py` in full before editing. Focus on `_mark_superseded` (line ~363) and `_extract_phase_id` (line ~320).
 

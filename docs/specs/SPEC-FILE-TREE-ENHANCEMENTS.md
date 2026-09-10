@@ -158,7 +158,7 @@ def status_porcelain(project_path: str) -> dict[str, str]:
 ```bash
 python3 -c "
 from utils.git_ops import status_porcelain
-result = status_porcelain('/home/q/projects/crabcakes')
+result = status_porcelain('/path/to/projects/crabcakes')
 print(type(result), len(result))
 "
 ```

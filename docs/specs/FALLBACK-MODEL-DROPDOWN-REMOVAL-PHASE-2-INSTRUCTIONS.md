@@ -1,11 +1,11 @@
 PHASE 2 of 6 — Handler template + agent_defs simplification
 
 Files to change:
-1. `/home/q/projects/crabcakes/ui/handlers/agent_builder_handler.py` — remove `"fallback_model": None,` from `create_new()` template
-2. `/home/q/projects/crabcakes/utils/agent_defs.py` — simplify `_normalize_fallback_fields()` to only check `fallback_provider`
+1. `/path/to/projects/crabcakes/ui/handlers/agent_builder_handler.py` — remove `"fallback_model": None,` from `create_new()` template
+2. `/path/to/projects/crabcakes/utils/agent_defs.py` — simplify `_normalize_fallback_fields()` to only check `fallback_provider`
 
 Spec reference:
-- Read the master spec at `/home/q/projects/crabcakes/docs/specs/SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md` §2.2 (handler) and §2.3 (utils).
+- Read the master spec at `/path/to/projects/crabcakes/docs/specs/SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md` §2.2 (handler) and §2.3 (utils).
 - The spec is identifier-anchored — do not rely on line numbers.
 
 Changes in `ui/handlers/agent_builder_handler.py`:
@@ -26,11 +26,11 @@ Rules:
 - Verify with grep that no `fallback_model` references remain in either file.
 
 Verification commands (run all and paste output):
-1. `grep -n "fallback_model" /home/q/projects/crabcakes/ui/handlers/agent_builder_handler.py /home/q/projects/crabcakes/utils/agent_defs.py` — expect zero matches
-2. `cd /home/q/projects/crabcakes && python3 -c "import ast; ast.parse(open('ui/handlers/agent_builder_handler.py').read()); ast.parse(open('utils/agent_defs.py').read())"` — expect no SyntaxError
-3. `cd /home/q/projects/crabcakes && python3 -c "from ui.handlers.agent_builder_handler import AgentBuilderHandler; from utils.agent_defs import _normalize_fallback_fields; t = AgentBuilderHandler().create_new(); assert 'fallback_model' not in t, t; assert 'fallback_provider' in t, t; print('create_new OK, fallback_model absent, fallback_provider present')"`
-4. `cd /home/q/projects/crabcakes && python3 -c "from utils.agent_defs import _normalize_fallback_fields; d = {'name': 'X'}; _normalize_fallback_fields(d); assert d.get('fallback_provider') is None; assert 'fallback_model' not in d; print('normalize OK')"`
-5. `cd /home/q/projects/crabcakes && timeout 60 xvfb-run -a python3 -m pytest tests/test_agent_builder_fallback.py tests/test_agent_builder_handler.py -v 2>&1 | tail -30` — expect passing (the fallback test still tests `fallback_provider` round-trip)
+1. `grep -n "fallback_model" /path/to/projects/crabcakes/ui/handlers/agent_builder_handler.py /path/to/projects/crabcakes/utils/agent_defs.py` — expect zero matches
+2. `cd /path/to/projects/crabcakes && python3 -c "import ast; ast.parse(open('ui/handlers/agent_builder_handler.py').read()); ast.parse(open('utils/agent_defs.py').read())"` — expect no SyntaxError
+3. `cd /path/to/projects/crabcakes && python3 -c "from ui.handlers.agent_builder_handler import AgentBuilderHandler; from utils.agent_defs import _normalize_fallback_fields; t = AgentBuilderHandler().create_new(); assert 'fallback_model' not in t, t; assert 'fallback_provider' in t, t; print('create_new OK, fallback_model absent, fallback_provider present')"`
+4. `cd /path/to/projects/crabcakes && python3 -c "from utils.agent_defs import _normalize_fallback_fields; d = {'name': 'X'}; _normalize_fallback_fields(d); assert d.get('fallback_provider') is None; assert 'fallback_model' not in d; print('normalize OK')"`
+5. `cd /path/to/projects/crabcakes && timeout 60 xvfb-run -a python3 -m pytest tests/test_agent_builder_fallback.py tests/test_agent_builder_handler.py -v 2>&1 | tail -30` — expect passing (the fallback test still tests `fallback_provider` round-trip)
 
 Report back with:
 - Files changed (with `wc -l` output before and after)

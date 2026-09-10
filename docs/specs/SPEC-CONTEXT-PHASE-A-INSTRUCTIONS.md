@@ -124,7 +124,7 @@ After the `/clear` wiring block (around line 628), add:
 ## Verification commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Syntax check
 python3 -c "import ast; [ast.parse(open(f).read()) for f in ['ui/handlers/agent_runtime_handler.py', 'ui/views/main_content.py', 'ui/views/settings_dialog.py', 'ui/window.py']]; print('SYNTAX OK')"

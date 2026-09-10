@@ -2,7 +2,7 @@
 
 **Spec to audit:** `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED.md`
 **Audit prompt to load:** `prompts/adversarialDebugger.md`
-**Working dir:** `/home/q/projects/crabcakes`
+**Working dir:** `/path/to/projects/crabcakes`
 
 Adversarially audit the spec at `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED.md` against the actual codebase. You are NOT verifying the code works — you are proving the spec is wrong. Find every way the spec's assumptions are broken, every code sample that won't actually run, every function signature that doesn't match reality, every edge case the spec didn't consider, every architectural violation the spec papered over.
 

@@ -3,7 +3,7 @@
 **Spec:** `docs/specs/SPEC-RUNTIME-EXTRACTION-PHASE-5.md`
 **Files:** `agent/audit.py` (NEW) + `agent/runtime.py` + `tests/test_agent_audit.py` (NEW)
 
-**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL. Activate it. Begin with Discovery Phase block.
+**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL. Activate it. Begin with Discovery Phase block.
 
 Read `agent/runtime.py` lines 86-164 (the AuditEntry + AuditLog classes) in full before editing.
 

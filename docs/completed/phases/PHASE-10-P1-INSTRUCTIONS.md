@@ -57,7 +57,7 @@ class ProviderConfig:
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 - Read both files COMPLETELY before editing (Rule 1)
 - Make ONLY the two field additions; do not touch any other code in either file (Rule 8)
 - Preserve exact field ordering: `name, base_url, api_key, default_model, caller, supports_tools, ...`
@@ -71,7 +71,7 @@ class ProviderConfig:
 Run BOTH and paste full output:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "from agent.config import LLMProviderConfig; c = LLMProviderConfig(name='x', base_url='', api_key=*** default_model=''); assert c.caller == ''; print('LLMProviderConfig.caller default OK:', c.caller)"
 python3 -c "from models.providers import ProviderConfig; c = ProviderConfig(name='x', base_url='', api_key=*** default_model=''); assert c.caller == ''; print('ProviderConfig.caller default OK:', c.caller)"
 ```
@@ -79,7 +79,7 @@ python3 -c "from models.providers import ProviderConfig; c = ProviderConfig(name
 ## Grep proof
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "caller" agent/config.py
 grep -n "caller" models/providers.py
 ```

@@ -3,7 +3,7 @@
 **Spec:** `docs/specs/SPEC-RUNTIME-EXTRACTION-PHASE-4.md`
 **Files:** `agent/runtime.py` + `tests/test_agent_runtime.py` + `tests/test_llm_cost.py`
 
-**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL. Activate it. Begin with Discovery Phase block.
+**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL. Activate it. Begin with Discovery Phase block.
 
 Read all 3 files before editing. This is a SMALL phase (remove re-export aliases, update call sites).
 

@@ -1,7 +1,7 @@
 # Security & Architecture Review — Verification Report
 
 **Review under verification:** `SECURITY_ARCHITECTURE_REVIEW.md`
-**Audit target repo:** `/home/q/projects/crabcakes` (branch `main`, HEAD `4fc79c1`)
+**Audit target repo:** `/path/to/projects/crabcakes` (branch `main`, HEAD `4fc79c1`)
 **Note:** The audit was performed against HEAD `ca24246`; HEAD has advanced 7 commits since the audit. No source changes materially affect any finding.
 **Verification date:** 2026-06-10
 **Verification method:** Manual re-reading of every cited line against current source; structural assertions verified via AST analysis; counts verified via scripted grep.

@@ -151,7 +151,7 @@ to:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Syntax
 python3 -c "import ast; [ast.parse(open(f).read()) for f in ['ui/handlers/project_handler.py', 'utils/agent_defs.py', 'ui/views/agent_builder.py', 'agent/runtime.py', 'ui/handlers/agent_runtime_handler.py']]; print('SYNTAX OK')"

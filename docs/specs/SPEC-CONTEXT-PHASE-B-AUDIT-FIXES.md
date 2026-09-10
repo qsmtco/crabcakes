@@ -74,7 +74,7 @@ In `cmd_compact`, find the line:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Syntax
 python3 -c "import ast; [ast.parse(open(f).read()) for f in ['ui/handlers/agent_runtime_handler.py', 'ui/handlers/command_handler.py', 'ui/handlers/project_handler.py']]; print('SYNTAX OK')"

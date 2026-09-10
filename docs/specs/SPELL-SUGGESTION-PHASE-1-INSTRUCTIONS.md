@@ -57,7 +57,7 @@ def replace_word_at_iter(self, text_iter, replacement: str) -> None:
 After adding the method, run:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/test_input_toolbar_handler.py -q --tb=short
 ```
 

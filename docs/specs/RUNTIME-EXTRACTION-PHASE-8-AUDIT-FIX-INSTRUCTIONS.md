@@ -5,7 +5,7 @@
 
 4 TestStreaming tests use the legacy `_PROVIDER_STREAMERS["openai"]` patch pattern which is dead (production code uses `_get_provider(caller_key).stream` since Phase B6). The tests make real HTTPS calls and fail with 401.
 
-**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL. Activate it.
+**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL. Activate it.
 
 Read `tests/test_agent_runtime.py` lines 1395-1545 (the TestStreaming class) in full before editing.
 

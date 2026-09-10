@@ -10,7 +10,7 @@ This is an audit-only task. You may create/modify test files only if the fix is 
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 - Run the full test suite first to get the current failure count and list
 - For each failing test, determine:
   1. Which test file and test class/method
@@ -20,8 +20,8 @@ This is an audit-only task. You may create/modify test files only if the fix is 
   5. Fixability (trivial / fixable with effort / deferred)
 - Fix only **trivial** failures (missing import, typo, wrong path, etc.)
 - For all others, document in `docs/specs/PHASE0-BUGS.md`
-- Run: `cd /home/q/projects/crabcakes && python3 -m pytest tests/ -q --tb=no --no-header 2>&1 | tail -10` and paste output
-- Run: `cd /home/q/projects/crabcakes && python3 -m pytest tests/ --tb=no --no-header 2>&1 | grep "FAILED" | head -20` and paste output
+- Run: `cd /path/to/projects/crabcakes && python3 -m pytest tests/ -q --tb=no --no-header 2>&1 | tail -10` and paste output
+- Run: `cd /path/to/projects/crabcakes && python3 -m pytest tests/ --tb=no --no-header 2>&1 | grep "FAILED" | head -20` and paste output
 - At the end, include a completeness checklist
 
 ## Approach

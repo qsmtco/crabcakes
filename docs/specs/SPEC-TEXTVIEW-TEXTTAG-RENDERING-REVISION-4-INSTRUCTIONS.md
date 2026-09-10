@@ -7,7 +7,7 @@
 
 **Lesson reinforced:** Do NOT trust ANY GTK4 API suggestion (including from supervisor) without probing it yourself. The `foreach` fix below is verified, but probe it again when you implement Phase 0b.
 
-**Output:** Revise `/home/q/projects/crabcakes/docs/specs/SPEC-TEXTVIEW-TEXTTAG-RENDERING.md` in place.
+**Output:** Revise `/path/to/projects/crabcakes/docs/specs/SPEC-TEXTVIEW-TEXTTAG-RENDERING.md` in place.
 
 ---
 

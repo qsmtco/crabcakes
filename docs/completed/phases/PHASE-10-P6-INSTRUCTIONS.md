@@ -76,7 +76,7 @@ Replace with:
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 - Read `utils/provider_test.py` lines 55-85 COMPLETELY before editing
 - Read `ui/handlers/settings_handler.py` lines 130-145 COMPLETELY before editing
 - Make ONLY the 2 edits described above
@@ -87,7 +87,7 @@ Replace with:
 ## Verification (mandatory — paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "
 import inspect
 from utils.provider_test import test_connection
@@ -104,24 +104,24 @@ print('P6 source check: caller kwarg added with default=None, positioned correct
 ```
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "caller" ui/handlers/settings_handler.py | head -10
 ```
 
 Expected: at least 2 matches — the new `caller=provider.caller or None` line and the new `# PHASE-10: auto-detect caller` comment block from the earlier P5 fix.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 timeout 30 python3 -m pytest tests/test_provider_test.py -q 2>&1 | tail -6
 ```
 
 If `test_provider_test.py` doesn't exist:
 ```bash
-ls /home/q/projects/crabcakes/tests/ | grep -i provider
+ls /path/to/projects/crabcakes/tests/ | grep -i provider
 ```
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 timeout 30 python3 -m pytest tests/test_settings_handler.py -q 2>&1 | tail -6
 ```
 

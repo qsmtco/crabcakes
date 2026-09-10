@@ -378,11 +378,11 @@ LeftPanel._show_prompt_copy_status(message)                                  [le
 4. **Step 4** — In `_build_prompt_row`, add `row._prompt_content = prompt['content']` next to the existing `row._filepath = ...` line (~line 666).
 5. **Step 5** — In `_build_prompt_row`, attach the right-click `Gtk.GestureClick` to the row after the `row.set_child(row_box)` call (~line 710).
 6. **Step 6** — Add the new private methods to `LeftPanel`: `_on_prompt_row_right_click`, `_on_prompt_menu_row_activated`, `_on_copy_prompt_path`, `_on_copy_prompt_content`, `_copy_text_to_clipboard`, `_show_prompt_copy_status`. All methods are private (underscore prefix) and contained in the Prompts-tab section of the file.
-7. **Step 7** — Run existing test suite to confirm no regressions: `cd /home/q/projects/crabcakes && pytest tests/ -q --tb=short`. **Verification gate:** must show all tests pass before proceeding.
+7. **Step 7** — Run existing test suite to confirm no regressions: `cd /path/to/projects/crabcakes && pytest tests/ -q --tb=short`. **Verification gate:** must show all tests pass before proceeding.
 8. **Step 8** — Create `tests/test_left_panel.py` with the 7 tests listed in §2.4.
-9. **Step 9** — Run new test file: `cd /home/q/projects/crabcakes && pytest tests/test_left_panel.py -v`. **Verification gate:** 7 tests must pass.
+9. **Step 9** — Run new test file: `cd /path/to/projects/crabcakes && pytest tests/test_left_panel.py -v`. **Verification gate:** 7 tests must pass.
 10. **Step 10** — Update `docs/ARCHITECTURE.md` §3.13 with the right-click note.
-11. **Step 11** — Run full test suite once more: `cd /home/q/projects/crabcakes && pytest tests/ -q --tb=short`. **Verification gate:** all tests pass.
+11. **Step 11** — Run full test suite once more: `cd /path/to/projects/crabcakes && pytest tests/ -q --tb=short`. **Verification gate:** all tests pass.
 
 ---
 

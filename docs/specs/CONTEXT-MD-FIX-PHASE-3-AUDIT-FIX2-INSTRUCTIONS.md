@@ -5,7 +5,7 @@
 
 4 bugs to fix, all confirmed by Supervisor's own reproduction. BUG #4 from the audit (`##\t`) was NOT reproduced by the supervisor and is excluded — do not "fix" it.
 
-**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh** from `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`. Read it in full, activate it, begin with Discovery Phase block.
+**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh** from `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`. Read it in full, activate it, begin with Discovery Phase block.
 
 Read `utils/project_awareness.py` in full before editing.
 

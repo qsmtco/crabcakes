@@ -136,7 +136,7 @@ The only change is `self._call_llm_streaming(` instead of `_call_llm_streaming(`
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 - Read `agent/runtime.py` — find `def _call_llm_streaming(` at module level (the function to delete) and `def _call_llm(` in `AgentRuntime` class (the call site location) COMPLETELY before editing
 - Symbol-based insertion point: after `def _call_llm(` ends and before `def _check_stuck(`
 - Do NOT change the body logic of `_call_llm_streaming` — only the indentation, the `runtime.` → `self.` substitutions, and the signature (drop `runtime`, add `self`)
@@ -148,7 +148,7 @@ The only change is `self._call_llm_streaming(` instead of `_call_llm_streaming(`
 ## Verification (mandatory — paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the function is gone from module level
 grep -n "^def _call_llm_streaming\|    def _call_llm_streaming" agent/runtime.py
 ```
@@ -156,7 +156,7 @@ grep -n "^def _call_llm_streaming\|    def _call_llm_streaming" agent/runtime.py
 Expect: exactly 1 match, indented (the new method, inside the class). NOT at column 0.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the call site uses self.
 grep -n "_call_llm_streaming(" agent/runtime.py
 ```
@@ -164,7 +164,7 @@ grep -n "_call_llm_streaming(" agent/runtime.py
 Expect: 2 matches — one for the method definition, one for the call site. The call site should start with `self._call_llm_streaming(`.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify runtime= is gone from the call site
 grep -n "runtime=self" agent/runtime.py
 ```
@@ -172,7 +172,7 @@ grep -n "runtime=self" agent/runtime.py
 Expect: 0 matches inside the call to `_call_llm_streaming`. There may be other `runtime=` usages elsewhere in the file (e.g. in `__init__` or other methods) — those are fine.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the body uses self. for runtime accesses
 grep -n "runtime\._on_text_delta\|runtime\._dispatch" agent/runtime.py
 ```
@@ -180,7 +180,7 @@ grep -n "runtime\._on_text_delta\|runtime\._dispatch" agent/runtime.py
 Expect: 0 matches. All such accesses should now be `self._on_text_delta` and `self._dispatch`.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the runtime can still be imported
 python3 -c "from agent.runtime import AgentRuntime; rt = AgentRuntime.__init__; print('imports ok')"
 ```
@@ -191,7 +191,7 @@ Expect: `imports ok`.
 
 To verify the 4 tests break predictably:
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 timeout 30 python3 -m pytest tests/test_agent_runtime.py::TestStreaming -q 2>&1 | tail -10
 ```
 

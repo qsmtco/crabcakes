@@ -290,9 +290,9 @@ class TestReviewLogEntry:
             actual="double-nested path",
             pattern="sed-overmatch",
         )
-        entry = r.to_review_log_entry("Qaster", "/home/q/projects/crabwatch")
+        entry = r.to_review_log_entry("Qaster", "/path/to/projects/crabwatch")
         assert entry["reviewer"] == "Qaster"
-        assert entry["project_path"] == "/home/q/projects/crabwatch"
+        assert entry["project_path"] == "/path/to/projects/crabwatch"
         assert entry["severity"] == "bug"
         assert entry["pattern"] == "sed-overmatch"
         assert "timestamp" in entry

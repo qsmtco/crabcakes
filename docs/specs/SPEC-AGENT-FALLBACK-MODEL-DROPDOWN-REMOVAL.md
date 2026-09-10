@@ -186,7 +186,7 @@ self._provider_models: dict[str, list[tuple[str, str]]] = {}  # name → [(displ
 
 **Line count estimate:** −60 lines (widget, signal handler, accessor, restoration loop, dict initialization, get_values field).
 
-**CSS class verification:** `grep -n "agent-builder-fallback-model" /home/q/projects/crabcakes/ui/styles.py` should return zero matches. If any CSS rules exist for the model dropdown, remove them.
+**CSS class verification:** `grep -n "agent-builder-fallback-model" /path/to/projects/crabcakes/ui/styles.py` should return zero matches. If any CSS rules exist for the model dropdown, remove them.
 
 ---
 
@@ -294,7 +294,7 @@ else:
 
 **Why:** the `fallback_model` field stays on the dataclass. The new runtime code doesn't read it. Removing it would be a separate deprecation cycle and risks breaking in-flight conversations loaded from disk that have the field populated. **Defer field removal to a future spec** (when the field is provably unread everywhere).
 
-**Note for follow-up:** `grep -n "fallback_model" /home/q/projects/crabcakes/agent/ /home/q/projects/crabcakes/ui/ /home/q/projects/crabcakes/models/ -r --include="*.py"` should return:
+**Note for follow-up:** `grep -n "fallback_model" /path/to/projects/crabcakes/agent/ /path/to/projects/crabcakes/ui/ /path/to/projects/crabcakes/models/ -r --include="*.py"` should return:
 - `agent/runtime.py:1015` (the passthrough in `create_conversation`) — keep
 - `models/conversation.py:108` (the field declaration) — keep
 - All other matches should be zero after this spec lands.
@@ -305,7 +305,7 @@ else:
 
 **Why:** the `fallback_model` field on `SpecialAgentDef` (line 39) is loaded from the agent YAML by `_load_registry()` (line 124). After this spec, agent YAMLs no longer have `fallback_model`, so the field will always be `None` on the dataclass. The field is kept for backward-read tolerance. The runtime derivation ignores it. **Defer field removal to a future spec.**
 
-**Note for follow-up:** `grep -n "fallback_model" /home/q/projects/crabcakes/agent/special_agents.py` should return one match (the field declaration) after this spec lands. The `_load_registry` line that copies it should be removed when the field is dropped.
+**Note for follow-up:** `grep -n "fallback_model" /path/to/projects/crabcakes/agent/special_agents.py` should return one match (the field declaration) after this spec lands. The `_load_registry` line that copies it should be removed when the field is dropped.
 
 ---
 
@@ -723,7 +723,7 @@ Each phase is independently testable. QTR's standard implementation loop applies
 6. Remove `"fallback_model"` from `get_values()` (line 180).
 7. Remove `self._provider_models` initialization in `__init__` (line 54).
 8. Remove `self._provider_models` assignment in `set_provider_options` (line 311-314).
-9. If `ui/styles.py` has any `agent-builder-fallback-model` CSS rules, remove them (`grep -n "fallback-model" /home/q/projects/crabcakes/ui/styles.py` first to confirm).
+9. If `ui/styles.py` has any `agent-builder-fallback-model` CSS rules, remove them (`grep -n "fallback-model" /path/to/projects/crabcakes/ui/styles.py` first to confirm).
 
 **Verification:**
 ```bash
@@ -784,7 +784,7 @@ grep -n "fallback_model" agent/runtime.py ui/handlers/agent_runtime_handler.py
 
 **Verification:**
 ```bash
-cd /home/q/projects/crabcakes && python -m pytest tests/test_agent_builder_fallback.py tests/test_runtime_fallback.py tests/test_kb_integration.py -v 2>&1 | tail -60
+cd /path/to/projects/crabcakes && python -m pytest tests/test_agent_builder_fallback.py tests/test_runtime_fallback.py tests/test_kb_integration.py -v 2>&1 | tail -60
 # Expected: all tests pass, including the new derivation test
 ```
 
@@ -836,8 +836,8 @@ grep -n "fallback_model" docs/ARCHITECTURE.md
 - [ ] **5.** `_normalize_fallback_fields()` adds `fallback_provider` but not `fallback_model` to a dict missing both.
 - [ ] **6.** Old agent YAMLs containing `fallback_model: openrouter/owl-alpha` still load without error (the field is ignored).
 - [ ] **7.** `agent/runtime.py:_run_loop` derives the fallback model from `self._config.providers[conv.fallback_provider].default_model` instead of from `conv.fallback_model`.
-- [ ] **8.** `grep -rn "_fallback_model_dropdown\|_fallback_model_labeled\|_get_selected_fallback_model" /home/q/projects/crabcakes/` returns zero matches.
-- [ ] **9.** `grep -rn "fallback_model" /home/q/projects/crabcakes/agent/ /home/q/projects/crabcakes/ui/ /home/q/projects/crabcakes/utils/agent_defs.py` returns only the kept sites (3 matches: `models/conversation.py:108`, `agent/special_agents.py:39`, `agent/runtime.py:1015`).
+- [ ] **8.** `grep -rn "_fallback_model_dropdown\|_fallback_model_labeled\|_get_selected_fallback_model" /path/to/projects/crabcakes/` returns zero matches.
+- [ ] **9.** `grep -rn "fallback_model" /path/to/projects/crabcakes/agent/ /path/to/projects/crabcakes/ui/ /path/to/projects/crabcakes/utils/agent_defs.py` returns only the kept sites (3 matches: `models/conversation.py:108`, `agent/special_agents.py:39`, `agent/runtime.py:1015`).
 - [ ] **10.** `pytest tests/test_agent_builder_fallback.py tests/test_runtime_fallback.py tests/test_kb_integration.py` passes (paste full output in the post-mortem).
 - [ ] **11.** `docs/ARCHITECTURE.md` has no live references to `fallback_model` outside of the kept dataclass fields and the deprecation note.
 - [ ] **12.** No `agent-builder-fallback-model` CSS class remains in `ui/styles.py`.

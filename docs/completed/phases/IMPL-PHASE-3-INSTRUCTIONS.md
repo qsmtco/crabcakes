@@ -69,7 +69,7 @@ This method is **dead code**. It is never called — `wire_settings_handler` ove
 After the fix, run:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # Confirm agent_builder_factory is now passed
 grep -n "agent_builder_factory" ui/window.py

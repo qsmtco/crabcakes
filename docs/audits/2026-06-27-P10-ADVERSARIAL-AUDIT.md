@@ -370,7 +370,7 @@ from utils.prompt_loader import compose_system_prompt
 
 t0 = time.time()
 p = compose_system_prompt(
-    agent_name="X", project_path="/home/q/projects/crabcakes",
+    agent_name="X", project_path="/path/to/projects/crabcakes",
     context_mode="jit", model_max_tokens=128_000,
 )
 print(f"{time.time()-t0:.3f}s, prompt_len={len(p)}")
@@ -379,7 +379,7 @@ print(f"{time.time()-t0:.3f}s, prompt_len={len(p)}")
 # Compare: PRELOAD mode (no line counting)
 t0 = time.time()
 p = compose_system_prompt(
-    agent_name="X", project_path="/home/q/projects/crabcakes",
+    agent_name="X", project_path="/path/to/projects/crabcakes",
     context_mode="preload", model_max_tokens=128_000,
 )
 print(f"{time.time()-t0:.3f}s, prompt_len={len(p)}")

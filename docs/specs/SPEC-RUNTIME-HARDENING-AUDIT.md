@@ -948,7 +948,7 @@ Each step includes a verification checkpoint. Do not proceed to the next step un
 
 ### Step 1: Verify existing W1 fix and test
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/test_low2_file_sandbox.py -v
 ```
 **Expected:** 20 tests pass, including `test_special_agent_colon_key_ok`.
@@ -995,7 +995,7 @@ python3 -m pytest tests/test_low2_file_sandbox.py -v
 
 ### Step 9: Full test suite
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/test_agent_runtime.py tests/test_low2_file_sandbox.py -v --tb=short
 ```
 
@@ -1119,7 +1119,7 @@ Yes. The W2/W3 helpers are mechanical extractions of existing code. The W4 fix i
 
 **To be pasted by implementer after running:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/test_agent_runtime.py tests/test_low2_file_sandbox.py -v --tb=short
 ```
 

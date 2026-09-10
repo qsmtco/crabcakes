@@ -131,22 +131,22 @@ def test_empty_response_with_streaming_does_not_render_extra_bubble(self):
 
 **Step 3a — Run the new test class:**
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py::TestEmptyResponseFallbackBubble -v 2>&1
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py::TestEmptyResponseFallbackBubble -v 2>&1
 ```
 
 **Step 3b — Run full test_agent_runtime.py (regression check):**
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py -v -k "not test_exec_with_approval" 2>&1
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py -v -k "not test_exec_with_approval" 2>&1
 ```
 
 **Step 3c — Pattern sweep:**
 ```bash
-cd /home/q/projects/crabcakes && grep -c "Agent returned no content" ui/handlers/agent_runtime_handler.py
+cd /path/to/projects/crabcakes && grep -c "Agent returned no content" ui/handlers/agent_runtime_handler.py
 ```
 Expected: 1.
 
 ```bash
-cd /home/q/projects/crabcakes && grep -c "if not was_streaming and" ui/handlers/agent_runtime_handler.py
+cd /path/to/projects/crabcakes && grep -c "if not was_streaming and" ui/handlers/agent_runtime_handler.py
 ```
 Expected: 2 (the new branch and the existing elif).
 

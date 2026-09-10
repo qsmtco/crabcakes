@@ -1173,7 +1173,7 @@ Update `docs/SECURITY_ARCHITECTURE_REVIEW_VERIFICATION.md` to add a section noti
 After Phase 0 implementation:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Scope checklist
 git diff HEAD --stat | grep -E "(enforcement|runtime|tools|prompt_loader|project_awareness)\.py"

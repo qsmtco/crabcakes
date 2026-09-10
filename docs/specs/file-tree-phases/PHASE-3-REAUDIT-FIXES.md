@@ -342,7 +342,7 @@ Add these tests:
 ## Verification (run ALL)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. _build_sorter is staticmethod
 grep -B1 "def _build_sorter" ui/views/file_tree.py | grep "@staticmethod"

@@ -139,7 +139,7 @@ Do NOT add it to the other 3 `FileTreeRow(...)` sites (lines 735, 1546, 1597) â€
 ## Verification (run ALL)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. BUG #1 fix â€” no more negative strings
 python3 -c "

@@ -237,7 +237,7 @@ class TestStrictEntityUnescape:
         gtk_result = subprocess.run([
             'python3', '-c', f'''
 import sys
-sys.path.insert(0, "/home/q/projects/crabcakes")
+sys.path.insert(0, "/path/to/projects/crabcakes")
 import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk
@@ -455,7 +455,7 @@ spec).
    ```bash
    python3 -c "
    import sys
-   sys.path.insert(0, '/home/q/projects/crabcakes')
+   sys.path.insert(0, '/path/to/projects/crabcakes')
    from utils.escaping import escape_for_pango
    from utils.markdown import format_markdown
    import gi

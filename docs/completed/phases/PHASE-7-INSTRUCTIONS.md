@@ -343,7 +343,7 @@ class TestOnProvidersChanged:
 ## Verification commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 7.1: wiring helper imports
 python3 -c "from ui.wiring import wire_settings_handler; print('imports ok')"

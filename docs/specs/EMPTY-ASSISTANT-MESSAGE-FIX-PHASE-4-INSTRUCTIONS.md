@@ -1,7 +1,7 @@
 # Phase 4 Instructions — Empty-Assistant-Message Fix (Post-Mortem + Spec Updates)
 
-**Master spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md`
-**Audit reference:** `/home/q/projects/crabcakes/docs/audits/2026-07-05-EMPTY-ASSISTANT-COHERE-400-READ-ONLY.md`
+**Master spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md`
+**Audit reference:** `/path/to/projects/crabcakes/docs/audits/2026-07-05-EMPTY-ASSISTANT-COHERE-400-READ-ONLY.md`
 **Phase:** 4 of 4 (final phase — documentation only)
 **File scope:** 3 documentation files (no code changes)
 **Estimated delta:** ~200 lines across 3 files
@@ -27,7 +27,7 @@ Phase 4 is the cleanup phase. It does NOT change any production code. It updates
 
 ### Task A: Update master spec with delivery status
 
-**File:** `/home/q/projects/crabcakes/docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md`
+**File:** `/path/to/projects/crabcakes/docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md`
 
 **Edit 1 — Update header status block.** Find the file's top metadata (lines 1–10) and add a delivery summary at the very top. If the file doesn't have such a block, add it right after the `# ` heading.
 
@@ -65,11 +65,11 @@ Find the section heading `### File 1: \`models/conversation.py\`` (or similar) a
 - **B1 (stopgap finds zero corrupt messages):** ⚠️ Operator action — leave [ ] but note in post-mortem
 - **B2 (Cohere no longer 400s):** ⚠️ Operator action — leave [ ] but note in post-mortem
 
-For P2 verification, run `grep -rn 'add_assistant_message\(""' agent/ models/ tests/` and `cd /home/q/projects/crabcakes && grep -rn '"role":\s*"assistant".*"content":\s*""' agent/ models/ tests/` (both should return zero matches against current code).
+For P2 verification, run `grep -rn 'add_assistant_message\(""' agent/ models/ tests/` and `cd /path/to/projects/crabcakes && grep -rn '"role":\s*"assistant".*"content":\s*""' agent/ models/ tests/` (both should return zero matches against current code).
 
 For T4/T5 verification, run:
-- `cd /home/q/projects/crabcakes && pytest tests/test_conversation.py 2>&1 | tail -3` (confirm 65 pass)
-- `cd /home/q/projects/crabcakes && pytest tests/test_agent_runtime.py -k "not approval" 2>&1 | tail -3`
+- `cd /path/to/projects/crabcakes && pytest tests/test_conversation.py 2>&1 | tail -3` (confirm 65 pass)
+- `cd /path/to/projects/crabcakes && pytest tests/test_agent_runtime.py -k "not approval" 2>&1 | tail -3`
 
 **Edit 4 — Extend §10 (Backlog) with post-shipment findings.** Spec §10 already has 5 deferred items. Add 3 more (B-1, B-2, B-3) capturing decisions made during Phases 1–3 about items that came up but were consciously deferred. Insert at the bottom of the §10 section (before any blank-line "End of spec" marker):
 
@@ -89,7 +89,7 @@ Find the row "Empty assistant in the middle of a long sequence" and update the T
 
 ### Task B: Write the post-mortem
 
-**New file:** `/home/q/projects/crabcakes/docs/post-mortems/2026-07-05-EMPTY-ASSISTANT-MESSAGE-POST-MORTEM.md`
+**New file:** `/path/to/projects/crabcakes/docs/post-mortems/2026-07-05-EMPTY-ASSISTANT-MESSAGE-POST-MORTEM.md`
 
 Use the post-mortem style from `docs/post-mortems/2026-07-04-CODER-400-STALE-MESSAGES-POST-MORTEM.md` as a template. Target length: ~150–250 lines.
 
@@ -251,7 +251,7 @@ Commit: `654bc2038d789d4086ffed49bff0432995386210` ("Accept: tests/test_conversa
 
 ### Task C: Update audit doc with resolution status
 
-**File:** `/home/q/projects/crabcakes/docs/audits/2026-07-05-EMPTY-ASSISTANT-COHERE-400-READ-ONLY.md`
+**File:** `/path/to/projects/crabcakes/docs/audits/2026-07-05-EMPTY-ASSISTANT-COHERE-400-READ-ONLY.md`
 
 **Edit 1 — Add status header.** Insert at the very top (right after the H1):
 
@@ -289,7 +289,7 @@ That's all for Task C.
 ### V1. Spec status block added
 
 ```
-cd /home/q/projects/crabcakes && head -15 docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md
+cd /path/to/projects/crabcakes && head -15 docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md
 ```
 
 Expected: status block visible at top with `✅ SHIPPED`, three commit hashes, `65 pass`, post-mortem link.
@@ -297,7 +297,7 @@ Expected: status block visible at top with `✅ SHIPPED`, three commit hashes, `
 ### V2. Spec drift fixed
 
 ```
-cd /home/q/projects/crabcakes && grep -n "^### File 1\|^### File 2" docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md
+cd /path/to/projects/crabcakes && grep -n "^### File 1\|^### File 2" docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md
 ```
 
 Then read those sections and verify the line-number references match the post-Phase-1 code. Specifically: ASSISTANT branch references in §2 should point to ~250–284 (post-Phase-1) not 244–258 (pre-Phase-1).
@@ -305,8 +305,8 @@ Then read those sections and verify the line-number references match the post-Ph
 ### V3. Acceptance criteria marked
 
 ```
-cd /home/q/projects/crabcakes && grep -c '\[x\]' docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md
-cd /home/q/projects/crabcakes && grep -c '\[ \]' docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md
+cd /path/to/projects/crabcakes && grep -c '\[x\]' docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md
+cd /path/to/projects/crabcakes && grep -c '\[ \]' docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md
 ```
 
 Expected: at least 12 `[x]` (the box-checkable criteria that are shippable). Exactly 2–3 `[ ]` (B1, B2, possibly T5 if test_agent_runtime.py has failures).
@@ -314,7 +314,7 @@ Expected: at least 12 `[x]` (the box-checkable criteria that are shippable). Exa
 ### V4. Backlog items 6/7/8 added to §10
 
 ```
-cd /home/q/projects/crabcakes && grep -n "^6\. \`agent/runtime.py:2290\|^7\. \`add_assistant_message\`\|`ValueError\|^8\. \*\*Two distinct placeholder strings" docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md
+cd /path/to/projects/crabcakes && grep -n "^6\. \`agent/runtime.py:2290\|^7\. \`add_assistant_message\`\|`ValueError\|^8\. \*\*Two distinct placeholder strings" docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md
 ```
 
 Expected: 3 hits, all in §10 (between line 577 and end of file). Items numbered 6, 7, 8 (existing items 1–5 unchanged).
@@ -322,8 +322,8 @@ Expected: 3 hits, all in §10 (between line 577 and end of file). Items numbered
 ### V5. Post-mortem exists and has all required sections
 
 ```
-cd /home/q/projects/crabcakes && ls -la docs/post-mortems/2026-07-05-EMPTY-ASSISTANT-MESSAGE-POST-MORTEM.md
-cd /home/q/projects/crabcakes && grep -n "^## 1\.\|^## 2\.\|^## 3\.\|^## 4\.\|^## 5\.\|^## 6\.\|^## 7\.\|^## 8\.\|^## 9\.\|^## 10\." docs/post-mortems/2026-07-05-EMPTY-ASSISTANT-MESSAGE-POST-MORTEM.md
+cd /path/to/projects/crabcakes && ls -la docs/post-mortems/2026-07-05-EMPTY-ASSISTANT-MESSAGE-POST-MORTEM.md
+cd /path/to/projects/crabcakes && grep -n "^## 1\.\|^## 2\.\|^## 3\.\|^## 4\.\|^## 5\.\|^## 6\.\|^## 7\.\|^## 8\.\|^## 9\.\|^## 10\." docs/post-mortems/2026-07-05-EMPTY-ASSISTANT-MESSAGE-POST-MORTEM.md
 ```
 
 Expected: file exists, 10 numbered sections all present.
@@ -331,7 +331,7 @@ Expected: file exists, 10 numbered sections all present.
 ### V6. Audit doc status updated
 
 ```
-cd /home/q/projects/crabcakes && head -15 docs/audits/2026-07-05-EMPTY-ASSISTANT-COHERE-400-READ-ONLY.md
+cd /path/to/projects/crabcakes && head -15 docs/audits/2026-07-05-EMPTY-ASSISTANT-COHERE-400-READ-ONLY.md
 ```
 
 Expected: status block visible with `✅ RESOLVED`.
@@ -339,7 +339,7 @@ Expected: status block visible with `✅ RESOLVED`.
 ### V7. Final test suite still passes
 
 ```
-cd /home/q/projects/crabcakes && pytest tests/test_conversation.py 2>&1 | tail -3
+cd /path/to/projects/crabcakes && pytest tests/test_conversation.py 2>&1 | tail -3
 ```
 
 Expected: 65 passed. Phase 4 is doc-only; tests should be unchanged.
@@ -347,8 +347,8 @@ Expected: 65 passed. Phase 4 is doc-only; tests should be unchanged.
 ### V8. No production code touched
 
 ```
-cd /home/q/projects/crabcakes && git status --short
-cd /home/q/projects/crabcakes && git diff HEAD --stat
+cd /path/to/projects/crabcakes && git status --short
+cd /path/to/projects/crabcakes && git diff HEAD --stat
 ```
 
 Expected: only docs modified. No changes to `agent/`, `models/`, or `tests/` (other than the already-accepted Phase 3 test_conversation.py edit).

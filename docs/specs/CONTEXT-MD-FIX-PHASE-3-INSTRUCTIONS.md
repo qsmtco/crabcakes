@@ -4,7 +4,7 @@
 **File:** `utils/project_awareness.py` (implementation) + `tests/test_project_awareness.py` (tests)
 **Goal:** Add supersedure of stale "in progress" entries and FIFO eviction at 50 entries to `append_project_context`.
 
-**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL before writing any code. Activate it. Begin your response with "Starting Discovery Phase — reading all relevant files before writing any code." and output a DISCOVERY block. Follow all 8 core rules.
+**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL before writing any code. Activate it. Begin your response with "Starting Discovery Phase — reading all relevant files before writing any code." and output a DISCOVERY block. Follow all 8 core rules.
 
 Read `utils/project_awareness.py` in full before editing (especially `append_project_context` at line 309, `MAX_CONTEXT_ENTRIES` at line 58, and `save_project_context`).
 

@@ -151,17 +151,17 @@ Add `from pathlib import Path` if not already imported in window.py.
 
 ```bash
 # 1. Does the helper function exist?
-cd /home/q/projects/crabcakes && python3 -c "from ui.handlers.auxilium_wizard_handler import is_auxilium_wizard_needed; from pathlib import Path; print('wizard_needed =', is_auxilium_wizard_needed(Path.home() / '.config' / 'crabcakes'))"
+cd /path/to/projects/crabcakes && python3 -c "from ui.handlers.auxilium_wizard_handler import is_auxilium_wizard_needed; from pathlib import Path; print('wizard_needed =', is_auxilium_wizard_needed(Path.home() / '.config' / 'crabcakes'))"
 
 # 2. Existing tests still pass
-cd /home/q/projects/crabcakes && pytest tests/test_architecture.py tests/test_kb_lookup.py -q 2>&1 | tail -3
+cd /path/to/projects/crabcakes && pytest tests/test_architecture.py tests/test_kb_lookup.py -q 2>&1 | tail -3
 
 # 3. Module imports
-cd /home/q/projects/crabcakes && python3 -c "import ui.window; print('window imports OK')"
+cd /path/to/projects/crabcakes && python3 -c "import ui.window; print('window imports OK')"
 
 # 4. G_DEBUG=fatal-criticals smoke — the app launches without GTK warnings
 # Note: this requires xvfb-run for headless mode
-cd /home/q/projects/crabcakes && xvfb-run -a G_DEBUG=fatal-criticals python3 -c "
+cd /path/to/projects/crabcakes && xvfb-run -a G_DEBUG=fatal-criticals python3 -c "
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
@@ -171,7 +171,7 @@ print('AuxiliumWizard importable from window.py import chain: OK')
 "
 
 # 5. Static check: chat_box has a remove method
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk

@@ -1,6 +1,6 @@
 # Phase 4 of 5 — Smart Scroll (Never Auto-Scroll to Top)
 
-**Master spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-FEED-CARD-UX.md` (read it in full, especially "Spec Revision History" and Section 2.8/2.9)
+**Master spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-FEED-CARD-UX.md` (read it in full, especially "Spec Revision History" and Section 2.8/2.9)
 
 **Phase 1-3 status:** COMPLETE (button policy + decision badges + sequence numbers all in working tree, 1698+ tests passing)
 
@@ -115,49 +115,49 @@ For testing, the existing `MockFeedTab` may need a vadjustment attribute. Add a 
 
 1. **New method exists:**
    ```bash
-   cd /home/q/projects/crabcakes && grep -n "def smart_scroll_to_bottom" ui/views/feed_tab.py
+   cd /path/to/projects/crabcakes && grep -n "def smart_scroll_to_bottom" ui/views/feed_tab.py
    ```
    Expect: 1 match
 
 2. **add_card uses smart_scroll:**
    ```bash
-   cd /home/q/projects/crabcakes && grep -n "smart_scroll_to_bottom" ui/handlers/feed_handler.py
+   cd /path/to/projects/crabcakes && grep -n "smart_scroll_to_bottom" ui/handlers/feed_handler.py
    ```
    Expect: ≥ 1 match in `add_card._append()`
 
 3. **scroll_to_bottom (unconditional) still exists in on_project_opened:**
    ```bash
-   cd /home/q/projects/crabcakes && grep -n "scroll_to_bottom" ui/handlers/feed_handler.py ui/views/feed_tab.py
+   cd /path/to/projects/crabcakes && grep -n "scroll_to_bottom" ui/handlers/feed_handler.py ui/views/feed_tab.py
    ```
    Expect: `scroll_to_bottom` (unconditional) still present in BOTH files (feed_handler.on_project_opened + feed_tab class)
 
 4. **card_container.set_vexpand(True) was NOT changed to False:**
    ```bash
-   cd /home/q/projects/crabcakes && grep -n "card_container.set_vexpand" ui/views/feed_tab.py
+   cd /path/to/projects/crabcakes && grep -n "card_container.set_vexpand" ui/views/feed_tab.py
    ```
    Expect: `set_vexpand(True)` (not `set_vexpand(False)`)
 
 5. **New tests pass:**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -m pytest tests/test_feed_handler.py -v
+   cd /path/to/projects/crabcakes && python3 -m pytest tests/test_feed_handler.py -v
    ```
    Expect: all existing tests + new TestSmartScroll tests pass
 
 6. **Import sanity:**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -c "import ui.views.feed_tab; import ui.handlers.feed_handler; print('OK')"
+   cd /path/to/projects/crabcakes && python3 -c "import ui.views.feed_tab; import ui.handlers.feed_handler; print('OK')"
    ```
    Expect: `OK`
 
 7. **Full test suite (sanity — should be no new failures):**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -m pytest -x -q
+   cd /path/to/projects/crabcakes && python3 -m pytest -x -q
    ```
    Expect: ≥ 1698 passed (Phase 1+2+3 baseline) + new Phase 4 tests, 1 skipped, 4 warnings
 
 8. **No accidental scope creep:**
    ```bash
-   cd /home/q/projects/crabcakes && git diff HEAD --stat
+   cd /path/to/projects/crabcakes && git diff HEAD --stat
    ```
    Expect: only `ui/views/feed_tab.py`, `ui/handlers/feed_handler.py`, `tests/test_feed_handler.py` changed (plus prior phase changes which were not re-modified).
 

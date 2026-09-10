@@ -1,6 +1,6 @@
 # Phase T2-4 — `tests/test_auxilium_tier2.py` (KB synthesis test suite)
 
-**Spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-auxilium-tier-2.md` §2.5
+**Spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-auxilium-tier-2.md` §2.5
 **Target:** main
 **Risk:** Low (adds a new test file; does not modify production code)
 **Lines:** ~280 (5 test classes, ~30 tests total)

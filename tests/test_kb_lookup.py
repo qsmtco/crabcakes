@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import importlib.util
+
 import numpy as np
 import pytest
 
@@ -255,16 +257,29 @@ def test_top_k_limits_results(synthetic_index):
 
 # ── Integration test (gated on real index existing) ───────────────────────────
 
-REAL_INDEX = Path("/home/q/projects/crabcakes/knowledge/.index")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+REAL_INDEX = REPO_ROOT / "knowledge" / ".index"
+
+# The gated test loads the real embedding model, so it needs
+# sentence-transformers in addition to the index. Gating on the index alone
+# turns a skip into a hard ImportError anywhere the model deps are absent.
+_HAS_SENTENCE_TRANSFORMERS = (
+    importlib.util.find_spec("sentence_transformers") is not None
+)
+
 REAL_INDEX_AVAILABLE = (
     (REAL_INDEX / "chunks.json").is_file()
     and (REAL_INDEX / "embeddings.npy").is_file()
+    and _HAS_SENTENCE_TRANSFORMERS
 )
 
 
 @pytest.mark.skipif(
     not REAL_INDEX_AVAILABLE,
-    reason="Real index not built (run scripts/rebuild_kb_index.py first)",
+    reason=(
+        "Integration test needs both the real index at "
+        f"{REAL_INDEX} and the sentence-transformers package"
+    ),
 )
 def test_real_index_retrieval_makes_sense():
     """Smoke test against the real index. Loads the real model (~22s first time)."""

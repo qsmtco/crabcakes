@@ -307,7 +307,7 @@ class TestChatFinalTracking:
 
 ### 1.4 Verification Steps
 
-1. Run the new tests: `cd /home/q/projects/crabcakes && python -m pytest tests/test_missing_message_fix.py -v`
+1. Run the new tests: `cd /path/to/projects/crabcakes && python -m pytest tests/test_missing_message_fix.py -v`
 2. Run the full test suite: `python -m pytest tests/ -v`
 3. Manual test: Start CrabCakes in debug mode, send a message to an agent, verify the response appears as a bubble. Then check terminal logs for `[fallback]` messages to confirm the path is working (it should NOT trigger on normal runs — only when chat final has no message).
 
@@ -1155,7 +1155,7 @@ These `agent` event streams are intentionally NOT rendered as activity bubbles:
 
 ### 2.10 Verification Steps
 
-1. `cd /home/q/projects/crabcakes && python -m pytest tests/test_activity_bubbles.py -v` — all new tests pass
+1. `cd /path/to/projects/crabcakes && python -m pytest tests/test_activity_bubbles.py -v` — all new tests pass
 2. `python -m pytest tests/test_missing_message_fix.py -v` — Phase 1 still passes
 3. `python -m pytest tests/ -v` — full suite (6 pre-existing failures in `test_chat_handler.py` are expected)
 4. Manual test: Start CrabCakes, send a message that triggers tool calls (e.g., "search for X"), verify activity bubbles appear between user message and agent response

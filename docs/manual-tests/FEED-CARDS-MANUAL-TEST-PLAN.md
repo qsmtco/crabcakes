@@ -2,7 +2,7 @@
 
 **Target:** Crabcakes project feed tab — commit `5727675 feat(feed): ship 5-phase Feed Card UX improvements`
 **Spec / post-mortem:** `docs/specs/SPEC-FEED-CARD-UX.md`, `docs/post-mortems/2026-06-18-FEED-CARD-UX-POST-MORTEM.md`
-**Prereq:** Working crabcakes install with an open project. The project should have at least one chat agent connected so file-change accept/reject cards can be produced. A second terminal in the project root (`/home/q/projects/crabcakes`) is handy for `git log --oneline` checks.
+**Prereq:** Working crabcakes install with an open project. The project should have at least one chat agent connected so file-change accept/reject cards can be produced. A second terminal in the project root (`/path/to/projects/crabcakes`) is handy for `git log --oneline` checks.
 **Reset state:** Before starting, run `rm -f ~/.local/share/crabcakes/feed/<project_id>.json` (or whatever the per-project feed store path is in your build) so you start with an empty feed. Reopen the project after deleting.
 
 Each step lists **what to do**, **what to look for**, and **what would be a bug**. Steps build on each other — don't skip ahead.

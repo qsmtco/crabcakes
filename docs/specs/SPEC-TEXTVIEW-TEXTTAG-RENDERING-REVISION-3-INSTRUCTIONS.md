@@ -3,7 +3,7 @@
 **To:** Coder
 **Task:** Fix 8 bugs found in round-2 audit (BUG #15–#22). All empirically verified by supervisor. The architecture is settled — these are localized fixes. Load `prompts/steelFramedSpecWriter.md` fresh.
 
-**Output:** Revise `/home/q/projects/crabcakes/docs/specs/SPEC-TEXTVIEW-TEXTTAG-RENDERING.md` in place.
+**Output:** Revise `/path/to/projects/crabcakes/docs/specs/SPEC-TEXTVIEW-TEXTTAG-RENDERING.md` in place.
 
 ---
 

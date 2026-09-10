@@ -5,8 +5,8 @@ Replace expensive full-Conversation deserialization in `list_conversations`
 with a lightweight JSON load that extracts only `agent_name`.
 
 ## Files to Read First
-- `/home/q/projects/crabcakes/agent/runtime.py` (lines 2257–2291)
-- `/home/q/projects/crabcakes/docs/specs/SPEC-RUNTIME-HARDENING-AUDIT.md` (W13, W14)
+- `/path/to/projects/crabcakes/agent/runtime.py` (lines 2257–2291)
+- `/path/to/projects/crabcakes/docs/specs/SPEC-RUNTIME-HARDENING-AUDIT.md` (W13, W14)
 
 ## Step 1 — Read Current `list_conversations`
 
@@ -60,7 +60,7 @@ imported at module level.
 ## Step 3 — Verify
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "from agent.runtime import AgentRuntime; print('import ok')"
 python3 -m py_compile agent/runtime.py && echo "syntax ok"
 ```

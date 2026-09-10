@@ -269,7 +269,7 @@ python3 -m pytest tests/test_agent_builder_handler.py -v --tb=short
 ## Verification commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # C.1: agent_builder.py imports ok
 python3 -c "from ui.views.agent_builder import AgentBuilderDialog; print('imports ok')"

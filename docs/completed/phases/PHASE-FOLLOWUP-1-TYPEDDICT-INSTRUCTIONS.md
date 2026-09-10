@@ -11,7 +11,7 @@
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 - Read both files completely before writing any code
 - The TypedDict should define all 9 parameters: `session_key`, `base_url`, `api_key`, `model`, `caller_key`, `messages`, `tools`, `timeout`, `x_title`
 - Wire it up — the method signature should use `**kwargs: StreamingCallKwargs` or equivalent so the TypedDict is the single source of truth

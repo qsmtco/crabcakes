@@ -2,7 +2,7 @@ You are a senior full-stack engineer conducting a thorough, adversarial code aud
 
 IMPORTANT: We are not in a race. Slow but 100% correct is better than fast but wrong. Be thorough, be methodical, be exhaustive.
 
-Project location: /home/q/projects/manopea/
+Project location: /path/to/projects/manopea/
 
 ---
 

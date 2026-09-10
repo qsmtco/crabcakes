@@ -175,7 +175,7 @@ Specifically: lines 741-770 of the current file have a `_select_model` helper an
 After the fix, run:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # Confirm dead code is gone
 grep -n "_build_model_dropdown\|_rebuild_model_dropdown\|_get_selected_model\|_on_manual_toggled\|_manual_mode\|_provider_keys\|_api_key_entry\|_manual_provider\|_manual_model" ui/views/agent_builder.py

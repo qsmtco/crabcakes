@@ -42,7 +42,7 @@ Replace with:
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 - Read `ui/handlers/agent_runtime_handler.py` lines 256-295 COMPLETELY before editing
 - Make ONLY the edit described above
 - Do NOT touch any other code in the file
@@ -54,7 +54,7 @@ Replace with:
 Run this verification (paste full output):
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "
 # Test: _resolve_agent_model should not double-prefix when default_model has a slash
 # We verify the logic by examining the function's source code
@@ -70,19 +70,19 @@ print('P4 source check: guard present and returns default_model as-is')
 ```
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 timeout 30 python3 -m pytest tests/test_agent_runtime_handler.py -q 2>&1 | tail -6
 ```
 
 If `tests/test_agent_runtime_handler.py` does not exist, run instead:
 ```bash
-ls /home/q/projects/crabcakes/tests/ | grep -i runtime
+ls /path/to/projects/crabcakes/tests/ | grep -i runtime
 ```
 
 and run the closest test file.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n 'return prov_cfg.default_model' ui/handlers/agent_runtime_handler.py
 ```
 

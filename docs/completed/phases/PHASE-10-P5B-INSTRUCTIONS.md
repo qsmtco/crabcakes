@@ -53,7 +53,7 @@ Adding the corrections note at the top makes option (1) impossible without rewri
 
 ## Rules
 
-- Use the implementationSupervisor prompt at `/home/q/projects/crabcakes/prompts/implementationSupervisor.md`
+- Use the implementationSupervisor prompt at `/path/to/projects/crabcakes/prompts/implementationSupervisor.md`
 - Read `docs/specs/PHASE-10-PROVIDER-CALLER-FIELD.md` lines 1-15 before editing
 - Make ONLY the 1 edit described above (insert the corrections note at line 3)
 - Do NOT rewrite the rest of the spec
@@ -63,7 +63,7 @@ Adding the corrections note at the top makes option (1) impossible without rewri
 ## Verification (mandatory — paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the corrections note is in place
 head -25 docs/specs/PHASE-10-PROVIDER-CALLER-FIELD.md
 ```
@@ -71,7 +71,7 @@ head -25 docs/specs/PHASE-10-PROVIDER-CALLER-FIELD.md
 Expect: the corrections note appears at the top, before the "Architecture compliance" blockquote.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the actual line numbers in the spec match reality
 echo "=== agent/runtime.py ==="
 grep -n "def _call_llm_streaming\|def _call_llm(\|def _resolve_caller_key\|streamer = _PROVIDER_STREAMERS\|caller = _PROVIDER_CALLERS" agent/runtime.py
@@ -84,7 +84,7 @@ grep -n "if \"/\" in prov_cfg.default_model\|return f\"{provider}/{prov_cfg.defa
 Expect: the actual line numbers match (or are within 2 lines of) the numbers in the corrections note.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify ARCHITECTURE.md §12 reference
 grep -n "^## 12\." docs/ARCHITECTURE.md
 ```

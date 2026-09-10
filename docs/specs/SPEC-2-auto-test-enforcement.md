@@ -407,7 +407,7 @@ Create a template at `docs/templates/enforcement-template.json`:
 
 ### 3.4 Crabwatch-specific `enforcement.json`
 
-Create at `/home/q/projects/crabwatch/.crabcakes/enforcement.json`:
+Create at `/path/to/projects/crabwatch/.crabcakes/enforcement.json`:
 
 ```json
 {

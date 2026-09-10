@@ -1,6 +1,6 @@
 # Phase 3 Instructions — Empty-Assistant-Message Fix (Regression Tests)
 
-**Master spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md`
+**Master spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md`
 **Phase:** 3 of 4
 **File scope:** 1 file (`tests/test_conversation.py`)
 **Estimated delta:** +5 new tests, ~50 lines
@@ -179,7 +179,7 @@ After your changes, the class will be (in order):
 ### V1. Confirm all 5 new tests are present
 
 ```
-cd /home/q/projects/crabcakes && grep -n "def test_empty_assistant_message_substitutes_placeholder\|def test_empty_assistant_message_logs_warning\|def test_assistant_message_with_only_tool_calls_does_not_substitute\|def test_assistant_message_with_only_content_does_not_substitute\|def test_corrupt_message_mid_sequence_uses_correct_index_in_warning" tests/test_conversation.py
+cd /path/to/projects/crabcakes && grep -n "def test_empty_assistant_message_substitutes_placeholder\|def test_empty_assistant_message_logs_warning\|def test_assistant_message_with_only_tool_calls_does_not_substitute\|def test_assistant_message_with_only_content_does_not_substitute\|def test_corrupt_message_mid_sequence_uses_correct_index_in_warning" tests/test_conversation.py
 ```
 
 Expected: 5 lines returned, all in `TestConversationToApiMessages` class (between line 166 and ~285).
@@ -187,7 +187,7 @@ Expected: 5 lines returned, all in `TestConversationToApiMessages` class (betwee
 ### V2. Run the new tests in isolation — they must pass
 
 ```
-cd /home/q/projects/crabcakes && pytest tests/test_conversation.py::TestConversationToApiMessages -v 2>&1 | tail -25
+cd /path/to/projects/crabcakes && pytest tests/test_conversation.py::TestConversationToApiMessages -v 2>&1 | tail -25
 ```
 
 Expected: 12 tests pass (7 existing + 5 new). 0 failures.
@@ -195,7 +195,7 @@ Expected: 12 tests pass (7 existing + 5 new). 0 failures.
 ### V3. Run the entire test_conversation.py file — nothing breaks
 
 ```
-cd /home/q/projects/crabcakes && pytest tests/test_conversation.py -v 2>&1 | tail -20
+cd /path/to/projects/crabcakes && pytest tests/test_conversation.py -v 2>&1 | tail -20
 ```
 
 Expected: 65 tests pass (60 existing + 5 new). 0 failures.
@@ -203,7 +203,7 @@ Expected: 65 tests pass (60 existing + 5 new). 0 failures.
 ### V4. Confirm existing tests are unchanged
 
 ```
-cd /home/q/projects/crabcakes && git diff HEAD tests/test_conversation.py | grep "^-" | grep -v "^---"
+cd /path/to/projects/crabcakes && git diff HEAD tests/test_conversation.py | grep "^-" | grep -v "^---"
 ```
 
 Expected: only `+` lines (additions); no `-` lines (no deletions or modifications of existing tests).
@@ -211,7 +211,7 @@ Expected: only `+` lines (additions); no `-` lines (no deletions or modification
 ### V5. Confirm new tests do not depend on anything outside the test's local scope except pytest + the imported modules
 
 ```
-cd /home/q/projects/crabcakes && grep -n "^import\|^from" tests/test_conversation.py | head -20
+cd /path/to/projects/crabcakes && grep -n "^import\|^from" tests/test_conversation.py | head -20
 ```
 
 Expected: the imports at the top of the file are unchanged. New imports (`import logging`) are inside test functions.
@@ -231,7 +231,7 @@ Write a one-line summary of this in your report.
 ### V7. Live simulation: confirm each new test PASSES against current code
 
 ```
-cd /home/q/projects/crabcakes && pytest tests/test_conversation.py::TestConversationToApiMessages::test_empty_assistant_message_substitutes_placeholder tests/test_conversation.py::TestConversationToApiMessages::test_empty_assistant_message_logs_warning tests/test_conversation.py::TestConversationToApiMessages::test_assistant_message_with_only_tool_calls_does_not_substitute tests/test_conversation.py::TestConversationToApiMessages::test_assistant_message_with_only_content_does_not_substitute tests/test_conversation.py::TestConversationToApiMessages::test_corrupt_message_mid_sequence_uses_correct_index_in_warning -v 2>&1 | tail -10
+cd /path/to/projects/crabcakes && pytest tests/test_conversation.py::TestConversationToApiMessages::test_empty_assistant_message_substitutes_placeholder tests/test_conversation.py::TestConversationToApiMessages::test_empty_assistant_message_logs_warning tests/test_conversation.py::TestConversationToApiMessages::test_assistant_message_with_only_tool_calls_does_not_substitute tests/test_conversation.py::TestConversationToApiMessages::test_assistant_message_with_only_content_does_not_substitute tests/test_conversation.py::TestConversationToApiMessages::test_corrupt_message_mid_sequence_uses_correct_index_in_warning -v 2>&1 | tail -10
 ```
 
 Expected: 5 passed.
@@ -245,7 +245,7 @@ Before reporting done, scan `tests/test_conversation.py` for **other** test patt
 1. Are there any existing tests in `TestConversationToApiMessages` that test `add_assistant_message("", [])` and check the serialized form? (Yes — `test_assistant_message_with_tool_calls` at line 188. But it has tool_calls, so the placeholder doesn't fire. Confirm unchanged.)
 2. Are there any tests elsewhere (not just in `tests/test_conversation.py`) that mock `to_api_messages` and might be affected by the new placeholder string? Search the project:
    ```
-   cd /home/q/projects/crabcakes && grep -rln "to_api_messages" tests/ | head -10
+   cd /path/to/projects/crabcakes && grep -rln "to_api_messages" tests/ | head -10
    ```
 3. Are there integration tests in `tests/test_agent_*.py` that hit the empty-content code path in `agent/runtime.py:2214` (the write-side guard)? If yes, those tests would now see the placeholder string in the saved conversation. They are out of scope for Phase 3 (spec §1) but flag them if you find any.
 

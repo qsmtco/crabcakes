@@ -70,7 +70,7 @@ git rm ui/views/chat_control_bar.py
 ## Verification Commands (run all of these)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Old name must be gone (expect 0)
 echo "=== ChatControlBar (should be 0) ==="
@@ -100,7 +100,7 @@ xvfb-run -a python3 -c "from ui.window import MainWindow; print('imports OK')"
 
 # 8. App launches with no Gtk-CRITICAL (fatal-criticals would crash on any)
 G_DEBUG=fatal-criticals xvfb-run -a python3 -c "
-import sys; sys.path.insert(0, '/home/q/projects/crabcakes')
+import sys; sys.path.insert(0, '/path/to/projects/crabcakes')
 from ui.window import MainWindow
 m = MainWindow(application=None)
 m.present()

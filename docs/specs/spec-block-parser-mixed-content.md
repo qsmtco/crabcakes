@@ -416,7 +416,7 @@ All function signatures verified. All regex patterns verified. No invented APIs.
 ### 2. Test suite (to be pasted after implementation)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 xvfb-run -a python3 -m pytest tests/test_block_parser.py -v
 ```
 

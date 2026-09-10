@@ -85,7 +85,7 @@ The drawer's actual code reads `self._list`, not `self._listbox`. This line is d
 
 ## Rules for the builder
 
-- **You MUST use the `steelFramedCodeWriter` prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md` exactly as written — no deviation.** Begin your response with: "Starting Discovery Phase — reading all relevant files before writing any code." Then output the discovery block, then proceed.
+- **You MUST use the `steelFramedCodeWriter` prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md` exactly as written — no deviation.** Begin your response with: "Starting Discovery Phase — reading all relevant files before writing any code." Then output the discovery block, then proceed.
 - Discovery is mandatory: re-read `tests/test_activity_drawer.py` and `ui/views/activity_drawer.py` (focus on lines 171-300 for the 3 untested public methods) before writing.
 - Maximum 15 lines of code per checkpoint, then verify.
 - Do NOT modify any other file. This phase is `tests/test_activity_drawer.py` ONLY.
@@ -107,15 +107,15 @@ grep -n "d._listbox = fake_list" tests/test_activity_drawer.py
 # Expected: 0 matches
 
 # 4. New tests pass
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_activity_drawer.py -v
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_activity_drawer.py -v
 # Expected: 24 passed (was 21, +3 new)
 
 # 5. No regression in test_activity_bubbles.py
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_activity_bubbles.py -q
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_activity_bubbles.py -q
 # Expected: 24 passed
 
 # 6. Combined run
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_activity_bubbles.py tests/test_activity_drawer.py -q
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_activity_bubbles.py tests/test_activity_drawer.py -q
 # Expected: 48 passed (24 + 24)
 
 # 7. AST parse

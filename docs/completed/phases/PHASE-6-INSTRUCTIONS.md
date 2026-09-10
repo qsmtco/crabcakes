@@ -410,7 +410,7 @@ class TestRefreshProviders:
 ## Verification commands (run between sub-phases AND at the end)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 6.1: styles.py still loads
 python3 -c "from ui.styles import APP_CSS; print('imports ok'); assert 'settings-dialog' in APP_CSS; assert 'settings-provider-card' in APP_CSS; assert 'settings-test-btn' in APP_CSS; assert 'settings-remove-btn' in APP_CSS; assert 'settings-status-ok' in APP_CSS; assert 'settings-status-fail' in APP_CSS; assert 'settings-empty-state' in APP_CSS; print('OK: all settings-* CSS classes present')"

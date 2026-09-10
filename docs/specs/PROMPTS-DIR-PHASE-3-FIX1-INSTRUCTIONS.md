@@ -59,8 +59,8 @@ Adjust assertions to the patched constant.
 ## Verification (paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_prompts_project_resolution.py -v -p no:cacheprovider
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_input_toolbar_handler.py tests/test_prompts_handler.py -q -p no:cacheprovider
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_prompts_project_resolution.py -v -p no:cacheprovider
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_input_toolbar_handler.py tests/test_prompts_handler.py -q -p no:cacheprovider
 grep -n "makedirs" ui/handlers/input_toolbar_handler.py
 ```
 

@@ -1,6 +1,6 @@
 # Phase T2-6 — Document Auxilium Tier 2 in ARCHITECTURE.md
 
-**Spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-auxilium-tier-2.md` §8
+**Spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-auxilium-tier-2.md` §8
 **Target:** main
 **Risk:** Low (documentation only — no code changes)
 **Lines:** ~50 (1 new sub-section, 1 small update, 1 test inventory entry)

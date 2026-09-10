@@ -367,7 +367,7 @@ class TestResult:
 ### Step 1: Verify baseline (read-only)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python -m pytest tests/test_settings_handler.py::TestTestProvider -v
 ```
 
@@ -389,7 +389,7 @@ grep -n "caller" ui/handlers/settings_handler.py
 ### Step 3: Run existing tests
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python -m pytest tests/test_settings_handler.py -v
 ```
 
@@ -407,7 +407,7 @@ grep -n "def test_preserves_caller\|def test_auto_detects" tests/test_settings_h
 ### Step 5: Run full test suite
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python -m pytest tests/ -v
 ```
 
@@ -426,7 +426,7 @@ Ask the user to click "Test Connection" on the broken `minimax-M3` card in Setti
 ### Step 8: Commit
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 git add ui/handlers/settings_handler.py tests/test_settings_handler.py
 # (and docs/ARCHITECTURE.md if Step 6 was applied)
 git commit -m "fix(settings): preserve caller field through test_provider save cycle

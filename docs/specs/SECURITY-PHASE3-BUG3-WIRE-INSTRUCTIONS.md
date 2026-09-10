@@ -57,7 +57,7 @@ If the test module's existing fixtures don't make this easy, add a minimal test 
 3. Anchor to identifiers, not line numbers
 4. Run the full test suite after the fix:
    ```bash
-   cd /home/q/projects/crabcakes
+   cd /path/to/projects/crabcakes
    python3 -m pytest tests/test_agent_config_yaml_fallback.py tests/test_runtime.py -q --no-header 2>&1 | tail -5
    python3 -m pytest tests/ -q --no-header --ignore=tests/test_kb_server.py 2>&1 | tail -5
    ```
@@ -71,6 +71,6 @@ If the test module's existing fixtures don't make this easy, add a minimal test 
 
 After fix:
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "from agent.config import load_agent_config, AgentConfig; import tempfile, json, os; tmp=tempfile.mkdtemp(); p=os.path.join(tmp,'agent.json'); json.dump({'user_id':'alice','default_provider':'local-kb','default_model':'local-kb/local-kb'}, open(p,'w')); os.chmod(p, 0o600); c=load_agent_config(p); assert c.user_id == 'alice'; print('user_id wire works:', c.user_id)"
 ```

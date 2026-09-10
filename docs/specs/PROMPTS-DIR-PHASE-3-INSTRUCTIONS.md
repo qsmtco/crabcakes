@@ -77,8 +77,8 @@ Also: existing suites MUST stay green — `tests/test_prompts_handler.py`, `test
 ## Verification (paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_prompts_project_resolution.py -v -p no:cacheprovider
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_prompts_handler.py tests/test_favorites.py tests/test_prompt_loader.py tests/test_seed_project_prompts.py tests/test_prompt_paths.py -q -p no:cacheprovider
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_prompts_project_resolution.py -v -p no:cacheprovider
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_prompts_handler.py tests/test_favorites.py tests/test_prompt_loader.py tests/test_seed_project_prompts.py tests/test_prompt_paths.py -q -p no:cacheprovider
 grep -n "_PROMPTS_DIR" ui/handlers/prompts_handler.py   # expect: no matches
 ```
 

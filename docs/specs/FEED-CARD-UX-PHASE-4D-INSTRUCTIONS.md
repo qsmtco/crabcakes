@@ -165,7 +165,7 @@ self._scroll_timeout_id: int | None = None
 
 ## Rules (use the steelFramedCodeWriter prompt)
 
-Read `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md` in full before writing any code. Follow the **Discovery → Hard Part First → Verify → Test → Spec Compliance → Completeness** flow.
+Read `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md` in full before writing any code. Follow the **Discovery → Hard Part First → Verify → Test → Spec Compliance → Completeness** flow.
 
 **Read these files in full before starting:**
 

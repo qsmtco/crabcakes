@@ -10,7 +10,7 @@
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 - Read the entire test file before writing any code
 - The fixture should take `rt` (runtime instance) and return a lambda that calls `rt._call_llm_streaming(...)` with the correct kwargs
 - Each test patch currently does:

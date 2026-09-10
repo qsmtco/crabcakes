@@ -53,7 +53,7 @@ The following activity drawer event types depend on gateway emission policies th
 ## Verification Commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "Gateway Event Limitations\|Patch Events.*Limitation\|Plan Events.*Limitation" docs/specs/SPEC-activity-drawer.md
 python3 -m pytest tests/ -q --tb=short 2>&1 | tail -5
 ```

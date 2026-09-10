@@ -523,9 +523,9 @@ For each segment:
 ```
 1. User double-clicks "manopea" directory in FileTree
         ↓
-   LeftPanel._file_tree emits on_project_opened("manopea", "/home/q/projects/manopea")
+   LeftPanel._file_tree emits on_project_opened("manopea", "/path/to/projects/manopea")
         ↓
-   ProjectHandler.open_project("manopea", "/home/q/projects/manopea")
+   ProjectHandler.open_project("manopea", "/path/to/projects/manopea")
         ├── Sets _active_project_name, _active_project_path
         ├── init_project_config() → creates .crabcakes/ if absent
         ├── load_members("manopea") → loads team roster
@@ -536,14 +536,14 @@ For each segment:
               │        └── Creates new tab in chat notebook with project tab label
               ├── LeftPanel.open_project_view(feed_tab)
               │        └── Reparents FileTree → nested Notebook (FileTree + Feed sub-tabs)
-              ├── FeedHandler.on_project_opened("manopea", "/home/q/projects/manopea")
+              ├── FeedHandler.on_project_opened("manopea", "/path/to/projects/manopea")
               │        ├── load_feed() → load .crabcakes/feed.json → render cards
               │        └── sets _active_project_name
-              ├── CrabWatchHandler.start_watching("/home/q/projects/manopea", "manopea")
+              ├── CrabWatchHandler.start_watching("/path/to/projects/manopea", "manopea")
               │        └── Gio.FileMonitor recursive tree monitoring starts
               ├── ChatRenderHandler.set_project_name("manopea")
               │        └── sets crabcard parser context
-              └── AgentRuntimeHandler.set_active_project("manopea", "/home/q/projects/manopea")
+              └── AgentRuntimeHandler.set_active_project("manopea", "/path/to/projects/manopea")
 
 2. User types "fix the auth bug" in the project tab input, presses Send
         ↓

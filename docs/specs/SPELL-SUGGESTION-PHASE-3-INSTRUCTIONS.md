@@ -73,7 +73,7 @@ def _on_input_right_click_internal(self, gesture, n_press, x, y) -> None:
 After making changes, run:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/test_main_content.py -q --tb=short 2>/dev/null || echo "No test_main_content.py found"
 python3 -c "from ui.views.main_content import MainContent; print('Import OK')"
 ```

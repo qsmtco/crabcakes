@@ -119,7 +119,7 @@ self._crabwatch_handler.stop_watching(),
 ## Verification Steps
 
 After implementing each piece:
-1. `cd /home/q/projects/crabcakes && python3 -c "import ui.handlers.crabwatch_handler"` — import check
+1. `cd /path/to/projects/crabcakes && python3 -c "import ui.handlers.crabwatch_handler"` — import check
 2. `pytest tests/` — run full test suite
 3. Manual test: open a project, create/modify/delete a file, verify system card appears in Project Feed
 

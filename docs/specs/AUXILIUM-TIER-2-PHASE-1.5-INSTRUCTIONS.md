@@ -1,6 +1,6 @@
 # Phase T2-1.5 — Fix persistence round-trip for dropped `Conversation` fields
 
-**Spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-auxilium-tier-2.md` §7 (edge cases)
+**Spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-auxilium-tier-2.md` §7 (edge cases)
 **Related bug found in:** Phase T2-1 audit
 **Target:** main
 **Risk:** Medium (touches persistence — could cause data corruption if load keys are wrong)

@@ -1,6 +1,6 @@
 # PHASE 2 of 7 — Verify + Test `ui/handlers/input_toolbar_handler.py`
 
-**Spec:** `/home/q/projects/crabcakes/docs/specs/SPEC_CHAT_INPUT_TOOLBAR.md` Section 2.2
+**Spec:** `/path/to/projects/crabcakes/docs/specs/SPEC_CHAT_INPUT_TOOLBAR.md` Section 2.2
 **Target file:** `ui/handlers/input_toolbar_handler.py` (already exists — 395 lines)
 **Test file to create:** `tests/test_input_toolbar_handler.py`
 
@@ -129,10 +129,10 @@ def make_mock_glib():
 
 ```bash
 # Run the new tests
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_input_toolbar_handler.py -v --tb=short
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_input_toolbar_handler.py -v --tb=short
 
 # Run the full suite to check for regressions
-cd /home/q/projects/crabcakes && python3 -m pytest tests/ -q --tb=short
+cd /path/to/projects/crabcakes && python3 -m pytest tests/ -q --tb=short
 
 # Verify the file has no Gtk widget imports
 grep -n "from gi.repository import Gtk\|import Gtk" ui/handlers/input_toolbar_handler.py

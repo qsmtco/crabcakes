@@ -1,6 +1,6 @@
 # Phase 1 of 4 — Close the High Findings (HIGH-3, HIGH-6, A-1)
 
-**Master spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-SECURITY-REMEDIATION.md` (1,211 lines)
+**Master spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-SECURITY-REMEDIATION.md` (1,211 lines)
 
 **Phase 0 status:** ✅ SHIPPED (commit `b5dcccc` on `main`).
 - CRIT-1, CRIT-2, HIGH-1, HIGH-5 all complete
@@ -460,35 +460,35 @@ def connect(self) -> None:
 **1. HIGH-3 — `api_key` removed from conversation files (Edit 1a):**
 
 ```bash
-cd /home/q/projects/crabcakes && grep -n '"api_key"' agent/runtime.py
+cd /path/to/projects/crabcakes && grep -n '"api_key"' agent/runtime.py
 ```
 Expect: 0 matches in `_save_conversation_to_disk` (the line at 783 should be removed)
 
 **2. HIGH-3 — `_conversations_dir` chmod 0o700 (Edit 1b):**
 
 ```bash
-cd /home/q/projects/crabcakes && grep -B 1 -A 5 "def _conversations_dir" agent/runtime.py
+cd /path/to/projects/crabcakes && grep -B 1 -A 5 "def _conversations_dir" agent/runtime.py
 ```
 Expect: `os.chmod(d, 0o700)` in the function body (when parent is newly created)
 
 **3. HIGH-3 — `_load_conversation_from_disk` re-resolves api_key (Edit 1c):**
 
 ```bash
-cd /home/q/projects/crabcakes && grep -B 1 -A 3 "_resolve_api_key_for_conversation" agent/runtime.py
+cd /path/to/projects/crabcakes && grep -B 1 -A 3 "_resolve_api_key_for_conversation" agent/runtime.py
 ```
 Expect: function defined and called from `_load_conversation_from_disk`
 
 **4. HIGH-3 — Migration function (Edit 1d):**
 
 ```bash
-cd /home/q/projects/crabcakes && grep -n "_migrate_conversation_files\|_CONVERSATION_MIGRATION_DONE" agent/runtime.py
+cd /path/to/projects/crabcakes && grep -n "_migrate_conversation_files\|_CONVERSATION_MIGRATION_DONE" agent/runtime.py
 ```
 Expect: function defined + called from `AgentRuntime.__init__`
 
 **5. HIGH-3 — End-to-end test:**
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import os, sys, json
 sys.path.insert(0, '.')
 # Simulate a save+load cycle with api_key
@@ -512,14 +512,14 @@ print('HIGH-3 source check: PASS')
 **6. HIGH-6 — `_WARNING_PREFIX` and `_ALLOWED_LINK_SCHEMES` (Edit 2a):**
 
 ```bash
-cd /home/q/projects/crabcakes && grep -n "_ALLOWED_LINK_SCHEMES\|_WARNING_PREFIX\|_validate_link_url" utils/markdown.py
+cd /path/to/projects/crabcakes && grep -n "_ALLOWED_LINK_SCHEMES\|_WARNING_PREFIX\|_validate_link_url" utils/markdown.py
 ```
 Expect: ≥ 3 matches (constants + helper function)
 
 **7. HIGH-6 — Warn-but-render behavior (Edit 2b, 2c):**
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import sys; sys.path.insert(0, '.')
 from utils.markdown import _validate_link_url
 # Spec test cases
@@ -556,7 +556,7 @@ else:
 **8. HIGH-6 — Full format_markdown test (warning visible in output):**
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import sys; sys.path.insert(0, '.')
 from utils.markdown import format_markdown
 # Spec test cases — verify warning is in output for non-allowlisted, absent for allowlisted
@@ -586,7 +586,7 @@ for text, url, should_be_allowed, desc in test_cases:
 **9. A-1 — `_load_identity` deferred (Edit 3a, 3b):**
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import sys; sys.path.insert(0, '.')
 # Construct GatewayClient without identity file present
 # Should NOT raise on construction
@@ -609,28 +609,28 @@ except Exception as e:
 **10. A-1 — `_identity_loaded` flag present:**
 
 ```bash
-cd /home/q/projects/crabcakes && grep -n "_identity_loaded" gateway/client.py
+cd /path/to/projects/crabcakes && grep -n "_identity_loaded" gateway/client.py
 ```
 Expect: ≥ 2 matches (init sets it to False, connect() checks/sets it to True)
 
 **11. New tests pass:**
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_conversation.py tests/test_markdown.py -v 2>&1 | tail -20
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_conversation.py tests/test_markdown.py -v 2>&1 | tail -20
 ```
 Expect: all existing tests + new HIGH-3 + HIGH-6 tests pass
 
 **12. Targeted test run (no regressions):**
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_enforcement.py tests/test_tools.py tests/test_conversation.py tests/test_markdown.py tests/test_prompt_loader.py tests/test_project_awareness.py -q 2>&1 | tail -5
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_enforcement.py tests/test_tools.py tests/test_conversation.py tests/test_markdown.py tests/test_prompt_loader.py tests/test_project_awareness.py -q 2>&1 | tail -5
 ```
 Expect: ≥ 143 (Phase 0 baseline) + new Phase 1 tests
 
 **13. Full test suite (sanity):**
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest -x -q 2>&1 | tail -3
+cd /path/to/projects/crabcakes && python3 -m pytest -x -q 2>&1 | tail -3
 ```
 Expect: ≥ 1750 passed (Feed Card UX baseline) + 143 (Phase 0) + new Phase 1 tests
 
@@ -639,7 +639,7 @@ Expect: ≥ 1750 passed (Feed Card UX baseline) + 143 (Phase 0) + new Phase 1 te
 **14. No accidental scope creep:**
 
 ```bash
-cd /home/q/projects/crabcakes && git diff HEAD --stat
+cd /path/to/projects/crabcakes && git diff HEAD --stat
 ```
 Expect: only these files changed:
 - `agent/runtime.py` (Edit 1)
@@ -655,7 +655,7 @@ If `agent/enforcement.py` or `agent/tools.py` (Phase 0) is modified, that is sco
 **15. No `api_key` in conversation serialization:**
 
 ```bash
-cd /home/q/projects/crabcakes && grep -n '"api_key"' agent/runtime.py
+cd /path/to/projects/crabcakes && grep -n '"api_key"' agent/runtime.py
 ```
 Expect: 0 matches in the data dict construction (the line at 783 should be gone)
 

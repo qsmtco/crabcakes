@@ -60,7 +60,7 @@ Backtick (`) is used as the command prefix in CrabCakes. Type `` `help `` to see
 
 | Character | Pros | Cons |
 |-----------|------|------|
-| `/` | Familiar (IRC, Discord, Slack) | Conflicts with file paths in messages. Agents mention `/home/q/...` constantly. |
+| `/` | Familiar (IRC, Discord, Slack) | Conflicts with file paths in messages. Agents mention `/home/user/...` constantly. |
 | `@` | Familiar (Twitter, mentions) | Already used for `@Agent` targets. Double duty is confusing. |
 | `!` | Familiar (IRC, Discord bots) | Agents use `!` in natural language ("don't do this!") and some code. Low conflict though. |
 | `#` | Familiar (channels, headings) | Conflicts with markdown headings. Already used for `# heading`. |
@@ -83,7 +83,7 @@ Here's why, and I'll be straight with you about the tradeoffs:
 
 1. **Everyone already knows it.** Every chat app on earth uses `/` for commands. Discord, Slack, IRC, Telegram, Matrix, Teams. Zero learning curve.
 2. **It's the expected convention.** When someone sees `/help` in a chat app, they know what it means. When they see `` `help `` they have to learn it.
-3. **File path conflicts are manageable.** Yes, agents mention `/home/q/projects/...` in messages. But `process_input()` only checks `text.startswith(self._prefix)` — and file paths rarely start a *user's chat message*. Users don't type `/home/q/...` as a command. The conflict is theoretical, not practical.
+3. **File path conflicts are manageable.** Yes, agents mention `/home/user/projects/...` in messages. But `process_input()` only checks `text.startswith(self._prefix)` — and file paths rarely start a *user's chat message*. Users don't type `/home/user/...` as a command. The conflict is theoretical, not practical.
 4. **The prefix is already configurable.** `set_prefix()` exists. `COMMAND_PREFIX` is a single config line. The plumbing is done.
 5. **Agent-generated text is irrelevant.** Commands are only parsed from *user input*, not from agent responses. So even if an agent says `/help` in a message, it's not scanned as a command — it's just text.
 

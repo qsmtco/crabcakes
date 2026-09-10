@@ -8,7 +8,7 @@
 Create `agent/callbacks.py` (~140 lines) defining 9 typed `Protocol` classes + 1 type alias for the AgentRuntime → UI handler callback contract.
 
 ### File location
-`/home/q/projects/crabcakes/agent/callbacks.py`
+`/path/to/projects/crabcakes/agent/callbacks.py`
 
 ### Verify the path is clear before writing
 ```bash

@@ -82,7 +82,7 @@ This means:
            - web_search
            - web_fetch
 
-[System] You are working on **crabwatch** at /home/q/projects/... ← awareness
+[System] You are working on **crabwatch** at /path/to/projects/... ← awareness
          Team: PM: Captain JAQx, QTR (builder), Qaster (reviewer)
          Project Memory: [context.md content]
          Current State: Git: abc1234 (dirty)

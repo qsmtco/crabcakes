@@ -2,7 +2,7 @@
 
 **Purpose:** This document is the authoritative reference for the Crabcakes codebase. It defines the structure, patterns, and principles that all contributors — human or agent — must follow. Before writing any code, read this document. When in doubt, consult this document.
 
-**Project root:** `/home/q/projects/crabcakes`
+**Project root:** `/path/to/projects/crabcakes`
 **Project status:** See `docs/PROJECT_STATUS.md` for current progress, completed phases, and planned work.
 
 ---
@@ -4005,7 +4005,7 @@ Tests live in `tests/` — one file per module being tested.
 
 **Run tests:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 pytest              # auto-discovers tests/ via pytest.ini
 ```
 

@@ -150,13 +150,13 @@ The wiring in `ui/window.py` (lines 197-230, 731-755) is small and self-explanat
 
 ```bash
 # 1. New sections exist
-cd /home/q/projects/crabcakes && grep -nE "### 3\.21q\.[67]" docs/ARCHITECTURE.md
+cd /path/to/projects/crabcakes && grep -nE "### 3\.21q\.[67]" docs/ARCHITECTURE.md
 
 # 2. §2 tree updated
-cd /home/q/projects/crabcakes && grep -nE "auxilium_wizard" docs/ARCHITECTURE.md | head -5
+cd /path/to/projects/crabcakes && grep -nE "auxilium_wizard" docs/ARCHITECTURE.md | head -5
 
 # 3. ARCHITECTURE.md still parses as markdown (no broken headings, no orphaned brackets)
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 content = open('docs/ARCHITECTURE.md').read()
 lines = content.splitlines()
 import re
@@ -175,7 +175,7 @@ print('PASS')
 "
 
 # 4. Existing tests still pass (no code changes here, but verify)
-cd /home/q/projects/crabcakes && pytest tests/test_architecture.py tests/test_kb_lookup.py -q 2>&1 | tail -3
+cd /path/to/projects/crabcakes && pytest tests/test_architecture.py tests/test_kb_lookup.py -q 2>&1 | tail -3
 ```
 
 ---

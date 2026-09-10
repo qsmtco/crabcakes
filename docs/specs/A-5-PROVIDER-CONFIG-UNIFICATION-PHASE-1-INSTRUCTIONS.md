@@ -153,7 +153,7 @@ Also verify the comment in `agent/config.py:300` (the "Match the format used by 
 3. Anchor to identifiers, not line numbers.
 4. Run the full test suite after each sub-phase:
    ```bash
-   cd /home/q/projects/crabcakes
+   cd /path/to/projects/crabcakes
    python3 -m pytest tests/ -q --no-header --ignore=tests/test_kb_server.py --ignore=tests/test_runtime.py 2>&1 | tail -5
    ```
 5. Report back with: files changed with line numbers, full test output, COMPLETENESS checklist per sub-phase, any issues found.
@@ -167,7 +167,7 @@ Also verify the comment in `agent/config.py:300` (the "Match the format used by 
 ## Verification Commands (run after ALL sub-phases)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/ -q --no-header --ignore=tests/test_kb_server.py --ignore=tests/test_runtime.py 2>&1 | tail -5
 python3 -c "
 import os, json

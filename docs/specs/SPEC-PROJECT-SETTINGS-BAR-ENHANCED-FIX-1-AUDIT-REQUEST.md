@@ -4,7 +4,7 @@
 **Original spec (for diff):** `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED.md`
 **Round 1 findings to verify addressed:** `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED-FINDINGS.md` (18 bugs: 4 CRITICAL, 7 HIGH, 5 MEDIUM, 2 LOW)
 **Audit prompt to load:** `prompts/adversarialDebugger.md`
-**Working dir:** `/home/q/projects/crabcakes`
+**Working dir:** `/path/to/projects/crabcakes`
 
 This is the **Round 2 re-audit** after the Coder rewrote the spec to address Round 1 findings. Your job:
 

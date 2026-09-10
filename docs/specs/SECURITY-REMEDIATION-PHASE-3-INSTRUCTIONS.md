@@ -99,7 +99,7 @@ Clear error on port conflict: address tried, OS error, hint about env var.
 
 ## Verification (all must pass)
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/ -q --no-header 2>&1 | tail -5
 python3 -c "
 import sys; sys.path.insert(0, '.')

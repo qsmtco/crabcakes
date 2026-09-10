@@ -3,7 +3,7 @@
 **Spec:** `docs/specs/SPEC-RUNTIME-EXTRACTION-PHASE-8.md` (revised after audit)
 **Files:** `agent/runtime.py` + `tests/test_agent_runtime.py`
 
-**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL. Activate it. Begin with Discovery Phase block.
+**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL. Activate it. Begin with Discovery Phase block.
 
 Read `agent/runtime.py` in full before editing — especially the re-export blocks at lines ~177-270 and ALL call sites of the underscored names.
 

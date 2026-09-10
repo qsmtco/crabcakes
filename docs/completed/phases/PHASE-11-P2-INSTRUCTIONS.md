@@ -69,7 +69,7 @@ with open('tests/test_agent_runtime.py', 'w') as f:
 
 ## Rules
 
-- Use the implementationSupervisor prompt at `/home/q/projects/crabcakes/prompts/implementationSupervisor.md`
+- Use the implementationSupervisor prompt at `/path/to/projects/crabcakes/prompts/implementationSupervisor.md`
 - Read `tests/test_agent_runtime.py` lines 625-740 COMPLETELY before editing
 - Find all occurrences of `rt_module._call_llm_streaming(` in `tests/test_agent_runtime.py` (verify with `grep -n "rt_module._call_llm_streaming" tests/test_agent_runtime.py`)
 - Do NOT change any other part of the test file
@@ -80,7 +80,7 @@ with open('tests/test_agent_runtime.py', 'w') as f:
 ## Verification (mandatory — paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify rt_module._call_llm_streaming is gone from the test file
 grep -n "rt_module._call_llm_streaming\|rt\._call_llm_streaming" tests/test_agent_runtime.py
 ```
@@ -88,7 +88,7 @@ grep -n "rt_module._call_llm_streaming\|rt\._call_llm_streaming" tests/test_agen
 Expect: 4 matches, all using `rt._call_llm_streaming(`. Zero matches for `rt_module._call_llm_streaming`.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify runtime= is gone from the test patches
 grep -n "runtime=rt, session_key" tests/test_agent_runtime.py
 ```
@@ -96,7 +96,7 @@ grep -n "runtime=rt, session_key" tests/test_agent_runtime.py
 Expect: 0 matches.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the 4 streaming tests now pass
 timeout 30 python3 -m pytest tests/test_agent_runtime.py::TestStreaming -v 2>&1 | tail -10
 ```
@@ -104,7 +104,7 @@ timeout 30 python3 -m pytest tests/test_agent_runtime.py::TestStreaming -v 2>&1 
 Expect: 4 passed.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the full test_agent_runtime suite passes
 timeout 60 python3 -m pytest tests/test_agent_runtime.py -q 2>&1 | tail -5
 ```
@@ -112,7 +112,7 @@ timeout 60 python3 -m pytest tests/test_agent_runtime.py -q 2>&1 | tail -5
 Expect: 57 passed (53 from before + 4 TestStreaming).
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # Verify the P8 caller resolution tests still pass
 timeout 30 python3 -m pytest tests/test_runtime_caller_resolution.py -v 2>&1 | tail -12
 ```

@@ -184,7 +184,7 @@ class TestAgentIssuedCompactClear:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Syntax
 python3 -c "import ast; ast.parse(open('ui/handlers/agent_command_handler.py').read()); print('SYNTAX OK')"

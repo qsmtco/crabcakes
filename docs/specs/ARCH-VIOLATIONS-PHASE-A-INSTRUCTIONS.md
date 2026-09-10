@@ -29,12 +29,12 @@ All 3 are rated **HIGH** in my audit (handler-to-handler or view-to-handler impo
 
 **Verification:**
 ```bash
-cd /home/q/projects/crabcakes && grep -n "from ui.handlers" ui/views/left_panel.py
+cd /path/to/projects/crabcakes && grep -n "from ui.handlers" ui/views/left_panel.py
 ```
 Expect: 0 matches.
 
 ```bash
-cd /home/q/projects/crabcakes && grep -n "PromptsHandler" ui/views/left_panel.py
+cd /path/to/projects/crabcakes && grep -n "PromptsHandler" ui/views/left_panel.py
 ```
 Expect: matches only inside docstrings or string annotations (e.g., `set_prompts_handler` method body, docstring of `set_prompts_handler`). No `from ui.handlers.prompts_handler` import.
 
@@ -54,12 +54,12 @@ Expect: matches only inside docstrings or string annotations (e.g., `set_prompts
 
 **Verification:**
 ```bash
-cd /home/q/projects/crabcakes && grep -n "from ui.handlers" ui/views/settings_dialog.py
+cd /path/to/projects/crabcakes && grep -n "from ui.handlers" ui/views/settings_dialog.py
 ```
 Expect: 0 matches.
 
 ```bash
-cd /home/q/projects/crabcakes && grep -n "SettingsHandler" ui/views/settings_dialog.py
+cd /path/to/projects/crabcakes && grep -n "SettingsHandler" ui/views/settings_dialog.py
 ```
 Expect: matches only in docstrings/annotations, not as an import.
 
@@ -149,17 +149,17 @@ from ui.constants import STREAMING_ENABLED
 
 **Verification:**
 ```bash
-cd /home/q/projects/crabcakes && grep -n "from ui.handlers.chat_handler" ui/toolbar.py
+cd /path/to/projects/crabcakes && grep -n "from ui.handlers.chat_handler" ui/toolbar.py
 ```
 Expect: 0 matches.
 
 ```bash
-cd /home/q/projects/crabcakes && grep -n "import.*chat_handler" ui/toolbar.py
+cd /path/to/projects/crabcakes && grep -n "import.*chat_handler" ui/toolbar.py
 ```
 Expect: 0 matches (the lazy `import` lines should also be gone, replaced with `import ui.constants`).
 
 ```bash
-cd /home/q/projects/crabcakes && grep -n "STREAMING_ENABLED" ui/handlers/chat_handler.py ui/toolbar.py ui/constants.py
+cd /path/to/projects/crabcakes && grep -n "STREAMING_ENABLED" ui/handlers/chat_handler.py ui/toolbar.py ui/constants.py
 ```
 Expect:
 - `ui/constants.py`: 1 match (the definition)
@@ -179,7 +179,7 @@ Expect:
 
 **Verification:**
 ```bash
-cd /home/q/projects/crabcakes && python3 -c "import models; assert 'task_store' in models.__all__; print('OK')"
+cd /path/to/projects/crabcakes && python3 -c "import models; assert 'task_store' in models.__all__; print('OK')"
 ```
 Expect: `OK`
 
@@ -198,7 +198,7 @@ Expect: `OK`
 
 **Verification:**
 ```bash
-cd /home/q/projects/crabcakes && grep -n "61 test files\|84 test files" docs/ARCHITECTURE.md
+cd /path/to/projects/crabcakes && grep -n "61 test files\|84 test files" docs/ARCHITECTURE.md
 ```
 Expect: 0 matches for "61 test files"; 1 match for "84 test files" at the updated location.
 
@@ -217,42 +217,42 @@ Expect: 0 matches for "61 test files"; 1 match for "84 test files" at the update
 
 1. **Per-file removal checks:**
    ```bash
-   cd /home/q/projects/crabcakes && grep -n "from ui.handlers" ui/views/left_panel.py ui/views/settings_dialog.py ui/toolbar.py
+   cd /path/to/projects/crabcakes && grep -n "from ui.handlers" ui/views/left_panel.py ui/views/settings_dialog.py ui/toolbar.py
    ```
    Expect: 0 matches across all 3 files.
 
    ```bash
-   cd /home/q/projects/crabcakes && grep -n "import.*chat_handler" ui/toolbar.py
+   cd /path/to/projects/crabcakes && grep -n "import.*chat_handler" ui/toolbar.py
    ```
    Expect: 0 matches.
 
 2. **New file check:**
    ```bash
-   cd /home/q/projects/crabcakes && ls -la ui/constants.py
+   cd /path/to/projects/crabcakes && ls -la ui/constants.py
    ```
    Expect: file exists, size > 0.
 
 3. **STREAMING_ENABLED usage check:**
    ```bash
-   cd /home/q/projects/crabcakes && grep -rn "STREAMING_ENABLED" ui/ --include="*.py"
+   cd /path/to/projects/crabcakes && grep -rn "STREAMING_ENABLED" ui/ --include="*.py"
    ```
    Expect: matches in `ui/constants.py` (definition + import), `ui/handlers/chat_handler.py` (import + reads), `ui/toolbar.py` (import + reads/writes via `ui.constants.STREAMING_ENABLED`). No references to `chat_handler.STREAMING_ENABLED` should remain.
 
 4. **Task store __all__ check:**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -c "import models; assert 'task_store' in models.__all__; print('OK')"
+   cd /path/to/projects/crabcakes && python3 -c "import models; assert 'task_store' in models.__all__; print('OK')"
    ```
    Expect: `OK`
 
 5. **ARCH §13 test count check:**
    ```bash
-   cd /home/q/projects/crabcakes && grep -n "61 test files\|84 test files" docs/ARCHITECTURE.md
+   cd /path/to/projects/crabcakes && grep -n "61 test files\|84 test files" docs/ARCHITECTURE.md
    ```
    Expect: 0 matches for "61 test files"; 1 match for "84 test files".
 
 6. **Full test suite (sanity — fix should be behavior-preserving):**
    ```bash
-   cd /home/q/projects/crabcakes && python3 -m pytest -x -q
+   cd /path/to/projects/crabcakes && python3 -m pytest -x -q
    ```
    Expect: no new failures. The pre-existing 1 skipped is unchanged.
 

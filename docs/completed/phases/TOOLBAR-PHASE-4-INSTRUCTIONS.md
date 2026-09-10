@@ -69,19 +69,19 @@ Do NOT:
 
 ```bash
 # Verify the import changed
-cd /home/q/projects/crabcakes && grep -n "chat_control_bar\|ChatControlBar" ui/views/main_content.py
+cd /path/to/projects/crabcakes && grep -n "chat_control_bar\|ChatControlBar" ui/views/main_content.py
 
 # Verify the new import exists
-cd /home/q/projects/crabcakes && grep -n "ChatInputToolbar" ui/views/main_content.py
+cd /path/to/projects/crabcakes && grep -n "ChatInputToolbar" ui/views/main_content.py
 
 # Verify no other files still import ChatControlBar (except the file itself and activity_handler comment)
-cd /home/q/projects/crabcakes && grep -rn "ChatControlBar" ui/ --include="*.py" | grep -v "chat_control_bar.py"
+cd /path/to/projects/crabcakes && grep -rn "ChatControlBar" ui/ --include="*.py" | grep -v "chat_control_bar.py"
 
 # Run the full test suite
-cd /home/q/projects/crabcakes && xvfb-run -a python3 -m pytest tests/ -q --tb=short
+cd /path/to/projects/crabcakes && xvfb-run -a python3 -m pytest tests/ -q --tb=short
 
 # Verify the app still imports cleanly
-cd /home/q/projects/crabcakes && xvfb-run -a python3 -c "from ui.views.main_content import MainContent; print('OK')"
+cd /path/to/projects/crabcakes && xvfb-run -a python3 -c "from ui.views.main_content import MainContent; print('OK')"
 ```
 
 ## COMPLETENESS Checklist

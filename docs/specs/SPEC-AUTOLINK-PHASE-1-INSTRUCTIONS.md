@@ -129,7 +129,7 @@ class TestAngleBracketAutoLink:
 ## Verification commands (run these, paste the output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Bug is fixed — no broken entities
 python3 -c "

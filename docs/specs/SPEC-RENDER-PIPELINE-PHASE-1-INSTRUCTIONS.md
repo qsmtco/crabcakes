@@ -165,7 +165,7 @@ class TestAutoLinkBareHostname:
 ## Verification commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Uppercase tags normalized
 python3 -c "

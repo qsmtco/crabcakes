@@ -192,7 +192,7 @@ Required test classes (mirror the actual behavior, not just the interface):
 ## Verification commands (you MUST run and paste output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Files exist
 ls -la models/providers.py utils/providers_store.py utils/provider_test.py tests/test_providers_store.py tests/test_provider_test.py

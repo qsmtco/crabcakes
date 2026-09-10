@@ -71,8 +71,8 @@ Also update the file index (~lines 218–219 region): add `utils/prompt_paths.py
 ## Verification (paste what you can; state explicitly if exec-gated)
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -B -m pytest tests/test_agent_context_prompts.py -v -p no:cacheprovider
-cd /home/q/projects/crabcakes && python3 -B -m pytest tests/test_prompt_paths.py tests/test_seed_project_prompts.py tests/test_favorites.py -q -p no:cacheprovider
+cd /path/to/projects/crabcakes && python3 -B -m pytest tests/test_agent_context_prompts.py -v -p no:cacheprovider
+cd /path/to/projects/crabcakes && python3 -B -m pytest tests/test_prompt_paths.py tests/test_seed_project_prompts.py tests/test_favorites.py -q -p no:cacheprovider
 grep -n "_load_project_prompts_context\|_PROJECT_PROMPTS" agent/context.py
 ```
 

@@ -85,7 +85,7 @@ If no test file for ActivityDrawer exists, create `tests/test_activity_drawer.py
 ## Verification Commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "_last_row_widget\|_trim_old_rows" ui/views/activity_drawer.py
 python3 -m pytest tests/ -q --tb=short -k "activity_drawer or trim" 2>&1 || echo "No matching tests found"
 python3 -m pytest tests/ -q --tb=short 2>&1 | tail -5

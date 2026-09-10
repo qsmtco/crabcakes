@@ -271,7 +271,7 @@ class TestFindSplitIndexCB6Hardening:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. New CB-6 hardening tests pass
 python3 -m pytest tests/test_context_strategy.py::TestFindSplitIndexCB6Hardening -v --tb=short

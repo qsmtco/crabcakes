@@ -115,7 +115,7 @@ def get_available_providers() -> list[dict]:
 ## Verification commands (run between sub-phases AND at the end)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 3.1: validation no longer rejects missing api_key
 python3 -c "

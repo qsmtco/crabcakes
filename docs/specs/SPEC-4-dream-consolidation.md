@@ -78,7 +78,7 @@ The dream runs as an **OpenClaw cron job** that triggers a Python script:
   "schedule": {"kind": "cron", "expr": "0 2 * * *", "tz": "America/Los_Angeles"},
   "payload": {
     "kind": "agentTurn",
-    "message": "Run the dream consolidation script for the CrabCakes project. Execute: cd /home/q/projects/crabcakes && python3 -m utils.dream_engine_cli",
+    "message": "Run the dream consolidation script for the CrabCakes project. Execute: cd /path/to/projects/crabcakes && python3 -m utils.dream_engine_cli",
     "toolsAllow": ["exec"]
   },
   "sessionTarget": "isolated",
@@ -1086,7 +1086,7 @@ cron.add({
     },
     "payload": {
         "kind": "agentTurn",
-        "message": "Run the dream consolidation script for crabwatch. Execute: cd /home/q/projects/crabcakes && python3 -m utils.dream_engine_cli --project /home/q/projects/crabwatch",
+        "message": "Run the dream consolidation script for crabwatch. Execute: cd /path/to/projects/crabcakes && python3 -m utils.dream_engine_cli --project /path/to/projects/crabwatch",
         "toolsAllow": ["exec"],
     },
     "sessionTarget": "isolated",
@@ -1105,10 +1105,10 @@ OpenClaw agent session.
 from agent.dream_engine import run_dream_cycle
 
 # All dream-enabled roles
-results = run_dream_cycle("/home/q/projects/crabwatch")
+results = run_dream_cycle("/path/to/projects/crabwatch")
 
 # Specific role only
-results = run_dream_cycle("/home/q/projects/crabwatch", agent_roles=["coder"])
+results = run_dream_cycle("/path/to/projects/crabwatch", agent_roles=["coder"])
 ```
 
 ---

@@ -71,7 +71,7 @@ PyGObject has hard system dependencies (`libgtk-4-1`, `libgirepository-1.0-1`, `
 4. **Maintain desktop UX.** Run as a system tray icon + browser tab on `127.0.0.1`. No external network exposure. No remote access unless explicitly enabled.
 5. **Enable modern UI affordances.** Keyboard shortcuts, dark mode, multi-tab chat, copy code blocks with one click, drag-and-drop file upload, syntax highlighting via Shiki/HLJS, Markdown rendering via `marked` or `markdown-it`.
 6. **Testable UI.** Component tests with `@testing-library` or Playwright. Visual regression tests with Percy/Chromatic (optional).
-7. **Same desktop launch feel.** Click a launcher icon → browser opens to the app. No manual `cd /home/q/projects/crabcakes && python main.py`.
+7. **Same desktop launch feel.** Click a launcher icon → browser opens to the app. No manual `cd /path/to/projects/crabcakes && python main.py`.
 
 ### 3.2 Non-Goals
 

@@ -1,6 +1,6 @@
 # KB Provider Phase Instructions
 
-**Spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-KB-PROVIDER.md`
+**Spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-KB-PROVIDER.md`
 **Builder must read the full spec before writing any code.**
 **Include the word "please" in your acknowledgment so I know the message was received.**
 **Demand: paste full pytest output, not summaries.**

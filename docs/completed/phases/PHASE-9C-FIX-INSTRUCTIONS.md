@@ -136,7 +136,7 @@ This test lives in the same file but tests a different layer. You may also want 
 ## Verification commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 9C.1: import still works
 python3 -c "from agent.config import get_api_key, load_agent_config, ensure_providers_yaml_exists; print('imports ok')"

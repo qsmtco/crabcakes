@@ -449,7 +449,7 @@ No test needed. The original `TestCrash1PopoverDismiss` test class is removed fr
 
 **Verify:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "def is_spell_enabled\|def get_word_at_iter" ui/handlers/input_toolbar_handler.py
 # Expected: 2 lines
 ```
@@ -464,7 +464,7 @@ grep -n "def is_spell_enabled\|def get_word_at_iter" ui/handlers/input_toolbar_h
 
 **Verify:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "handler._spell_enabled\|is_spell_enabled\|clicked_word\|get_word_at_iter" ui/window.py
 # Expected: NO matches for "handler._spell_enabled"; YES matches for new methods
 python3 -m pytest tests/test_chat_input_toolbar.py::TestTranslateCoordinatesWarning -q
@@ -479,7 +479,7 @@ python3 -m pytest tests/test_chat_input_toolbar.py::TestTranslateCoordinatesWarn
 
 **Verify:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/test_chat_input_toolbar.py tests/test_input_toolbar_handler.py -v
 # Expected: all existing + new tests pass
 ```
@@ -492,7 +492,7 @@ python3 -m pytest tests/test_chat_input_toolbar.py tests/test_input_toolbar_hand
 
 **Verify:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "_spell_enabled" tests/test_input_toolbar_handler.py
 # Lines that assert state → should use is_spell_enabled()
 # Lines that set up state → may remain as _spell_enabled
@@ -506,7 +506,7 @@ grep -n "_spell_enabled" tests/test_input_toolbar_handler.py
 
 **Verify:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "is_spell_enabled\|get_word_at_iter" docs/ARCHITECTURE.md
 # Expected: 2+ matches
 ```
@@ -515,7 +515,7 @@ grep -n "is_spell_enabled\|get_word_at_iter" docs/ARCHITECTURE.md
 
 **Verify:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/ -q
 # Expected: all pass + new tests; 25 pre-existing failures unchanged
 ```

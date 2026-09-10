@@ -130,7 +130,7 @@ No existing test asserts that onboarding loads for non-coder agents. The fix is 
 
 ## 6. Verification commands
 
-Run these from `/home/q/projects/crabcakes`:
+Run these from `/path/to/projects/crabcakes`:
 
 1. **Import check:** `python3 -c "from utils.prompt_loader import compose_system_prompt; print('import OK')"`
 2. **New test:** `pytest tests/test_prompt_loader.py::TestComposeSystemPrompt::test_onboarding_only_loaded_for_coder -v`

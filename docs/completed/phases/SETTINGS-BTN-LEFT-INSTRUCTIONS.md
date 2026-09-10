@@ -83,7 +83,7 @@ That's it. No other lines change. No CSS, no styles, no callbacks, no window.py 
 ## Verification commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # Imports ok
 python3 -c "from ui.toolbar import Toolbar; print('imports ok')"

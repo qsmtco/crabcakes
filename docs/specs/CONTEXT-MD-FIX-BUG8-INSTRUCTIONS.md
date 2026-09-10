@@ -1,6 +1,6 @@
 # Phase 1 Re-Audit Fix — BUG #8 (cache fingerprint collision)
 
-**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL before writing any code. Activate it. Begin your response with "Starting Discovery Phase — reading all relevant files before writing any code." and output a DISCOVERY block per its Step 0. Follow all 8 core rules: read-before-write, hard-part-first, verify-every-claim, tests-must-be-able-to-fail, wire-it-or-delete-it, validate-all-input, error-handling-not-optional, do-not-modify-what-you-werent-asked-to.
+**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL before writing any code. Activate it. Begin your response with "Starting Discovery Phase — reading all relevant files before writing any code." and output a DISCOVERY block per its Step 0. Follow all 8 core rules: read-before-write, hard-part-first, verify-every-claim, tests-must-be-able-to-fail, wire-it-or-delete-it, validate-all-input, error-handling-not-optional, do-not-modify-what-you-werent-asked-to.
 
 ---
 

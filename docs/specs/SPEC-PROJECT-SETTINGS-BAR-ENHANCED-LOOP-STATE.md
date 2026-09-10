@@ -2,7 +2,7 @@
 
 **Spec:** `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED.md` (29 KB)
 **Audit request:** `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED-AUDIT-REQUEST.md`
-**Working dir:** `/home/q/projects/crabcakes`
+**Working dir:** `/path/to/projects/crabcakes`
 
 **Loop protocol (per `prompts/implementationSupervisor.md`):**
 spec → audit by Debugger → fix by Coder (if bugs) → re-audit → clean → phased implementation (per phase) → audit each phase → final post-mortem.

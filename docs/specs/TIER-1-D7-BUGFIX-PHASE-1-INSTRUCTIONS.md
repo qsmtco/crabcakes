@@ -63,10 +63,10 @@ This must come **after** the view is created (the view polls `get_state()` on a 
 grep -n "\.start()" ui/window.py | grep auxilium
 
 # 2. Does the module import cleanly?
-cd /home/q/projects/crabcakes && python3 -c "from ui.handlers.auxilium_wizard_handler import AuxiliumWizardHandler, WizardStep; print('imports OK')"
+cd /path/to/projects/crabcakes && python3 -c "from ui.handlers.auxilium_wizard_handler import AuxiliumWizardHandler, WizardStep; print('imports OK')"
 
 # 3. Does the app launch without crash?
-cd /home/q/projects/crabcakes && xvfb-run -a python3 -c "
+cd /path/to/projects/crabcakes && xvfb-run -a python3 -c "
 import gi; gi.require_version('Gtk', '4.0')
 from ui.window import MainWindow
 w = MainWindow(application=None)
@@ -75,7 +75,7 @@ w.close()
 " 2>&1 | tail -3
 
 # 4. Run existing tests
-cd /home/q/projects/crabcakes && pytest tests/test_auxilium_tier1.py -q 2>&1 | tail -5
+cd /path/to/projects/crabcakes && pytest tests/test_auxilium_tier1.py -q 2>&1 | tail -5
 ```
 
 ---

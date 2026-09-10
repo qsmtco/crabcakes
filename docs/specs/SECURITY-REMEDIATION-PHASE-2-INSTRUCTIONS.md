@@ -1,6 +1,6 @@
 # Phase 2 of 4 — Medium Severity Findings (MED-1 through MED-13)
 
-**Master spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-SECURITY-REMEDIATION.md` (1,211 lines)
+**Master spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-SECURITY-REMEDIATION.md` (1,211 lines)
 
 **Phase 0 + 1 status:** ✅ SHIPPED (commits `b5dcccc`, `9943740` on `main`, pushed to `origin/main`)
 - 7 of 46 findings complete: CRIT-1, CRIT-2, HIGH-1, HIGH-3, HIGH-5, HIGH-6, A-1
@@ -207,7 +207,7 @@ After all 13 edits, run a comprehensive test suite. The test count will grow sig
 
 **1. MED-1 — Per-instance callback (per-runtime state):**
 ```bash
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import sys; sys.path.insert(0, '.')
 # Two concurrent AgentRuntime instances with different callbacks don't interfere
 # (Test in tests/test_runtime_callbacks.py — verify it exists and passes)
@@ -216,13 +216,13 @@ import sys; sys.path.insert(0, '.')
 
 **2. MED-2 — `_BLOCKLIST` docstring updated:**
 ```bash
-cd /home/q/projects/crabcakes && grep -A 5 "_BLOCKLIST" agent/tools.py | head -10
+cd /path/to/projects/crabcakes && grep -A 5 "_BLOCKLIST" agent/tools.py | head -10
 ```
 Expect: comment doesn't say "safety tier"
 
 **3. MED-3 — web_fetch opt-in (default off):**
 ```bash
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import os
 # Default behavior: web_fetch not restricted
 os.environ.pop('CRABCAKES_WEB_FETCH_RESTRICT', None)
@@ -237,13 +237,13 @@ print('MED-3 opt-in: PASS')
 
 **4. MED-4 — `/reject` scope:**
 ```bash
-cd /home/q/projects/crabcakes && grep -n "last_check_files" ui/handlers/review_handler.py
+cd /path/to/projects/crabcakes && grep -n "last_check_files" ui/handlers/review_handler.py
 ```
 Expect: ≥ 1 match
 
 **5. MED-5 — https-only base_url:**
 ```bash
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import sys; sys.path.insert(0, '.')
 from utils.provider_url import validate_provider_url
 validate_provider_url('https://api.openai.com')  # should pass
@@ -258,30 +258,30 @@ validate_provider_url('http://localhost:11434')  # should pass (loopback)
 
 **6. MED-6 — File permission check:**
 ```bash
-cd /home/q/projects/crabcakes && grep -rn "st_mode & 0o077\|st.st_uid != os.getuid" utils/mcp_config.py utils/improve.py gateway/client.py
+cd /path/to/projects/crabcakes && grep -rn "st_mode & 0o077\|st.st_uid != os.getuid" utils/mcp_config.py utils/improve.py gateway/client.py
 ```
 Expect: ≥ 3 matches (one per file)
 
 **7. MED-7 — feedback_processor sanitization:**
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_feedback_processor.py -q 2>&1 | tail -3
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_feedback_processor.py -q 2>&1 | tail -3
 ```
 
 **8. MED-8 — Atomic+0600 for save_provider:**
 ```bash
-cd /home/q/projects/crabcakes && grep -B 1 -A 5 "def save_provider" utils/agent_defs.py | head -15
+cd /path/to/projects/crabcakes && grep -B 1 -A 5 "def save_provider" utils/agent_defs.py | head -15
 ```
 Expect: write to `.tmp`, `os.rename`, `os.chmod(path, 0o600)`
 
 **9. MED-9 — escape_for_pango in set_markup:**
 ```bash
-cd /home/q/projects/crabcakes && grep -B 1 -A 2 "set_markup" ui/handlers/chat_render_handler.py | head -20
+cd /path/to/projects/crabcakes && grep -B 1 -A 2 "set_markup" ui/handlers/chat_render_handler.py | head -20
 ```
 Expect: interpolated values wrapped in `escape_for_pango()` or `GLib.markup_escape_text()`
 
 **10. MED-10 — ReDoS fix:**
 ```bash
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import sys; sys.path.insert(0, '.')
 from utils.markdown import format_markdown
 # Adversarial input: 1000 stars should not hang
@@ -297,7 +297,7 @@ print(f'MED-10 ReDoS fix: PASS ({elapsed:.3f}s)')
 
 **11. MED-11 — commit_sha validation:**
 ```bash
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import sys; sys.path.insert(0, '.')
 from utils.git_ops import _validate_sha
 import re
@@ -311,30 +311,30 @@ print('MED-11 sha validation: PASS')
 
 **12. MED-12 — MCP env allowlist:**
 ```bash
-cd /home/q/projects/crabcakes && grep -B 2 -A 10 "def _substitute_env" utils/mcp_config.py
+cd /path/to/projects/crabcakes && grep -B 2 -A 10 "def _substitute_env" utils/mcp_config.py
 ```
 Expect: env var allowlist check
 
 **13. MED-13 — streaming usage:**
 ```bash
-cd /home/q/projects/crabcakes && grep -n "stream_options\|include_usage" agent/runtime.py
+cd /path/to/projects/crabcakes && grep -n "stream_options\|include_usage" agent/runtime.py
 ```
 Expect: ≥ 1 match
 
 **14. New tests pass:**
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_*.py -q 2>&1 | tail -5
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_*.py -q 2>&1 | tail -5
 ```
 
 **15. Full test suite (sanity):**
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest -x -q 2>&1 | tail -3
+cd /path/to/projects/crabcakes && python3 -m pytest -x -q 2>&1 | tail -3
 ```
 Expect: ≥ 194 + new Phase 2 tests
 
 **16. No accidental scope creep:**
 ```bash
-cd /home/q/projects/crabcakes && git diff HEAD --stat
+cd /path/to/projects/crabcakes && git diff HEAD --stat
 ```
 
 ---

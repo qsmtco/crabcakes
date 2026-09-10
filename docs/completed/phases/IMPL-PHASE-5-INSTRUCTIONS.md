@@ -290,7 +290,7 @@ If the test already exists (or its coverage is already provided by the 4 existin
 After the changes:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # New tests pass
 python3 -m pytest tests/test_agent_builder_dialog.py tests/test_agent_builder_no_model_dropdown.py -v --tb=short 2>&1 | tail -20

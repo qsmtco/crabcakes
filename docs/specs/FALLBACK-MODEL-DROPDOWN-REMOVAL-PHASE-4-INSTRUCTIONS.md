@@ -1,12 +1,12 @@
 PHASE 4 of 6 — Tests: update existing tests for the new contract, add new derivation test and backward-compat test
 
 Files to change:
-1. `/home/q/projects/crabcakes/tests/test_agent_builder_fallback.py` — drop `fallback_model` assertions, add new "does not emit" and "old YAML loads" tests
-2. `/home/q/projects/crabcakes/tests/test_runtime_fallback.py` — drop `fallback_model` parameter, add new derivation test
-3. `/home/q/projects/crabcakes/tests/test_kb_integration.py` — drop `fallback_model` parameter from the integration test
+1. `/path/to/projects/crabcakes/tests/test_agent_builder_fallback.py` — drop `fallback_model` assertions, add new "does not emit" and "old YAML loads" tests
+2. `/path/to/projects/crabcakes/tests/test_runtime_fallback.py` — drop `fallback_model` parameter, add new derivation test
+3. `/path/to/projects/crabcakes/tests/test_kb_integration.py` — drop `fallback_model` parameter from the integration test
 
 Spec reference:
-- Read the master spec at `/home/q/projects/crabcakes/docs/specs/SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md` §2.8 (test_agent_builder_fallback), §2.9 (test_runtime_fallback), and the small note about test_kb_integration.
+- Read the master spec at `/path/to/projects/crabcakes/docs/specs/SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md` §2.8 (test_agent_builder_fallback), §2.9 (test_runtime_fallback), and the small note about test_kb_integration.
 - The spec is identifier-anchored — do not rely on line numbers.
 
 Changes in `tests/test_agent_builder_fallback.py`:
@@ -84,12 +84,12 @@ Rules:
 - Verify with grep that the only `fallback_model` references remaining in the tests are intentional (e.g., the "old YAML loads" test references the key in a comment or string).
 
 Verification commands (run all and paste output):
-1. `cd /home/q/projects/crabcakes && timeout 90 xvfb-run -a python3 -m pytest tests/test_agent_builder_fallback.py tests/test_runtime_fallback.py tests/test_kb_integration.py -v 2>&1 | tail -50` — expect all tests pass (old + new)
-2. `grep -n "fallback_model" /home/q/projects/crabcakes/tests/test_agent_builder_fallback.py /home/q/projects/crabcakes/tests/test_runtime_fallback.py /home/q/projects/crabcakes/tests/test_kb_integration.py` — expect:
+1. `cd /path/to/projects/crabcakes && timeout 90 xvfb-run -a python3 -m pytest tests/test_agent_builder_fallback.py tests/test_runtime_fallback.py tests/test_kb_integration.py -v 2>&1 | tail -50` — expect all tests pass (old + new)
+2. `grep -n "fallback_model" /path/to/projects/crabcakes/tests/test_agent_builder_fallback.py /path/to/projects/crabcakes/tests/test_runtime_fallback.py /path/to/projects/crabcakes/tests/test_kb_integration.py` — expect:
    - test_agent_builder_fallback.py: 0 matches (or only in the new "old YAML loads" test where the key is being tested for tolerance)
    - test_runtime_fallback.py: 0 matches (or only in the new "derives from provider default_model" test where the model string is the expected value)
    - test_kb_integration.py: 0 matches
-3. `cd /home/q/projects/crabcakes && python3 -c "import ast; ast.parse(open('tests/test_agent_builder_fallback.py').read()); ast.parse(open('tests/test_runtime_fallback.py').read()); ast.parse(open('tests/test_kb_integration.py').read())"` — expect no SyntaxError
+3. `cd /path/to/projects/crabcakes && python3 -c "import ast; ast.parse(open('tests/test_agent_builder_fallback.py').read()); ast.parse(open('tests/test_runtime_fallback.py').read()); ast.parse(open('tests/test_kb_integration.py').read())"` — expect no SyntaxError
 4. Confirm the new derivation test actually exercises the runtime derivation (not just the helper): the test should mock `_call_llm` and assert `conv.model == "openrouter/test-model"` (the provider card's default_model) at the moment of the fallback call, not `"openrouter/owl-alpha"` (which was the old hard-coded value).
 
 Report back with:

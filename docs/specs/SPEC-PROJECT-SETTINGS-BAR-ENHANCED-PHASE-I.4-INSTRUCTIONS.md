@@ -2,7 +2,7 @@
 
 **Spec:** `docs/specs/SPEC-SETTINGS-BAR-ENHANCED-FIX-3.md` §2.2 (window), §2.4 (project_handler), §2.3 (feed_handler setter)
 **Prompt to load:** `prompts/steelFramedCodeWriter.md`
-**Working dir:** `/home/q/projects/crabcakes`
+**Working dir:** `/path/to/projects/crabcakes`
 
 ## Task
 

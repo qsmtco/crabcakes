@@ -1067,7 +1067,7 @@ description.
 
 2. **Test suite output (paste actual pytest -v output, not summary):**
    ```
-   $ cd /home/q/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py tests/test_streaming.py -v
+   $ cd /path/to/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py tests/test_streaming.py -v
    <paste full output here>
    ```
 

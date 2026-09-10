@@ -3,7 +3,7 @@
 **Spec:** `docs/specs/SPEC-RUNTIME-EXTRACTION-PHASE-6.md`
 **Files:** `agent/persistence.py` (NEW) + `agent/runtime.py` + `tests/test_agent_persistence.py` (NEW) + `tests/test_low2_file_sandbox.py` + `tests/test_conversation.py`
 
-**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL. Activate it. Begin with Discovery Phase block.
+**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL. Activate it. Begin with Discovery Phase block.
 
 Read `agent/runtime.py` lines 350-650 (the 6 persistence functions) in full before editing.
 

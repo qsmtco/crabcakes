@@ -1,10 +1,10 @@
 PHASE 1 of 6 — UI removal in `ui/views/agent_builder.py`
 
 Files to change:
-1. `/home/q/projects/crabcakes/ui/views/agent_builder.py` — remove the Fallback Model dropdown widget and all its plumbing
+1. `/path/to/projects/crabcakes/ui/views/agent_builder.py` — remove the Fallback Model dropdown widget and all its plumbing
 
 Spec reference:
-- Read the master spec at `/home/q/projects/crabcakes/docs/specs/SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md` §2.1 for the exact code changes.
+- Read the master spec at `/path/to/projects/crabcakes/docs/specs/SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md` §2.1 for the exact code changes.
 - The spec is identifier-anchored — do not rely on line numbers from the spec; they may have drifted. Use the symbol/attribute names listed below as anchors.
 
 Symbols to REMOVE (must result in zero grep matches after the phase):
@@ -36,7 +36,7 @@ Required behavior after the change:
 - `set_provider_options` no longer assigns to `self._provider_models` (the dict is no longer used anywhere).
 
 Also check for and remove:
-- Any `agent-builder-fallback-model` CSS rules in `ui/styles.py` (run `grep -n "fallback-model" /home/q/projects/crabcakes/ui/styles.py` first; remove any matches).
+- Any `agent-builder-fallback-model` CSS rules in `ui/styles.py` (run `grep -n "fallback-model" /path/to/projects/crabcakes/ui/styles.py` first; remove any matches).
 
 Rules:
 - Use the `steelFramedCodeWriter` prompt at `prompts/steelFramedCodeWriter.md` — invoke it before writing any code.
@@ -45,10 +45,10 @@ Rules:
 - Verify every removal with grep before reporting done.
 
 Verification commands (run all and paste output):
-1. `grep -n "fallback_model\|_fallback_model_dropdown\|_fallback_model_labeled" /home/q/projects/crabcakes/ui/views/agent_builder.py` — expect zero matches
-2. `grep -n "fallback-model" /home/q/projects/crabcakes/ui/styles.py` — expect zero matches
-3. `cd /home/q/projects/crabcakes && python -c "import ast; ast.parse(open('ui/views/agent_builder.py').read())"` — expect no SyntaxError
-4. `cd /home/q/projects/crabcakes && python -c "from ui.views.agent_builder import AgentBuilderDialog; print('imports OK')"` — expect "imports OK"
+1. `grep -n "fallback_model\|_fallback_model_dropdown\|_fallback_model_labeled" /path/to/projects/crabcakes/ui/views/agent_builder.py` — expect zero matches
+2. `grep -n "fallback-model" /path/to/projects/crabcakes/ui/styles.py` — expect zero matches
+3. `cd /path/to/projects/crabcakes && python -c "import ast; ast.parse(open('ui/views/agent_builder.py').read())"` — expect no SyntaxError
+4. `cd /path/to/projects/crabcakes && python -c "from ui.views.agent_builder import AgentBuilderDialog; print('imports OK')"` — expect "imports OK"
 
 Report back with:
 - Files changed (with `wc -l` output before and after)

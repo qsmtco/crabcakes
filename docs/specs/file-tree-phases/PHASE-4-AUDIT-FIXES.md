@@ -188,7 +188,7 @@ Already handled by Fix 2 (the try/except in `_save_prefs` catches `FileNotFoundE
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Subdir-of-repo works
 python3 << 'PYEOF'

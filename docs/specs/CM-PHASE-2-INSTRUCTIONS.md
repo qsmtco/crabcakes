@@ -149,7 +149,7 @@ Add `compaction_threshold` after `default_max_tokens`:
 Run these exact commands after making the changes:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Round-trip test: ProviderConfig → dict → ProviderConfig → LLMProviderConfig
 python3 -c "

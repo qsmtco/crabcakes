@@ -60,6 +60,6 @@ def test_popovers_not_refreshed_when_known_sets_unchanged(self, drawer, monkeypa
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/test_activity_drawer.py -q --tb=short
 ```

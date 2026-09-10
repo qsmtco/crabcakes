@@ -134,7 +134,7 @@ Un-skip the 2 tests by replacing them with MagicMock-based tests:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Label/mode alignment
 python3 -c "

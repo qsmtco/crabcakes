@@ -1,10 +1,10 @@
 # Phase 1 BUG FIX — HIGH-6 (auto-link regex + paren handling) + A-1 (module-level load)
 
-**Original instructions:** `/home/q/projects/crabcakes/docs/specs/SECURITY-REMEDIATION-PHASE-1-INSTRUCTIONS.md`
+**Original instructions:** `/path/to/projects/crabcakes/docs/specs/SECURITY-REMEDIATION-PHASE-1-INSTRUCTIONS.md`
 
-**Master spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-SECURITY-REMEDIATION.md` §2.3 (HIGH-3), §2.4 (HIGH-6), §2.8 (A-1)
+**Master spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-SECURITY-REMEDIATION.md` §2.3 (HIGH-3), §2.4 (HIGH-6), §2.8 (A-1)
 
-**Source audit:** `/home/q/projects/crabcakes/docs/SECURITY_ARCHITECTURE_REVIEW.md` §4 (HIGH-3, HIGH-6, A-1)
+**Source audit:** `/path/to/projects/crabcakes/docs/SECURITY_ARCHITECTURE_REVIEW.md` §4 (HIGH-3, HIGH-6, A-1)
 
 **Audit verdict (Qaster, 2026-06-18 20:22 PDT):** ❌ NEEDS BUG FIX
 - HIGH-3: ✅ correct (api_key removed from serialization, _conversations_dir chmod 0o700, _resolve_api_key_for_conversation defined)
@@ -169,7 +169,7 @@ _IDENTITY_CACHE = None
 **1. HIGH-6 — Auto-link regex broadened (Bug 1):**
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import sys; sys.path.insert(0, '.')
 from utils.markdown import _AUTO_LINK_RE
 # Test that the regex matches various schemes
@@ -195,7 +195,7 @@ Expect: all 8 URLs match.
 **2. HIGH-6 — Markdown link paren handling (Bug 2):**
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_markdown.py -q 2>&1 | tail -5
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_markdown.py -q 2>&1 | tail -5
 ```
 
 Expect: 58/58 passed (no failures). Specifically, these 3 tests should now pass:
@@ -206,7 +206,7 @@ Expect: 58/58 passed (no failures). Specifically, these 3 tests should now pass:
 **3. A-1 — Module-level _load_identity call removed (Bug 3):**
 
 ```bash
-cd /home/q/projects/crabcakes && grep -n "^_load_identity()" gateway/client.py
+cd /path/to/projects/crabcakes && grep -n "^_load_identity()" gateway/client.py
 ```
 
 Expect: 0 matches at module level (the function definition `_load_identity()` at line 75 doesn't match this pattern; only standalone calls).
@@ -214,7 +214,7 @@ Expect: 0 matches at module level (the function definition `_load_identity()` at
 **4. A-1 — Importing gateway.client is safe:**
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import sys; sys.path.insert(0, '.')
 # Simulate missing identity file by patching
 import os
@@ -237,7 +237,7 @@ Expect: PASS (or "test inconclusive" if identity file happens to be present).
 **5. Full Phase 1 test run (no regressions):**
 
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_markdown.py tests/test_conversation.py tests/test_tools.py tests/test_enforcement.py -q 2>&1 | tail -5
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_markdown.py tests/test_conversation.py tests/test_tools.py tests/test_enforcement.py -q 2>&1 | tail -5
 ```
 
 Expect: ≥ 200 passed (143 Phase 0 + 60 conversation + 58 markdown after fix, with overlap).
@@ -245,7 +245,7 @@ Expect: ≥ 200 passed (143 Phase 0 + 60 conversation + 58 markdown after fix, w
 **6. No accidental scope creep:**
 
 ```bash
-cd /home/q/projects/crabcakes && git diff HEAD --stat
+cd /path/to/projects/crabcakes && git diff HEAD --stat
 ```
 
 Expect: only `utils/markdown.py` (Bugs 1+2) and `gateway/client.py` (Bug 3) changed. NO changes to:
@@ -256,17 +256,17 @@ Expect: only `utils/markdown.py` (Bugs 1+2) and `gateway/client.py` (Bug 3) chan
 **7. Specific grep checks for the 3 fixes:**
 
 ```bash
-cd /home/q/projects/crabcakes && grep -n "Preload identity on module" gateway/client.py
+cd /path/to/projects/crabcakes && grep -n "Preload identity on module" gateway/client.py
 ```
 Expect: comment gone (was at line 184)
 
 ```bash
-cd /home/q/projects/crabcakes && grep -n "LINK_RE\|balanced parens" utils/markdown.py
+cd /path/to/projects/crabcakes && grep -n "LINK_RE\|balanced parens" utils/markdown.py
 ```
 Expect: 1+ match (the new regex)
 
 ```bash
-cd /home/q/projects/crabcakes && grep -c "https?://" utils/markdown.py
+cd /path/to/projects/crabcakes && grep -c "https?://" utils/markdown.py
 ```
 Expect: 0 matches (the old `https?://` only regex is replaced with broader scheme match)
 

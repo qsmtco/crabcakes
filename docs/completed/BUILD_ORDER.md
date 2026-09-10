@@ -8,7 +8,7 @@
 
 ## Source Documents
 
-All source documents live in `/home/q/projects/crabcakes/docs/`:
+All source documents live in `/path/to/projects/crabcakes/docs/`:
 
 | File | What It Is |
 |------|-----------|

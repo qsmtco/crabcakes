@@ -3,7 +3,7 @@
 **Spec to revise:** `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED-FIX-1.md` (Round 1 fix)
 **Round 2 findings to address:** `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED-FIX-1-FINDINGS.md`
 **Prompt to load:** `prompts/steelFramedSpecWriter.md`
-**Working dir:** `/home/q/projects/crabcakes`
+**Working dir:** `/path/to/projects/crabcakes`
 
 ## Task
 

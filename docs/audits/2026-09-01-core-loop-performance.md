@@ -1,7 +1,7 @@
 # Crabcakes Performance Analysis — Core Loop / UI Lag
 
 **Date:** 2026-09-01
-**Scope:** Read-only code analysis of `/home/q/projects/crabcakes` (~40k lines Python/GTK4)
+**Scope:** Read-only code analysis of `/path/to/projects/crabcakes` (~40k lines Python/GTK4)
 **Focus:** UI unresponsiveness during agent implementation loops (tab switching nearly impossible while a loop runs)
 **Files modified:** none
 

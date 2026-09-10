@@ -60,7 +60,7 @@ At the end of `_show_tree`, ensure columns are visible (no drawers open yet):
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Column refs stored
 grep "_col_status\|_col_size\|_col_modified" ui/views/file_tree.py

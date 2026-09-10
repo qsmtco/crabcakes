@@ -662,7 +662,7 @@ Chat handler renders the response in the UI
 5. **Step 5 — Verification (Rule 10):** Run the full test suite, paste output in commit message, confirm no old patterns remain via grep sweep.
 
 **Verification at each step** (Rule 7 / Rule 10):
-- After step 1: `cd /home/q/projects/crabcakes && python -m pytest tests/test_agent_runtime.py -v` — all existing tests should pass.
+- After step 1: `cd /path/to/projects/crabcakes && python -m pytest tests/test_agent_runtime.py -v` — all existing tests should pass.
 - After step 2: same command — the new test `test_streaming_preserves_provider_tool_call_id` should now pass; all pre-existing tests still pass.
 - After step 3: same command — Anthropic-specific tests (if any) should pass; the change is additive.
 - After step 4: `grep -n "STREAM-ID-PRES\|provider-assigned id" docs/ARCHITECTURE.md` — should show 1-2 matches in §3.21m and §12.
@@ -764,7 +764,7 @@ If 2.1.d is deferred, mark it explicitly as `DEFERRED — separate ticket`. Do n
 The implementer must paste the actual pytest output (not a summary) in the commit message. Expected output (approximate):
 
 ```
-$ cd /home/q/projects/crabcakes && python -m pytest tests/test_agent_runtime.py -v
+$ cd /path/to/projects/crabcakes && python -m pytest tests/test_agent_runtime.py -v
 ...
 tests/test_agent_runtime.py::TestStreaming::test_text_delta_fires_incrementally PASSED
 tests/test_agent_runtime.py::TestStreaming::test_response_complete_fires_after_stream PASSED
@@ -783,7 +783,7 @@ If the suite cannot be run (e.g. test environment unavailable), the implementer 
 ### Check 3: Pattern sweep
 
 ```bash
-$ cd /home/q/projects/crabcakes && grep -rn 'f"call_{idx}"' agent/runtime.py
+$ cd /path/to/projects/crabcakes && grep -rn 'f"call_{idx}"' agent/runtime.py
 2087:                        "id": tc["id"] or f"call_{idx}",
 2105:                        "id": tc["id"] or f"call_{idx}",
 ```

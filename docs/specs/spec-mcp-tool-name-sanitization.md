@@ -374,7 +374,7 @@ All function signatures verified. All import paths verified. No invented APIs.
 ### 2. Test suite (to be pasted after implementation)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 xvfb-run -a python3 -m pytest tests/test_mcp_client.py tests/test_mcp_integration.py tests/test_tools.py tests/test_mcp_tool_naming.py -v
 ```
 

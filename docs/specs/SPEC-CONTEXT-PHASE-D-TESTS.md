@@ -463,7 +463,7 @@ class TestCallForSummary:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. All new tests
 python3 -m pytest tests/test_context_ui.py tests/test_compact_command.py tests/test_llm_summarize_strategy.py -v

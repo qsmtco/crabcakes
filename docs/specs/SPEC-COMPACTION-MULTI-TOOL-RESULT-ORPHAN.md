@@ -152,7 +152,7 @@ DefaultContextStrategy().compact(conv, token_budget=300, keep_first=2)
 
 ```python
 import json
-with open("/home/q/.config/crabcakes/conversations/special:coder.json") as f:
+with open("~/.config/crabcakes/conversations/special:coder.json") as f:
     data = json.load(f)
 # 1913 messages, est=301,716 tokens, soft ceiling 209,600 (80% of 262,000)
 # ... rebuild Conversation ...

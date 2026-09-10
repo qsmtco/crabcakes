@@ -247,7 +247,7 @@ Attack vector: git log shows _find_split_index was added in the same commit
                commit then makes incremental changes to a method that
                already existed.
 Reproduction:
-    cd /home/q/projects/crabcakes
+    cd /path/to/projects/crabcakes
     git log --oneline -- agent/context_strategy.py
     # The first commit that adds _find_split_index — was it Phase 1 (forward-
     # loaded), Phase 5 (scope creep), Phase 6 (correct), or later?

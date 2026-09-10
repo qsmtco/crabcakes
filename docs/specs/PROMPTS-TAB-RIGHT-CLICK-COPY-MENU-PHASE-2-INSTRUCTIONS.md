@@ -106,17 +106,17 @@ QTR created `tests/test_left_panel.py` in Phase 1 with 7 tests. Adversarial audi
 
 ```bash
 # 1. All tests in test_left_panel.py pass
-cd /home/q/projects/crabcakes && pytest tests/test_left_panel.py -v --tb=short
+cd /path/to/projects/crabcakes && pytest tests/test_left_panel.py -v --tb=short
 
 # 2. Test 8 actually fails if Edit 5 (gesture wiring) is reverted — REGRESSION-PROOF CHECK
 # Temporarily comment out the add_controller line in _build_prompt_row, run Test 8, expect FAIL.
 # Then restore. (Do NOT commit the revert.)
 
 # 3. Full test suite still passes (no regressions in other test files)
-cd /home/q/projects/crabcakes && pytest tests/test_left_panel.py tests/test_prompts_handler.py tests/test_feed_handler.py -q --tb=short
+cd /path/to/projects/crabcakes && pytest tests/test_left_panel.py tests/test_prompts_handler.py tests/test_feed_handler.py -q --tb=short
 
 # 4. Total test count
-cd /home/q/projects/crabcakes && pytest tests/test_left_panel.py --collect-only -q 2>&1 | tail -3
+cd /path/to/projects/crabcakes && pytest tests/test_left_panel.py --collect-only -q 2>&1 | tail -3
 ```
 
 ## REGRESSION-PROOF CHECK (Edit 1 / Test 8)

@@ -3,7 +3,7 @@
 **To:** Coder
 **Task:** Fix 3 bugs found in round-4 audit (BUG #26, #27, #28). All empirically verified by supervisor. These are small, targeted fixes — the architecture is settled.
 
-**Output:** Revise `/home/q/projects/crabcakes/docs/specs/SPEC-TEXTVIEW-TEXTTAG-RENDERING.md` in place.
+**Output:** Revise `/path/to/projects/crabcakes/docs/specs/SPEC-TEXTVIEW-TEXTTAG-RENDERING.md` in place.
 
 ---
 

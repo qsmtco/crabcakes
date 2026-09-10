@@ -147,7 +147,7 @@ Add compaction telemetry after `breakdown["messages_removed_this_turn"]` line:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Module imports cleanly
 python3 -c "

@@ -512,7 +512,7 @@ The snapshot is stored inside `feed.json` as part of the card's `metadata` dict:
   "file_path": "src/main.py",
   "metadata": {
     "session_key": "agent:qaster:telegram:direct:7478874934",
-    "project_path": "/home/q/projects/crabcakes",
+    "project_path": "/path/to/projects/crabcakes",
     "snapshot": {
       "snapshot_type": "conversation",
       "messages": [

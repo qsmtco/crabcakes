@@ -148,12 +148,12 @@ New:
 |-------|:---:|:---:|:---:|--------|
 | `/ask @Coder "hello"` | ✅ | ✅ ask | ✅ | **Parsed** |
 | `text /ask @Coder "hi"` | ✅ | ✅ ask | ✅ | **Parsed** |
-| `/home/q/file.py` | ✅ | ❌ home | — | **Rejected** |
+| `/home/user/file.py` | ✅ | ❌ home | — | **Rejected** |
 | `use /etc/hosts` | ✅ | ❌ etc | — | **Rejected** |
 | `Save /tmp/out.txt and @Coder` | ✅ | ❌ tmp, out.txt | — | **Rejected** |
 | `/status` | ✅ | ✅ status | ❌ None | **Rejected** (no agent) |
 | `/task @QTR do stuff` | ✅ | ✅ task | ✅ | **Parsed** |
-| `path/home/q` | ❌ no space | — | — | **No match** |
+| `path/home/user` | ❌ no space | — | — | **No match** |
 | `/a @Coder "quick"` | ✅ | ✅ a (alias) | ✅ | **Parsed** |
 | `the // comment` | ❌ no space+slash | — | — | **No match** |
 | `/STOp @Coder` | ✅ | ✅ stop | ✅ | **Parsed** |
@@ -596,7 +596,7 @@ self._command_handler = None     # injected via set_command_handler() — for sl
 9. `AgentCommandHandler` rebuilds as `/ask @Debugger "check this"` → passes to `process_input()`
 10. Routes to target agent
 
-### User types `/home/q/projects/file.py`
+### User types `/path/to/projects/file.py`
 1. `process_input()` checks `text.startswith("/")` → True
 2. Strips prefix: `raw = "home/q/projects/file.py"`
 3. First token: `home/q/projects/file.py` (no spaces)
@@ -666,7 +666,7 @@ self._command_handler = None     # injected via set_command_handler() — for sl
 
 - [ ] `COMMAND_PREFIX = "/"` in `utils/config.py`
 - [ ] A2A scanner detects `/command @Agent "payload"` in agent responses
-- [ ] A2A scanner rejects file paths (`/home/q/...`), URLs, and unknown words after `/`
+- [ ] A2A scanner rejects file paths (`/home/user/...`), URLs, and unknown words after `/`
 - [ ] A2A scanner validates command names against registered commands
 - [ ] All help text shows `/command` format
 - [ ] All error messages show `/command` format
@@ -678,7 +678,7 @@ self._command_handler = None     # injected via set_command_handler() — for sl
 - [ ] Markdown backticks for code rendering work unchanged
 - [ ] `/help` command displays correct output
 - [ ] `/ask @Agent "payload"` routes correctly
-- [ ] Unknown `/` inputs (e.g. `/home/q/...`) pass through as `handled=False`
+- [ ] Unknown `/` inputs (e.g. `/home/user/...`) pass through as `handled=False`
 - [ ] `ARCHITECTURE.md` updated with slash prefix references
 
 ---
@@ -687,7 +687,7 @@ self._command_handler = None     # injected via set_command_handler() — for sl
 
 | Case | Expected Behavior |
 |------|-------------------|
-| User types `/home/q/file.py` | `process_input()` returns `handled=False` — passes through as text |
+| User types `/home/user/file.py` | `process_input()` returns `handled=False` — passes through as text |
 | Agent writes `use /etc/hosts` in response | Scanner rejects `etc` — not a registered command |
 | Agent writes `/ask @Coder "hello"` in fenced code block | `_strip_fenced_blocks()` removes it — not detected |
 | User types `// comment` | No space before second `/` → regex doesn't match → `handled=False` |

@@ -283,7 +283,7 @@ class TestStreamingBubbleHigh6:
 ## Verification commands (run these, paste the output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Confirm type guards are in place (BUG #1)
 xvfb-run -a python3 -c "

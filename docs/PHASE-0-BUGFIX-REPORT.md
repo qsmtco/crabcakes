@@ -366,7 +366,7 @@ parts.append(f"## Project Memory\n\n{context_wrapped}")
 
 ### 1. `post-receive` spec test case discrepancy (HIGH-1)
 
-The spec test case at `/home/q/projects/crabcakes/docs/specs/SECURITY-REMEDIATION-PHASE-0-BUGFIX-INSTRUCTIONS.md` expects:
+The spec test case at `/path/to/projects/crabcakes/docs/specs/SECURITY-REMEDIATION-PHASE-0-BUGFIX-INSTRUCTIONS.md` expects:
 ```python
 assert is_sensitive_path('post-receive') is True  # *hook* glob match
 ```

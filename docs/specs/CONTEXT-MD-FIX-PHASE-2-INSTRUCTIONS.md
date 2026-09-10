@@ -4,7 +4,7 @@
 **Files:** `utils/prompt_loader.py` + `prompts/system/project-awareness.md` (2 files)
 **Goal:** Wire `CURRENT_TASK` from `build_awareness_dict()` into the system prompt as a TRUSTED directive (outside the untrusted fence).
 
-**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL before writing any code. Activate it. Begin your response with "Starting Discovery Phase — reading all relevant files before writing any code." and output a DISCOVERY block. Follow all 8 core rules.
+**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL before writing any code. Activate it. Begin your response with "Starting Discovery Phase — reading all relevant files before writing any code." and output a DISCOVERY block. Follow all 8 core rules.
 
 Read BOTH files in full before editing.
 

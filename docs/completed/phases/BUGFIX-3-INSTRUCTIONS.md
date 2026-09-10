@@ -70,7 +70,7 @@ Also add a test for the mixed scenario:
 ## Verification Commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "_agent_counters" ui/views/activity_drawer.py | head -15
 python3 -m pytest tests/test_activity_drawer.py -q --tb=short
 python3 -m pytest tests/ -q --tb=short 2>&1 | tail -5

@@ -57,7 +57,7 @@ def _from_dict(d: dict[str, Any]) -> ProviderConfig:
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 - Read `utils/providers_store.py` COMPLETELY before editing
 - Make ONLY the two function updates; do not touch any other code
 - Preserve existing docstrings, comments, and behavior for all other fields
@@ -70,7 +70,7 @@ def _from_dict(d: dict[str, Any]) -> ProviderConfig:
 Run BOTH and paste full output:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "
 from utils.providers_store import _to_dict, _from_dict
 from models.providers import ProviderConfig
@@ -87,14 +87,14 @@ print('OK')
 ```
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/test_providers_store.py -q 2>&1 | tail -8
 ```
 
 ## Grep proof
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "caller" utils/providers_store.py
 ```
 

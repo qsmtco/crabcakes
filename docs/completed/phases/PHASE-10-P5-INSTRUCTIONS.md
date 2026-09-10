@@ -83,7 +83,7 @@ Add BEFORE `enabled`:
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 - Read `ui/views/settings_dialog.py` lines 30-55, 85-115, 130-180 COMPLETELY before editing
 - Make ONLY the 4 edits described above
 - Do NOT add any Entry widget for caller — it is read-only
@@ -96,7 +96,7 @@ Add BEFORE `enabled`:
 Run BOTH and paste full output:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "
 from ui.views.settings_dialog import _ProviderCard
 from models.providers import ProviderConfig
@@ -116,20 +116,20 @@ print('P5 source checks: placeholder caller=\"\" OK, caller_label set_text OK')
 ```
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "_caller_label\|caller=" ui/views/settings_dialog.py | head -15
 ```
 
 Expected: at least 5 matches (placeholder, label widget, label set_text in populate, label reference in dirty check, caller= in collect).
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 timeout 30 python3 -m pytest tests/test_settings_dialog.py -q 2>&1 | tail -6
 ```
 
 If `test_settings_dialog.py` doesn't exist:
 ```bash
-ls /home/q/projects/crabcakes/tests/ | grep -i settings
+ls /path/to/projects/crabcakes/tests/ | grep -i settings
 ```
 
 ## Report

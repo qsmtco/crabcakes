@@ -140,7 +140,7 @@ Run `tests/test_settings_dialog.py` and `tests/test_settings_handler.py` after t
 ## Verification commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # New regression test passes
 python3 -m pytest tests/test_window_settings_wiring.py -v --tb=short 2>&1 | tail -20

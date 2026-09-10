@@ -3,7 +3,7 @@
 **Spec to revise:** `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED-FIX-2.md` (Round 2 fix)
 **Round 3 findings to address:** `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED-FIX-2-FINDINGS.md` (7 new bugs: 1 CRIT, 3 HIGH, 3 MED)
 **Prompt to load:** `prompts/steelFramedSpecWriter.md`
-**Working dir:** `/home/q/projects/crabcakes`
+**Working dir:** `/path/to/projects/crabcakes`
 
 ## Task
 

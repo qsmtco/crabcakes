@@ -110,7 +110,7 @@ For each finding: **ID**, **what the original review said**, **what the code act
 ### 4.6 LOW-7 — `xdg-open` on LLM-controlled path
 
 - **Original review:** "Clicking an image in a chat bubble calls `_open_in_viewer(file_path)` which uses `shutil.which('xdg-open')` to open the file. If the LLM produces a `file://` or shell-special path, this could be exploited."
-- **HEAD reality (`ui/views/chat_bubble.py:50-58`):** `_open_in_viewer(file_path)` is called from `_build_image_block` (line 412). It only runs if `os.path.isfile(file_path)` returns True (line 53), so a non-existent file is already filtered. However, the `file_path` could be an absolute path on the system that the LLM chose (e.g., `/home/q/.ssh/id_rsa` — unlikely but possible). The `subprocess.Popen([opener, file_path])` call is a vector if the opener is something unexpected.
+- **HEAD reality (`ui/views/chat_bubble.py:50-58`):** `_open_in_viewer(file_path)` is called from `_build_image_block` (line 412). It only runs if `os.path.isfile(file_path)` returns True (line 53), so a non-existent file is already filtered. However, the `file_path` could be an absolute path on the system that the LLM chose (e.g., `~/.ssh/id_rsa` — unlikely but possible). The `subprocess.Popen([opener, file_path])` call is a vector if the opener is something unexpected.
 - **Fix:** Add a project-scope check: only open files that are inside the current project path (passed via env var or constructor), or inside the user's home, or inside `/tmp` (whitelisted). Refuse to open paths that resolve via symlinks to outside the whitelist. Use a `Gtk.FileLauncher` (Gtk 4.10+) if available, falling back to `xdg-open` with the path constraint.
 - **Test:** Call `_open_in_viewer("/etc/passwd")` and assert it does NOT call subprocess. Call with a path inside a project dir and assert it opens. Mock the subprocess and assert the command is sanitized.
 
@@ -127,7 +127,7 @@ For each finding: **ID**, **what the original review said**, **what the code act
 - **HEAD reality (`utils/git_ops.py:42, 55, 66, 77, 115, 126, 136, 146, 162, 172, 192, 207, 224, 234`):** 14 `error=str(e)` sites in git_ops.py. Plus `utils/provider_test.py:245` and `utils/mcp_client.py:273`. GitPython exceptions can be verbose — `git.exc.GitCommandError` includes the command, partial stdout, and partial stderr.
 - **Fix:** Introduce a `_safe_error(e: Exception, *, max_len: int = 200) -> str` helper in `utils/git_ops.py` that:
   - extracts only the exception class name and a sanitized message
-  - strips absolute paths (replaces `/home/q/...` with `~`, `C:\...` with `...`)
+  - strips absolute paths (replaces `/home/user/...` with `~`, `C:\...` with `...`)
   - truncates to `max_len` chars
   - never includes the full repr/args of the exception
   Apply at all 14 sites. Add similar treatment in `provider_test.py:245` and `mcp_client.py:273`.

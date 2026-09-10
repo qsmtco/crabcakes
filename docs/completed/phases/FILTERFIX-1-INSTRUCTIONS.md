@@ -128,7 +128,7 @@ def test_append_event_refreshes_filter_popovers(self, drawer):
 ## Verification Commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "connect.*activate.*filter\|MenuButton\|set_popover" ui/views/activity_drawer.py
 python3 -m pytest tests/test_activity_drawer.py -q --tb=short
 python3 -m pytest tests/ -q --tb=short 2>&1 | tail -5

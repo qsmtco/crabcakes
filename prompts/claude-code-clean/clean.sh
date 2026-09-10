@@ -1,6 +1,6 @@
 #!/bin/bash
 # Bulk cleanup script for making prompts platform-agnostic
-cd /home/q/projects/crabcakes/prompts/claude-code-clean/
+cd /path/to/projects/crabcakes/prompts/claude-code-clean/
 
 # Global replacements across all .md files
 for f in *.md; do

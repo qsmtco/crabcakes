@@ -112,7 +112,7 @@ def test_lifecycle_end_triggers_state_machine(self, fake_glib):
 ## Verification Commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "if event == \"agent\":" ui/handlers/activity_handler.py
 python3 -m pytest tests/test_activity_bubbles.py -q --tb=short
 python3 -m pytest tests/ -q --tb=short 2>&1 | tail -5

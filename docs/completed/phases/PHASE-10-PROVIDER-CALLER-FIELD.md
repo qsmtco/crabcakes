@@ -561,7 +561,7 @@ Each step has a verification gate. Do not proceed if the gate fails.
 **Action:** Add `caller: str = ""` to both dataclasses.
 **Verify:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "from agent.config import LLMProviderConfig; c = LLMProviderConfig(name='x', base_url='', api_key='', default_model=''); assert c.caller == ''; print('OK')"
 python3 -c "from models.providers import ProviderConfig; c = ProviderConfig(name='x', base_url='', api_key='', default_model=''); assert c.caller == ''; print('OK')"
 ```
@@ -571,7 +571,7 @@ python3 -c "from models.providers import ProviderConfig; c = ProviderConfig(name
 **Action:** Update `_to_dict` and `_from_dict` per §2.3.
 **Verify:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 << 'PYEOF'
 from utils.providers_store import _to_dict, _from_dict
 from models.providers import ProviderConfig
@@ -592,7 +592,7 @@ PYEOF
 **Action:** Add `_resolve_caller_key` static method; update lines 1303 and 1352 per §2.4.
 **Verify:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 << 'PYEOF'
 from agent.config import LLMProviderConfig
 from agent.runtime import AgentRuntime
@@ -620,7 +620,7 @@ PYEOF
 **Action:** Add `if "/" in prov_cfg.default_model: return prov_cfg.default_model` guard at line 286–289 per §2.5.
 **Verify:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/test_agent_runtime.py -v 2>&1 | tail -30
 # Expect: all tests pass, particularly any that test _resolve_agent_model
 ```
@@ -635,7 +635,7 @@ python3 -m pytest tests/test_agent_runtime.py -v 2>&1 | tail -30
 **Action:** Add optional `caller: str | None = None` kwarg, branch in provider detection per §2.7.
 **Verify:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/test_provider_test.py -v 2>&1 | tail -20
 ```
 
@@ -650,7 +650,7 @@ grep -A 1 "name: Owl-Alpha" ~/.config/crabcakes/providers.yaml | head -5
 ### Step 8 — Full test suite
 **Verify:**
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -m pytest tests/ 2>&1 | tail -20
 ```
 All existing tests pass; new tests in `test_runtime_caller_resolution.py` pass.

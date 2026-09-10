@@ -22,7 +22,7 @@ status: DRAFT
 
 ```python
 _PROMPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'prompts')
-# → always /home/q/projects/crabcakes/prompts, regardless of which project is open
+# → always /path/to/projects/crabcakes/prompts, regardless of which project is open
 ```
 
 Agent briefs in project A regularly reference files in `prompts/` (e.g. `prompts/steelFramedCodeWriter.md`). The agent's tool layer (`agent/tools.py:_resolve_project_path`, line 186) rejects any path outside the open project's realpath with *"Path escapes project sandbox"*. The current state: the instruction points at a file the agent cannot read.
@@ -734,8 +734,8 @@ with tempfile.TemporaryDirectory() as d:
 "
 
 # Tests
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_prompt_loader.py tests/test_prompts_handler.py -q -p no:cacheprovider
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_prompts.py -q -p no:cacheprovider
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_prompt_loader.py tests/test_prompts_handler.py -q -p no:cacheprovider
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_prompts.py -q -p no:cacheprovider
 
 # Manual: open existing project, verify Prompts tab contents
 # Manual: agent read_file('prompts/steelFramedCodeWriter.md') in project A

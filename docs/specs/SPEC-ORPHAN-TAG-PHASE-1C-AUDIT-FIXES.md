@@ -56,7 +56,7 @@ Wait — actually `(` and `)` are already excluded in the current regex but NOT 
 ## Verification commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Orphan href doesn't corrupt markdown
 python3 -c "

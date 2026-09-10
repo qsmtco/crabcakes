@@ -92,7 +92,7 @@ Then read the file again (`sed -n '3130,3136p' docs/ARCHITECTURE.md`) to confirm
 ## Verification Commands (run all of these)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. CSS block is present
 echo "=== .input-toolbar CSS present (should be 1) ==="
@@ -117,7 +117,7 @@ xvfb-run -a python3 -c "from ui.window import MainWindow; print('imports OK')"
 
 # 5. App launches with no Gtk-CRITICAL
 G_DEBUG=fatal-criticals xvfb-run -a python3 -c "
-import sys; sys.path.insert(0, '/home/q/projects/crabcakes')
+import sys; sys.path.insert(0, '/path/to/projects/crabcakes')
 from ui.window import MainWindow
 m = MainWindow(application=None)
 m.present()

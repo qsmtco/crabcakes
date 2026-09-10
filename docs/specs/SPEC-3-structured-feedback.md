@@ -752,7 +752,7 @@ An agent reviewing its own previous work sends an audit report. The target role 
 Each line is a JSON object:
 
 ```json
-{"timestamp": "2026-05-18T21:30:00Z", "reviewer": "Qaster", "project_path": "/home/q/projects/crabwatch", "task": "Task 7 — Install script", "file": "install.sh:57", "severity": "bug", "bug": "sed replaces all python3 including inside venv path", "expected": ".venv/bin/python3 stays intact", "actual": ".venv/bin/.venv/bin/python3 (double-nested)", "root_cause": "sed expression matches all occurrences of python3 substring", "fix": "Remove the sed python3 replacement line entirely", "pattern": "sed-overmatch", "tests": "bash -n install.sh (syntax), manual verification of generated paths"}
+{"timestamp": "2026-05-18T21:30:00Z", "reviewer": "Qaster", "project_path": "/path/to/projects/crabwatch", "task": "Task 7 — Install script", "file": "install.sh:57", "severity": "bug", "bug": "sed replaces all python3 including inside venv path", "expected": ".venv/bin/python3 stays intact", "actual": ".venv/bin/.venv/bin/python3 (double-nested)", "root_cause": "sed expression matches all occurrences of python3 substring", "fix": "Remove the sed python3 replacement line entirely", "pattern": "sed-overmatch", "tests": "bash -n install.sh (syntax), manual verification of generated paths"}
 ```
 
 **Fields:**
@@ -950,9 +950,9 @@ class TestReviewLogEntry:
             actual="double-nested path",
             pattern="sed-overmatch",
         )
-        entry = r.to_review_log_entry("Qaster", "/home/q/projects/crabwatch")
+        entry = r.to_review_log_entry("Qaster", "/path/to/projects/crabwatch")
         assert entry["reviewer"] == "Qaster"
-        assert entry["project_path"] == "/home/q/projects/crabwatch"
+        assert entry["project_path"] == "/path/to/projects/crabwatch"
         assert entry["severity"] == "bug"
         assert entry["pattern"] == "sed-overmatch"
         assert "timestamp" in entry

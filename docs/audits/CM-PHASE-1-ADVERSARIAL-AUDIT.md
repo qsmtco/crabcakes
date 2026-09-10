@@ -33,7 +33,7 @@ Attack vector: A reviewer diffing the Phase 1 commit against the spec would disc
                the post-loop verifier only ran tests (which passed) and didn't do
                cross-reference spec→file→commit.
 Reproduction:
-    cd /home/q/projects/crabcakes
+    cd /path/to/projects/crabcakes
     git show 25b72f6 -- agent/context_strategy.py | wc -l    # 590+ lines, spec said ~150
     grep -n "def " agent/context_strategy.py
         compact                          # P1 expected
@@ -223,7 +223,7 @@ Attack vector: git blame shows the CB-6 keep_first search code was added in the
                Phase 1 commit (25b72f6), not the Phase 9 commit (a69e763). The
                Phase 9 commit message claims credit for the change.
 Reproduction:
-    cd /home/q/projects/crabcakes
+    cd /path/to/projects/crabcakes
     git log --all --oneline -- agent/context_strategy.py | head -20
     git blame -L 376,405 agent/context_strategy.py
     # Look for the comment "# Phase 9 hardening" — was it there from Phase 1?
@@ -285,7 +285,7 @@ Attack vector: A future audit counts "Phase 1 added N tests" based on the
                commit. The Phase 1 test delta is actually negative (or zero) —
                it added zero tests of its own.
 Reproduction:
-    cd /home/q/projects/crabcakes
+    cd /path/to/projects/crabcakes
     git log --diff-filter=A --name-only -- tests/test_context_strategy.py
     # First commit: 016e10d "Accept: 2 files (agent/context_strategy.py,
     # tests/test_context_strategy.py)" — both files in the SAME commit.

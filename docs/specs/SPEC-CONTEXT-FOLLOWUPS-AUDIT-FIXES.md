@@ -188,7 +188,7 @@ class TestLlmNameResolution:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Syntax
 python3 -c "import ast; [ast.parse(open(f).read()) for f in ['ui/handlers/agent_runtime_handler.py', 'ui/views/agent_builder.py', 'tests/test_compact_command.py', 'tests/test_llm_summarize_strategy.py']]; print('SYNTAX OK')"

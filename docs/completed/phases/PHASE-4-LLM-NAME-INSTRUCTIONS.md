@@ -34,7 +34,7 @@ Per spec, `model` key is removed from new agent YAMLs. Read sites of `agent_def.
 
 ## Verification
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n '_get_selected_provider_id\|_get_selected_llm_name\|llm_name' ui/views/agent_builder.py | head -20
 python3 -c 'from ui.views.agent_builder import AgentBuilderDialog; print(hasattr(AgentBuilderDialog, "_get_selected_provider_id"), hasattr(AgentBuilderDialog, "_get_selected_llm_name"))'
 python3 -m pytest tests/test_agent_builder_dialog.py tests/test_agent_builder_no_model_dropdown.py tests/test_agent_builder_no_provider_keys.py -q --tb=line 2>&1 | tail -10

@@ -146,7 +146,7 @@ Where §4.X is the next free number after 4.9 (currently 4.7 is Forward Callback
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # §3.21t should mention "No Model dropdown", "No API key field"
 grep -n "No Model dropdown\|No API key field\|set_provider_options" docs/ARCHITECTURE.md

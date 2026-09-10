@@ -3,7 +3,7 @@
 **Date:** 2026-06-05
 **Auditor:** Qaster (M3)
 **Spec:** `docs/specs/SPEC-activity-drawer.md` (98KB, 8 deliverables, 11 file changes, 23 acceptance criteria)
-**Repo:** `/home/q/projects/crabcakes`
+**Repo:** `/path/to/projects/crabcakes`
 **Repo state at audit time:** working tree has 11 modified files + 1 new file (`ui/views/activity_drawer.py`), uncommitted. Last commit `ef9b1f0 docs: apply 4 audit fixes to SPEC-activity-drawer`.
 **Test result:** `pytest tests/test_activity_bubbles.py` → 25/25 pass.
 **Worked with:** QTR (spec author, Kage-7) on adjacent code

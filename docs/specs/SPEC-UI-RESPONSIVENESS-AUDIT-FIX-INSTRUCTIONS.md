@@ -3,7 +3,7 @@
 **Spec:** `docs/specs/SPEC-UI-RESPONSIVENESS.md`
 **Audit:** 12 bugs found by Debugger (2 CRITICAL, 4 MEDIUM, 5 LOW, 1 cleared)
 
-Load steelFramedSpecWriter fresh from `/home/q/projects/crabcakes/prompts/steelFramedSpecWriter.md`. Read the spec in full. Fix all 12 bugs below. Output the revised spec.
+Load steelFramedSpecWriter fresh from `/path/to/projects/crabcakes/prompts/steelFramedSpecWriter.md`. Read the spec in full. Fix all 12 bugs below. Output the revised spec.
 
 ---
 

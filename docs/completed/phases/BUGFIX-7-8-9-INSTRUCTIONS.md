@@ -55,7 +55,7 @@ Remove the inner `if agent_runtime is not None:` guard and dedent the code insid
 ### Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "agent_runtime is not None" ui/handlers/connection_sync_handler.py
 # Should show only ONE match (the outer scope check)
 ```
@@ -96,7 +96,7 @@ def test_passes_filter_handles_non_string_agent(self, drawer):
 ## Verification Commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 # BUGFIX 7: verify elif chain
 grep -n "if stream ==" ui/handlers/activity_handler.py | head -10
 

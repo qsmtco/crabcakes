@@ -2,7 +2,7 @@
 
 **Files:** `agent/llm/streaming.py` + `tests/test_llm_streaming.py`
 
-**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL. Activate it. Begin with Discovery Phase block.
+**FIRST ACTION: Load the steelFramedCodeWriter prompt fresh.** Read `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md` IN FULL. Activate it. Begin with Discovery Phase block.
 
 Read `agent/llm/streaming.py` in full before editing.
 

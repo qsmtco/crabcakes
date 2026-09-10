@@ -117,7 +117,7 @@ from agent.tools import execute_tool
 result = execute_tool(
     name="edit_file",
     arguments={"path": "/tmp/x", "old_text": "a", "new_text": "b"},
-    project_path="/home/q/projects/crabcakes",
+    project_path="/path/to/projects/crabcakes",
     session_key="special:debugger",
     approval_callback=None,
     scratch_dir="/tmp",
@@ -245,7 +245,7 @@ None — the fix is complete and verified. Optionally:
 | `tests/test_agent_runtime.py:2910` | `TestAllowedToolsFallback` (3 tests) |
 | `~/.config/crabcakes/conversations/special:debugger.json` | Persisted Debugger conversation (correctly populated after delete-and-restart) |
 | `c601b16` | Live-verification commit: `Accept: helloworld.md` |
-| `/home/q/.openclaw/workspace/qtr/notes/debugger-edit-file-investigation-2026-07-03.md` | Pre-verification investigation note |
+| `~/.openclaw/workspace/qtr/notes/debugger-edit-file-investigation-2026-07-03.md` | Pre-verification investigation note |
 
 ## Commits
 

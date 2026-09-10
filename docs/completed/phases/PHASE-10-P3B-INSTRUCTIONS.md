@@ -48,7 +48,7 @@ This replaces the old `model.split("/")[0]` derivation with `self._resolve_calle
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 - Read `agent/runtime.py` lines 1281–1365 COMPLETELY before editing
 - Make ONLY the two edits described above (the caller lookup fix is the main one; the streaming path requires no change)
 - Do NOT modify `_PROVIDER_CALLERS`, `_PROVIDER_STREAMERS`, or any other code
@@ -60,7 +60,7 @@ This replaces the old `model.split("/")[0]` derivation with `self._resolve_calle
 Run the verification and paste full output:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "
 from agent.config import LLMProviderConfig
 from agent.runtime import AgentRuntime
@@ -82,14 +82,14 @@ print('P3b helper verification: OK')
 ```
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "_resolve_caller_key\|_PROVIDER_CALLERS\|No caller for provider" agent/runtime.py
 ```
 
 Expected: `_resolve_caller_key` appears 1 time (the definition), `No caller for provider` shows the new error message.
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 timeout 30 python3 -m pytest tests/test_agent_runtime.py -q 2>&1 | tail -6
 ```
 

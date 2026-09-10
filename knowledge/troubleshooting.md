@@ -101,14 +101,14 @@ The `providers.yaml` fallback scan: if neither the conversation nor the provider
 The KB server (`agent/kb_server.py`) only starts if the KB index is available. Check:
 
 ```bash
-ls -la /home/q/projects/crabcakes/knowledge/.index/
+ls -la /path/to/projects/crabcakes/knowledge/.index/
 # Should show: chunks.json  embeddings.npy
 ```
 
 If these files don't exist, the index needs to be built:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 scripts/rebuild_kb_index.py
 ```
 
@@ -260,7 +260,7 @@ sudo pacman -S python-gobject gtk4
 Install CrabCakes dependencies:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 pip install -e .
 ```
 
@@ -269,7 +269,7 @@ pip install -e .
 If you see `ModuleNotFoundError` for CrabCakes modules, ensure you are running from the project root:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 main.py
 ```
 

@@ -202,7 +202,7 @@ class TestExistingBehaviorPreserved:
 ## Verification commands (run between sub-phases AND at the end)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 5.1: imports
 python3 -c "from ui.toolbar import Toolbar; print('imports ok')"

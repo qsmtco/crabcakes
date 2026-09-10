@@ -420,7 +420,7 @@ class TestFitSummary:
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. New P5/P6 tests pass
 python3 -m pytest tests/test_context_strategy.py::TestFindSplitIndex tests/test_context_strategy.py::TestFitSummary -v --tb=short

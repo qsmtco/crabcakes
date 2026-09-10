@@ -1,11 +1,11 @@
 PHASE 3 of 6 — Runtime derivation: drop `conv.fallback_model` reads, derive from provider card
 
 Files to change:
-1. `/home/q/projects/crabcakes/agent/runtime.py` — replace the `fallback_model = conv.fallback_model or conv.fallback_provider` derivation with provider-card-based resolution
-2. `/home/q/projects/crabcakes/ui/handlers/agent_runtime_handler.py` — drop the `fallback_model` passthroughs in two places
+1. `/path/to/projects/crabcakes/agent/runtime.py` — replace the `fallback_model = conv.fallback_model or conv.fallback_provider` derivation with provider-card-based resolution
+2. `/path/to/projects/crabcakes/ui/handlers/agent_runtime_handler.py` — drop the `fallback_model` passthroughs in two places
 
 Spec reference:
-- Read the master spec at `/home/q/projects/crabcakes/docs/specs/SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md` §2.4 (runtime) and §2.7 (handler).
+- Read the master spec at `/path/to/projects/crabcakes/docs/specs/SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md` §2.4 (runtime) and §2.7 (handler).
 - The spec is identifier-anchored — do not rely on line numbers.
 
 Changes in `agent/runtime.py`:
@@ -45,16 +45,16 @@ Rules:
 - Verify with grep that the only `fallback_model` references remaining in `agent/runtime.py` and `ui/handlers/agent_runtime_handler.py` are in comments (the one at line 1015 is the create_conversation passthrough — out of scope, KEEP).
 
 Verification commands (run all and paste output):
-1. `grep -n "fallback_model" /home/q/projects/crabcakes/agent/runtime.py /home/q/projects/crabcakes/ui/handlers/agent_runtime_handler.py` — expect:
+1. `grep -n "fallback_model" /path/to/projects/crabcakes/agent/runtime.py /path/to/projects/crabcakes/ui/handlers/agent_runtime_handler.py` — expect:
    - `agent/runtime.py:1015` (the kept create_conversation passthrough parameter, in a comment context)
    - Optionally a comment referencing the spec in the new derivation block
    - ZERO matches in `agent_runtime_handler.py` (or only comment matches)
-2. `cd /home/q/projects/crabcakes && python3 -c "import ast; ast.parse(open('agent/runtime.py').read()); ast.parse(open('ui/handlers/agent_runtime_handler.py').read())"` — expect no SyntaxError
-3. `cd /home/q/projects/crabcakes && python3 -c "from agent.runtime import AgentRuntime; from ui.handlers.agent_runtime_handler import AgentRuntimeHandler; print('imports OK')"` — expect "imports OK"
-4. `cd /home/q/projects/crabcakes && timeout 60 xvfb-run -a python3 -m pytest tests/test_runtime_fallback.py tests/test_kb_integration.py -v 2>&1 | tail -40` — expect all existing tests still pass (Phase 4 will update them for the new contract, but the existing tests should still pass because the provider card default_model happens to be what the tests set fallback_model to)
+2. `cd /path/to/projects/crabcakes && python3 -c "import ast; ast.parse(open('agent/runtime.py').read()); ast.parse(open('ui/handlers/agent_runtime_handler.py').read())"` — expect no SyntaxError
+3. `cd /path/to/projects/crabcakes && python3 -c "from agent.runtime import AgentRuntime; from ui.handlers.agent_runtime_handler import AgentRuntimeHandler; print('imports OK')"` — expect "imports OK"
+4. `cd /path/to/projects/crabcakes && timeout 60 xvfb-run -a python3 -m pytest tests/test_runtime_fallback.py tests/test_kb_integration.py -v 2>&1 | tail -40` — expect all existing tests still pass (Phase 4 will update them for the new contract, but the existing tests should still pass because the provider card default_model happens to be what the tests set fallback_model to)
 5. **Behavioral smoke test** — simulate the fallback chain end-to-end with the new derivation:
    ```
-   cd /home/q/projects/crabcakes && python3 << 'EOF'
+   cd /path/to/projects/crabcakes && python3 << 'EOF'
    from agent.config import AgentConfig, LLMProviderConfig
    from agent.runtime import AgentRuntime, KB_OUT_OF_SCOPE
    from models.conversation import Conversation

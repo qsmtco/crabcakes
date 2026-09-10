@@ -17,7 +17,7 @@
 
 ```
 DISCOVERY:
-- Read /home/q/projects/crabcakes/utils/escaping.py (entire file, 267 lines):
+- Read /path/to/projects/crabcakes/utils/escaping.py (entire file, 267 lines):
     * _PANGO_KNOWN_TAGS frozenset (line 24-36): includes b, i, u, s, tt, big,
       small, span, a, br, hr, wabr, sub, sup, o — all LOWERCASE.
     * _PANGO_VOID_TAGS (line 39-44): HTML void elements (line 41).
@@ -37,7 +37,7 @@ DISCOVERY:
     * All function signatures verified via `inspect.signature()` — public API
       shape unchanged.
 
-- Read /home/q/projects/crabcakes/utils/markdown.py (relevant sections):
+- Read /path/to/projects/crabcakes/utils/markdown.py (relevant sections):
     * Lines 86-105: format_markdown() docstring listing 7-step pipeline.
     * Line 36: _AUTO_LINK_RE regex with TWO alternatives separated by `|`:
         - Alt A: scheme://... captures into group(1)
@@ -53,7 +53,7 @@ DISCOVERY:
     * Step 3a regex at lines 269-274: only one capture group (group(1)) —
       safe, no alternation.
 
-- Read /home/q/projects/crabcakes/tests/test_escaping.py (selected):
+- Read /path/to/projects/crabcakes/tests/test_escaping.py (selected):
     * Line 201-203: test_uppercase_tag_pair_preserved — WRONG TEST added in
       commit cef7da30 ("Lt. Qrusher", 2026-07-09 22:15:56 -0700). Asserts
       escape_for_pango("<B>orphan</B>") == "<B>orphan</B>" and claims
@@ -63,14 +63,14 @@ DISCOVERY:
       "Tom &amp; Jerry" but `html.escape` v3.12 with quote=False returns
       "Tom & Jerry" — see Rule 2 trace below).
 
-- Read /home/q/projects/crabcakes/tests/test_markdown.py (relevant):
+- Read /path/to/projects/crabcakes/tests/test_markdown.py (relevant):
     * Line 99-103: test_auto_link_bare_url uses `https://example.com` (explicit
       scheme). NO test exists for bare hostname like `httpbin.org/help`.
     * Line 488-495: test_markup_passes_pango_validation — existing pattern for
       end-to-end Pango validation using Gtk.Label().set_markup(). This is the
       pattern I'll copy for the new invariant test.
 
-- Read /home/q/projects/crabcakes/docs/ARCHITECTURE.md:
+- Read /path/to/projects/crabcakes/docs/ARCHITECTURE.md:
     * §3.14a (line 806-825) — utils/escaping.py module ownership.
     * §3.14b (line 826-848) — utils/markdown.py module ownership.
     * §3.14b.1 (line 850-) — utils/gtk_safe_link.py runtime allowlist (URL

@@ -5,8 +5,8 @@ Extract two reusable helpers from `_call_anthropic` (lines 288–463) so both
 streaming and non-streaming paths use identical message/tool format conversion.
 
 ## Files to Read First
-- `/home/q/projects/crabcakes/agent/runtime.py` (lines 288–463, 1–50)
-- `/home/q/projects/crabcakes/docs/specs/SPEC-RUNTIME-HARDENING-AUDIT.md` (W2, W3)
+- `/path/to/projects/crabcakes/agent/runtime.py` (lines 288–463, 1–50)
+- `/path/to/projects/crabcakes/docs/specs/SPEC-RUNTIME-HARDENING-AUDIT.md` (W2, W3)
 
 ## Step 1 — Extract `_convert_messages_for_anthropic`
 
@@ -112,7 +112,7 @@ Replace the `api_payload` block (current lines ~352–363) to use `anthropic_mes
 ## Verification
 After editing, run:
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "from agent.runtime import AgentRuntime; print('import ok')"
 ```
 

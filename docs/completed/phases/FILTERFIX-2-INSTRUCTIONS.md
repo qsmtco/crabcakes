@@ -99,7 +99,7 @@ def test_known_sets_updated_even_when_filter_blocks_event(self, drawer):
 ## Verification Commands
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 grep -n "self._known_agents.add\|self._known_types.add\|_passes_filter" ui/views/activity_drawer.py | head -10
 python3 -m pytest tests/test_activity_drawer.py -q --tb=short
 python3 -m pytest tests/ -q --tb=short 2>&1 | tail -5

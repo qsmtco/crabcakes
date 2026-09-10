@@ -168,10 +168,10 @@ Every public method gets a docstring. Use the spec's state machine as the refere
 
 ```bash
 # 1. Does the module import?
-cd /home/q/projects/crabcakes && python3 -c "from ui.handlers.auxilium_wizard_handler import AuxiliumWizardHandler, WizardStep, WizardState; print('imports OK')"
+cd /path/to/projects/crabcakes && python3 -c "from ui.handlers.auxilium_wizard_handler import AuxiliumWizardHandler, WizardStep, WizardState; print('imports OK')"
 
 # 2. Does install check work?
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 from pathlib import Path
 from ui.handlers.auxilium_wizard_handler import AuxiliumWizardHandler
 calls = []
@@ -191,7 +191,7 @@ print(f'calls={calls}')
 "
 
 # 3. Existing tests still pass
-cd /home/q/projects/crabcakes && pytest tests/test_kb_lookup.py -q 2>&1 | tail -3
+cd /path/to/projects/crabcakes && pytest tests/test_kb_lookup.py -q 2>&1 | tail -3
 ```
 
 ---

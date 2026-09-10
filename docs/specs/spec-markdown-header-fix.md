@@ -810,7 +810,7 @@ These are meta-tests that verify the documentation is present. They will fail if
 ## 6. Verification Commands (real, runnable)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # Bug #1: Confirm bug exists today (before fix)
 python3 -c "

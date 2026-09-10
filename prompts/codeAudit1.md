@@ -1,4 +1,4 @@
-You are performing a comprehensive code audit of the quantum-memory-v2 project at /home/q/projects/quantum-memory-V2.
+You are performing a comprehensive code audit of the quantum-memory-v2 project at /path/to/projects/quantum-memory-V2.
 
 IMPORTANT: We are not in a race. Slow but 100% correct is better than fast but wrong. Be thorough, be methodical, be exhaustive.
 

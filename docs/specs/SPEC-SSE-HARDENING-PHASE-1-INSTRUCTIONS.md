@@ -238,7 +238,7 @@ Use `rendered` instead of `f"[Error] {message}"` in the bubble render call.
 ## Verification commands (run these, paste the output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. _first_choice works
 python3 -c "

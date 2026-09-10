@@ -82,7 +82,7 @@ handler._wired = True
 
 After the fix, run:
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # BUG #1 verify: toolbar crash is now caught
 python3 -c "

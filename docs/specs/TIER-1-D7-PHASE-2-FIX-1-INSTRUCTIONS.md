@@ -80,7 +80,7 @@ For the gateway path (idx == 1), `_sync_to_handler_state` will read the handler 
 
 ```bash
 # 1. Re-run the failing probe — Continue on install must advance the view
-cd /home/q/projects/crabcakes && G_DEBUG=fatal-criticals python3 -c "
+cd /path/to/projects/crabcakes && G_DEBUG=fatal-criticals python3 -c "
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
@@ -108,7 +108,7 @@ with tempfile.TemporaryDirectory() as tmp:
 "
 
 # 2. Re-run probe A (initial state) — must still show install_check
-cd /home/q/projects/crabcakes && G_DEBUG=fatal-criticals python3 -c "
+cd /path/to/projects/crabcakes && G_DEBUG=fatal-criticals python3 -c "
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk
@@ -126,7 +126,7 @@ with tempfile.TemporaryDirectory() as tmp:
 "
 
 # 3. Architecture + KB tests still pass
-cd /home/q/projects/crabcakes && pytest tests/test_architecture.py tests/test_kb_lookup.py -q 2>&1 | tail -3
+cd /path/to/projects/crabcakes && pytest tests/test_architecture.py tests/test_kb_lookup.py -q 2>&1 | tail -3
 ```
 
 ---

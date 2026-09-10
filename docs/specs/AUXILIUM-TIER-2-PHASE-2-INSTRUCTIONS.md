@@ -1,6 +1,6 @@
 # Phase T2-2 — KB synthesis in `_run_loop()` for auxilium
 
-**Spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-auxilium-tier-2.md` §2.2
+**Spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-auxilium-tier-2.md` §2.2
 **Target:** main
 **Risk:** Medium-High (touches the hot loop — runs on every user message; must not regress the existing KB fallback chain)
 **Lines:** +18 (3 changes — KB pre-fetch gate, `_call_llm` call site, new `_inject_kb_context` method)

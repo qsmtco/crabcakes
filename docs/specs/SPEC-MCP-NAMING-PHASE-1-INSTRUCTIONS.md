@@ -361,7 +361,7 @@ class TestExecuteToolRouting:
 ## Verification commands (run these, paste the output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Confirm new functions exist
 python3 -c "

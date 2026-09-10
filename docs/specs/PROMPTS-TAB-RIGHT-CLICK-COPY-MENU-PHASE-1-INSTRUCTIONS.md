@@ -229,25 +229,25 @@ Append these 6 methods to the `LeftPanel` class (anywhere after `_on_prompt_row_
 
 ```bash
 # 1. File still parses (no syntax errors)
-cd /home/q/projects/crabcakes && python3 -c "import ast; ast.parse(open('ui/views/left_panel.py').read()); print('OK')"
+cd /path/to/projects/crabcakes && python3 -c "import ast; ast.parse(open('ui/views/left_panel.py').read()); print('OK')"
 
 # 2. Gdk import present
-cd /home/q/projects/crabcakes && grep -n "^from gi.repository" ui/views/left_panel.py
+cd /path/to/projects/crabcakes && grep -n "^from gi.repository" ui/views/left_panel.py
 
 # 3. New method names present
-cd /home/q/projects/crabcakes && grep -n "_on_prompt_row_right_click\|_on_prompt_menu_row_activated\|_on_copy_prompt_path\|_on_copy_prompt_content\|_copy_text_to_clipboard\|_show_prompt_copy_status" ui/views/left_panel.py
+cd /path/to/projects/crabcakes && grep -n "_on_prompt_row_right_click\|_on_prompt_menu_row_activated\|_on_copy_prompt_path\|_on_copy_prompt_content\|_copy_text_to_clipboard\|_show_prompt_copy_status" ui/views/left_panel.py
 
 # 4. _prompt_content set on row
-cd /home/q/projects/crabcakes && grep -n "_prompt_content" ui/views/left_panel.py
+cd /path/to/projects/crabcakes && grep -n "_prompt_content" ui/views/left_panel.py
 
 # 5. Existing tests still pass (regression check)
-cd /home/q/projects/crabcakes && pytest tests/ -q --tb=short
+cd /path/to/projects/crabcakes && pytest tests/ -q --tb=short
 
 # 6. prompts_handler.py is UNCHANGED (no GTK imports added there)
-cd /home/q/projects/crabcakes && grep -n "^from gi.repository\|^import gi" ui/handlers/prompts_handler.py
+cd /path/to/projects/crabcakes && grep -n "^from gi.repository\|^import gi" ui/handlers/prompts_handler.py
 
 # 7. Line count of left_panel.py (paste the actual number)
-cd /home/q/projects/crabcakes && wc -l ui/views/left_panel.py
+cd /path/to/projects/crabcakes && wc -l ui/views/left_panel.py
 ```
 
 ## REPORT BACK

@@ -3,7 +3,7 @@
 **Audit window:** 2026-06-27 (post-loop, post-post-mortem)
 **Auditor:** qtr (OC Tech Writer) — direct execution after subagent failures
 **Audit method:** Adversarial debugging per `prompts/adversarialDebugger.md`
-**Project:** `/home/q/projects/crabcakes`
+**Project:** `/path/to/projects/crabcakes`
 **Roadmap:** `docs/specs/SPEC-CONTEXT-MANAGEMENT-ROADMAP.md`
 **Total commits audited:** 28 (2a9c252 through a69e763)
 
@@ -275,7 +275,7 @@ on logical correctness and spec compliance.
 
 ## Audit Files
 
-All audit reports are in `/home/q/.openclaw/workspace/qtr/`:
+All audit reports are in `~/.openclaw/workspace/qtr/`:
 
 - `CM-PHASE-1-ADVERSARIAL-AUDIT.md` (25,945 bytes, 10 bugs)
 - `CM-PHASE-2-ADVERSARIAL-AUDIT.md` (9,420 bytes, subagent-written, 3 bugs)

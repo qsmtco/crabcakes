@@ -46,7 +46,7 @@ Before writing any code, confirm the current state:
 openclaw gateway stop 2>/dev/null; true
 
 # Launch crabcakes
-cd /home/q/projects/crabcakes && python3 main.py
+cd /path/to/projects/crabcakes && python3 main.py
 ```
 
 **Expected:**
@@ -369,7 +369,7 @@ Run through the complete offline workflow:
 openclaw gateway stop 2>/dev/null; true
 
 # Launch
-cd /home/q/projects/crabcakes && python3 main.py
+cd /path/to/projects/crabcakes && python3 main.py
 ```
 
 **Checklist:**

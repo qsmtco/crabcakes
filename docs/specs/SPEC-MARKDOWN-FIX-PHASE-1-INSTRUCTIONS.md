@@ -99,7 +99,7 @@ Update the docstring to document the new parameter. Add this `Args:` block to th
 ## Verification commands (run these, paste the output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Confirm new parameter exists with correct default
 python3 -c "

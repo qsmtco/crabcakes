@@ -86,7 +86,7 @@ Find `_populate_from_provider`. Add this line near the existing `self._max_token
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Syntax
 python3 -c "import ast; [ast.parse(open(f).read()) for f in ['ui/handlers/agent_runtime_handler.py', 'ui/views/main_content.py', 'ui/views/settings_dialog.py']]; print('SYNTAX OK')"

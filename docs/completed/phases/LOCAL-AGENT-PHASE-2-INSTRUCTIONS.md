@@ -160,24 +160,24 @@ with urllib.request.urlopen(req, timeout=timeout) as resp:
 
 **Step 4a — Run the new test class:**
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py::TestMinimaxBodyLevelError -v 2>&1
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py::TestMinimaxBodyLevelError -v 2>&1
 ```
 
 Expected: 2 passed, 0 failed.
 
 **Step 4b — Run the full agent_runtime test file (regression check):**
 ```bash
-cd /home/q/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py -v -k "not test_exec_with_approval" 2>&1
+cd /path/to/projects/crabcakes && python3 -m pytest tests/test_agent_runtime.py -v -k "not test_exec_with_approval" 2>&1
 ```
 
 **Step 4c — Pattern sweep:**
 ```bash
-cd /home/q/projects/crabcakes && grep -n "base_resp" agent/runtime.py
+cd /path/to/projects/crabcakes && grep -n "base_resp" agent/runtime.py
 ```
 Expected: at least 4 matches (one or more in `_call_minimax`, one or more in `_stream_minimax_events`).
 
 ```bash
-cd /home/q/projects/crabcakes && grep -n "status_code" agent/runtime.py
+cd /path/to/projects/crabcakes && grep -n "status_code" agent/runtime.py
 ```
 Expected: at least 4 matches.
 

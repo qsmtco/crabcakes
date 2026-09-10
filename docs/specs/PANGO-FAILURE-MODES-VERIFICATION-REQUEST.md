@@ -22,7 +22,7 @@ gi.require_require_version('Pango', '1.0')
 from gi.repository import Pango
 from ui.views.chat_bubble import process_segments
 
-with open('/home/q/.config/crabcakes/conversations/special:supervisor.json') as f:
+with open('~/.config/crabcakes/conversations/special:supervisor.json') as f:
     conv = json.load(f)
 messages = conv if isinstance(conv, list) else conv.get('messages', [])
 

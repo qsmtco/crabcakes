@@ -89,19 +89,19 @@ Additionally, you may need to connect the buffer's `changed` signal to trigger t
 
 ```bash
 # Verify InputToolbarHandler import exists
-cd /home/q/projects/crabcakes && grep -n "InputToolbarHandler" ui/window.py
+cd /path/to/projects/crabcakes && grep -n "InputToolbarHandler" ui/window.py
 
 # Verify _input_toolbar_handler attribute exists
-cd /home/q/projects/crabcakes && grep -n "_input_toolbar_handler" ui/window.py
+cd /path/to/projects/crabcakes && grep -n "_input_toolbar_handler" ui/window.py
 
 # Verify toolbar callbacks are wired
-cd /home/q/projects/crabcakes && grep -n "set_on_" ui/window.py
+cd /path/to/projects/crabcakes && grep -n "set_on_" ui/window.py
 
 # Verify app imports cleanly
-cd /home/q/projects/crabcakes && xvfb-run -a python3 -c "from ui.window import MainWindow; print('OK')"
+cd /path/to/projects/crabcakes && xvfb-run -a python3 -c "from ui.window import MainWindow; print('OK')"
 
 # Run full test suite
-cd /home/q/projects/crabcakes && xvfb-run -a python3 -m pytest tests/ -q --tb=short
+cd /path/to/projects/crabcakes && xvfb-run -a python3 -m pytest tests/ -q --tb=short
 
 # Verify no handler imports in view
 grep -n "from ui.handlers" ui/views/chat_input_toolbar.py

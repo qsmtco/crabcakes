@@ -121,7 +121,7 @@ if __name__ == "__main__":
 
 ## Rules
 
-- Use the steelFramedCodeWriter prompt at `/home/q/projects/crabcakes/prompts/steelFramedCodeWriter.md`
+- Use the steelFramedCodeWriter prompt at `/path/to/projects/crabcakes/prompts/steelFramedCodeWriter.md`
 - Test only the **public surface** of `_resolve_caller_key` (it's a static method, so direct calls are fine)
 - Do NOT test private internals like `_PROVIDER_CALLERS` dict contents
 - Do NOT add GTK dependencies
@@ -131,13 +131,13 @@ if __name__ == "__main__":
 ## Verification (mandatory — paste full output)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 test -f tests/test_runtime_caller_resolution.py && echo "EXISTS" || echo "MISSING"
 wc -l tests/test_runtime_caller_resolution.py
 ```
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 timeout 30 python3 -m pytest tests/test_runtime_caller_resolution.py -v 2>&1 | tail -20
 ```
 

@@ -2,7 +2,7 @@
 
 **Spec:** `docs/specs/SPEC-PROJECT-SETTINGS-BAR-ENHANCED-FIX-3.md` §2.3
 **Prompt to load:** `prompts/steelFramedCodeWriter.md`
-**Working dir:** `/home/q/projects/crabcakes`
+**Working dir:** `/path/to/projects/crabcakes`
 
 ## Task
 

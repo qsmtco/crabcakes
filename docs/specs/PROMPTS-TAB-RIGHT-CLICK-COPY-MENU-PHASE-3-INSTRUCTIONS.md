@@ -103,25 +103,25 @@ Place it alphabetically (before `test_prompts_handler.py`).
 
 ```bash
 # 1. §3.7 Prompts tab paragraph updated
-cd /home/q/projects/crabcakes && grep -n "Right-click on a prompt row opens a 2-item popover" docs/ARCHITECTURE.md
+cd /path/to/projects/crabcakes && grep -n "Right-click on a prompt row opens a 2-item popover" docs/ARCHITECTURE.md
 
 # 2. §3.7a added
-cd /home/q/projects/crabcakes && grep -n "### 3.7a Prompts Tab Right-Click Copy Menu" docs/ARCHITECTURE.md
+cd /path/to/projects/crabcakes && grep -n "### 3.7a Prompts Tab Right-Click Copy Menu" docs/ARCHITECTURE.md
 
 # 3. file inventory updated
-cd /home/q/projects/crabcakes && grep -n "left_panel.py.*974" docs/ARCHITECTURE.md
+cd /path/to/projects/crabcakes && grep -n "left_panel.py.*974" docs/ARCHITECTURE.md
 
 # 4. test inventory added
-cd /home/q/projects/crabcakes && grep -n "test_left_panel.py.*LeftPanel" docs/ARCHITECTURE.md
+cd /path/to/projects/crabcakes && grep -n "test_left_panel.py.*LeftPanel" docs/ARCHITECTURE.md
 
 # 5. test file tree updated
-cd /home/q/projects/crabcakes && grep -n "├── test_left_panel.py" docs/ARCHITECTURE.md
+cd /path/to/projects/crabcakes && grep -n "├── test_left_panel.py" docs/ARCHITECTURE.md
 
 # 6. No accidental damage to the rest of the file
-cd /home/q/projects/crabcakes && git diff --stat docs/ARCHITECTURE.md
+cd /path/to/projects/crabcakes && git diff --stat docs/ARCHITECTURE.md
 
 # 7. Markdown is valid (no broken backticks, no unmatched code fences)
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import re
 with open('docs/ARCHITECTURE.md') as f:
     text = f.read()

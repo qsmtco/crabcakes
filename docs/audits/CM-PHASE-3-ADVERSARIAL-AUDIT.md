@@ -111,7 +111,7 @@ Severity: MEDIUM
 Assumption violated: The spec's COMPLETENESS checklist and verification steps reference "tests/test_prompt_loader_budget.py" as a test file that exists and should pass. This file does not exist in the repository.
 Attack vector: If a developer follows the spec literally and runs `python3 -m pytest tests/test_prompt_loader_budget.py`, they get FileNotFoundError. This is not a regression in the code, but the spec references a test file that was never created, which creates a documentation-implementation gap.
 Reproduction:
-    cd /home/q/projects/crabcakes
+    cd /path/to/projects/crabcakes
     python3 -m pytest tests/test_prompt_loader_budget.py
     # ENOENT: no such file or directory
 Root cause: The spec references a test file for the prompt_loader budget feature (Phase CB-2), but this file was never created. The budget feature itself is implemented in utils/prompt_loader.py and is tested indirectly by other test files, but there are no direct unit tests for the budget enforcement logic.

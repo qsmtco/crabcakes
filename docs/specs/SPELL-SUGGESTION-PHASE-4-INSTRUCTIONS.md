@@ -72,7 +72,7 @@ self._main_content.set_on_input_right_click(_on_input_right_click)
 After making changes, run:
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "from ui.window import MainWindow; print('Import OK')"
 python3 -m pytest tests/test_window.py -q --tb=short 2>/dev/null || echo "No test_window.py found or failures"
 ```

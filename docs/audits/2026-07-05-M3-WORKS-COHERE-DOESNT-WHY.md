@@ -95,6 +95,6 @@ The proper fix (Phases B + C above, with new spec + adversarial audit + regressi
 
 **Files referenced:**
 - `~/.config/crabcakes/conversations/special:supervisor.json` — still contains the corrupt message
-- `/home/q/projects/crabcakes/docs/audits/2026-07-05-EMPTY-ASSISTANT-COHERE-400-READ-ONLY.md` — full diagnosis from earlier
-- `/home/q/projects/crabcakes/agent/runtime.py:2214` — write-side, still emitting empty entries
-- `/home/q/projects/crabcakes/models/conversation.py:243-260` — read-side, still serializing them
+- `/path/to/projects/crabcakes/docs/audits/2026-07-05-EMPTY-ASSISTANT-COHERE-400-READ-ONLY.md` — full diagnosis from earlier
+- `/path/to/projects/crabcakes/agent/runtime.py:2214` — write-side, still emitting empty entries
+- `/path/to/projects/crabcakes/models/conversation.py:243-260` — read-side, still serializing them

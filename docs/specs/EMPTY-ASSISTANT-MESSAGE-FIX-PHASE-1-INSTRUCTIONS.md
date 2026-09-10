@@ -1,6 +1,6 @@
 # Phase 1 Instructions — Empty-Assistant-Message Fix (Read-Side Filter)
 
-**Master spec:** `/home/q/projects/crabcakes/docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md`
+**Master spec:** `/path/to/projects/crabcakes/docs/specs/SPEC-EMPTY-ASSISTANT-MESSAGE-FIX.md`
 **Phase:** 1 of 4
 **File scope:** 1 file (`models/conversation.py`)
 **Estimated delta:** +11 lines net
@@ -118,7 +118,7 @@ Replace it with:
 ### V1. Confirm existing test still passes (proves else branch unchanged)
 
 ```
-cd /home/q/projects/crabcakes && pytest tests/test_conversation.py::TestConversationToApiMessages -v 2>&1 | tail -30
+cd /path/to/projects/crabcakes && pytest tests/test_conversation.py::TestConversationToApiMessages -v 2>&1 | tail -30
 ```
 
 Expected: all 7 existing tests pass.
@@ -126,8 +126,8 @@ Expected: all 7 existing tests pass.
 ### V2. Confirm the existing tool-calls test pattern still matches
 
 ```
-cd /home/q/projects/crabcakes && grep -n "assistant_message_with_tool_calls" tests/test_conversation.py
-cd /home/q/projects/crabcakes && sed -n '188,196p' tests/test_conversation.py
+cd /path/to/projects/crabcakes && grep -n "assistant_message_with_tool_calls" tests/test_conversation.py
+cd /path/to/projects/crabcakes && sed -n '188,196p' tests/test_conversation.py
 ```
 
 Expected: line numbers and content unchanged.
@@ -135,8 +135,8 @@ Expected: line numbers and content unchanged.
 ### V3. Confirm new import is added exactly once
 
 ```
-cd /home/q/projects/crabcakes && grep -n "^import logging" models/conversation.py
-cd /home/q/projects/crabcakes && grep -c "^import logging" models/conversation.py
+cd /path/to/projects/crabcakes && grep -n "^import logging" models/conversation.py
+cd /path/to/projects/crabcakes && grep -c "^import logging" models/conversation.py
 ```
 
 Expected: `count` = 1.
@@ -144,8 +144,8 @@ Expected: `count` = 1.
 ### V4. Confirm new logger is added exactly once and placed correctly
 
 ```
-cd /home/q/projects/crabcakes && grep -n "^_logger = logging.getLogger" models/conversation.py
-cd /home/q/projects/crabcakes && grep -c "^_logger = logging.getLogger" models/conversation.py
+cd /path/to/projects/crabcakes && grep -n "^_logger = logging.getLogger" models/conversation.py
+cd /path/to/projects/crabcakes && grep -c "^_logger = logging.getLogger" models/conversation.py
 ```
 
 Expected: `count` = 1, line between 24 and 25 (between `_DEFAULT_ENCODING_NAME` at line 23 and `_tiktoken_encoding_for` at line 26). NOT after any `class` definition.
@@ -155,7 +155,7 @@ Expected: `count` = 1, line between 24 and 25 (between `_DEFAULT_ENCODING_NAME` 
 Run this python snippet — it should print "PASS":
 
 ```python
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import sys; sys.path.insert(0, '.')
 import logging; logging.basicConfig(level=logging.WARNING)
 from models.conversation import Conversation
@@ -172,7 +172,7 @@ Expected: `PASS: [{'role': 'assistant', 'content': '[assistant returned no conte
 ### V6. Confirm the valid case is preserved (live simulation)
 
 ```python
-cd /home/q/projects/crabcakes && python3 -c "
+cd /path/to/projects/crabcakes && python3 -c "
 import sys; sys.path.insert(0, '.')
 import json
 from models.conversation import Conversation, ToolCall
@@ -192,7 +192,7 @@ Expected: `PASS:` followed by the dict showing tool_calls preserved with empty c
 ### V7. Line count delta
 
 ```
-cd /home/q/projects/crabcakes && wc -l models/conversation.py
+cd /path/to/projects/crabcakes && wc -l models/conversation.py
 ```
 
 Expected: ~369 lines (was 358; +11 net per spec).
@@ -200,8 +200,8 @@ Expected: ~369 lines (was 358; +11 net per spec).
 ### V8. Pattern sweep (must all return 0)
 
 ```
-cd /home/q/projects/crabcakes && grep -c 'add_assistant_message("", \[\])' models/conversation.py
-cd /home/q/projects/crabcakes && grep -c 'add_assistant_message(""' models/conversation.py
+cd /path/to/projects/crabcakes && grep -c 'add_assistant_message("", \[\])' models/conversation.py
+cd /path/to/projects/crabcakes && grep -c 'add_assistant_message(""' models/conversation.py
 ```
 
 Expected: both return `0` (this pattern only exists in `agent/runtime.py:2214`, which is not in scope for Phase 1).

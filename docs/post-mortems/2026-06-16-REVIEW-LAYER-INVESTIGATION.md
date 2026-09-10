@@ -22,7 +22,7 @@ The `.gitignore` is correct. The cache-commit problem flagged in MEMORY.md is re
 ### Command sequence
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 git log --oneline -20          # show recent Accept commits
 cat .gitignore                  # confirm .gitignore is correct
 ```

@@ -326,7 +326,7 @@ def set_on_get_sort_mode(self, cb):
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Module imports cleanly with all new GTK types
 python3 -c "

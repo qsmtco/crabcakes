@@ -6,8 +6,8 @@ target items: duplicate urllib.request imports, empty finally blocks, a
 shadowed variable name, and wrong return-type annotations.
 
 ## Files to Read First
-- `/home/q/projects/crabcakes/agent/runtime.py`
-- `/home/q/projects/crabcakes/docs/specs/SPEC-RUNTIME-HARDENING-AUDIT.md` (W5–W10)
+- `/path/to/projects/crabcakes/agent/runtime.py`
+- `/path/to/projects/crabcakes/docs/specs/SPEC-RUNTIME-HARDENING-AUDIT.md` (W5–W10)
 
 ## ⚠️ Important: Do These in Order
 
@@ -109,7 +109,7 @@ From `_stream_minimax_events` payload (around line 562):
 ## Step 6 — Verify
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 python3 -c "from agent.runtime import AgentRuntime; print('import ok')"
 python3 -m py_compile agent/runtime.py && echo "syntax ok"
 ```

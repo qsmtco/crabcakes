@@ -220,7 +220,7 @@ Search for "21" in handler context and update to 22.
 ## Verification
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Handler imports cleanly (no GTK)
 python3 -c "

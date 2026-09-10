@@ -600,7 +600,7 @@ Created by the user (or by setup tooling). Format:
     "filesystem": {
       "transport": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/q/projects"],
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/projects"],
       "description": "Secure file operations",
       "enabled": true
     }

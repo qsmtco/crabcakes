@@ -267,7 +267,7 @@ commit, then modify to produce `M`/`A`/etc. For rename, use
 ## Verification (run ALL of these)
 
 ```bash
-cd /home/q/projects/crabcakes
+cd /path/to/projects/crabcakes
 
 # 1. Unit tests — all green
 python3 -m pytest tests/test_file_icons.py tests/test_projects.py \

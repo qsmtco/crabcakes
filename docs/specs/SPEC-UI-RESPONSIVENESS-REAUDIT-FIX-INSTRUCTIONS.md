@@ -3,7 +3,7 @@
 **Spec:** `docs/specs/SPEC-UI-RESPONSIVENESS.md`
 **Re-audit:** 7 new bugs (1 CRITICAL, 2 MEDIUM, 4 LOW)
 
-Load steelFramedSpecWriter fresh from `/home/q/projects/crabcakes/prompts/steelFramedSpecWriter.md`. Read the spec in full. Fix all 7 bugs.
+Load steelFramedSpecWriter fresh from `/path/to/projects/crabcakes/prompts/steelFramedSpecWriter.md`. Read the spec in full. Fix all 7 bugs.
 
 ---
 
