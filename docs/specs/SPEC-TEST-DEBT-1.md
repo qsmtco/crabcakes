@@ -39,7 +39,7 @@
 | `agent/callbacks.py` — new `OnTurnStart` Protocol | `chat_render_handler.py` — `end_streaming` contract already correct |
 | `agent/runtime.py` — ctor param + `_run_loop` dispatch swap | `gateway_handler.py` — gateway path doesn't use this pipeline (grep-verified) |
 | `ui/handlers/agent_runtime_handler.py` — `_on_turn_start`/`_do_turn_start`, wiring, render-guards, dead-set deletion, comment truth-fixes | `window.py`, `models/`, `tools.py` — no wiring needed (handler wires itself in `_get_runtime`) |
-| `tests/test_agent_runtime.py` — 4 rewrites + 6 new tests | The other 38 baseline failures (later phases of this unit) |
+| `tests/test_agent_runtime.py` — 4 rewrites + 6 new + 2 updates (docstring + Protocol-count test) | The other 38 baseline failures (later phases of this unit) |
 | `docs/ARCHITECTURE.md` — §3.21m.3 + ctor signature | |
 
 **Architecture principles that apply:** callback Protocols as the runtime↔UI contract (§3.21m.3); single-chokepoint dispatch through `_dispatch`; main-thread-only GTK work via GLib.idle_add; per-turn token staleness rejection (RACE-FIX v4).
@@ -236,7 +236,7 @@ Note: the dispatch keeps `_turn_token=turn_token` so the handler can reject stal
             )
 ```
 
-**Edit I — `_do_compaction_bubble` (:1810-1812): REPLACE:**
+**Edit I — `_do_compaction_bubble` (:1810-1812): REPLACE** (note: `end_streaming` comes BEFORE `_resolve_chat_box` here — replace in place, do not reorder):
 ```python
         if self._crh is not None:
             # BUG #22 guard: tool-only turn — no empty bubble on cleanup.
@@ -246,7 +246,7 @@ Note: the dispatch keeps `_turn_token=turn_token` so the handler can reject stal
             )
 ```
 
-**Edit J — `_do_usage_warning` (:1858-1860): REPLACE** (inside the existing `if self._crh is not None:` block):
+**Edit J — `_do_usage_warning` (:1858-1860): REPLACE** (note: unlike compaction, this function resolves the chat box FIRST with an early-return if None, then calls `end_streaming` inside the `if self._crh is not None:` block — replace the `end_streaming` line IN PLACE, do not move it across the `_resolve_chat_box` boundary):
 ```python
             # BUG #22 guard: tool-only turn — no empty bubble on cleanup.
             streaming_text = self._crh.get_streaming_text(session_key) or ""
@@ -457,6 +457,8 @@ All tests below live in `TestLocalAgentDrawerEmissions` unless noted. Line numbe
 
 **Edit G — `TestDeltaCoalescing::test_empty_delta_still_reaches_main_thread` (:5695-5705):** update the DOCSTRING only (assertions unchanged, traced still-green): "(4) empty-delta bypass preserved: provider-sent empty deltas still dispatch to the main thread uncoalesced, and the empty delta still returns before accumulation. (The runtime's turn-start signal moved to on_turn_start.)"
 
+**Edit H — UPDATE `TestRuntimeStructure::test_callbacks_module_exports_protocols` (:5488) (Debugger audit BUG #1):** the test hard-codes the 9-Protocol count in two places. Add `OnTurnStart` to BOTH the `from agent.callbacks import (...)` list and the `for cls in (...)` tuple (alphabetical position after `OnTextDelta`), and update the docstring "all 9 callback Protocols" → "all 10 callback Protocols". The import list's `AgentRuntimeCallbacks` entry stays last.
+
 ### 2.5 `docs/ARCHITECTURE.md`
 
 - **:1797** (runtime ctor signature): add `on_turn_start` to the documented parameter list.
@@ -490,7 +492,7 @@ All tests below live in `TestLocalAgentDrawerEmissions` unless noted. Line numbe
 | `agent/callbacks.py` | +OnTurnStart, docstring fixes | +28/−3 | Low |
 | `agent/runtime.py` | ctor + dispatch swap | +10/−8 | Medium (hot path) |
 | `ui/handlers/agent_runtime_handler.py` | +2 methods, wiring, 3 render-guards, dead-set deletion, comment truth-fixes | +95/−55 | Medium |
-| `tests/test_agent_runtime.py` | 4 rewrites, 6 new, 1 docstring | +150/−60 | Low |
+| `tests/test_agent_runtime.py` | 4 rewrites, 6 new, 2 updates (docstring + Protocol-count) | +160/−60 | Low |
 | `docs/ARCHITECTURE.md` | §3.21m.3 + ctor line | +6/−4 | Low |
 
 ## 5. Implementation Order
@@ -513,7 +515,8 @@ All tests below live in `TestLocalAgentDrawerEmissions` unless noted. Line numbe
 - [ ] `TestDeltaCoalescing` 7/7 green (empty-delta bypass untouched).
 - [ ] 3 render-guard tests green, each with pasted red-first evidence.
 - [ ] 2 race-guard tests + GLib-wrapper test green.
-- [ ] Grep sweeps: `_started_turn_sessions` → ZERO matches repo-wide; `_dispatch(self._on_text_delta, session_key, ""` → ZERO matches; `on_turn_start=self._on_turn_start` present in `_get_runtime`.
+- [ ] Grep sweeps (scoped to `*.py` — historical spec/audit docs legitimately retain their references; they are project history, not live code): `_started_turn_sessions` → ZERO matches in `*.py`; `_dispatch(self._on_text_delta, session_key, ""` → ZERO matches in `*.py`; `on_turn_start=self._on_turn_start` present in `_get_runtime`.
+- [ ] `TestRuntimeStructure::test_callbacks_module_exports_protocols` green with `OnTurnStart` in the import list AND the iterate tuple (10 Protocols).
 - [ ] pyflakes: 0 undefined-name findings on the 3 touched source files.
 - [ ] No review-layer history surgery: spec'd commits only (conventional-commit messages, e.g. `fix(runtime): dedicated on_turn_start callback replaces empty-delta turn-start signal (BUG-21)`).
 - [ ] Supervisor unit-close gate: worktree full-suite baseline comparison — failure set shrinks 40 → 38, exactly the 2 closed (Supervisor runs this).
