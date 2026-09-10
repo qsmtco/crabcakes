@@ -1007,11 +1007,15 @@ class AgentRuntimeHandler:
         AgentRuntime text delta callback.
         → Start or update a streaming bubble in the UI.
 
-        AC3 Part A — producer-side coalescing. Runs on the runtime thread:
-        accumulates text immediately (per-session single producer makes this
-        race-free; GIL-atomic str assignment) and schedules at most one
-        main-thread dispatch per _delta_throttle_sec, with an unconditional
-        trailing re-schedule so the last batch is never dropped.
+        AC3 Part A — producer-side coalescing. Runs in the runtime's dispatch
+        context (in production the runtime's _dispatch already wraps this
+        callback in GLib.idle_add, so this executes on the main thread; in
+        test mode without GTK it runs on the caller's thread). Accumulates
+        text immediately and schedules at most one main-thread render
+        dispatch per _delta_throttle_sec, with an unconditional trailing
+        re-schedule so the last batch is never dropped. The win is the
+        idle_add-queue flood reduction: N deltas no longer enqueue N
+        render dispatches.
         """
         # Empty deltas bypass coalescing entirely: the runtime fires a
         # turn-start signal via _on_text_delta(sk, "") (agent/runtime.py
@@ -1071,10 +1075,13 @@ class AgentRuntimeHandler:
     def _do_text_delta(self, session_key: str, text: str = "", delta_token: object = None) -> None:
         """Main-thread portion of _on_text_delta (AC3 Part A: coalesced).
 
-        Text is accumulated on the PRODUCER thread (see _on_text_delta); this
-        dispatch renders the producer-accumulated text. The `text` parameter
-        is retained for legacy direct callers and the empty-delta turn-start
-        signal (empty `text` returns before any rendering, exactly as before).
+        Text is accumulated in the dispatch context (see _on_text_delta —
+        in production both run on the main thread via the runtime's
+        GLib.idle_add wrapper; the accumulation happens once per delta
+        instead of once per render dispatch); this dispatch renders the
+        accumulated text. The `text` parameter is retained for legacy
+        direct callers and the empty-delta turn-start signal (empty `text`
+        returns before any rendering, exactly as before).
 
         _delta_dispatch_pending is cleared on EVERY return path (finally). If
         deltas arrived while this dispatch was in flight (dirty flag), exactly
