@@ -3614,3 +3614,500 @@ class TestUpdateCardNotFound:
         # Guard must return before any widget/feed-tab work
         assert feed_handler._feed_tab.cards == []
         assert "nonexistent-card-id" not in feed_handler._cards
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  TestBackgroundPersistWriter — SPEC-UI-RESPONSIVENESS-2 §2.1 (Phase 1)
+#  The background, coalesced feed writer. Producers enqueue; one daemon
+#  thread drains with last-write-wins coalescing + a deferred-retry map.
+#
+#  Determinism strategy (spec §9): writer-behaviour tests stub
+#  `_ensure_persist_writer` so no real thread races the assertions, then
+#  drive `_drain_persist_queue()` directly. The tests that MUST exercise
+#  the real thread (restart-after-shutdown, bounded shutdown) do so with
+#  bounded joins / polls. The existing sync MockGLib is reused untouched.
+# ═══════════════════════════════════════════════════════════════════
+
+class _DeadWriterStub:
+    """A writer-thread stand-in that has already exited."""
+    def __init__(self):
+        self.joined = None
+
+    def is_alive(self):
+        return False
+
+    def join(self, timeout=None):
+        self.joined = timeout
+
+
+class _AliveWriterStub:
+    """A writer-thread stand-in that never exits (join always times out)."""
+    def __init__(self, on_join=None):
+        self.joined = None
+        self._on_join = on_join
+
+    def is_alive(self):
+        return True
+
+    def join(self, timeout=None):
+        self.joined = timeout
+        if self._on_join is not None:
+            self._on_join()
+
+
+class TestBackgroundPersistWriter:
+    """Phase 1 invariants 1-8 from the spec (interim shape — no compactions)."""
+
+    def _make_handler(self):
+        from ui.handlers.feed_handler import FeedHandler
+        h = FeedHandler(GLib=MockGLib(), on_send_to_agent=MagicMock())
+        h.set_feed_tab(MockFeedTab())
+        return h
+
+    def _seed_card(self, h, project_name="proj"):
+        """Add one card, then register its project path (so persist fires)."""
+        card = FeedCardData(
+            card_type="tool_call", source="agent", title="tool result",
+            body="", author="Coder",
+            timestamp=datetime.now(timezone.utc), project_name=project_name,
+        )
+        card_id = h.add_card(card)
+        # Registered AFTER add_card so add_card itself spawns no persist thread.
+        h._project_paths[project_name] = "/tmp/uiresp2-proj"
+        return card_id, card
+
+    @staticmethod
+    def _no_writer(h):
+        """Suppress the real writer thread so drain calls are deterministic."""
+        h._ensure_persist_writer = lambda: None
+
+    # ── Invariant 1: no disk I/O on the main-thread path ─────────────────
+
+    def test_update_card_does_no_disk_io_and_returns_fast(self, monkeypatch):
+        """update_card must not touch feed_store on the calling (main) thread.
+
+        Pre-change this is RED: update_card did a synchronous read-modify-write
+        of feed.json (measured 0.62 s on the real 13.9 MB feed).
+        """
+        import time
+        from utils import feed_store as real_feed_store
+
+        h = self._make_handler()
+        # Large in-memory fixture (the main-thread cost is the dict assignment;
+        # pre-change the cost was the full-file RMW on the SAME thread).
+        for i in range(2000):
+            h._cards[f"seed-{i}"] = FeedCardData(
+                card_type="tool_call", source="agent", title=f"seed {i}",
+                body="", author="Coder",
+                timestamp=datetime.now(timezone.utc), project_name="proj",
+            )
+        card_id, card = self._seed_card(h)
+        card.body = "updated body"
+
+        calls = []
+
+        def _slow_update(*args, **kwargs):
+            calls.append(args)
+            time.sleep(0.3)
+            return True
+
+        # Patch the SOURCE module: pre-change update_card used a function-local
+        # `from utils.feed_store import update_feed_card`, which resolves this
+        # patched attribute — so the sleeper really is hit on the main thread.
+        monkeypatch.setattr(real_feed_store, "update_feed_card", _slow_update)
+        self._no_writer(h)
+
+        t0 = time.perf_counter()
+        h.update_card(card_id, card)
+        elapsed = time.perf_counter() - t0
+
+        # Structural assertion: NO disk write happened on the caller's thread.
+        assert calls == [], "update_card must not persist on the main thread"
+        # Timing bound (design target <5 ms; 50 ms is the generous gate).
+        assert elapsed < 0.05, f"update_card took {elapsed:.3f}s (bound 0.05s)"
+        # ...the work was queued for the writer instead.
+        assert (h._project_paths["proj"], card_id) in h._persist_queue
+
+    # ── Invariant 2: coalescing + last-write-wins ────────────────────────
+
+    def test_coalescing_n_enqueues_become_one_writer_call_last_wins(self, monkeypatch):
+        h = self._make_handler()
+        card_id, _card = self._seed_card(h)
+        project_path = h._project_paths["proj"]
+        self._no_writer(h)
+
+        store = MagicMock()
+        store.update_feed_card.return_value = True
+        monkeypatch.setattr("ui.handlers.feed_handler.feed_store", store)
+
+        for i in range(7):
+            h._enqueue_card_update(project_path, card_id, {"body": f"v{i}"})
+
+        assert len(h._persist_queue) == 1, "coalesced per (project, card)"
+
+        h._drain_persist_queue()
+
+        assert store.update_feed_card.call_count == 1
+        args = store.update_feed_card.call_args[0]
+        assert args[0] == project_path
+        assert args[1] == card_id
+        assert args[2] == {"body": "v6"}, "final state must be the LAST update"
+        assert h._persist_queue == {}
+
+    # ── Invariant 3: a failing write never strands siblings ──────────────
+
+    def test_poison_entry_does_not_strand_siblings(self, monkeypatch):
+        h = self._make_handler()
+        good_id, _card = self._seed_card(h)
+        project_path = h._project_paths["proj"]
+        self._no_writer(h)
+
+        seen = []
+
+        def _update(p, cid, updates):
+            if cid == "poison":
+                raise RuntimeError("poison write failed")
+            seen.append(cid)
+            return True
+
+        store = MagicMock()
+        store.update_feed_card.side_effect = _update
+        monkeypatch.setattr("ui.handlers.feed_handler.feed_store", store)
+
+        h._enqueue_card_update(project_path, "poison", {"body": "bad"})
+        h._enqueue_card_update(project_path, good_id, {"body": "good"})
+        h._drain_persist_queue()
+
+        assert good_id in seen, "the good entry must persist in the SAME pass"
+        assert seen == [good_id]
+        # The poison entry was retried into the deferred map, not dropped.
+        assert (project_path, "poison") in h._persist_deferred
+
+    # ── Invariant 4: retry cap 3 → ERROR drop ────────────────────────────
+
+    def test_update_retry_cap_drops_with_error(self, monkeypatch, caplog):
+        import logging
+
+        h = self._make_handler()
+        card_id, _card = self._seed_card(h)
+        project_path = h._project_paths["proj"]
+        self._no_writer(h)
+        key = (project_path, card_id)
+
+        store = MagicMock()
+        store.update_feed_card.side_effect = RuntimeError("nope")
+        monkeypatch.setattr("ui.handlers.feed_handler.feed_store", store)
+
+        h._enqueue_card_update(project_path, card_id, {"body": "x"})
+        with caplog.at_level(logging.INFO, logger="ui.handlers.feed_handler"):
+            h._drain_persist_queue()
+            assert h._persist_deferred[key][1] == 1, "first failure -> tries=1"
+            h._drain_persist_queue()
+            assert h._persist_deferred[key][1] == 2
+            h._drain_persist_queue()
+        assert key not in h._persist_deferred, "3rd failure must drop the entry"
+        assert any(
+            r.levelno >= logging.ERROR and "after 3 failures" in r.getMessage()
+            for r in caplog.records
+        ), f"expected cap ERROR, got {[r.getMessage() for r in caplog.records]}"
+
+    # ── Invariant 2b: fresh enqueue ⇒ fresh retry budget ─────────────────
+
+    def test_fresh_enqueue_discards_deferred_and_restores_budget(self, monkeypatch):
+        h = self._make_handler()
+        card_id, _card = self._seed_card(h)
+        project_path = h._project_paths["proj"]
+        self._no_writer(h)
+        key = (project_path, card_id)
+
+        store = MagicMock()
+        store.update_feed_card.side_effect = RuntimeError("nope")
+        monkeypatch.setattr("ui.handlers.feed_handler.feed_store", store)
+
+        h._enqueue_card_update(project_path, card_id, {"body": "v1"})
+        h._drain_persist_queue()
+        h._drain_persist_queue()
+        assert h._persist_deferred[key][1] == 2
+
+        # A fresh enqueue for the same key DISCARDS the deferred entry.
+        h._enqueue_card_update(project_path, card_id, {"body": "v2"})
+        assert key not in h._persist_deferred, "fresh wins, structurally"
+
+        h._drain_persist_queue()
+        assert h._persist_deferred[key][1] == 1, "fresh budget — no comparison"
+        assert h._persist_deferred[key][0] == {"body": "v2"}
+
+    # ── Invariant 2c: deferred retries IN PLACE (tries preserved) ────────
+
+    def test_deferred_entry_retries_in_place_with_tries_preserved(self, monkeypatch):
+        h = self._make_handler()
+        card_id, _card = self._seed_card(h)
+        project_path = h._project_paths["proj"]
+        self._no_writer(h)
+        key = (project_path, card_id)
+
+        store = MagicMock()
+        store.update_feed_card.side_effect = RuntimeError("nope")
+        monkeypatch.setattr("ui.handlers.feed_handler.feed_store", store)
+
+        h._enqueue_card_update(project_path, card_id, {"body": "v1"})
+        h._drain_persist_queue()
+        payload_before = h._persist_deferred[key][0]
+
+        h._drain_persist_queue()
+
+        assert h._persist_deferred[key][1] == 2, "tries increments across passes"
+        assert h._persist_deferred[key][0] is payload_before, (
+            "the payload must be retried in place — never re-merged/re-copied"
+        )
+
+    # ── Invariant 5: shutdown is bounded + drop-during-stop ──────────────
+
+    def test_shutdown_bounds_the_writer_thread(self, tmp_path, monkeypatch):
+        import time
+
+        h = self._make_handler()
+        card_id, _card = self._seed_card(h)
+        h._project_paths["proj"] = str(tmp_path)
+        (tmp_path / ".crabcakes").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".crabcakes" / "feed.json").write_text("[]")
+
+        store = MagicMock()
+        store.update_feed_card.return_value = True
+        monkeypatch.setattr("ui.handlers.feed_handler.feed_store", store)
+
+        h._enqueue_card_update(str(tmp_path), card_id, {"body": "x"})
+        writer = h._persist_writer
+        assert writer is not None and writer.is_alive()
+
+        t0 = time.perf_counter()
+        h.shutdown_persist_writer()
+        elapsed = time.perf_counter() - t0
+
+        assert not writer.is_alive(), "writer must exit within the bounded join"
+        assert elapsed < 5.0, f"shutdown took {elapsed:.2f}s (must be bounded)"
+        assert h._persist_stop is True
+        # ≤1 drain pass after the stop signal: the queue is empty or dropped.
+        assert h._persist_queue == {}
+
+    def test_join_timeout_scales_with_feed_size(self, tmp_path):
+        h = self._make_handler()
+        h._project_paths["proj"] = str(tmp_path)
+        (tmp_path / ".crabcakes").mkdir(parents=True, exist_ok=True)
+        feed_file = tmp_path / ".crabcakes" / "feed.json"
+        feed_file.write_text("x" * 2_000_000)  # ~2 MB
+
+        stub = _DeadWriterStub()
+        h._persist_writer = stub
+
+        h.shutdown_persist_writer()
+
+        size = feed_file.stat().st_size
+        assert stub.joined == min(60.0, 5.0 + size / 1_000_000), (
+            "join timeout must scale with the feed's size"
+        )
+
+    def test_drop_during_stop_is_logged_as_error(self, monkeypatch, caplog):
+        import logging
+
+        h = self._make_handler()
+        card_id, _card = self._seed_card(h)
+        project_path = h._project_paths["proj"]
+        self._no_writer(h)
+
+        store = MagicMock()
+        store.update_feed_card.side_effect = RuntimeError("nope")
+        monkeypatch.setattr("ui.handlers.feed_handler.feed_store", store)
+
+        h._enqueue_card_update(project_path, card_id, {"body": "x"})
+        h._persist_stop = True  # simulate the stop signal being observed
+
+        with caplog.at_level(logging.INFO, logger="ui.handlers.feed_handler"):
+            h._drain_persist_queue()
+
+        assert (project_path, card_id) not in h._persist_deferred, (
+            "failures during stop DROP — they are never deferred"
+        )
+        assert any(
+            r.levelno >= logging.ERROR and "during shutdown" in r.getMessage()
+            for r in caplog.records
+        ), f"expected drop-during-stop ERROR, got {[r.getMessage() for r in caplog.records]}"
+
+    # ── Invariant 5b: three-way exit logging (spec §10 build note 1) ─────
+
+    def test_exit_logging_is_three_way(self, caplog):
+        import logging
+
+        # (a) undrained entries → ERROR
+        h = self._make_handler()
+        h._persist_queue[("proj", "c1")] = {"body": "x"}
+        h._persist_writer = _DeadWriterStub()
+        with caplog.at_level(logging.INFO, logger="ui.handlers.feed_handler"):
+            h.shutdown_persist_writer()
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("undrained entries" in m for m in messages), messages
+
+        # (b) a straggler enqueued DURING the join → WARNING; the undrained
+        #     ERROR covers the total (build-time note 1 — accepted conflation).
+        h2 = self._make_handler()
+        h2._persist_queue[("proj", "c1")] = {"body": "x"}
+        h2._persist_writer = _AliveWriterStub(
+            on_join=lambda: h2._persist_queue.__setitem__(("proj", "c2"), {"body": "y"})
+        )
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="ui.handlers.feed_handler"):
+            h2.shutdown_persist_writer()
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("stragglers" in m for m in messages), messages
+        assert any("undrained entries" in m for m in messages), messages
+
+        # (c) queue empty but the writer is still alive → WARNING
+        h3 = self._make_handler()
+        h3._persist_writer = _AliveWriterStub()
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="ui.handlers.feed_handler"):
+            h3.shutdown_persist_writer()
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("exit not observed" in m for m in messages), messages
+
+    # ── Invariant 6: close-then-reopen ──────────────────────────────────
+
+    def test_new_writer_generation_resets_deferred_tries(self, monkeypatch):
+        h = self._make_handler()
+        h._persist_writer = _DeadWriterStub()  # a prior generation that exited
+        h._persist_deferred[("proj", "card")] = ({"body": "keep"}, 2)
+
+        store = MagicMock()
+        store.update_feed_card.return_value = True
+        monkeypatch.setattr("ui.handlers.feed_handler.feed_store", store)
+
+        h._ensure_persist_writer()
+
+        assert h._persist_deferred[("proj", "card")][1] == 0, (
+            "a new writer generation resets tries"
+        )
+        assert h._persist_deferred[("proj", "card")][0] == {"body": "keep"}, (
+            "payloads are kept across the reset"
+        )
+        assert h._persist_writer is not None
+        h.shutdown_persist_writer()
+
+    def test_enqueue_after_shutdown_restarts_writer_and_strands_nothing(self, monkeypatch):
+        import time
+
+        h = self._make_handler()
+        card_id, _card = self._seed_card(h)
+        project_path = h._project_paths["proj"]
+
+        store = MagicMock()
+        store.update_feed_card.return_value = True
+        monkeypatch.setattr("ui.handlers.feed_handler.feed_store", store)
+
+        h._enqueue_card_update(project_path, card_id, {"body": "v1"})
+        first = h._persist_writer
+        assert first is not None and first.is_alive()
+
+        h.shutdown_persist_writer()
+        deadline = time.monotonic() + 3.0
+        while first.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not first.is_alive()
+        assert h._persist_stop is True
+
+        h._enqueue_card_update(project_path, card_id, {"body": "v2"})
+        assert h._persist_writer is not first, "a new generation must start"
+        assert h._persist_stop is False, "the stop flag is cleared before the liveness check"
+
+        deadline = time.monotonic() + 3.0
+        while h._persist_queue and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert h._persist_queue == {}, "the new entry must not be stranded"
+        assert store.update_feed_card.called
+
+        h.shutdown_persist_writer()
+
+    # ── Invariant 8: tri-state None (card gone) → INFO drop ─────────────
+
+    def test_none_return_is_logged_and_dropped_never_deferred(self, monkeypatch, caplog):
+        import logging
+
+        h = self._make_handler()
+        card_id, _card = self._seed_card(h)
+        project_path = h._project_paths["proj"]
+        self._no_writer(h)
+
+        store = MagicMock()
+        store.update_feed_card.return_value = None  # card gone (legacy path)
+        monkeypatch.setattr("ui.handlers.feed_handler.feed_store", store)
+
+        h._enqueue_card_update(project_path, card_id, {"body": "x"})
+        with caplog.at_level(logging.INFO, logger="ui.handlers.feed_handler"):
+            h._drain_persist_queue()
+
+        assert (project_path, card_id) not in h._persist_deferred, (
+            "retrying a pruned card is futile — None must be dropped"
+        )
+        assert h._persist_queue == {}
+        assert any(
+            r.levelno == logging.INFO and "no longer exists" in r.getMessage()
+            for r in caplog.records
+        ), f"expected INFO drop, got {[r.getMessage() for r in caplog.records]}"
+
+    # ── Latency: persisted ≤0.6 s after enqueue (steady state) ──────────
+
+    def test_persisted_within_600ms_of_enqueue(self, monkeypatch):
+        """Steady-state bound: the writer drains an enqueue within 0.6 s."""
+        import time
+
+        h = self._make_handler()
+        card_id, _card = self._seed_card(h)
+        project_path = h._project_paths["proj"]
+
+        persisted = []
+        store = MagicMock()
+
+        def _update(p, c, u):
+            persisted.append((p, c))
+            return True
+
+        store.update_feed_card.side_effect = _update
+        monkeypatch.setattr("ui.handlers.feed_handler.feed_store", store)
+
+        t0 = time.perf_counter()
+        h._enqueue_card_update(project_path, card_id, {"body": "v"})
+        deadline = t0 + 0.6
+        while not persisted and time.perf_counter() < deadline:
+            time.sleep(0.005)
+        elapsed = time.perf_counter() - t0
+
+        assert persisted == [(project_path, card_id)], "not drained within 0.6 s"
+        assert elapsed < 0.6, f"persist took {elapsed:.3f}s (bound 0.6s)"
+        assert h._persist_queue == {}
+
+        h.shutdown_persist_writer()
+
+    # ── Malformed queue entries ─────────────────────────────────────────
+
+    def test_malformed_queue_entry_dropped_with_warning(self, monkeypatch, caplog):
+        import logging
+
+        h = self._make_handler()
+        self._no_writer(h)
+
+        store = MagicMock()
+        store.update_feed_card.return_value = True
+        monkeypatch.setattr("ui.handlers.feed_handler.feed_store", store)
+
+        h._persist_queue[("proj", "")] = {"body": "orphan"}
+        h._persist_queue[("", "card")] = {"body": "orphan"}
+
+        with caplog.at_level(logging.INFO, logger="ui.handlers.feed_handler"):
+            h._drain_persist_queue()
+
+        assert store.update_feed_card.call_count == 0, "malformed entries never persist"
+        assert h._persist_queue == {}
+        warnings = [
+            r for r in caplog.records if "malformed queue entry" in r.getMessage()
+        ]
+        assert len(warnings) == 2
+        assert all(r.levelno == logging.WARNING for r in warnings)

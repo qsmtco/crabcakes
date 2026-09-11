@@ -65,6 +65,11 @@ class MainWindow(Gtk.ApplicationWindow):
         # Connect realize signal — set_icon_list requires a valid surface
         self.connect("realize", self._on_realize)
 
+        # SPEC-UI-RESPONSIVENESS-2 Phase 1: flush the background feed writer
+        # before the window destroys. No other close-request handler exists on
+        # MainWindow (the ones in views/ belong to separate windows).
+        self.connect("close-request", self._on_close_request)
+
         # Chat handler — owns message sending, fan-out, and response routing (Phase 1)
         self._chat_handler = None
         # Gateway handler — owns GatewayClient + AgentManager (Phase 2)
@@ -100,6 +105,14 @@ class MainWindow(Gtk.ApplicationWindow):
 
         self._build()
         self._setup_keyboard_shortcuts()
+
+    def _on_close_request(self, *args) -> bool:
+        """Flush the background feed writer before the window destroys."""
+        try:
+            self._feed_handler.shutdown_persist_writer()
+        except Exception:
+            logger.exception("close-request: feed writer shutdown failed")
+        return False  # allow default close handling
 
     def _build(self):
         """Composition root — all handler and view wiring lives here.
@@ -599,6 +612,10 @@ class MainWindow(Gtk.ApplicationWindow):
                 self._input_toolbar_handler.set_project_path(None),
                 self._prompts_handler.load_prompts(),
                 self._left_panel.refresh_prompts(),
+                # SPEC-UI-RESPONSIVENESS-2 Phase 1: flush the background feed
+                # writer on project close (appended last so a failure here can
+                # never skip the pre-existing lifecycle cleanup above).
+                self._feed_handler.shutdown_persist_writer(),
             )
         )
         self._project_handler.set_on_members_changed(

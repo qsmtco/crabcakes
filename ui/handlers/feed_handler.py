@@ -9,6 +9,7 @@ from __future__ import annotations
 # No GTK calls from background threads — always via GLib.idle_add().
 
 import logging
+import os
 import re
 from typing import TYPE_CHECKING, Callable
 import threading
@@ -80,6 +81,19 @@ class FeedHandler:
         self._loading = False
         # Protects all shared dicts from concurrent access across threads
         self._lock = threading.Lock()
+
+        # ── Background feed persistence (SPEC-UI-RESPONSIVENESS-2 Phase 1) ──
+        # One writer thread per handler. Producers enqueue (project_path,
+        # card_id, updates); the dict coalesces per (project, card). Failed
+        # writes move to _persist_deferred (retry cap); a FRESH enqueue for
+        # the same key discards the deferred entry (new payload, fresh
+        # budget).
+        self._persist_queue: dict[tuple[str, str], dict] = {}
+        self._persist_deferred: dict[tuple[str, str], tuple[dict, int]] = {}
+        self._persist_queue_lock = threading.Lock()
+        self._persist_wakeup = threading.Event()
+        self._persist_writer: threading.Thread | None = None
+        self._persist_stop = False
 
         # Lazy-load backlog: older cards not yet rendered.
         # Populated by on_project_opened() when total cards > PAGE_SIZE.
@@ -1009,15 +1023,15 @@ class FeedHandler:
         with self._lock:
             self._card_widgets[card_id] = new_widget
 
-        # Persist to feed_store (update_feed_card updates JSON)
+        # Phase 1: persist off the main thread (was a synchronous 13.9 MB
+        # read-modify-write on the GTK main thread — measured 0.62 s per tool
+        # result). Coalesced per (project, card); last-write-wins.
         project_path = self._project_paths.get(card_data.project_name, "")
         if project_path:
-            from utils.feed_store import update_feed_card
-            updates = {
+            self._enqueue_card_update(project_path, card_id, {
                 "body": card_data.body,
                 "metadata": card_data.metadata,
-            }
-            update_feed_card(project_path, card_id, updates)
+            })
 
         # Replace widget in FeedTab on main thread
         _card_id = card_id
@@ -1038,6 +1052,233 @@ class FeedHandler:
                 self._schedule_smart_scroll()
 
         self._GLib.idle_add(_replace)
+
+    # ─────────────────────────────────────────────────────────────────
+    # Background feed persistence (SPEC-UI-RESPONSIVENESS-2 Phase 1)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _ensure_persist_writer(self) -> None:
+        """Lazily (re)start the background feed writer thread.
+
+        Clears the stop flag BEFORE the liveness check so an enqueue that
+        races a shutdown never strands the entry. When a NEW thread is
+        started, deferred retries keep their payloads but reset tries to 0
+        (a new writer generation = a fresh retry budget; the reset happens
+        per new-thread-start — any prior exit: stop or crash — NOT per
+        close/reopen cycle).
+        """
+        self._persist_stop = False
+        w = self._persist_writer
+        if w is not None and w.is_alive():
+            return
+        with self._persist_queue_lock:
+            self._persist_deferred = {
+                k: (payload, 0) for k, (payload, _t) in self._persist_deferred.items()
+            }
+        self._persist_writer = threading.Thread(
+            target=self._persist_loop, name="crabcakes-feed-writer", daemon=True
+        )
+        self._persist_writer.start()
+
+    def _enqueue_card_update(self, project_path: str, card_id: str, updates: dict) -> None:
+        """Queue a card update for background persistence. Non-blocking.
+
+        Contract: callers MUST pass the FULL current metadata (and body).
+        Coalescing merges per top-level key via dict.update — a partial
+        second update DROPS omitted keys (correct only for full-state
+        payloads like update_card's). metadata is copied one level deep; a
+        non-dict metadata value is dropped with a WARNING (never journaled).
+        A fresh enqueue DISCARDS any deferred entry for the same key — the
+        fresh payload supersedes the old retry entirely (fresh budget).
+        """
+        if not project_path or not card_id:
+            return
+        payload = dict(updates)
+        if "metadata" in payload:
+            if isinstance(payload["metadata"], dict):
+                payload["metadata"] = dict(payload["metadata"])
+            else:
+                _logger.warning(
+                    "enqueue: non-dict metadata for card %s dropped", card_id
+                )
+                payload.pop("metadata")
+        with self._persist_queue_lock:
+            key = (project_path, card_id)
+            self._persist_deferred.pop(key, None)   # fresh wins, structurally
+            pending = self._persist_queue.get(key)
+            if pending is None:
+                self._persist_queue[key] = payload
+            else:
+                pending.update(payload)
+        self._ensure_persist_writer()
+        self._persist_wakeup.set()
+
+    def _persist_loop(self) -> None:
+        """Writer main loop. Stop-check FIRST; drain-before-exit; bounded.
+
+        Shutdown bound: once the stop flag is observed, at most one more
+        drain pass runs; failures during that pass DROP with ERROR (no
+        deferral), so the writer exits within one pass of the stop signal.
+        """
+        while True:
+            if self._persist_stop:
+                with self._persist_queue_lock:
+                    drained = (
+                        not self._persist_queue
+                        and not self._persist_deferred
+                    )
+                if drained:
+                    return
+            self._persist_wakeup.wait(timeout=0.5)
+            self._persist_wakeup.clear()
+            self._drain_persist_queue()
+            # loop: stop-check at top re-examines after the drain
+
+    def _drain_persist_queue(self) -> None:
+        """One full drain pass: deferred entries, then the queue.
+
+        Deferred entries are attempted IN PLACE (never moved to the queue —
+        no re-merge, no counter reset, audit r5 #2/#3). A queue entry's
+        first failure enters deferred with tries=1 (fresh budget by
+        construction — enqueue always pops any deferred entry for the key,
+        so deferred and queue entries for one key are mutually exclusive).
+        Never raises: the except blocks only log and do dict ops under the
+        queue lock.
+
+        Phase 1 interim shape: the spec's §2.1.2 draft additionally drains a
+        compactions list first; that machinery arrives with Phase 3.
+        """
+        # ── deferred updates: attempted in place ─────────────────────────
+        with self._persist_queue_lock:
+            deferred_items = list(self._persist_deferred.items())
+        for key, (payload, tries) in deferred_items:
+            project_path, card_id = key
+            try:
+                ok = feed_store.update_feed_card(project_path, card_id, payload)
+                if ok is False:
+                    raise RuntimeError(
+                        "update_feed_card returned False (append+legacy failed)"
+                    )
+                # success — remove OUR entry only (a newer entry may exist)
+                with self._persist_queue_lock:
+                    cur = self._persist_deferred.get(key)
+                    if cur is not None and cur[0] is payload:
+                        del self._persist_deferred[key]
+            except Exception:  # noqa: BLE001
+                _logger.exception("persist: deferred update failed (%r)", key)
+                with self._persist_queue_lock:
+                    cur = self._persist_deferred.get(key)
+                    if cur is None:
+                        # a fresh enqueue superseded us — drop the stale retry
+                        pass
+                    elif cur[0] is not payload:
+                        # a newer failure already replaced us — leave it
+                        pass
+                    elif self._persist_stop:
+                        _logger.error(
+                            "persist: dropping deferred update during shutdown (%r)",
+                            key,
+                        )
+                        del self._persist_deferred[key]
+                    elif tries + 1 >= 3:
+                        _logger.error(
+                            "persist: dropping update for %r after %d failures",
+                            key, tries + 1,
+                        )
+                        del self._persist_deferred[key]
+                    else:
+                        self._persist_deferred[key] = (payload, tries + 1)
+
+        # ── queue updates ────────────────────────────────────────────────
+        while True:
+            task = None
+            with self._persist_queue_lock:
+                if not self._persist_queue:
+                    break
+                key, updates = self._persist_queue.popitem()
+                task = (key, updates)
+            project_path, card_id = key
+            if not project_path or not card_id:
+                _logger.warning(
+                    "persist: dropping malformed queue entry for %r", card_id
+                )
+                continue
+            try:
+                ok = feed_store.update_feed_card(project_path, card_id, updates)
+                if ok is False:
+                    raise RuntimeError(
+                        "update_feed_card returned False (append+legacy failed)"
+                    )
+                if ok is None:
+                    # Legacy path: card gone (pruned between enqueue and
+                    # drain). Retrying is futile — drop with INFO.
+                    _logger.info(
+                        "persist: card %s no longer exists in %s; "
+                        "update dropped (pruned?)", card_id, project_path,
+                    )
+                    continue
+            except Exception:  # noqa: BLE001 — writer thread must never die
+                _logger.exception("persist: update task failed (%r)", task)
+                if self._persist_stop:
+                    _logger.error(
+                        "persist: dropping failed update during shutdown (%r)",
+                        key,
+                    )
+                else:
+                    # first failure of THIS payload: fresh budget (any prior
+                    # deferred entry was popped by the enqueue that queued it)
+                    with self._persist_queue_lock:
+                        self._persist_deferred[key] = (updates, 1)
+
+    def shutdown_persist_writer(self) -> None:
+        """Flush and stop the writer. Safe to call multiple times.
+
+        Join timeout scales with the feed's size (a 13.9 MB compact can
+        exceed a flat 5 s): min(60.0, 5.0 + size_mb). Exit logging
+        distinguishes three conditions (audit r5 #4): undrained entries
+        (ERROR), a straggler enqueued during shutdown (WARNING — it will
+        be drained by the still-alive writer or the next generation), and
+        exit not observed though the queue is empty (WARNING).
+        """
+        self._persist_stop = True
+        self._persist_wakeup.set()
+        with self._persist_queue_lock:
+            queued_at_stop = (
+                len(self._persist_queue)
+                + len(self._persist_deferred)
+            )
+        if self._persist_writer is not None:
+            timeout = 5.0
+            try:
+                for path in list(self._project_paths.values()):
+                    fp = os.path.join(path, ".crabcakes", "feed.json")
+                    if os.path.isfile(fp):
+                        timeout = min(60.0, 5.0 + os.path.getsize(fp) / 1_000_000)
+                        break
+            except OSError:
+                pass
+            self._persist_writer.join(timeout=timeout)
+        with self._persist_queue_lock:
+            leftover = (
+                len(self._persist_queue)
+                + len(self._persist_deferred)
+            )
+        if leftover > queued_at_stop:
+            _logger.warning(
+                "persist shutdown: %d entries enqueued after shutdown began "
+                "(stragglers — drained by the writer or next generation)",
+                leftover - queued_at_stop,
+            )
+        if leftover > 0:
+            _logger.error(
+                "persist writer stopped with %d undrained entries "
+                "(in-flight write exceeded join timeout)", leftover,
+            )
+        elif self._persist_writer is not None and self._persist_writer.is_alive():
+            _logger.warning(
+                "persist writer still draining at join timeout; queue is empty "
+                "— exit not observed, but entries were drained",
+            )
 
     def get_cards_for_project(self, project_name: str) -> list[FeedCardData]:
         """Get all cards for a project, newest first."""
@@ -1427,8 +1668,8 @@ class FeedHandler:
                 if result_commit.success:
                     card.accepted = True
                     card.metadata["project_path"] = project_path
-                    # Persist to feed.json
-                    feed_store.update_feed_card(project_path, card_id, {"accepted": True})
+                    # Persist to feed.json (Phase 1: via the background writer)
+                    self._enqueue_card_update(project_path, card_id, {"accepted": True})
                     # Update visual on main thread
                     def _mark():
                         self._update_card_visual(card_id, accepted=True)
@@ -1488,8 +1729,8 @@ class FeedHandler:
                     card.accepted = False
                     card.metadata["project_path"] = project_path
                     self._update_card_visual(card_id, accepted=False)
-                    # Persist to feed.json
-                    feed_store.update_feed_card(project_path, card_id, {"accepted": False})
+                    # Persist to feed.json (Phase 1: via the background writer)
+                    self._enqueue_card_update(project_path, card_id, {"accepted": False})
                     # Notify agent
                     msg = f"[PM] Rejected change: {card.title}"
                     self._on_send_to_agent(f"project:{card.project_name}", msg)
