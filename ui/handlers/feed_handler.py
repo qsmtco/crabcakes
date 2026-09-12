@@ -1325,7 +1325,7 @@ class FeedHandler:
             body=f"{pruned} oldest cards pruned (window {window})",
             author="system",
             timestamp=datetime.now(timezone.utc),
-            project_name=self._active_project_name or "",
+            project_name="",   # assigned inside _ui by reverse lookup (spec §2.3.5)
         )
 
         def _ui():

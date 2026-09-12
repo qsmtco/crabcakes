@@ -737,8 +737,17 @@ class TestSeqNumHandler:
         feed_handler.add_card(c2)
         assert c2.seq_num == 1  # fresh start after clear
 
-    def test_seq_num_on_project_open_reconstruction(self, feed_handler, mock_glib):
-        """On project open, _project_seq is rebuilt from max(loaded seq_nums)."""
+    def test_seq_num_on_project_open_reconstruction(
+        self, feed_handler, mock_glib, monkeypatch
+    ):
+        """On project open, _project_seq is rebuilt from max(loaded seq_nums).
+
+        Deterministic: on_project_opened dispatches _load_and_render on a
+        daemon thread — patched to _SyncThreading so the load completes
+        before the assertion (Debugger Phase-3 audit: the un-joined daemon
+        made this test order-dependent/flaky)."""
+        import ui.handlers.feed_handler as fh
+        monkeypatch.setattr(fh, "threading", _SyncThreading)
         ts = datetime.now(timezone.utc)
 
         # Simulate loading pre-existing cards with seq_nums 1, 2, 3
@@ -768,8 +777,15 @@ class TestSeqNumHandler:
         # After on_project_opened, _project_seq should be 3 (max of loaded)
         assert feed_handler._project_seq.get("restore-project") == 3
 
-    def test_seq_num_migration_assigns_to_cards_without_it(self, feed_handler, mock_glib):
-        """Cards loaded without seq_num get assigned seq_nums on project open."""
+    def test_seq_num_migration_assigns_to_cards_without_it(
+        self, feed_handler, mock_glib, monkeypatch
+    ):
+        """Cards loaded without seq_num get assigned seq_nums on project open.
+
+        Deterministic per the sibling test — _SyncThreading patch (the
+        un-joined daemon made assertions order-dependent/flaky)."""
+        import ui.handlers.feed_handler as fh
+        monkeypatch.setattr(fh, "threading", _SyncThreading)
         ts = datetime.now(timezone.utc)
 
         # Cards from old feed.json — no seq_num field

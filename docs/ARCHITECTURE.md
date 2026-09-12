@@ -165,7 +165,7 @@ crabcakes/
 │   │   ├── input_toolbar_handler.py # ~395 lines — InputToolbarHandler — find/replace, spell check, word count logic
 │   │   ├── agent_builder_handler.py # ~199 lines — AgentBuilderHandler — agent create/edit form + delete_agent_with_confirmation() (Phase 5)
 │   │   ├── agent_command_handler.py # AgentCommandHandler — agent response slash-command parser (Phase 6.2)
-│   │   ├── feed_handler.py        # ~2266 lines — FeedHandler — feed card lifecycle, background persist writer, compaction + prune surfacing (SPEC-UI-RESPONSIVENESS-2 P1/P3)
+│   │   ├── feed_handler.py        # ~2276 lines — FeedHandler — feed card lifecycle, background persist writer, compaction + prune surfacing (SPEC-UI-RESPONSIVENESS-2 P1/P3)
 │   │   ├── session_handler.py     # ~164 lines — SessionHandler — session switching commands (Phase 7)
 │   │   ├── connection_sync_handler.py  # post-connect wiring (Phase 3a extraction)
 │   │   ├── forward_handler.py     # 17 tests (Phase 3b extraction)
@@ -4453,7 +4453,7 @@ crabcakes/
 │   │   ├── command_handler.py    # ~623 lines — slash-prefix command parser (Phase 7)
 │   │   ├── connection_sync_handler.py # ~234 lines — post-connect wiring (Phase 3a)
 │   │   ├── crabwatch_handler.py  # ~364 lines — CrabWatchHandler filesystem watcher (Phase 5)
-│   │   ├── feed_handler.py       # ~2266 lines — FeedHandler — feed card lifecycle, background persist writer, compaction + prune surfacing (SPEC-UI-RESPONSIVENESS-2 P1/P3)
+│   │   ├── feed_handler.py       # ~2276 lines — FeedHandler — feed card lifecycle, background persist writer, compaction + prune surfacing (SPEC-UI-RESPONSIVENESS-2 P1/P3)
 │   │   ├── forward_handler.py    # ~194 lines — ForwardHandler (Phase 3b)
 │   │   ├── gateway_handler.py    # ~234 lines — connect, agents, lifecycle (Phase 2)
 │   │   ├── input_toolbar_handler.py # ~485 lines — find/replace, spell check, word count
@@ -4497,7 +4497,7 @@ crabcakes/
     ├── env_security.py           # ~44 lines — get_scrubbed_env() (MED-2 / CRIT-2)
     ├── escaping.py               # ~187 lines — escape_for_pango(), xml_escape_text()
     ├── favorites.py              # ~60 lines — favorites persistence
-    ├── feed_store.py             # ~935 lines — feed JSON + update-journal persistence, compaction (SPEC-UI-RESPONSIVENESS-2 P2-P3)
+    ├── feed_store.py             # ~948 lines — feed JSON + update-journal persistence, compaction (SPEC-UI-RESPONSIVENESS-2 P2-P3)
     ├── feedback_processor.py     # ~274 lines — audit report file I/O
     ├── file_security.py          # ~36 lines — assert_secure_file() (MED-6)
     ├── git_ops.py                # ~263 lines — GitPython wrapper (Phase 7)

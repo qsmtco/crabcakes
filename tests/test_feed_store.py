@@ -1003,3 +1003,28 @@ class TestWindowPruning:
 
         assert fs.compact_feed(project_path, window=2) == 0
         assert len(load_feed(project_path)) == 10
+
+    def test_load_feed_under_100ms_at_window_default(self, project_path):
+        """Spec §6 / Phase-3 invariant 4: after one-time compaction of a
+        9,500-card feed, load_feed at the window default stays <100 ms.
+
+        Structural companion (§9 timing discipline): the loaded count must
+        equal the window exactly, so a timing flake can never mask a
+        functional break."""
+        import time as _time
+        cards = make_feed(9500)
+        save_feed(project_path, cards)
+
+        fs.compact_feed(project_path, window=fs.FEED_WINDOW_DEFAULT)
+
+        t0 = _time.perf_counter()
+        loaded = load_feed(project_path)
+        elapsed_ms = (_time.perf_counter() - t0) * 1000.0
+
+        assert len(loaded) == fs.FEED_WINDOW_DEFAULT, (
+            f"expected exactly the window after compaction, got {len(loaded)}"
+        )
+        assert elapsed_ms < 100.0, (
+            f"load_feed took {elapsed_ms:.1f} ms at the window default "
+            f"(spec §6 bound: 100 ms)"
+        )
