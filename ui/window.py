@@ -680,6 +680,9 @@ class MainWindow(Gtk.ApplicationWindow):
         self._command_handler.set_special_agents(self._agent_runtime_handler.get_special_agents())
         # Wire ReviewHandler into AgentRuntimeHandler (deferred to avoid circular dep in _build order)
         self._agent_runtime_handler.set_review_handler(self._review_handler)
+        # Wire FeedHandler into ReviewHandler (REVIEW-PERSIST-1: accept_changes/
+        # reject_changes persist the resolution back onto the needs_review cards).
+        self._review_handler.set_feed_handler(self._feed_handler)
         # Wire FeedHandler into AgentRuntimeHandler (Phase D: tool call feed cards)
         self._agent_runtime_handler.set_feed_handler(self._feed_handler)
         # Wire AgentRoutingTable into AgentRuntimeHandler (solo DM response routing)

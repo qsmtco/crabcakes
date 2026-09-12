@@ -273,6 +273,175 @@ class TestRejectChangesFeedCard:
         assert len(captured) == 0
 
 
+class TestReviewBarResolutionPersist:
+    """REVIEW-PERSIST-1 Edit B: accept_changes/reject_changes must persist the
+    resolution back to the ORIGINAL tool-result cards (metadata needs_review),
+    mirroring approve_exec's durable-record write. Red-first per instructions:
+    on current code the review bar resolves the git session but never touches
+    the cards, so the decisions vanish on reload.
+
+    Hermeticity: real FeedHandler with the persist writer suppressed
+    (_no_writer pattern from tests/test_feed_handler.py) — enqueue payloads
+    are asserted directly out of _persist_queue, nothing touches disk.
+    """
+
+    def _make_fh_with_needs_review_card(self):
+        """FeedHandler + one resolved-by-review tool-result card.
+
+        Uses a MagicMock GLib so add_card's idle_add work (widget build,
+        snapshot finalize) never runs — this file stays GTK-widget-free.
+        The project path is registered AFTER add_card so add_card itself
+        spawns no persist thread.
+        """
+        from models.feed_card import FeedCardData
+        from ui.handlers.feed_handler import FeedHandler
+
+        fh = FeedHandler(GLib=MagicMock(), on_send_to_agent=MagicMock())
+        fh._ensure_persist_writer = lambda: None  # _no_writer pattern
+        card = FeedCardData(
+            card_type="agent_action", source="agent",
+            title="Coder is writing src/main.py", body="done",
+            author="Coder", timestamp=datetime.now(timezone.utc),
+            project_name="testproject", file_path="src/main.py",
+            metadata={"tool_name": "write_file", "status": "complete",
+                      "needs_review": True},
+        )
+        card_id = fh.add_card(card)
+        fh._project_paths["testproject"] = "/tmp/testproject"
+        return fh, card_id, card
+
+    def _enqueue_for(self, fh, project_path, card_id):
+        """The enqueued update payload for (project_path, card_id), or None."""
+        return fh._persist_queue.get((project_path, card_id))
+
+    @patch("ui.handlers.review_handler.git_ops")
+    def test_review_bar_resolution_persists_decision(self, mock_git_ops):
+        """Review-bar accept → the ORIGINAL card's decision is enqueued.
+
+        Debugger F1-audit BUG #1 suggested test. Asserts the enqueue payload
+        itself (the durable record), not just the in-memory mutation.
+        """
+        handler = _make_handler()
+        fh, card_id, card = self._make_fh_with_needs_review_card()
+        handler.set_feed_handler(fh)
+        _setup_active_session(handler)
+
+        mock_git_ops.stage_all.return_value = MockGitResult(success=True)
+        mock_git_ops.commit.return_value = MockGitResult(
+            success=True, stdout="[main abc123d] accepted", sha="abc123def456"
+        )
+        import sys
+        mock_git_module = MagicMock()
+        mock_diff = MagicMock()
+        mock_diff.a_path = "src/main.py"
+        mock_diff.b_path = None
+        mock_repo = MagicMock()
+        mock_repo.index.diff.return_value = [mock_diff]
+        mock_git_module.Repo.return_value = mock_repo
+        with patch.dict(sys.modules, {"git": mock_git_module}):
+            handler.accept_changes("testproject", "approved")
+
+        project_path = fh._project_paths["testproject"]
+        assert _wait_until(
+            lambda: self._enqueue_for(fh, project_path, card_id) is not None
+        ), "review-bar accept never enqueued the decision on the original card"
+
+        updates = self._enqueue_for(fh, project_path, card_id)
+        assert updates.get("accepted") is True, (
+            f"durable decision missing from enqueue payload: {updates!r}"
+        )
+        assert "needs_review" not in updates["metadata"], (
+            f"resolved card still flagged needs_review in payload: {updates!r}"
+        )
+        assert updates["metadata"].get("status") == "approved", (
+            f"resolution status not mirrored from approve_exec: {updates!r}"
+        )
+        # In-memory agreement (approve_exec parity)
+        assert card.accepted is True
+        assert card.metadata.get("needs_review") is None
+
+    @patch("ui.handlers.review_handler.git_ops")
+    def test_review_bar_reject_clears_needs_review(self, mock_git_ops):
+        """Review-bar reject → needs_review cleared AND persist enqueued."""
+        handler = _make_handler()
+        fh, card_id, card = self._make_fh_with_needs_review_card()
+        handler.set_feed_handler(fh)
+        _setup_active_session(handler)
+
+        mock_git_ops.checkout_paths.return_value = MockGitResult(
+            success=True, stdout="1 file changed", sha="abc123def456"
+        )
+        handler.reject_changes("testproject", "bad code")
+
+        project_path = fh._project_paths["testproject"]
+        assert _wait_until(
+            lambda: self._enqueue_for(fh, project_path, card_id) is not None
+        ), "review-bar reject never enqueued the decision on the original card"
+
+        updates = self._enqueue_for(fh, project_path, card_id)
+        assert updates.get("accepted") is False, (
+            f"durable decision missing from enqueue payload: {updates!r}"
+        )
+        assert "needs_review" not in updates["metadata"]
+        assert updates["metadata"].get("status") == "denied"
+        assert card.metadata.get("needs_review") is None, (
+            "needs_review must be cleared from metadata after resolution"
+        )
+        assert card.accepted is False
+
+    @patch("ui.handlers.review_handler.git_ops")
+    def test_accept_omits_accepted_when_undecided(self, mock_git_ops):
+        """Review-bar accept must not stamp decisions on unrelated cards.
+
+        The resolution sweep targets needs_review cards ONLY: a pending card
+        with no decision keeps accepted=None, keeps its metadata, and is never
+        enqueued (F1 parity: never write None — an undecided card is omitted
+        from the sweep entirely, branch-independent of which persist path
+        fires).
+        """
+        from models.feed_card import FeedCardData
+
+        handler = _make_handler()
+        fh, card_id, _card = self._make_fh_with_needs_review_card()
+        undecided = FeedCardData(
+            card_type="agent_action", source="agent",
+            title="Coder is reading docs/x.md", body="ok",
+            author="Coder", timestamp=datetime.now(timezone.utc),
+            project_name="testproject", file_path="docs/x.md",
+            metadata={"tool_name": "read_file", "status": "complete"},
+        )
+        undecided_id = fh.add_card(undecided)
+        handler.set_feed_handler(fh)
+        _setup_active_session(handler)
+
+        mock_git_ops.stage_all.return_value = MockGitResult(success=True)
+        mock_git_ops.commit.return_value = MockGitResult(
+            success=True, stdout="[main abc123d] accepted", sha="abc123def456"
+        )
+        import sys
+        mock_git_module = MagicMock()
+        mock_diff = MagicMock()
+        mock_diff.a_path = "src/main.py"
+        mock_diff.b_path = None
+        mock_repo = MagicMock()
+        mock_repo.index.diff.return_value = [mock_diff]
+        mock_git_module.Repo.return_value = mock_repo
+        with patch.dict(sys.modules, {"git": mock_git_module}):
+            handler.accept_changes("testproject", "approved")
+
+        project_path = fh._project_paths["testproject"]
+        assert _wait_until(
+            lambda: self._enqueue_for(fh, project_path, card_id) is not None
+        ), "resolution card was never enqueued (fixture precondition)"
+
+        assert undecided.accepted is None, (
+            "review-bar accept must not decide undecided cards"
+        )
+        assert self._enqueue_for(fh, project_path, undecided_id) is None, (
+            "undecided card must not be enqueued by the resolution sweep"
+        )
+
+
 class TestNoSession:
     """No card when no active review session exists."""
 

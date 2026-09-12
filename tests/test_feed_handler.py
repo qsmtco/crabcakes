@@ -3881,6 +3881,7 @@ class TestBackgroundPersistWriter:
             f"payload was {updates!r}"
         )
 
+
     # ── Invariant 2: coalescing + last-write-wins ────────────────────────
 
     def test_coalescing_n_enqueues_become_one_writer_call_last_wins(self, monkeypatch):
@@ -4947,3 +4948,113 @@ class TestUpdateCardInPlace:
             "the failed in-place refresh must fall back to a rebuild"
         )
         assert [cid for cid, _w in replaced] == [card_id]
+
+
+class TestNonGitDecisionPersist:
+    """REVIEW-PERSIST-1 Edit A: the non-git accept/reject branches and the
+    auto-approve path must enqueue the durable decision exactly like the git
+    paths do (:1895/:1956). Red-first per instructions — on current code the
+    non-git branches stop at the in-memory mutation + visual refresh, so the
+    decision vanishes on reload.
+    """
+
+    def _make_handler(self):
+        from ui.handlers.feed_handler import FeedHandler
+        # MagicMock GLib: add_card's idle_add work (append/snapshot) is a
+        # no-op and update_card's enqueue block runs synchronously — the
+        # exact production timing for the persist seam under test.
+        h = FeedHandler(GLib=MagicMock(), on_send_to_agent=MagicMock())
+        h.set_feed_tab(MockFeedTab())
+        h._ensure_persist_writer = lambda: None  # _no_writer pattern
+        return h
+
+    def _seed_non_git_card(self, h, project_name="proj", metadata=None):
+        card = FeedCardData(
+            card_type="agent_action", source="agent", title="non-git card",
+            body="", author="Coder",
+            timestamp=datetime.now(timezone.utc), project_name=project_name,
+            metadata=metadata if metadata is not None else {},
+        )
+        card_id = h.add_card(card)
+        # Registered AFTER add_card so add_card itself spawns no persist thread.
+        h._project_paths[project_name] = "/tmp/uiresp2-proj"
+        return card_id, card
+
+    def _payload_for(self, h, card_id):
+        return h._persist_queue.get((h._project_paths["proj"], card_id))
+
+    def test_non_git_accept_persists_accepted(self):
+        h = self._make_handler()
+        card_id, _card = self._seed_non_git_card(h)
+
+        h.handle_accept(card_id)
+
+        updates = self._payload_for(h, card_id)
+        assert updates is not None, (
+            "non-git accept must enqueue the durable decision "
+            "(git path parity); nothing was enqueued"
+        )
+        assert updates.get("accepted") is True, (
+            f"payload must carry the decision; got {updates!r}"
+        )
+
+    def test_non_git_reject_persists_accepted_false(self):
+        h = self._make_handler()
+        card_id, _card = self._seed_non_git_card(h)
+
+        h.handle_reject(card_id)
+
+        updates = self._payload_for(h, card_id)
+        assert updates is not None, (
+            "non-git reject must enqueue the durable decision "
+            "(git path parity); nothing was enqueued"
+        )
+        assert updates.get("accepted") is False, (
+            f"payload must carry the decision; got {updates!r}"
+        )
+
+    def test_auto_approve_exec_persists_accepted(self):
+        """Auto-approve (Show mode) must persist the decision.
+
+        Order matters here: handle_approve_exec → approve_exec runs FIRST and
+        its update_card call still sees accepted=None (F1: omitted), so the
+        auto-approve path itself is the only site that can record the durable
+        decision for auto-approved cards.
+        """
+        h = self._make_handler()  # no on_approve_exec callback → warning path
+        card_id, card = self._seed_non_git_card(
+            h, metadata={"needs_approval": True, "status": "running"}
+        )
+
+        h._auto_approve_exec_card(card_id)
+
+        updates = self._payload_for(h, card_id)
+        assert updates is not None, (
+            "auto-approve must enqueue the durable decision; nothing was "
+            "enqueued (the decision is lost on reload)"
+        )
+        assert updates.get("accepted") is True, (
+            f"payload must carry the decision; got {updates!r}"
+        )
+        assert card.accepted is True
+
+    def test_non_git_accept_without_project_path_logs_warning(self, caplog):
+        """Unpersistable decision (no project path) must warn, not drop silently."""
+        import logging as _logging
+
+        h = self._make_handler()
+        card_id, card = self._seed_non_git_card(h)
+        project_path = h._project_paths.pop("proj")  # nothing to persist against
+
+        with caplog.at_level(_logging.WARNING, logger="ui.handlers.feed_handler"):
+            h.handle_accept(card_id)
+
+        assert any(
+            "non-git" in r.message.lower() and card_id in r.message
+            for r in caplog.records
+        ), f"expected a warning naming the unpersistable card; got {caplog.records!r}"
+        assert card.accepted is True, "in-memory decision must still be recorded"
+        assert h._persist_queue.get((project_path, card_id)) is None, (
+            "no project path → no enqueue possible"
+        )
+

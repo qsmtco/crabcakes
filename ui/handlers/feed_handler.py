@@ -1908,8 +1908,21 @@ class FeedHandler:
             t = threading.Thread(target=_git_accept, daemon=True)
             t.start()
         else:
+            # REVIEW-PERSIST-1: a non-git decision is durable state too — the
+            # git path above enqueues {"accepted": True}; this branch used to
+            # stop at the in-memory mutation, so the decision was lost on
+            # reload. update_card records the decision, refreshes the widget
+            # (in-place seam or rebuild) and enqueues the persist — the same
+            # approve_exec mechanism the approval cards use.
+            project_path = card.metadata.get("project_path", "") or self._project_paths.get(card.project_name, "")
+            if not project_path:
+                _logger.warning(
+                    "handle_accept: non-git card %s accepted with no project "
+                    "path — decision cannot be persisted to feed.json",
+                    card_id,
+                )
             card.accepted = True
-            self._update_card_visual(card_id, accepted=True)
+            self.update_card(card_id, card)
             # Refresh batch accept bar (Phase 5)
             self._update_batch_bar_for_active_project()
 
@@ -1968,8 +1981,17 @@ class FeedHandler:
             t = threading.Thread(target=_git_reject, daemon=True)
             t.start()
         else:
+            # REVIEW-PERSIST-1: same persist parity as handle_accept's non-git
+            # branch — record the durable decision via update_card.
+            project_path = card.metadata.get("project_path", "") or self._project_paths.get(card.project_name, "")
+            if not project_path:
+                _logger.warning(
+                    "handle_reject: non-git card %s rejected with no project "
+                    "path — decision cannot be persisted to feed.json",
+                    card_id,
+                )
             card.accepted = False
-            self._update_card_visual(card_id, accepted=False)
+            self.update_card(card_id, card)
             # Refresh batch accept bar (Phase 5)
             self._update_batch_bar_for_active_project()
 
@@ -2385,11 +2407,23 @@ class FeedHandler:
                 # MockFeedTab or legacy FeedTab without hide_card_buttons
                 pass
 
-        # 3. Update visual to show approved state
+        # 3. Update visual to show approved state, and persist the decision.
+        # REVIEW-PERSIST-1: the approve_exec path above only persists when the
+        # approval callback is registered AND the card passes its needs_approval
+        # gate — and even then it runs BEFORE step 3 sets card.accepted, so its
+        # payload omits accepted (F1). This site is the durable record for
+        # auto-approved cards; update_card is the approve_exec mechanism.
         card = self._cards.get(card_id)
         if card is not None:
+            project_path = card.metadata.get("project_path", "") or self._project_paths.get(card.project_name, "")
+            if not project_path:
+                _logger.warning(
+                    "_auto_approve_exec_card: card %s approved with no project "
+                    "path — decision cannot be persisted to feed.json",
+                    card_id,
+                )
             card.accepted = True
-            self._update_card_visual(card_id, accepted=True)
+            self.update_card(card_id, card)
 
     def _make_approve_exec_cb(self, card_id: str) -> tuple[Callable, Callable]:
         """

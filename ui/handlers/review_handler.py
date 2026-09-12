@@ -3,6 +3,7 @@
 # Coordinates git_ops, diff_parser, and GTK views.
 # All GTK via GLib.idle_add(). No git calls on the main thread.
 
+import logging
 import re
 import threading
 from datetime import datetime, timezone
@@ -18,6 +19,8 @@ from utils.diff_parser import parse_diff
 
 # MED-11: Validate git commit SHA to prevent argument injection
 _VALID_SHA_RE = re.compile(r"^(HEAD|[0-9a-fA-F]{4,40})$")
+
+_logger = logging.getLogger(__name__)
 
 
 def _validate_sha(sha: str, context: str = "") -> None:
@@ -67,12 +70,66 @@ class ReviewHandler:
         # Chat handler reference for sending rejection messages (set via set_chat_handler)
         self._chat_handler = None
 
+        # Feed handler reference for persisting review resolutions (set via
+        # set_feed_handler; REVIEW-PERSIST-1 Edit B)
+        self._feed_handler = None
+
         # Gateway client for sending messages to agents (set via set_gateway_client)
         self._gw = None
 
     def set_chat_handler(self, chat_handler):
         """Set ChatHandler reference for rejection message sending."""
         self._chat_handler = chat_handler
+
+    def set_feed_handler(self, feed_handler):
+        """Set FeedHandler reference for persisting review resolutions.
+
+        Called by window.py during _build (after both handlers exist — the
+        same callback-injection pattern as on_feed_card/set_chat_handler; no
+        handler→handler import). The stored reference is invoked from the
+        accept_changes/reject_changes success paths, which write the decision
+        back to the original needs_review cards (REVIEW-PERSIST-1 Edit B).
+        """
+        self._feed_handler = feed_handler
+
+    def _persist_review_resolution(self, project_name: str, project_path: str,
+                                   accepted: bool) -> None:
+        """Write the review-bar resolution back to the ORIGINAL review-flagged cards.
+
+        When a review session resolves, the tool-result cards flagged
+        metadata["needs_review"] (set by AgentRuntimeHandler._do_tool_call_result)
+        must record the decision — otherwise it is lost on reload. Mirrors
+        approve_exec's durable-record write: mutate card.accepted +
+        metadata["status"], clear the needs_review flag, then feed the card
+        through FeedHandler.update_card, which refreshes the widget and
+        enqueues the coalesced persist (F1: accepted is included because a
+        decision exists — never None).
+
+        Called from accept_changes/reject_changes via GLib.idle_add (main
+        thread). Missing feed handler → warning, never a silent drop.
+        """
+        fh = getattr(self, "_feed_handler", None)
+        if fh is None:
+            _logger.warning(
+                "_persist_review_resolution: no feed handler wired — review "
+                "resolution for %s will not be persisted on its cards",
+                project_name,
+            )
+            return
+        for card in fh.get_cards_for_project(project_name):
+            if not (card.metadata or {}).get("needs_review"):
+                continue
+            card.metadata.pop("needs_review", None)
+            card.metadata["status"] = "approved" if accepted else "denied"
+            card.accepted = accepted
+            try:
+                fh.update_card(card.card_id, card)
+            except Exception:
+                _logger.exception(
+                    "_persist_review_resolution: failed to persist resolution "
+                    "for card %s in %s",
+                    card.card_id, project_name,
+                )
 
     def set_gateway_client(self, gw):
         """Set GatewayClient reference for sending messages to agents."""
@@ -361,6 +418,9 @@ class ReviewHandler:
                     "project_name": project_name,
                     "commit_sha": getattr(commit_result, "sha", None),
                 })
+                # REVIEW-PERSIST-1 Edit B: the decision must also land on the
+                # review-flagged tool-result cards, or it is lost on reload.
+                self._persist_review_resolution(project_name, project_path, True)
 
             self._GLib.idle_add(_update_state)
 
@@ -418,6 +478,9 @@ class ReviewHandler:
                     "project_name": project_name,
                     "commit_sha": sha,
                 })
+                # REVIEW-PERSIST-1 Edit B: persist the resolution on the
+                # review-flagged tool-result cards (accept-path parity).
+                self._persist_review_resolution(project_name, project_path, False)
 
             self._GLib.idle_add(_update_state)
 
