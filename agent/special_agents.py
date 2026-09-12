@@ -8,7 +8,12 @@
 # System prompts are loaded from prompts/system/{role}.md via prompt_loader.
 #
 # Adding a new special agent: create a YAML file in the agents config dir,
-# or use the Agent Builder UI. No code changes needed.
+# or use the Agent Builder UI. No code changes needed — EXCEPT when the new
+# agent shares a `role` with an existing one. The session key defaults to
+# "special:<role>", so same-role agents collide here and one replaces the
+# other. `role` also selects the prompt template (agent/context.py
+# build_system_prompt), so it cannot be changed to dodge the collision —
+# declare an explicit `session_key:` in that agent's YAML instead.
 
 from __future__ import annotations
 
@@ -75,7 +80,14 @@ def _load_registry() -> dict[str, SpecialAgentDef]:
     for agent_def in defs:
         role = agent_def.get("role", "").lower()
         name = agent_def.get("name", "Agent")
-        session_key = f"special:{role}"
+        # Session key resolution. Default is derived from the role (legacy
+        # behaviour, preserved so existing keys and conversations are stable).
+        # Because the key is role-derived, two agents that share a role collide
+        # and the later one silently replaces the earlier one. The `role` cannot
+        # simply be changed to fix that — it selects the prompt template in
+        # agent/context.py build_system_prompt(). Such an agent needs an
+        # explicit `session_key:` in its YAML instead.
+        session_key = str(agent_def.get("session_key") or "").strip() or f"special:{role}"
         tools = agent_def.get("tools", [])
 
         # BUG #30: Coerce mcp_servers to list if YAML gave a string
@@ -84,6 +96,14 @@ def _load_registry() -> dict[str, SpecialAgentDef]:
             raw_mcp = [raw_mcp]  # Coerce single string to list
         elif not isinstance(raw_mcp, list):
             raw_mcp = []  # Invalid type → treat as empty
+
+        if session_key in registry:
+            logger.warning(
+                "Duplicate session key %r — agent %r replaces %r. Two agents "
+                "may not share a role unless one declares an explicit "
+                "'session_key' in its YAML.",
+                session_key, name, registry[session_key].display_name,
+            )
 
         registry[session_key] = SpecialAgentDef(
             conv_id_prefix=session_key,
