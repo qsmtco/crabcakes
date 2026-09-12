@@ -199,9 +199,13 @@ class TestToStdioParams:
                 f"expected the MED-12 refusal warning; got {caplog.records!r}"
             )
             assert params is not None
-            assert params.env is None, (
-                "refused var must be omitted; all-var env dict degrades to None "
-                f"(got {params.env!r})"
+            # Security invariant: a refused var must never reach the server env.
+            # Deliberately NOT asserting `env is None` (that is only today's
+            # degrade choice — a future `env={}` refactor stays secure).
+            # Audit suggestion from TEST-DEBT-3: decouple the control from the
+            # implementation detail.
+            assert "TOKEN" not in (params.env or {}), (
+                f"refused var leaked into the server env: {params.env!r}"
             )
         finally:
             if test_env:

@@ -148,6 +148,12 @@ class TestKBLookupFiresForAuxilium:
             return []
 
         def fake_call(sk, messages, tools, **_kwargs):
+            # Tripwire (TEST-DEBT-3 audit suggestion): a renamed/extra kwarg
+            # from the production _call_llm call site fires here instead of
+            # being silently swallowed by **_kwargs.
+            assert set(_kwargs) <= {"turn_token"}, (
+                f"unexpected kwargs from _call_llm: {sorted(_kwargs)}"
+            )
             llm_call_count[0] += 1
             if llm_call_count[0] == 1:
                 # First call: trigger the tool loop with a tool_calls response
@@ -196,6 +202,12 @@ class TestKBLookupFiresForAuxilium:
             return []
 
         def fake_call(sk, messages, tools, **_kwargs):
+            # Tripwire (TEST-DEBT-3 audit suggestion): a renamed/extra kwarg
+            # from the production _call_llm call site fires here instead of
+            # being silently swallowed by **_kwargs.
+            assert set(_kwargs) <= {"turn_token"}, (
+                f"unexpected kwargs from _call_llm: {sorted(_kwargs)}"
+            )
             llm_call_count[0] += 1
             if llm_call_count[0] == 1:
                 # First call: trigger the tool loop with a tool_calls response
@@ -244,6 +256,12 @@ class TestKBLookupFiresForAuxilium:
             raise RuntimeError("simulated KB backend down")
 
         def fake_call(sk, messages, tools, **_kwargs):
+            # Tripwire (TEST-DEBT-3 audit suggestion): a renamed/extra kwarg
+            # from the production _call_llm call site fires here instead of
+            # being silently swallowed by **_kwargs.
+            assert set(_kwargs) <= {"turn_token"}, (
+                f"unexpected kwargs from _call_llm: {sorted(_kwargs)}"
+            )
             llm_call_count[0] += 1
             if llm_call_count[0] == 1:
                 return {
