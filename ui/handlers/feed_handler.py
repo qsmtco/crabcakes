@@ -12,6 +12,7 @@ import logging
 import os
 import re
 from typing import TYPE_CHECKING, Callable
+import copy
 import threading
 import time
 
@@ -90,6 +91,11 @@ class FeedHandler:
         # budget).
         self._persist_queue: dict[tuple[str, str], dict] = {}
         self._persist_deferred: dict[tuple[str, str], tuple[dict, int]] = {}
+        # Compactions ride a SEPARATE list: a sentinel key in the update dict
+        # would be unpacked as a (project_path, card_id) pair. Entries are
+        # (project_path, tries). External triggers replace (fresh budget);
+        # the drain's internal retry appends only-if-absent with tries+1.
+        self._persist_compactions: list[tuple[str, int]] = []
         self._persist_queue_lock = threading.Lock()
         self._persist_wakeup = threading.Event()
         self._persist_writer: threading.Thread | None = None
@@ -711,7 +717,7 @@ class FeedHandler:
     # Card lifecycle
     # ─────────────────────────────────────────────────────────────────
 
-    def add_card(self, card_data: FeedCardData) -> str:
+    def add_card(self, card_data: FeedCardData, persist: bool = True) -> str:
         """
         Add a card to the project feed.
 
@@ -722,6 +728,11 @@ class FeedHandler:
         5. Prepend to feed_tab
         6. Persist to feed.json via feed_store.append_feed_card()
         7. Return card_id
+
+        `persist=False` skips step 6 entirely — used by `_surface_prune_card`,
+        which persists a main-thread COPY instead (§2.3.5) and must not depend
+        on the `_loading` gate. All existing callers are positional on
+        `card_data` and keep the default.
 
         Thread-safe: GTK operations via GLib.idle_add().
         """
@@ -821,8 +832,9 @@ class FeedHandler:
 
         self._GLib.idle_add(_append)
         # Persist in background to avoid blocking UI.
-        # Skip persistence when _loading=True (cards already on disk from load).
-        if project_path and not self._loading:
+        # Skip persistence when _loading=True (cards already on disk from load)
+        # or when the caller explicitly owns persistence (persist=False).
+        if project_path and not self._loading and persist:
             t = threading.Thread(target=_persist, daemon=True)
             t.start()
 
@@ -1113,6 +1125,25 @@ class FeedHandler:
         self._ensure_persist_writer()
         self._persist_wakeup.set()
 
+    def _enqueue_compaction(self, project_path: str) -> None:
+        """Queue a feed compaction for the writer thread. Non-blocking.
+
+        EXTERNAL trigger (load-time, §2.3.4): REPLACES any existing entry for
+        the same path with a fresh `tries=0` — a load-time enqueue is a new
+        attempt and resets the compact budget (accepted, build-time note
+        r6#15). This is deliberately DISTINCT from the drain's internal retry
+        re-enqueue, which appends only-if-absent with `tries+1` so it can
+        never clobber an externally-owned live entry.
+        """
+        if not project_path:
+            return
+        with self._persist_queue_lock:
+            self._persist_compactions = [
+                t for t in self._persist_compactions if t[0] != project_path
+            ] + [(project_path, 0)]
+        self._ensure_persist_writer()
+        self._persist_wakeup.set()
+
     def _persist_loop(self) -> None:
         """Writer main loop. Stop-check FIRST; drain-before-exit; bounded.
 
@@ -1125,6 +1156,7 @@ class FeedHandler:
                 with self._persist_queue_lock:
                     drained = (
                         not self._persist_queue
+                        and not self._persist_compactions
                         and not self._persist_deferred
                     )
                 if drained:
@@ -1135,19 +1167,55 @@ class FeedHandler:
             # loop: stop-check at top re-examines after the drain
 
     def _drain_persist_queue(self) -> None:
-        """One full drain pass: deferred entries, then the queue.
+        """One full drain pass: compactions, then deferred, then queue.
 
-        Deferred entries are attempted IN PLACE (never moved to the queue —
-        no re-merge, no counter reset, audit r5 #2/#3). A queue entry's
-        first failure enters deferred with tries=1 (fresh budget by
-        construction — enqueue always pops any deferred entry for the key,
-        so deferred and queue entries for one key are mutually exclusive).
-        Never raises: the except blocks only log and do dict ops under the
-        queue lock.
-
-        Phase 1 interim shape: the spec's §2.1.2 draft additionally drains a
-        compactions list first; that machinery arrives with Phase 3.
+        Bounded pass: compactions are SNAPSHOTTED at pass start (an entry
+        enqueued during the pass — internal retry or external trigger — waits
+        for the next pass; ≤1 attempt per path per pass regardless of source,
+        audit r5 #18). Deferred entries are attempted IN PLACE (never moved to
+        the queue — no re-merge, no counter reset, audit r5 #2/#3). A queue
+        entry's first failure enters deferred with tries=1 (fresh budget by
+        construction — enqueue always pops any deferred entry for the key, so
+        deferred and queue entries for one key are mutually exclusive). Never
+        raises: the except blocks only log and do dict/list ops under the
+        queue lock; `task` is initialized before the try (audit r5 #15).
         """
+        # ── compactions: snapshot at pass start ──────────────────────────
+        with self._persist_queue_lock:
+            compactions = list(self._persist_compactions)
+            self._persist_compactions.clear()
+        for compact_task in compactions:
+            path, tries = compact_task
+            try:
+                pruned = feed_store.compact_feed(
+                    path, window=feed_store.FEED_WINDOW_DEFAULT
+                )
+                if pruned:
+                    self._surface_prune_card(
+                        path, pruned, feed_store.FEED_WINDOW_DEFAULT
+                    )
+            except Exception:  # noqa: BLE001 — writer thread must never die
+                _logger.exception("persist: compact task failed (%r)", compact_task)
+                if self._persist_stop:
+                    _logger.error(
+                        "persist: dropping failed compact during shutdown (%r)",
+                        compact_task,
+                    )
+                elif tries + 1 >= 3:
+                    _logger.error(
+                        "persist: dropping compaction for %s after %d failures",
+                        path, tries + 1,
+                    )
+                else:
+                    with self._persist_queue_lock:
+                        # only-if-absent: an external _enqueue_compaction that
+                        # landed during the pass owns the live entry (fresh
+                        # budget); do not overwrite it
+                        if not any(
+                            p == path for p, _t in self._persist_compactions
+                        ):
+                            self._persist_compactions.append((path, tries + 1))
+
         # ── deferred updates: attempted in place ─────────────────────────
         with self._persist_queue_lock:
             deferred_items = list(self._persist_deferred.items())
@@ -1239,6 +1307,51 @@ class FeedHandler:
                     with self._persist_queue_lock:
                         self._persist_deferred[key] = (updates, 1)
 
+    def _surface_prune_card(self, project_path: str, pruned: int, window: int) -> None:
+        """Surface a compaction as a UI system card. Called on the writer.
+
+        UI work (add_card: seq assignment, widget build, indexing) happens on
+        the MAIN thread via idle_add. Persistence writes a point-in-time COPY
+        of the card state (deep-copied on the main thread inside _ui) from a
+        tiny persist thread — bypassing add_card's _loading-gated persist
+        (audit r1 #9) and immune to post-add in-memory mutation (audit r3 #7).
+        System cards never carry snapshots (no file_path ⇒
+        _maybe_create_snapshot no-ops), so the copy is always complete.
+        """
+        card = FeedCardData(
+            card_type="system",
+            source="system",
+            title="Feed compacted",
+            body=f"{pruned} oldest cards pruned (window {window})",
+            author="system",
+            timestamp=datetime.now(timezone.utc),
+            project_name=self._active_project_name or "",
+        )
+
+        def _ui():
+            # Main thread: resolve the compacted project's NAME here — never
+            # on the writer. Deriving it from _active_project_name on the
+            # writer made the guard below self-satisfying (a project switch
+            # mid-compaction misfiled the card into the new project's view
+            # while persisting it into the old project's feed.json — Coder
+            # Phase-3 finding; spec §2.3.5 amended likewise).
+            name = next(
+                (n for n, p in self._project_paths.items() if p == project_path),
+                "",
+            )
+            if not name or self._active_project_name != name:
+                return
+            card.project_name = name
+            self.add_card(card, persist=False)   # seq, widgets, indexing — main only
+            snapshot = copy.deepcopy(card)       # point-in-time copy, main thread
+
+            def _persist():
+                feed_store.append_feed_card(project_path, snapshot)
+
+            threading.Thread(target=_persist, daemon=True).start()
+
+        self._GLib.idle_add(_ui)
+
     def shutdown_persist_writer(self) -> None:
         """Flush and stop the writer. Safe to call multiple times.
 
@@ -1254,6 +1367,7 @@ class FeedHandler:
         with self._persist_queue_lock:
             queued_at_stop = (
                 len(self._persist_queue)
+                + len(self._persist_compactions)
                 + len(self._persist_deferred)
             )
         if self._persist_writer is not None:
@@ -1270,6 +1384,7 @@ class FeedHandler:
         with self._persist_queue_lock:
             leftover = (
                 len(self._persist_queue)
+                + len(self._persist_compactions)
                 + len(self._persist_deferred)
             )
         if leftover > queued_at_stop:
@@ -1351,6 +1466,20 @@ class FeedHandler:
 
             # Load persisted cards from .crabcakes/feed.json
             cards = feed_store.load_feed(project_path)
+
+            # §2.3.4 one-time large-feed compaction: a legacy feed bigger than
+            # the window's soft bound gets compacted once, on open. Accepted
+            # cost (audit r1 #6): the first tool results after a legacy-feed
+            # open may wait behind the compaction. `load_feed` itself never
+            # compacts — this is the only open-time trigger.
+            if len(cards) > feed_store.FEED_WINDOW_DEFAULT * 1.25:
+                _logger.info(
+                    "on_project_opened: feed for %s has %d cards (> %s) — "
+                    "requesting a one-time compaction",
+                    project_name, len(cards),
+                    int(feed_store.FEED_WINDOW_DEFAULT * 1.25),
+                )
+                self._enqueue_compaction(project_path)
 
             # Phase 5 + v2: load auto-accept prefs (separate file from feed.json).
             # Phase 2 of utils/feed_store guarantees load_feed_prefs returns

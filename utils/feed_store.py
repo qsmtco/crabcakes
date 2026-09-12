@@ -18,6 +18,19 @@
 # for pending changes, replay is idempotent, and a torn final line is
 # tolerated.
 #
+# UNIFORM LOCK RULE (§2.2.3): every mutation — snapshot OR journal — holds the
+# FEED flock (`feed.json.lock`) for its whole critical section. fcntl.flock is
+# per-inode, so a separate journal lock would give no mutual exclusion and a
+# journal append could be truncated away mid-fold by a concurrent compaction
+# (lost update despite a True return). ONE inode, every mutation.
+#
+# §2.3 — sliding-window pruning. `compact_feed(window=N)` keeps the newest N
+# cards and prunes the rest, except PINNED cards (a recorded accept/reject,
+# needs_review/needs_approval, or git_commit) which are never pruned.
+# `window=None` prunes nothing. Triggers: journal threshold, the rate-limited
+# post-append check, and the FeedHandler's one-time open-time request for a
+# legacy oversized feed. `load_feed` never compacts.
+#
 # DOCUMENTED DEVIATION from the "pure functions — no state" contract above:
 # `_compact_last` / `_compact_rl_lock` keep per-project compaction
 # timestamps so the append-triggered compaction is rate-limited. This is
@@ -573,11 +586,32 @@ def _maybe_compact(project_path: str) -> None:
     except (OSError, json.JSONDecodeError, TypeError):
         return
     if n > FEED_WINDOW_DEFAULT * 1.25:
-        compact_feed(project_path, window=None)
+        compact_feed(project_path, window=FEED_WINDOW_DEFAULT)
+
+
+def _is_pinned_card(card: FeedCardData) -> bool:
+    """§2.3.2 retention pin — a card that must NEVER be pruned.
+
+    Pinned when any of: an accept/reject decision is already recorded
+    (`accepted is not None` — pruning it would orphan the decision and the
+    seq narrative); it is still actionable (`metadata.needs_review` /
+    `metadata.needs_approval` — `update_feed_card` would silently return
+    False after pruning); or it is a `git_commit` card (cheap, few, and
+    referenced by review history).
+    """
+    if card.accepted is not None:
+        return True
+    if card.card_type == "git_commit":
+        return True
+    meta = card.metadata or {}
+    return bool(meta.get("needs_review") or meta.get("needs_approval"))
 
 
 def compact_feed(project_path: str, window: int | None = None) -> int:
-    """Fold the journal into feed.json. Returns the number of cards pruned.
+    """Fold the journal into feed.json, applying the sliding window.
+
+    Returns the number of cards pruned (`0` when `window is None` or when
+    nothing falls outside the retention rules).
 
     Runs under ONE feed-flock hold: read the snapshot inline via the shared
     `_parse_cards` (deliberately NOT via `load_feed` — that would re-enter
@@ -588,9 +622,12 @@ def compact_feed(project_path: str, window: int | None = None) -> int:
     journal whose replay is idempotent. On success the rate-limit timestamp
     is recorded so every trigger path shares one budget.
 
-    `window` is accepted for signature stability (it is the Phase-3 sliding
-    window) and is currently ignored — Phase 2 never prunes, so the return
-    value is always 0. Every Phase-2 call site passes `window=None`.
+    `window` = the number of NEWEST cards retained by list order (§2.3.2).
+    Cards outside that slice are pruned UNLESS pinned (`_is_pinned_card`):
+    an accepted/rejected decision, a needs_review/needs_approval card, or a
+    git_commit card. Pruning preserves chronological order (pinned older
+    cards keep their original position — they are not re-appended). A
+    WARNING reports the prune count and how many cards the pins rescued.
     """
     path = _feed_path(project_path)
     jp = _journal_path(project_path)
@@ -618,11 +655,27 @@ def compact_feed(project_path: str, window: int | None = None) -> int:
 
         pruned = 0
         if window is not None:
-            # Phase 3 adds the sliding window + pins here.
-            _logger.debug(
-                "compact_feed: window pruning not implemented yet (%s, window=%s)",
-                project_path, window,
-            )
+            # §2.3.2: keep the newest `window` by list order, then ALSO keep
+            # any pinned card from outside that slice. Chronological order is
+            # preserved — a rescued old card keeps its position rather than
+            # being re-appended at the end.
+            slice_start = max(0, len(cards) - window)
+            kept = [
+                c for i, c in enumerate(cards)
+                if i >= slice_start or _is_pinned_card(c)
+            ]
+            pruned = len(cards) - len(kept)
+            if pruned:
+                pinned_kept = sum(
+                    1 for i, c in enumerate(cards)
+                    if i < slice_start and _is_pinned_card(c)
+                )
+                _logger.warning(
+                    "compact_feed: pruned %d oldest cards (%d outside-window "
+                    "cards pinned) from %s (window=%s)",
+                    pruned, pinned_kept, project_path, window,
+                )
+            cards = kept
 
         try:
             _atomic_write_json(path, [c.to_dict() for c in cards], compact=True)
@@ -670,9 +723,9 @@ def update_feed_card(project_path: str, card_id: str, updates: dict) -> bool | N
     if ok:
         try:
             if _journal_line_count(project_path) >= JOURNAL_COMPACT_THRESHOLD:
-                # Phase 2: window=None until Phase 3 supplies the retention
-                # rules (§2.3 wire-up).
-                compact_feed(project_path, window=None)
+                # Phase 3 supplies the retention rules (§2.3): the fold now
+                # applies the sliding window + pins.
+                compact_feed(project_path, window=FEED_WINDOW_DEFAULT)
         except Exception:  # noqa: BLE001 — compaction is orthogonal to durability
             _logger.warning(
                 "update_feed_card: post-append compaction failed for %s "

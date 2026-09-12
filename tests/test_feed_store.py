@@ -912,3 +912,94 @@ class TestSingleLockInode:
                 project_path, "il-1", {"body": "landed-mid-fold"}
             ) is True
             assert load_feed(project_path)[0].body == "landed-mid-fold"
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  SPEC-UI-RESPONSIVENESS-2 Phase 3 — sliding-window pruning (§2.3.2).
+#  Red-first: tests 1, 2 and 4 prune nothing against the Phase-2 tree
+#  (`window` was accepted but ignored). Tests 3 and 5 are regression /
+#  edge guards for the retained `window=None` path — green both sides.
+# ═══════════════════════════════════════════════════════════════════
+
+_WINDOW = 5
+
+
+class TestWindowPruning:
+    """§2.3.2 retention rules — pins, count, logging, window=None path."""
+
+    def test_pins_survive_pruning_beyond_window(self, project_path):
+        """Every pinned class outside the newest `window` slice is kept."""
+        cards = [
+            # Oldest — one card of each pinned class, plus one pruneable.
+            make_card("diff", card_id="pin-accepted", accepted=True),
+            make_card("diff", card_id="pin-review",
+                      metadata={"needs_review": True}),
+            make_card("diff", card_id="pin-approval",
+                      metadata={"needs_approval": True}),
+            make_card("git_commit", card_id="pin-git"),
+            make_card("diff", card_id="prune-me"),
+        ] + [
+            make_card("diff", card_id=f"new-{i}") for i in range(_WINDOW)
+        ]
+        save_feed(project_path, cards)
+
+        pruned = fs.compact_feed(project_path, window=_WINDOW)
+
+        ids = [c.card_id for c in load_feed(project_path)]
+        assert pruned == 1, f"exactly the unpinned old card prunes: {ids}"
+        for pinned in ("pin-accepted", "pin-review", "pin-approval", "pin-git"):
+            assert pinned in ids, f"{pinned} is pinned and must survive"
+        assert "prune-me" not in ids
+        assert [f"new-{i}" for i in range(_WINDOW)] == [
+            i for i in ids if i.startswith("new-")
+        ], "the newest window is retained in order"
+
+    def test_seq_num_max_survives_compaction(self, project_path):
+        """Invariant 2 — seq numbering stays monotonic across compaction."""
+        cards = [
+            make_card("diff", card_id=f"sq-{i}", seq_num=i + 1)
+            for i in range(6)
+        ]
+        save_feed(project_path, cards)
+
+        fs.compact_feed(project_path, window=2)
+
+        loaded = load_feed(project_path)
+        assert len(loaded) == 2, "the window must actually prune (else untested)"
+        seqs = [c.seq_num for c in loaded]
+        assert max(seqs) == 6, "the highest seq must survive the prune"
+        assert len(set(seqs)) == len(seqs), "no duplicate seq numbers"
+
+    def test_window_none_prunes_nothing(self, project_path):
+        """Regression guard: the Phase-2 no-window path stays intact."""
+        save_feed(project_path, make_feed(10))
+
+        assert fs.compact_feed(project_path, window=None) == 0
+        assert len(load_feed(project_path)) == 10
+
+    def test_pruned_count_returned_and_warning_logs_pinned_count(
+        self, project_path, caplog
+    ):
+        cards = [
+            make_card("git_commit", card_id="w-git"),
+            make_card("diff", card_id="w-plain-1"),
+            make_card("diff", card_id="w-plain-2"),
+        ] + [make_card("diff", card_id=f"w-new-{i}") for i in range(2)]
+        save_feed(project_path, cards)
+
+        with caplog.at_level(logging.WARNING, logger="utils.feed_store"):
+            pruned = fs.compact_feed(project_path, window=2)
+
+        assert pruned == 2, "two unpinned cards fall outside the window"
+        assert any("pinned" in r.getMessage() for r in caplog.records), (
+            [r.getMessage() for r in caplog.records]
+        )
+
+    def test_all_cards_pinned_prunes_zero(self, project_path):
+        """Edge: everything pinned → prune count 0, nothing lost."""
+        save_feed(project_path, [
+            make_card("git_commit", card_id=f"ap-{i}") for i in range(10)
+        ])
+
+        assert fs.compact_feed(project_path, window=2) == 0
+        assert len(load_feed(project_path)) == 10

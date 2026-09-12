@@ -165,7 +165,7 @@ crabcakes/
 │   │   ├── input_toolbar_handler.py # ~395 lines — InputToolbarHandler — find/replace, spell check, word count logic
 │   │   ├── agent_builder_handler.py # ~199 lines — AgentBuilderHandler — agent create/edit form + delete_agent_with_confirmation() (Phase 5)
 │   │   ├── agent_command_handler.py # AgentCommandHandler — agent response slash-command parser (Phase 6.2)
-│   │   ├── feed_handler.py        # ~867 lines — FeedHandler — feed card lifecycle, persistence, review actions (Phase 5)
+│   │   ├── feed_handler.py        # ~2266 lines — FeedHandler — feed card lifecycle, background persist writer, compaction + prune surfacing (SPEC-UI-RESPONSIVENESS-2 P1/P3)
 │   │   ├── session_handler.py     # ~164 lines — SessionHandler — session switching commands (Phase 7)
 │   │   ├── connection_sync_handler.py  # post-connect wiring (Phase 3a extraction)
 │   │   ├── forward_handler.py     # 17 tests (Phase 3b extraction)
@@ -2884,7 +2884,17 @@ def css_class_for_type(card_type: str) -> str:
 
 **Responsibility:** Manages project feed card lifecycle — add, remove, persist, accept/reject. Coordinates with `CrabWatchHandler` (filesystem events) and `ChatRenderHandler` (crabcard extraction). Delegates rendering to `feed_card.py`, persistence to `feed_store.py`, git ops to `git_ops.py`.
 
-**Owns:** `_cards` (dict: card_id → FeedCardData), `_card_widgets` (dict: card_id → Gtk.Widget), `_project_cards` (dict: project_name → [card_ids]), `_project_paths` (dict: project_name → abs_path), `_recent_git_paths` (dict: file_path → monotonic timestamp for echo suppression), `_lock` (threading.Lock).
+**Owns:** `_cards` (dict: card_id → FeedCardData), `_card_widgets` (dict: card_id → Gtk.Widget), `_project_cards` (dict: project_name → [card_ids]), `_project_paths` (dict: project_name → abs_path), `_recent_git_paths` (dict: file_path → monotonic timestamp for echo suppression), `_lock` (threading.Lock), plus the background-persistence state: `_persist_queue` (dict: (project_path, card_id) → coalesced updates), `_persist_deferred` (dict: same key → (payload, tries)), `_persist_compactions` (list: (project_path, tries)), `_persist_queue_lock`, `_persist_wakeup` (threading.Event), `_persist_writer` (threading.Thread | None), `_persist_stop` (bool).
+
+**Background feed writer (SPEC-UI-RESPONSIVENESS-2 Phases 1 + 3):** the GTK main thread never does feed disk I/O. `update_card` mutates `_cards` under `_lock` and calls `_enqueue_card_update` (coalesced per `(project_path, card_id)`, last-write-wins, <1 ms, no disk); the daemon `crabcakes-feed-writer` thread drains it via `feed_store.update_feed_card`, moving failures to `_persist_deferred` (retry cap 3 → ERROR drop, in-place retries preserving the try count). Accept/reject clicks ride the same queue. `shutdown_persist_writer()` (wired to project-close and window close-request) joins with a size-scaled timeout, empties within one bounded drain pass, and classifies leftovers.
+
+**Drain pass order (`_drain_persist_queue`):** compactions → deferred updates → queued updates. Compactions are **snapshotted at pass start** (≤1 attempt per path per pass, whatever the source) and run `feed_store.compact_feed(path, window=FEED_WINDOW_DEFAULT)`; a failure re-enqueues **only-if-absent** with `tries+1` so it can never clobber a concurrent external trigger, and drops at 3 failures. Compactions ride their own list — a sentinel inside the update-keyed dict would be unpacked as a `(project_path, card_id)` pair (invariant: a compaction path never reaches `update_feed_card` as a `card_id`).
+
+**Compaction triggers:** journal threshold (`utils/feed_store.py`, 500 lines) and post-append rate-limited `_maybe_compact`; plus `_enqueue_compaction(project_path)` — the **external** trigger used by the open-time path (§2.3.4 one-time large-feed compaction: `_load_and_render` requests it when the loaded feed exceeds `FEED_WINDOW_DEFAULT * 1.25`, accepted one-time upgrade latency). An external enqueue **replaces** any existing entry for that path with a fresh `tries=0`.
+
+**Prune surfacing (`_surface_prune_card`, §2.3.5):** when a compaction prunes >0 cards, the **writer thread** builds a `system` `FeedCardData` ("Feed compacted — N oldest cards pruned (window W)") and dispatches the UI work through `GLib.idle_add`. The writer never calls `add_card`, never touches `_cards` / `_project_seq` / widgets: the `_ui` closure runs on the main thread, re-checks `_active_project_name` (a project closed mid-compaction suppresses the card), calls `add_card(card, persist=False)` — seq assignment, widget build, indexing — then `copy.deepcopy`s the card and hands that point-in-time copy to a tiny daemon thread that calls `feed_store.append_feed_card`. The copy path deliberately bypasses `add_card`'s `_loading`-gated persist (audit r1 #9), so the prune card is persisted even during a project load, and is immune to post-add in-memory mutation (audit r3 #7).
+
+**`add_card(card_data, persist=True)`:** `persist=False` skips the per-card persist thread entirely — used only by `_surface_prune_card`, which owns persistence from the main-thread copy. All other callers keep the default.
 
 **Constructor:**
 ```python
@@ -3021,30 +3031,61 @@ Tab routing uses `agent_to_project` (AgentRoutingTable). In ChatHandler this is 
 - First chat delta → `streaming`
 - Agent message in history → `sending` (pre-flight)
 
-### 3.22d `utils/feed_store.py` — Feed Persistence (Phase 5)
+### 3.22d `utils/feed_store.py` — Feed Persistence (Phase 5; read/write paths rebuilt in SPEC-UI-RESPONSIVENESS-2 Phases 2-3)
 
-**Responsibility:** JSON persistence for feed cards. Pure functions — no classes, no GTK, no state. Loads/saves `FeedCardData` lists from `.crabcakes/feed.json` per project.
+**Responsibility:** JSON + JSONL persistence for feed cards. Pure functions — no classes, no GTK, no state (one documented deviation: the compaction rate-limit table). Loads/saves `FeedCardData` lists from `.crabcakes/feed.json` per project, plus the append-only update journal `.crabcakes/feed-updates.jsonl`.
+
+**Two-file model (§2.2):**
+| File | Role |
+|------|------|
+| `.crabcakes/feed.json` | Snapshot — the full card list, written atomically (`.tmp` + `os.replace`, compact JSON, 0o600) |
+| `.crabcakes/feed-updates.jsonl` | Update journal — one `{"card_id", "updates"}` JSON line per update, O(1) append, folded into the snapshot at compaction |
+
+An update is recorded without the card having to exist yet (the journal is the source of truth for pending changes for a card); replay is idempotent and a torn final line is tolerated (replay stops at the first unparseable line).
+
+**Lock discipline — the uniform rule (§2.2.3):** **every** `feed_store` mutation, snapshot or journal, holds the **feed flock** (`.crabcakes/feed.json.lock`) for its whole critical section. `fcntl.flock` is per-inode, so one lock inode for all mutations is what makes "a concurrent compaction can never truncate between an append and its fold" true. There is no separate journal lock. `_acquire_lock` is **bounded** (2 s default deadline, non-blocking attempts in a loop, returns `None`) — no unbounded blocking lock on any path reachable from the main thread; `load_feed` uses a size-scaled timeout (`min(60.0, 10.0 + size_bytes/1_000_000)`) because a large compaction is slow. On `None`: write paths skip + WARNING (the journal/queue keeps the data safe), read paths fall back to a lock-free read + WARNING (documented narrow residual race — the next load re-reads consistently).
+
+**Retention (window + pins, §2.3.2):** `compact_feed` keeps the **newest `window`** cards (`FEED_WINDOW_DEFAULT = 2000`) by list order, then additionally keeps every **pinned** card from outside that slice. A card is pinned — never pruned — if any of: `accepted is not None` (a recorded decision; pruning would orphan it and the `seq_num` narrative), `metadata.needs_review` / `metadata.needs_approval` (still actionable — `update_feed_card` would silently return False after pruning), or `card_type == "git_commit"`. Pruning preserves chronological order and logs a WARNING with the prune count **and** how many outside-window cards the pins rescued.
+
+**Compaction triggers (§2.3.3):** (1) journal threshold — `update_feed_card` compacts at `JOURNAL_COMPACT_THRESHOLD` (500) lines, with `window=FEED_WINDOW_DEFAULT`; (2) post-append `_maybe_compact` — rate-limited to at most one per project per `_COMPACT_MIN_INTERVAL` (60 s), fires when the snapshot exceeds `FEED_WINDOW_DEFAULT * 1.25`; (3) project open — `FeedHandler._load_and_render` requests a one-time compaction when a legacy feed exceeds the same 1.25× soft bound (see §3.22c). **`load_feed` never compacts.** Compaction order is crash-safe: snapshot `os.replace` FIRST, journal truncate SECOND (a crash between them leaves an unfoldable-but-idempotent journal).
 
 **Public API:**
 ```python
 def load_feed(project_path: str) -> list[FeedCardData]
-    # Load cards from .crabcakes/feed.json. Chronological (oldest first). Empty list if missing/invalid.
+    # Load cards from .crabcakes/feed.json + replay the journal. Chronological (oldest first).
+    # Snapshot and journal are read under ONE feed-flock hold. Empty list if missing/invalid.
 
 def save_feed(project_path: str, cards: list[FeedCardData]) -> None
-    # Save cards to .crabcakes/feed.json. Creates .crabcakes/ if needed.
+    # Save cards to .crabcakes/feed.json. Creates .crabcakes/ if needed. Takes the feed lock.
 
 def append_feed_card(project_path: str, card: FeedCardData) -> None
-    # Append single card. Load → append → save.
+    # Append single card (lock → load → append → write), then a lock-free rate-limited
+    # _maybe_compact check. Multiple caller threads serialize on the flock.
 
-def update_feed_card(project_path: str, card_id: str, updates: dict) -> bool
-    # Update card by card_id. Returns True if found. Only allows runtime fields (accepted, reviewed, metadata).
+def update_feed_card(project_path: str, card_id: str, updates: dict) -> bool | None
+    # Hot path: append_card_update (O(1) journal line) + threshold compaction.
+    # True = recorded (journal-write); False = write failure (append AND legacy failed →
+    # the caller defers and retries); None = legacy path ran and the card was gone (dropped).
+
+def append_card_update(project_path: str, card_id: str, updates: dict) -> bool
+    # One journal line, under the feed flock (with best-effort torn-tail repair).
+
+def compact_feed(project_path: str, window: int | None = None) -> int
+    # Fold journal → snapshot, apply the window + pins, truncate the journal. Returns pruned count.
+    # window=None prunes nothing (returns 0) — the no-window path is retained.
+
+def _maybe_compact(project_path: str) -> None
+    # Rate-limited (60 s/project) post-append compaction trigger; timestamp recorded before
+    # the size check so a sub-window feed still spends the interval (prevents re-check thrash).
 ```
 
 **Architecture rules:**
 - Lives in `utils/` — pure Python, no GTK, no network
-- Thread-safe via file I/O (called from background threads by FeedHandler)
+- Thread-safe via the **feed flock** (called from background threads by FeedHandler)
 - Imports `models.feed_card.FeedCardData` only
 - No imports from `ui/` or `gateway/`
+- **Documented deviation from the "pure functions — no state" contract:** `_compact_last` / `_compact_rl_lock` keep per-project compaction timestamps for the rate limit. File-I/O orchestration state only (no GTK, no handler state), guarded by its own lock, never evicted (≈100 B per project).
+- **Documented pre-existing limitation:** `_ensure_gitignore_entry`'s read-modify-write is not under the feed flock (audit-accepted, not fixed — locking per-project `.gitignore` writes would be scope creep).
 
 ### 3.22e `utils/crabcard_parser.py` — Crabcard Block Parser (Phase 5)
 
@@ -3838,6 +3879,35 @@ User removes a provider in Settings while the Agent Builder is open (with that p
         → _get_selected_provider_id() returns "" if the selected index is now invalid
           → _update_save_button() disables Save
 
+### 4.14 Feed Persistence — Background Writer, Journal, Compaction (SPEC-UI-RESPONSIVENESS-2)
+
+The feed write path is asynchronous: no feed disk I/O ever runs on the GTK main thread.
+
+```
+Tool result (runtime thread)
+  → _on_tool_call_result → GLib.idle_add → _do_tool_call_result [main]
+    → feed_handler.update_card [main]
+        mutate self._cards under _lock; rebuild/replace widget     [main, ~ms]
+        _enqueue_card_update(project_path, card_id, {body, metadata})  [main, <1 ms, no disk]
+  → crabcakes-feed-writer thread [background]
+    → feed_store.update_feed_card
+        append_card_update → 1 JSONL line (feed flock held briefly)   [O(1)]
+        if journal ≥ 500 lines → compact_feed(window=2000)             [no lock held here]
+            fold (shared _parse_cards/_apply_overlay) → prune (window + pins)
+            → atomic compact snapshot write → truncate journal        [ONE feed-flock hold]
+
+Project open [main: on_project_opened]
+  → _load_and_render [daemon thread]
+      load_feed: snapshot + journal under one feed-flock hold (size-scaled timeout)
+      if len(cards) > 2500 (= FEED_WINDOW_DEFAULT * 1.25) → _enqueue_compaction  [writer runs it]
+
+Compaction pruned >0 → feed_handler._surface_prune_card [writer thread]
+  → GLib.idle_add → _ui [main]: active-project guard → add_card(persist=False) + deepcopy
+      → tiny daemon thread: append_feed_card(copy) → rate-limited _maybe_compact
+```
+
+Accept/reject clicks follow the same update queue. `add_card` / `add_cards_batch` persist via their own per-card threads → `append_feed_card`, and a new card arriving during a project load persists through the writer. **Multiple threads call `append_feed_card` (per-card persist threads, batch thread, prune persist thread) — the feed flock serializes them; that is the concurrency contract, not "a single writer thread."**
+
 ## 5. Callback Pattern
 
 **Primary pattern for all component communication.** A callback is a function reference passed to a component at construction time or via a setter. The component calls it when something happens. The component does NOT know what happens after.
@@ -4044,8 +4114,8 @@ pytest              # auto-discovers tests/ via pytest.ini
 - `tests/test_enforcement.py` — enforcement tier execution: syntax, tests, lint
 - `tests/test_escaping.py` — escape_for_pango(), xml_escape_text()
 - `tests/test_feed_card.py` — FeedCardData dataclass + css_class_for_type()
-- `tests/test_feed_handler.py` — FeedHandler: card lifecycle, echo suppression, persistence
-- `tests/test_feed_store.py` — feed JSON persistence: load/save/append/update
+- `tests/test_feed_handler.py` — FeedHandler: card lifecycle, echo suppression, background persist writer, compaction trigger + prune surfacing
+- `tests/test_feed_store.py` — feed JSON + journal persistence: load/save/append/update, journal replay, bounded lock, window pruning + pins
 - `tests/test_git_ops.py` — git operations: stage, commit, diff, checkout
 - `tests/test_mcp_client.py` — MCP client: asyncio bridge, connection pooling, tool discovery
 - `tests/test_mcp_config.py` — MCP server config loading + validation
@@ -4383,7 +4453,7 @@ crabcakes/
 │   │   ├── command_handler.py    # ~623 lines — slash-prefix command parser (Phase 7)
 │   │   ├── connection_sync_handler.py # ~234 lines — post-connect wiring (Phase 3a)
 │   │   ├── crabwatch_handler.py  # ~364 lines — CrabWatchHandler filesystem watcher (Phase 5)
-│   │   ├── feed_handler.py       # ~1102 lines — FeedHandler — feed card lifecycle, persistence (Phase 5)
+│   │   ├── feed_handler.py       # ~2266 lines — FeedHandler — feed card lifecycle, background persist writer, compaction + prune surfacing (SPEC-UI-RESPONSIVENESS-2 P1/P3)
 │   │   ├── forward_handler.py    # ~194 lines — ForwardHandler (Phase 3b)
 │   │   ├── gateway_handler.py    # ~234 lines — connect, agents, lifecycle (Phase 2)
 │   │   ├── input_toolbar_handler.py # ~485 lines — find/replace, spell check, word count
@@ -4427,7 +4497,7 @@ crabcakes/
     ├── env_security.py           # ~44 lines — get_scrubbed_env() (MED-2 / CRIT-2)
     ├── escaping.py               # ~187 lines — escape_for_pango(), xml_escape_text()
     ├── favorites.py              # ~60 lines — favorites persistence
-    ├── feed_store.py             # ~268 lines — feed JSON persistence (Phase 5)
+    ├── feed_store.py             # ~935 lines — feed JSON + update-journal persistence, compaction (SPEC-UI-RESPONSIVENESS-2 P2-P3)
     ├── feedback_processor.py     # ~274 lines — audit report file I/O
     ├── file_security.py          # ~36 lines — assert_secure_file() (MED-6)
     ├── git_ops.py                # ~263 lines — GitPython wrapper (Phase 7)

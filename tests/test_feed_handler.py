@@ -5,11 +5,19 @@
 
 import pytest
 from datetime import datetime, timezone
+import logging
 import sys
+import threading
 from unittest.mock import MagicMock, patch
 
 from models.feed_card import AutoAcceptPrefs, ExecCommandPref, FeedCardData, FileChangePref
-from utils.feed_store import _default_prefs, _merge_v2_defaults, _migrate_v1_to_v2, load_feed_prefs
+from utils.feed_store import (
+    FEED_WINDOW_DEFAULT,
+    _default_prefs,
+    _merge_v2_defaults,
+    _migrate_v1_to_v2,
+    load_feed_prefs,
+)
 
 
 # ── Mock GLib that records calls instead of dispatching ──────────────────────
@@ -748,6 +756,9 @@ class TestSeqNumHandler:
 
         with patch('ui.handlers.feed_handler.feed_store') as mock_fs:
             mock_fs.load_feed.return_value = existing_cards
+            # The load path reads this constant (SPEC-UI-RESPONSIVENESS-2
+            # §2.3.4); a bare MagicMock would make the comparison raise.
+            mock_fs.FEED_WINDOW_DEFAULT = FEED_WINDOW_DEFAULT
 
             # Mock _project_paths so the handler knows where to look
             feed_handler._project_paths["restore-project"] = "/tmp/restore-project"
@@ -776,6 +787,8 @@ class TestSeqNumHandler:
 
         with patch('ui.handlers.feed_handler.feed_store') as mock_fs:
             mock_fs.load_feed.return_value = old_cards
+            # See the sibling test — the load path reads this constant.
+            mock_fs.FEED_WINDOW_DEFAULT = FEED_WINDOW_DEFAULT
             feed_handler._project_paths["migration-project"] = "/tmp/migration-project"
 
             feed_handler.on_project_opened("migration-project", "/tmp/migration-project")
@@ -4111,3 +4124,536 @@ class TestBackgroundPersistWriter:
         ]
         assert len(warnings) == 2
         assert all(r.levelno == logging.WARNING for r in warnings)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  SPEC-UI-RESPONSIVENESS-2 Phase 3 — sliding-window compaction,
+#  the compaction trigger, prune surfacing (§2.3).
+# ═══════════════════════════════════════════════════════════════════
+
+class RecordingGLib:
+    """Queue-only GLib fake: records callbacks, runs NONE until fire().
+
+    The sync MockGLib runs callbacks on the CALLING thread, so it cannot
+    express "this work must happen on the main thread". This fake can: the
+    writer thread enqueues, the test thread fires. (Existing MockGLib is
+    untouched — Phase-1 tests depend on its synchronous semantics.)
+    """
+
+    def __init__(self):
+        self._queue = []
+
+    def idle_add(self, fn, *args, **kwargs):
+        self._queue.append((fn, args, kwargs))
+        return len(self._queue)
+
+    def fire(self):
+        pending, self._queue = self._queue, []
+        for fn, args, kwargs in pending:
+            fn(*args, **kwargs)
+
+    def pending(self) -> int:
+        return len(self._queue)
+
+
+class _SyncThreading:
+    """threading shim: Thread.start() runs the target on the calling thread.
+
+    Makes the prune-card persist hop and the project-open load hop
+    deterministic without a join/poll race.
+    """
+
+    Lock = threading.Lock
+    Event = threading.Event
+
+    class Thread:
+        def __init__(self, target=None, name=None, daemon=None,
+                     args=(), kwargs=None):
+            self._target = target
+            self._args = args or ()
+            self._kwargs = kwargs or {}
+
+        def start(self):
+            if self._target is not None:
+                self._target(*self._args, **self._kwargs)
+
+        def is_alive(self):
+            return False
+
+        def join(self, timeout=None):
+            return None
+
+
+class _NoWaitEvent:
+    """Event whose wait() never blocks (deterministic writer-loop driving)."""
+
+    def set(self):
+        pass
+
+    def clear(self):
+        pass
+
+    def wait(self, timeout=None):
+        return False
+
+
+class TestWindowCompaction:
+    """§2.3 — trigger, drain branch, prune surfacing, persist gating."""
+
+    def _make_handler(self, glib=None):
+        from ui.handlers.feed_handler import FeedHandler
+        h = FeedHandler(GLib=glib or MockGLib(), on_send_to_agent=MagicMock())
+        h.set_feed_tab(MockFeedTab())
+        return h
+
+    # ── §2.3.4 load-time trigger ─────────────────────────────────────────
+
+    def _run_project_open(self, monkeypatch, cards, name="big", path="/tmp/big"):
+        import ui.handlers.feed_handler as fh
+
+        h = self._make_handler()
+        enqueued = []
+        h._enqueue_compaction = lambda p: enqueued.append(p)
+        h._ensure_persist_writer = lambda: None
+
+        store = MagicMock()
+        store.load_feed.return_value = cards
+        store.load_feed_prefs.return_value = _default_prefs()
+        store.FEED_WINDOW_DEFAULT = 2000      # real constant (not a MagicMock)
+        monkeypatch.setattr(fh, "feed_store", store)
+        # Deterministic: the load runs on a daemon thread in production.
+        monkeypatch.setattr(fh, "threading", _SyncThreading)
+
+        h.on_project_opened(name, path)
+        return h, enqueued
+
+    def test_load_time_trigger_enqueues_compaction_above_threshold(
+        self, monkeypatch
+    ):
+        cards = [
+            FeedCardData(
+                card_type="diff", source="agent", title=f"c{i}", body="",
+                author="x", timestamp=datetime.now(timezone.utc),
+                project_name="big", card_id=f"lt-{i}", seq_num=i + 1,
+            )
+            for i in range(2501)          # > FEED_WINDOW_DEFAULT * 1.25
+        ]
+        _h, enqueued = self._run_project_open(monkeypatch, cards)
+        assert enqueued == ["/tmp/big"], (
+            "a 2501-card open must request a one-time compaction"
+        )
+
+    def test_load_time_trigger_not_fired_at_or_below_threshold(self, monkeypatch):
+        cards = [
+            FeedCardData(
+                card_type="diff", source="agent", title=f"c{i}", body="",
+                author="x", timestamp=datetime.now(timezone.utc),
+                project_name="big", card_id=f"lt-{i}", seq_num=i + 1,
+            )
+            for i in range(2500)          # exactly the threshold — not over it
+        ]
+        _h, enqueued = self._run_project_open(monkeypatch, cards)
+        assert enqueued == [], "at the threshold the feed is already compact enough"
+
+    # ── Invariant 5 + §2.1.2 sentinel isolation ──────────────────────────
+
+    def test_compaction_path_never_reaches_update_feed_card(self, monkeypatch):
+        import ui.handlers.feed_handler as fh
+
+        h = self._make_handler()
+        h._ensure_persist_writer = lambda: None
+        proj = "/tmp/iso-proj"
+
+        seen = []
+
+        def _update(p, cid, updates):
+            seen.append((p, cid))
+            return True
+
+        store = MagicMock()
+        store.update_feed_card.side_effect = _update
+        store.compact_feed.return_value = 0
+        store.FEED_WINDOW_DEFAULT = 2000
+        monkeypatch.setattr(fh, "feed_store", store)
+
+        h._enqueue_compaction(proj)
+        h._enqueue_card_update(proj, "card-1", {"body": "x"})
+        h._drain_persist_queue()
+
+        assert store.compact_feed.called, "the compaction phase must run"
+        assert seen == [(proj, "card-1")], (
+            f"the update phase sees only real card updates: {seen}"
+        )
+        assert all(cid != proj for _p, cid in seen), (
+            "a compaction's path must never be unpacked as a card_id"
+        )
+
+    # ── §2.1.2 drain compaction branch ───────────────────────────────────
+
+    def test_failed_compact_reenqueues_with_incremented_tries(self, monkeypatch):
+        import ui.handlers.feed_handler as fh
+
+        h = self._make_handler()
+        h._ensure_persist_writer = lambda: None
+        proj = "/tmp/rc-proj"
+
+        store = MagicMock()
+        store.compact_feed.side_effect = RuntimeError("compact boom")
+        store.FEED_WINDOW_DEFAULT = 2000
+        monkeypatch.setattr(fh, "feed_store", store)
+
+        h._enqueue_compaction(proj)
+        h._drain_persist_queue()
+
+        assert h._persist_compactions == [(proj, 1)], (
+            "internal retry re-enqueues the SAME path with tries+1"
+        )
+
+    def test_compact_retry_cap_drops_with_error(self, monkeypatch, caplog):
+        import ui.handlers.feed_handler as fh
+
+        h = self._make_handler()
+        h._ensure_persist_writer = lambda: None
+        proj = "/tmp/cap-proj"
+
+        store = MagicMock()
+        store.compact_feed.side_effect = RuntimeError("compact boom")
+        store.FEED_WINDOW_DEFAULT = 2000
+        monkeypatch.setattr(fh, "feed_store", store)
+
+        h._persist_compactions = [(proj, 2)]      # 3rd attempt fails
+        with caplog.at_level(logging.ERROR, logger="ui.handlers.feed_handler"):
+            h._drain_persist_queue()
+
+        assert h._persist_compactions == [], "cap 3 → dropped, not retried"
+        assert any(
+            "after 3 failures" in r.getMessage() and r.levelno == logging.ERROR
+            for r in caplog.records
+        ), [r.getMessage() for r in caplog.records]
+
+    def test_external_enqueue_replaces_with_fresh_budget(self, monkeypatch):
+        import ui.handlers.feed_handler as fh
+
+        h = self._make_handler()
+        h._ensure_persist_writer = lambda: None
+        proj = "/tmp/fresh-proj"
+        monkeypatch.setattr(fh, "feed_store", MagicMock())
+
+        h._persist_compactions = [(proj, 2)]
+        h._enqueue_compaction(proj)
+
+        assert h._persist_compactions == [(proj, 0)], (
+            "an external (load-time) enqueue is a NEW attempt — fresh budget"
+        )
+
+    def test_internal_retry_does_not_clobber_a_concurrent_external_enqueue(
+        self, monkeypatch
+    ):
+        """§2.1.2 only-if-absent: the externally-owned live entry wins."""
+        import ui.handlers.feed_handler as fh
+
+        h = self._make_handler()
+        h._ensure_persist_writer = lambda: None
+        proj = "/tmp/race-proj"
+
+        def _boom(path, window=None):
+            # An external trigger lands DURING this pass (the load path).
+            h._enqueue_compaction(proj)
+            raise RuntimeError("compact boom")
+
+        store = MagicMock()
+        store.compact_feed.side_effect = _boom
+        store.FEED_WINDOW_DEFAULT = 2000
+        monkeypatch.setattr(fh, "feed_store", store)
+
+        h._enqueue_compaction(proj)
+        h._drain_persist_queue()
+
+        assert h._persist_compactions == [(proj, 0)], (
+            "the internal retry must not overwrite the external fresh entry"
+        )
+
+    def test_successful_prune_surfaces_a_card_with_the_window(
+        self, monkeypatch
+    ):
+        import ui.handlers.feed_handler as fh
+
+        h = self._make_handler()
+        h._ensure_persist_writer = lambda: None
+        proj = "/tmp/surf-proj"
+        surfaced = []
+        h._surface_prune_card = lambda p, n, w: surfaced.append((p, n, w))
+
+        store = MagicMock()
+        store.compact_feed.return_value = 5
+        store.FEED_WINDOW_DEFAULT = 2000
+        monkeypatch.setattr(fh, "feed_store", store)
+
+        h._enqueue_compaction(proj)
+        h._drain_persist_queue()
+
+        assert store.compact_feed.call_args[1]["window"] == 2000 or (
+            store.compact_feed.call_args[0][1] == 2000
+        ), f"compact must be called with the window: {store.compact_feed.call_args}"
+        assert surfaced == [(proj, 5, 2000)]
+
+    def test_zero_prune_does_not_surface_a_card(self, monkeypatch):
+        import ui.handlers.feed_handler as fh
+
+        h = self._make_handler()
+        h._ensure_persist_writer = lambda: None
+        h._surface_prune_card = MagicMock()
+
+        store = MagicMock()
+        store.compact_feed.return_value = 0        # nothing pruned
+        store.FEED_WINDOW_DEFAULT = 2000
+        monkeypatch.setattr(fh, "feed_store", store)
+
+        h._enqueue_compaction("/tmp/zero-proj")
+        h._drain_persist_queue()
+
+        assert not h._surface_prune_card.called, "no prune → no card"
+
+    # ── Invariant 6: prune surfacing rides the main thread ───────────────
+
+    def test_prune_card_surfaced_only_after_idle_fire(self, monkeypatch):
+        import ui.handlers.feed_handler as fh
+
+        glib = RecordingGLib()
+        h = self._make_handler(glib=glib)
+        h._active_project_name = "proj"
+        h._project_paths["proj"] = "/tmp/win-proj"
+        monkeypatch.setattr(fh, "threading", _SyncThreading)
+
+        added = []
+        real_add = type(h).add_card
+
+        def _spy_add(self, card_data, persist=True):
+            added.append((card_data, persist))
+            return real_add(self, card_data, persist=persist)
+
+        monkeypatch.setattr(type(h), "add_card", _spy_add)
+
+        h._surface_prune_card("/tmp/win-proj", 7, 2000)
+
+        assert added == [], "add_card must NOT run on the writer (calling) thread"
+        assert glib.pending() == 1
+        glib.fire()
+        assert len(added) == 1, "it runs when the main thread fires the idle"
+        card, persist = added[0]
+        assert card.card_type == "system"
+        assert "7" in card.body and "2000" in card.body
+        assert persist is False, "add_card's own persist is bypassed"
+
+    def test_surface_prune_card_add_card_calls_are_inside_a_nested_def(self):
+        """AST structural proof: no `add_card` call in the method body.
+
+        The writer thread must never touch widgets/`_project_seq`; the only
+        `add_card` call site lives inside the `_ui` closure dispatched via
+        GLib.idle_add.
+        """
+        import ast
+        import inspect
+
+        import ui.handlers.feed_handler as fh
+
+        src = inspect.getsource(fh)
+        tree = ast.parse(src)
+
+        def _is_add_card_call(node):
+            if not isinstance(node, ast.Call):
+                return False
+            f = node.func
+            return (isinstance(f, ast.Attribute) and f.attr == "add_card") or (
+                isinstance(f, ast.Name) and f.id == "add_card"
+            )
+
+        def _collect(node, in_nested, direct, nested):
+            for child in ast.iter_child_nodes(node):
+                now_nested = in_nested or isinstance(
+                    child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+                )
+                if _is_add_card_call(child):
+                    (nested if in_nested else direct).append(child.lineno)
+                _collect(child, now_nested, direct, nested)
+
+        method = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_surface_prune_card":
+                method = node
+                break
+        assert method is not None, "_surface_prune_card not found"
+
+        direct, nested = [], []
+        _collect(method, False, direct, nested)
+
+        assert direct == [], (
+            f"add_card called directly in the method body at line(s) {direct} — "
+            "it must be inside the _ui closure (main thread only)"
+        )
+        assert nested, "expected the _ui closure to call add_card"
+
+    def test_prune_card_persisted_even_while_loading(self, monkeypatch):
+        """Audit r1 #9 — the copy path bypasses add_card's _loading gate."""
+        import ui.handlers.feed_handler as fh
+
+        glib = RecordingGLib()
+        h = self._make_handler(glib=glib)
+        h._active_project_name = "proj"
+        h._project_paths["proj"] = "/tmp/win-proj"
+        h._loading = True                       # a project load is in flight
+        monkeypatch.setattr(fh, "threading", _SyncThreading)
+
+        store = MagicMock()
+        monkeypatch.setattr(fh, "feed_store", store)
+
+        h._surface_prune_card("/tmp/win-proj", 3, 2000)
+        glib.fire()                              # main thread does its part
+
+        assert store.append_feed_card.call_count == 1, (
+            "the prune card must be persisted from the main-thread copy"
+        )
+        persisted_path, snapshot = store.append_feed_card.call_args[0]
+        assert persisted_path == "/tmp/win-proj"
+        assert snapshot.card_type == "system"
+        assert snapshot.card_id, "the copy must carry the assigned card_id"
+
+    def test_prune_card_suppressed_when_project_closed_before_idle(
+        self, monkeypatch
+    ):
+        import ui.handlers.feed_handler as fh
+
+        glib = RecordingGLib()
+        h = self._make_handler(glib=glib)
+        h._active_project_name = "proj"
+        h._project_paths["proj"] = "/tmp/win-proj"
+        monkeypatch.setattr(fh, "threading", _SyncThreading)
+
+        store = MagicMock()
+        monkeypatch.setattr(fh, "feed_store", store)
+        added = []
+        monkeypatch.setattr(
+            type(h), "add_card",
+            lambda self, card_data, persist=True: added.append(card_data) or "x",
+        )
+
+        h._surface_prune_card("/tmp/win-proj", 3, 2000)
+        h._active_project_name = None            # user closed the project
+        glib.fire()
+
+        assert added == [], "a card for a closed project must not be added"
+        assert store.append_feed_card.call_count == 0
+
+    def test_prune_card_not_misfiled_when_project_switched_mid_compaction(
+        self, monkeypatch
+    ):
+        """Coder Phase-3 finding: the card's project name must be resolved
+        on the MAIN thread from the compaction's project_path — never
+        derived from _active_project_name on the writer (self-satisfying
+        guard; a switch mid-compaction misfiled the card into the new
+        project's view while persisting it into the old project's feed)."""
+        import ui.handlers.feed_handler as fh
+
+        glib = RecordingGLib()
+        h = self._make_handler(glib=glib)
+        h._active_project_name = "A"
+        h._project_paths["A"] = "/tmp/proj-a"
+        h._project_paths["B"] = "/tmp/proj-b"
+        monkeypatch.setattr(fh, "threading", _SyncThreading)
+
+        store = MagicMock()
+        monkeypatch.setattr(fh, "feed_store", store)
+        added = []
+        monkeypatch.setattr(
+            type(h), "add_card",
+            lambda self, card_data, persist=True: added.append(card_data) or "x",
+        )
+
+        # Writer runs for A's path while the user has already switched to B.
+        h._surface_prune_card("/tmp/proj-a", 3, 2000)
+        h._active_project_name = "B"
+        glib.fire()
+
+        assert added == [], (
+            "compaction of A while B is active must surface nothing — "
+            "the guard must resolve the name from project_path, not echo "
+            "_active_project_name"
+        )
+        assert store.append_feed_card.call_count == 0
+        # And the complementary case: A still active → the card IS surfaced,
+        # attributed to A by reverse lookup (not by echoing the active name).
+        h._active_project_name = "A"
+        h._surface_prune_card("/tmp/proj-a", 3, 2000)
+        glib.fire()
+        assert len(added) == 1 and added[0].project_name == "A"
+
+    # ── E8: add_card(persist=) ───────────────────────────────────────────
+
+    def test_add_card_persist_false_skips_the_persist_thread(self, monkeypatch):
+        import ui.handlers.feed_handler as fh
+
+        h = self._make_handler()
+        h._project_paths["proj"] = "/tmp/persist-proj"
+        monkeypatch.setattr(fh, "threading", _SyncThreading)
+        store = MagicMock()
+        monkeypatch.setattr(fh, "feed_store", store)
+
+        card = FeedCardData(
+            card_type="system", source="system", title="Feed compacted",
+            body="b", author="system", timestamp=datetime.now(timezone.utc),
+            project_name="proj",
+        )
+
+        h.add_card(card, persist=False)
+        assert store.append_feed_card.call_count == 0, (
+            "persist=False must not write the feed"
+        )
+
+        # Control: the default still persists (proves the gate, not the path).
+        h.add_card(
+            FeedCardData(
+                card_type="system", source="system", title="t2", body="b",
+                author="system", timestamp=datetime.now(timezone.utc),
+                project_name="proj",
+            )
+        )
+        assert store.append_feed_card.call_count == 1
+
+    # ── §2.1.2 final form: drained check counts compactions ──────────────
+
+    def test_drained_check_includes_pending_compactions(self, monkeypatch):
+        h = self._make_handler()
+        proj = "/tmp/drained-proj"
+        h._persist_stop = True
+        h._persist_compactions = [(proj, 0)]
+        h._persist_wakeup = _NoWaitEvent()
+
+        drains = []
+
+        def _drain():
+            drains.append(1)
+            h._persist_compactions.clear()
+
+        h._drain_persist_queue = _drain
+
+        h._persist_loop()      # must NOT exit before that pass runs
+
+        assert drains == [1], (
+            "the writer exited with a compaction still queued — the drained "
+            "check must include _persist_compactions"
+        )
+
+    def test_shutdown_counts_pending_compactions_as_undrained(
+        self, monkeypatch, caplog
+    ):
+        h = self._make_handler()
+        h._persist_writer = _DeadWriterStub()
+        h._persist_compactions = [("/tmp/shut-proj", 0)]
+
+        with caplog.at_level(logging.ERROR, logger="ui.handlers.feed_handler"):
+            h.shutdown_persist_writer()
+
+        assert any(
+            "undrained entries" in r.getMessage() and r.levelno == logging.ERROR
+            for r in caplog.records
+        ), [r.getMessage() for r in caplog.records]

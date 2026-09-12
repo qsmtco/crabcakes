@@ -741,6 +741,14 @@ FEED_WINDOW_DEFAULT = 2000        # newest N cards retained at compaction
         persist (audit r1 #9) and immune to post-add in-memory mutation
         (audit r3 #7). System cards never carry snapshots (no file_path ⇒
         _maybe_create_snapshot no-ops), so the copy is always complete.
+
+        The compacted project's NAME is resolved on the MAIN thread inside
+        _ui by reverse lookup from the compaction's project_path. (Coder
+        Phase-3 finding, folded at implementation time: the original §2.3.5
+        derived it from _active_project_name on the writer, making the
+        guard self-satisfying — a project switch mid-compaction misfiled
+        the card into the new project's view while persisting it into the
+        old project's feed.json. Spec amended; code carries the fix.)
         """
         card = FeedCardData(
             card_type="system",
@@ -749,13 +757,20 @@ FEED_WINDOW_DEFAULT = 2000        # newest N cards retained at compaction
             body=f"{pruned} oldest cards pruned (window {window})",
             author="system",
             timestamp=datetime.now(timezone.utc),
-            project_name=self._active_project_name or "",
+            project_name="",   # assigned inside _ui by reverse lookup
         )
 
         def _ui():
-            # Main thread: guard against the project closing mid-compaction.
-            if not card.project_name or self._active_project_name != card.project_name:
+            # Main thread: resolve the compacted project's NAME here — never
+            # on the writer (a switch mid-compaction would otherwise echo
+            # the NEW project's name into both the view and the snapshot).
+            name = next(
+                (n for n, p in self._project_paths.items() if p == project_path),
+                "",
+            )
+            if not name or self._active_project_name != name:
                 return
+            card.project_name = name
             self.add_card(card, persist=False)   # seq, widgets, indexing — main only
             snapshot = copy.deepcopy(card)        # point-in-time copy, main thread
             def _persist():
