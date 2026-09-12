@@ -9,12 +9,12 @@ Public API:
     parse_sse_line — SSE line → SSEEvent
     parse_sse_delta — delta dict → SSEEvent list
     first_choice — defensive choices[0] accessor
-    urlopen_with_ssl_retry — urllib.urlopen with SSL retry
+    urlopen_with_ssl_retry — urllib.urlopen with SSL/DNS retry
     stream_with_ssl_retry — SSE stream retry wrapper
-    is_retryable_ssl_error — transient SSL error detection
+    is_retryable_ssl_error — transient SSL/DNS error detection
     friendly_error_message — raw exception → user-facing message
     RETRYABLE_SSL_ERRORS — frozenset of retryable SSL error tokens
-    RETRYABLE_OSERROR_TYPES — tuple of retryable TCP-level error types
+    RETRYABLE_OSERROR_TYPES — tuple of retryable TCP-level + DNS error types
     MAX_SSL_RETRIES — retry budget
     SSL_RETRY_BASE_MS — exponential backoff base in ms
 """
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 import ssl
 import time
 import urllib.error
@@ -134,16 +135,18 @@ RETRYABLE_SSL_ERRORS = frozenset({
     "UNEXPECTED_EOF_WHILE_READING",
 })
 
-# OSError subclasses that indicate a transient TCP-level failure
+# OSError subclasses that indicate a transient network-level failure
 # (NOT ssl.SSLError). ConnectionResetError happens when the peer
 # abruptly closes a half-open socket; BrokenPipeError happens when
-# writing to a socket the peer has already closed. Both are safe
-# to retry. MUST be a tuple (not a list) for use with `except` and
-# `isinstance`. See docs/specs/SPEC-SSL-RETRY-FIX.md Layer 1.
+# writing to a socket the peer has already closed. socket.gaierror is a
+# DNS resolution failure (EAI_AGAIN / EAI_FAIL) — see SPEC-DNS-RETRY-1.
+# All are safe to retry. MUST be a tuple (not a list) for use with
+# `except` and `isinstance`. See docs/specs/SPEC-SSL-RETRY-FIX.md Layer 1.
 RETRYABLE_OSERROR_TYPES: tuple[type[Exception], ...] = (
     ConnectionResetError,
     BrokenPipeError,
     TimeoutError,  # Python 3.10+: alias for socket.timeout
+    socket.gaierror,  # DNS: EAI_AGAIN "Temporary failure in name resolution"
 )
 
 MAX_SSL_RETRIES = 3
@@ -166,8 +169,11 @@ def is_retryable_ssl_error(exc: BaseException) -> bool:
 
     For each candidate:
       - If it is an instance of `RETRYABLE_OSERROR_TYPES`, return True.
-        These are TCP-level resets that never produce an SSL reason
-        string at all.
+        These are TCP-level resets/errors that never produce an SSL reason
+        string at all, plus `socket.gaierror` (DNS resolution failure —
+        see SPEC-DNS-RETRY-1: transient EAI_AGAIN and permanent NXDOMAIN
+        are both retried within budget; the trade-off is documented in
+        `urlopen_with_ssl_retry`).
       - If it is an `ssl.SSLError`, check if `str(cand)` contains any
         token from `RETRYABLE_SSL_ERRORS`. Token-match (not isinstance
         check) because `ssl.SSLError` is one class but the reason
@@ -177,9 +183,9 @@ def is_retryable_ssl_error(exc: BaseException) -> bool:
         .reason is then the raw string, not an exception), token-match
         the string itself. This is the common urllib idiom.
 
-    Returns False for anything else (DNS failures, timeouts that aren't
-    SSL-related, configuration errors, etc.) — those should surface to
-    the caller immediately.
+    Returns False for anything else (unclassified network errors,
+    configuration errors, etc.) — those should surface to the caller
+    immediately.
 
     See docs/specs/SPEC-SSL-RETRY-FIX.md §Helpers for the contract.
     """
@@ -276,35 +282,55 @@ def friendly_error_message(exc: Exception) -> str:
 
 
 def urlopen_with_ssl_retry(req, timeout, *, max_retries=MAX_SSL_RETRIES):
-    """Like urllib.request.urlopen but retries on transient SSL errors.
+    """Like urllib.request.urlopen but retries on transient SSL/DNS errors.
 
-    Three exception types trigger a retry attempt (all decided by
+    Four exception types trigger a retry attempt (all decided by
     `is_retryable_ssl_error` which walks the exception chain):
 
       1. `ssl.SSLError` — raw SSL failure caught directly.
       2. `urllib.error.URLError` — `urllib.request.do_open` wraps the
-         underlying `OSError`/`ssl.SSLError` in `URLError` during the
-         request-send phase. The old `except ssl.SSLError` never fires
-         here; the new `except URLError` unwraps via `is_retryable_ssl_error`.
+         underlying `OSError`/`ssl.SSLError`/`socket.gaierror` in `URLError`
+         during the request-send phase. The old `except ssl.SSLError` never
+         fires here; the new `except URLError` unwraps via
+         `is_retryable_ssl_error`.
       3. `RETRYABLE_OSERROR_TYPES` — TCP-level `ConnectionResetError` /
          `BrokenPipeError` that arrive WITHOUT being wrapped in URLError
          (e.g. on the read side of a half-closed connection).
+      4. `socket.gaierror` — DNS resolution failure (EAI_AGAIN "Temporary
+         failure in name resolution" / EAI_FAIL). Caught either raw or
+         URLError-wrapped. On 2026-09-12 a transient gaierror killed a live
+         agent turn because this path did not exist; see SPEC-DNS-RETRY-1.
+
+    DNS trade-off: ALL `gaierror`s are treated as retryable within the
+    existing budget, including permanent failures such as NXDOMAIN
+    (errno -2). A permanent failure therefore costs at most
+    `max_retries` extra attempts (~3 × 1.5s worst case with the default
+    budget) before the original exception propagates unchanged. That cost
+    is accepted deliberately: it is far cheaper than losing an entire agent
+    turn to a ~2-second resolver hiccup, and it keeps the classifier free
+    of errno-specific special cases that would rot as resolver behaviour
+    varies across platforms.
 
     Each branch: if not retryable or max attempts reached, re-raise the
     original exception unchanged. Otherwise log a warning and sleep with
     exponential backoff (500ms × 2^attempt).
 
-    See docs/specs/SPEC-SSL-RETRY-FIX.md Layer 1 for the design.
+    See docs/specs/SPEC-SSL-RETRY-FIX.md Layer 1 and
+    docs/specs/SPEC-DNS-RETRY-1.md for the design.
     """
     last_exc = None
     for attempt in range(max_retries + 1):
         try:
             return urllib.request.urlopen(req, timeout=timeout)
-        except (ConnectionResetError, BrokenPipeError, TimeoutError) as e:
+        except (ConnectionResetError, BrokenPipeError, TimeoutError, socket.gaierror) as e:
             # Bare OSError subclasses — never SSL-wrapped, retry directly.
             # TimeoutError (Python 3.10+, alias for socket.timeout) fires
             # when the socket read exceeds the timeout. Retryable: the
             # provider may be slow or under load.
+            # socket.gaierror fires when the resolver fails before any
+            # connection is made (SPEC-DNS-RETRY-1) — urllib usually wraps
+            # it in URLError, but a caller using a custom socket can see it
+            # raw. Both paths must retry.
             if attempt == max_retries:
                 raise
             last_exc = e

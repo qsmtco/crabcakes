@@ -178,6 +178,96 @@ def test_urlopen_ssl_retry_max_attempts():
         assert call_count[0] == 3  # initial + 2 retries = 3 attempts
 
 
+# ── DNS gaierror retry tests (SPEC-DNS-RETRY-1) ─────────────────────────────
+
+def test_urlopen_retries_transient_dns_gaierror():
+    """URLError-wrapped socket.gaierror (EAI_AGAIN) → retried then succeeds.
+
+    Reproduces the 2026-09-12 Debugger turn death: urllib.do_open wraps the
+    resolver's gaierror in URLError, and the pre-fix classifier returned
+    False for it, so the retry budget never fired.
+    """
+    import socket
+    import urllib.request as _urllib_request
+
+    dns_err = urllib.error.URLError(
+        socket.gaierror(-3, "Temporary failure in name resolution")
+    )
+
+    call_count = [0]
+
+    def _patched_urlopen(req, timeout=None):
+        call_count[0] += 1
+        if call_count[0] < 3:  # fail twice, succeed on the 3rd
+            raise dns_err
+        return MagicMock()
+
+    with patch.object(_urllib_request, "urlopen", _patched_urlopen), \
+            patch("agent.llm.streaming.time.sleep") as mock_sleep:
+        req = MagicMock()
+        req.full_url = "https://api.example.com/v1/chat/completions"
+        result = urlopen_with_ssl_retry(req, timeout=30)
+
+    assert call_count[0] == 3  # initial + 2 retries
+    assert result is not None
+    assert mock_sleep.call_count == 2  # backoff between attempts, not after success
+
+
+def test_urlopen_dns_retry_budget_exhausts():
+    """Persistent DNS gaierror → propagates UNCHANGED after MAX_SSL_RETRIES+1 calls."""
+    import socket
+    import urllib.request as _urllib_request
+
+    from agent.llm.streaming import MAX_SSL_RETRIES
+
+    dns_err = urllib.error.URLError(
+        socket.gaierror(-3, "Temporary failure in name resolution")
+    )
+
+    call_count = [0]
+
+    def _patched_urlopen(req, timeout=None):
+        call_count[0] += 1
+        raise dns_err
+
+    with patch.object(_urllib_request, "urlopen", _patched_urlopen), \
+            patch("agent.llm.streaming.time.sleep"):
+        req = MagicMock()
+        req.full_url = "https://api.example.com/v1/chat/completions"
+        with pytest.raises(urllib.error.URLError) as excinfo:
+            urlopen_with_ssl_retry(req, timeout=30)
+
+    assert call_count[0] == MAX_SSL_RETRIES + 1
+    assert excinfo.value is dns_err  # same object, not rewrapped
+    assert isinstance(excinfo.value.reason, socket.gaierror)
+    assert excinfo.value.reason.errno == -3
+
+
+def test_direct_gaierror_retried():
+    """Raw socket.gaierror (not URLError-wrapped) → caught by the direct branch and retried."""
+    import socket
+    import urllib.request as _urllib_request
+
+    raw_dns_err = socket.gaierror(-3, "Temporary failure in name resolution")
+
+    call_count = [0]
+
+    def _patched_urlopen(req, timeout=None):
+        call_count[0] += 1
+        if call_count[0] < 2:
+            raise raw_dns_err
+        return MagicMock()
+
+    with patch.object(_urllib_request, "urlopen", _patched_urlopen), \
+            patch("agent.llm.streaming.time.sleep"):
+        req = MagicMock()
+        req.full_url = "https://api.example.com/v1/chat/completions"
+        result = urlopen_with_ssl_retry(req, timeout=30)
+
+    assert call_count[0] == 2  # 1 fail + 1 success
+    assert result is not None
+
+
 # ── Backward-compat tests ───────────────────────────────────────────────────
 
 def test_runtime_reexport_sse_event():
