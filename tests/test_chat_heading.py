@@ -61,7 +61,13 @@ class TestHeadingSegmentMarkdown:
         seg = {"level": 2, "content": "[click](https://example.com)"}
         label = _build_heading_segment(seg)
         markup = label.get_label()
-        assert 'href="https://example.com"' in markup
+        # Markdown link syntax is consumed and rendered as underlined text.
+        # Pango rejects <a href> ("Unknown tag 'a'"), so links are deliberately
+        # non-clickable — see utils/markdown.py:253 (commit 676eb1f) and the
+        # <u> assertions in tests/test_markdown.py.
+        assert "<u>click</u>" in markup
+        assert "[click](" not in markup
+        assert "href=" not in markup
 
     def test_javascript_link_blocked(self):
         """HIGH-6: javascript: links in headings must be blocked by activate-link."""

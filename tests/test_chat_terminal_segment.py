@@ -37,7 +37,12 @@ class TestTerminalSegment:
         assert find_label_with(widget, "<b>bold</b>"), "bold not rendered in terminal line"
 
     def test_https_link_in_terminal(self):
-        """Terminal content with [docs](https://...) must render the href."""
+        """Terminal content with [docs](https://...) must render the link text.
+
+        Current contract (utils/markdown.py:253, commit 676eb1f): markdown
+        links render as <u>text</u> with NO href — Pango rejects the <a> tag
+        ("Unknown tag 'a'"), so links are underlined but not clickable.
+        """
         if _gtk_skip():
             pytest.skip("GTK not available in test environment")
         from ui.views.chat_bubble import _build_terminal_segment
@@ -52,27 +57,41 @@ class TestTerminalSegment:
                     return True
                 child = child.get_next_sibling()
             return False
-        assert find_label_with(widget, 'href="https://example.com"')
+        assert find_label_with(widget, "<u>docs</u>")
+        # Non-clickable by design — no anchor markup anywhere in the segment.
+        assert not find_label_with(widget, "href=")
 
     def test_javascript_link_blocked(self):
-        """HIGH-6: javascript: links in terminal must be blocked by activate-link."""
+        """HIGH-6: javascript: links in terminal must never become clickable.
+
+        Current contract (utils/markdown.py:257-260): the link renders as
+        underlined text behind the red HIGH-6 warning prefix, with no href —
+        so it is not an anchor at all. The activate-link guard stays as the
+        backstop for any anchor that does carry an href.
+        """
         if _gtk_skip():
             pytest.skip("GTK not available in test environment")
         from ui.views.chat_bubble import _build_terminal_segment
         widget = _build_terminal_segment({"content": "see [x](javascript:alert(1))"})
-        # Find the label with the href and verify activate-link returns True
-        def find_and_emit(w):
-            if hasattr(w, "get_label") and "javascript" in w.get_label():
-                return w.emit("activate-link", "javascript:alert(1)")
+        # Find the label carrying the needle (returns the widget, not a bool).
+        def find_label_with(w, needle):
+            if hasattr(w, "get_label") and needle in w.get_label():
+                return w
             child = w.get_first_child()
             while child:
-                result = find_and_emit(child)
-                if result is not None:
-                    return result
+                found = find_label_with(child, needle)
+                if found is not None:
+                    return found
                 child = child.get_next_sibling()
             return None
-        result = find_and_emit(widget)
-        assert result is True, "javascript: link not blocked in terminal"
+        # No clickable anchor is emitted for a non-allowlisted scheme.
+        assert find_label_with(widget, "href=") is None
+        # The HIGH-6 warning prefix (U+26A0) marks it as non-allowlisted.
+        js_label = find_label_with(widget, "\u26a0")
+        assert js_label is not None, "javascript: link missing HIGH-6 warning prefix"
+        assert "<u>x</u>" in js_label.get_label()
+        # Backstop: the activate-link handler blocks the scheme outright.
+        assert js_label.emit("activate-link", "javascript:alert(1)") is True
 
     def test_plain_text_unchanged(self):
         """Regression: plain terminal text must render without Pango conversion."""
