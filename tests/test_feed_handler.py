@@ -3804,6 +3804,83 @@ class TestBackgroundPersistWriter:
             f"clobbering a recorded decision); payload was {updates!r}"
         )
 
+    # ── F1 REBUILD-PATH parity (Debugger audit BUG #1, bf0fe54) ──────────
+    #  The two tests above seed `tool_call` cards, which now expose the
+    #  `_body_label` seam — so they exercise the IN-PLACE branch of
+    #  update_card. These two force the REBUILD branch (`file_modified`
+    #  renders via _render_file_event_body, no `_text_label`, so
+    #  card._body_label is None), proving the enqueue block's F1 shape is
+    #  branch-independent: a future refactor that moves the enqueue into
+    #  one branch cannot silently regress the other.
+
+    def _seed_rebuild_path_card(self, h, project_name="proj"):
+        """Seed a file_modified card — no _body_label seam → rebuild path."""
+        card = FeedCardData(
+            card_type="file_modified", source="agent", title="file changed",
+            body="", author="Coder",
+            timestamp=datetime.now(timezone.utc), project_name=project_name,
+            file_path="src/main.py",
+        )
+        card_id = h.add_card(card)
+        h._project_paths[project_name] = "/tmp/uiresp2-proj"
+        return card_id, card
+
+    def test_rebuild_path_persists_accepted_when_decided(self, monkeypatch):
+        h = self._make_handler()
+        card_id, card = self._seed_rebuild_path_card(h)
+        project_path = h._project_paths["proj"]
+        self._no_writer(h)
+
+        # Precondition guard: this fixture really takes the rebuild branch.
+        old_widget = h._card_widgets[card_id]
+        assert getattr(old_widget, "_body_label", "MISSING") is None, (
+            "fixture precondition: file_modified card must lack _body_label "
+            "(if the renderer gained a seam, this test no longer covers the "
+            "rebuild path)"
+        )
+
+        store = MagicMock()
+        store.update_feed_card.return_value = True
+        monkeypatch.setattr("ui.handlers.feed_handler.feed_store", store)
+
+        card.accepted = True
+        h.update_card(card_id, card)
+        h._drain_persist_queue()
+
+        updates = store.update_feed_card.call_args[0][2]
+        assert updates.get("accepted") is True, (
+            f"rebuild path must persist the durable decision; "
+            f"payload was {updates!r}"
+        )
+        # Structural: the widget was rebuilt + swapped, not mutated in place.
+        assert h._card_widgets[card_id] is not old_widget, (
+            "rebuild branch must replace the widget"
+        )
+
+    def test_rebuild_path_omits_accepted_when_none(self, monkeypatch):
+        h = self._make_handler()
+        card_id, card = self._seed_rebuild_path_card(h)
+        project_path = h._project_paths["proj"]
+        self._no_writer(h)
+
+        assert getattr(h._card_widgets[card_id], "_body_label", "MISSING") is None, (
+            "fixture precondition: rebuild branch required"
+        )
+
+        store = MagicMock()
+        store.update_feed_card.return_value = True
+        monkeypatch.setattr("ui.handlers.feed_handler.feed_store", store)
+
+        assert card.accepted is None, "fixture precondition"
+        h.update_card(card_id, card)
+        h._drain_persist_queue()
+
+        updates = store.update_feed_card.call_args[0][2]
+        assert "accepted" not in updates, (
+            f"rebuild path: accepted=None must NOT be written; "
+            f"payload was {updates!r}"
+        )
+
     # ── Invariant 2: coalescing + last-write-wins ────────────────────────
 
     def test_coalescing_n_enqueues_become_one_writer_call_last_wins(self, monkeypatch):
