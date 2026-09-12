@@ -278,6 +278,9 @@ def friendly_error_message(exc: Exception) -> str:
             return ("The AI provider took too long to respond (connection timed out "
                     "after retries). The provider may be slow or overloaded. "
                     "Please try sending your message again.")
+        if isinstance(cand, socket.gaierror):
+            return ("Could not reach the AI provider (DNS lookup failed). "
+                    "Check your network connection and try again.")
     return str(exc)
 
 
