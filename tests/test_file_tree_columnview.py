@@ -101,18 +101,21 @@ class TestFileTreeRowWidget:
         assert "file-tree-row" in widget.get_css_classes()
 
     def test_widget_has_children(self):
-        """Widget has expander (Gtk.Button), label (Gtk.Label), drawer_container (Gtk.Box)."""
+        """Widget has expander (Gtk.Button), icon (Gtk.Image), label (Gtk.Label), drawer_container (Gtk.Box)."""
         widget = FileTreeRowWidget()
         children = []
         child = widget.get_first_child()
         while child is not None:
             children.append(child)
             child = child.get_next_sibling()
-        assert len(children) >= 3
-        # Check types
+        assert len(children) == 4
+        # Check types — child order is expander, icon, label, drawer_container.
+        # (The icon column was added to FileTreeRowWidget after this test was
+        # written; the old assertion expected the label at index 1.)
         assert isinstance(children[0], Gtk.Button)  # expander
-        assert isinstance(children[1], Gtk.Label)   # label
-        assert isinstance(children[2], Gtk.Box)     # drawer_container
+        assert isinstance(children[1], Gtk.Image)   # icon
+        assert isinstance(children[2], Gtk.Label)   # label
+        assert isinstance(children[3], Gtk.Box)     # drawer_container
 
     def test_set_depth(self):
         """set_depth sets margin-start on the widget."""
@@ -138,8 +141,11 @@ class TestFileTreeRowWidget:
         while child is not None:
             children.append(child)
             child = child.get_next_sibling()
-        label = children[1]
-        assert label.get_text() == "test.txt"
+        # Find the label by type — the Gtk.Image icon sits between the expander
+        # and the label, so the old positional lookup hit the icon.
+        labels = [c for c in children if isinstance(c, Gtk.Label)]
+        assert len(labels) == 1
+        assert labels[0].get_text() == "test.txt"
 
     def test_attach_detach_drawer(self):
         """attach_drawer and detach_drawer work correctly."""
@@ -190,12 +196,19 @@ class TestFileTreeFactory:
         assert factory is not None
 
     def test_setup_creates_widget(self):
-        """_on_setup creates a FileTreeRowWidget and sets it as the list_item child."""
-        factory = FileTreeFactory(None)
+        """_on_setup creates a FileTreeRowWidget, sets it as the list_item child,
+        and wires the right-click gesture (which requires a real FileTree — the
+        handler is bound off self._tree, so passing None raises AttributeError)."""
+        factory = FileTreeFactory(FileTree())
         list_item = Gtk.ListItem()
         factory._on_setup(factory, list_item)
         widget = list_item.get_child()
         assert isinstance(widget, FileTreeRowWidget)
+        # Right-click gesture must be attached — reads the row LIVE at click
+        # time from widget._bound_row.
+        controllers = widget.observe_controllers()
+        assert controllers.get_n_items() == 1
+        assert isinstance(controllers.get_item(0), Gtk.GestureClick)
 
     def test_bind_populates_widget(self):
         """_on_bind populates the widget from the row properties.
