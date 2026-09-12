@@ -155,8 +155,35 @@ class TestToStdioParams:
         assert params.command == "npx"
         assert params.args == ["-y", "@mcp/server-fetch"]
 
-    def test_env_var_substitution(self):
-        """BUG #8: Env vars substituted from environment."""
+    def test_env_var_substitution_allowlisted_var_is_substituted(self):
+        """MED-12: ${VAR} substitution works for ALLOWLISTED vars.
+
+        Pins the MED-12 allowlist contract (utils/mcp_config.py):
+        PATH/HOME/LANG/VIRTUAL_ENV/PYTHONPATH are forwarded. PATH is used
+        here because it exists in every environment.
+        """
+        import os
+        original = os.environ.get("PATH", "")
+        config = MCPServerConfig(
+            name="test",
+            command="cmd",
+            env={"PATH": "${PATH}"},
+        )
+        params = config.to_stdio_params()
+        assert params is not None
+        assert params.env["PATH"] == original, (
+            "allowlisted ${PATH} must be substituted from the process environment"
+        )
+
+    def test_env_var_refused_when_not_in_med12_allowlist(self, caplog):
+        """MED-12: non-allowlisted ${VAR} is refused, with the warning logged.
+
+        A credential-style var (TEST_MCP_TOKEN) must NOT be forwarded: the
+        key is omitted from env, the MED-12 warning fires, and when every
+        requested var is refused the result degrades to env=None (the
+        StdioServerParameters still constructs).
+        """
+        import logging
         import os
         test_env = os.environ.get("TEST_MCP_TOKEN", "")
         os.environ["TEST_MCP_TOKEN"] = "secret123"
@@ -166,8 +193,16 @@ class TestToStdioParams:
                 command="cmd",
                 env={"TOKEN": "${TEST_MCP_TOKEN}"},
             )
-            params = config.to_stdio_params()
-            assert params.env["TOKEN"] == "secret123"
+            with caplog.at_level(logging.WARNING, logger="utils.mcp_config"):
+                params = config.to_stdio_params()
+            assert "MED-12" in caplog.text and "TEST_MCP_TOKEN" in caplog.text, (
+                f"expected the MED-12 refusal warning; got {caplog.records!r}"
+            )
+            assert params is not None
+            assert params.env is None, (
+                "refused var must be omitted; all-var env dict degrades to None "
+                f"(got {params.env!r})"
+            )
         finally:
             if test_env:
                 os.environ["TEST_MCP_TOKEN"] = test_env
