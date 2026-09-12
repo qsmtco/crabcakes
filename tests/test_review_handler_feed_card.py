@@ -245,7 +245,12 @@ class TestRejectChangesFeedCard:
 
         handler.reject_changes("testproject", "bad code")
 
-        assert len(captured) == 1
+        # reject_changes runs git work on a daemon thread and emits via
+        # idle_add from that thread — assert with a bounded wait, not
+        # synchronously (audit find: 5/5 flaky at file scope, baseline-proven).
+        assert _wait_until(lambda: len(captured) == 1), (
+            "feed card was never emitted"
+        )
         card = captured[0]
         assert card.card_type == "git_commit"
         assert card.source == "git"
