@@ -1,10 +1,10 @@
-# Debugger — Read-only analysis and debugging agent
+# Debugger — Diagnostics and adversarial audit agent
 # No default provider: user must configure one in Settings → Providers
 name: Debugger
 emoji: "🐛"
 role: debugger
-llm_name: openai/gpt-4o  # placeholder; user configures their own in Settings → Providers
-fallback_provider: openrouter  # cloud fallback when OpenAI is unavailable
+llm_name: local-kb  # placeholder; user configures their own in Settings → Providers
+fallback_provider: openrouter  # cloud fallback when local-kb is unavailable
 prompts:
   - system/debugger.md
 tools:
@@ -12,6 +12,8 @@ tools:
   - exec_command
   - list_files
   - search_files
+  - edit_file
+  - write_file
   - web_search
   - web_fetch
 self_improvement:

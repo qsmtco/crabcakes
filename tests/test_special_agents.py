@@ -159,11 +159,30 @@ class TestRegistry:
             assert "write_file" in coder.tools
             assert coder.can_write is True
 
-    def test_debugger_no_write_tools(self):
+    def test_debugger_has_write_tools(self):
+        """Debugger is write-capable as of DEBUGGER-WRITE-TOOL Phase 1.
+
+        DESIGN CHANGE (deliberate inversion of `test_debugger_no_write_tools`):
+        the shipped debugger.yaml used to list only read tools, but that
+        read-only posture was nominal — `exec_command` could always write, and
+        agents used `cat > file <<EOF` heredocs for probe scripts and audit
+        scratch. Those heredocs surface as single approval cards containing the
+        ENTIRE file (22,714 chars measured live on 2026-09-12), which is both an
+        approval-UX problem (the PM must read a 22 KB command to approve a
+        probe) and a pango cost problem (T2: text measurement was 60.1% of
+        main-thread burn).
+
+        Granting write_file/edit_file is the audited path: a named tool call
+        with a small card, a structured audit-log record, and no approval prompt
+        (exec_command always requires one). The investigate/diagnose/report
+        mandate is unchanged in prompts/system/debugger.md, which now states the
+        heredoc ban explicitly.
+        """
         debugger = get_special_agent("special:debugger")
         assert debugger is not None
-        assert "write_file" not in debugger.tools
-        assert debugger.can_write is False
+        assert "write_file" in debugger.tools
+        assert "edit_file" in debugger.tools
+        assert debugger.can_write is True
 
     def test_get_nonexistent_returns_none(self):
         assert get_special_agent("special:nonexistent") is None
