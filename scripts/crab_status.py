@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""crab_status.py — command-line shim for the CrabCakes status reporter.
+
+AGENTCTRL1 Phase 1b (SPEC-AGENT-CONTROL-1 §2.2 CLI, §2.3 invariants, §2.4 alert
+path). Pure Python over `utils.status_report`: no GTK, no network, no import of
+`ui/` or `agent/`, and no scheduler. Correct with the app running or closed —
+that is the point of the tool.
+
+Usage:
+    crab_status.py [--project PATH] [--json] [--full] [--no-feed] [--watch N]
+                   [--auto-resume]
+
+Exit codes (§2.2): 0 healthy · 2 attention needed · 3 app not running ·
+10 reserved flag (`--auto-resume`, Phase 3 — not implemented yet).
+Two codes outside that set exist on purpose: a usage error exits 2 (argparse
+convention — the usage text on stderr disambiguates it from "attention"), and an
+unexpected reporter failure exits 1 with a traceback on stderr (§1.4: failure is
+loud, never a silent no-op).
+
+Read-only contract (§2.3.6 / §2.3.2): this process never mutates app state. Its
+only writes are inside the reporter's own cache directory
+(`<XDG_CACHE_HOME or ~/.cache>/crabcakes`) for the feed-summary cache. The §2.4
+alert-dedupe bookkeeping (`should_alert` → `report["alert"]` →
+`status-state.json`) is deliberately NOT wired here — the phase instructions
+scope Phase 1b to argv/exit codes/rendering/watch, and the cron wiring is a
+later step. The report's `alert` field therefore stays False in Phase 1b.
+"""
+
+from __future__ import annotations
+
+import argparse
+import math
+import os
+import sys
+import time
+import traceback
+
+# scripts/crab_status.py is one level deep: make `utils` importable when the
+# script is run directly (`python3 scripts/crab_status.py`) from any cwd.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+from utils import status_report  # imported after the sys.path bootstrap
+
+EXIT_HEALTHY = 0           # §2.2
+EXIT_FAILURE = 1           # §1.4 unexpected reporter failure (loud)
+EXIT_ATTENTION = 2         # §2.2 (+ argparse's usage-error code)
+EXIT_APP_DOWN = 3          # §2.2
+EXIT_NOT_IMPLEMENTED = 10  # reserved flag handled by a later phase
+
+NOT_IMPLEMENTED_MSG = "not implemented (Phase 3)"
+USAGE_EPILOG = (
+    "For cron/alerting run `crab_status.py --json`; the exit code is the alert "
+    "condition (§2.4) and the report is printed as JSON on stdout."
+)
+
+
+class _UsageExit(Exception):
+    """Raised by `_ArgumentParser.exit` instead of SystemExit.
+
+    Keeps `main()` a plain `argv -> int` function (no SystemExit escaping), so
+    the exit-code mapping is unit-testable in-process.
+    """
+
+    def __init__(self, status):
+        super().__init__(int(status))
+        self.status = int(status)
+
+
+class _ArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser that reports --help/usage errors as return codes."""
+
+    def exit(self, status=0, message=None):
+        if message:
+            self._print_message(message, sys.stderr)
+        raise _UsageExit(status)
+
+
+def _positive_seconds(value):
+    """`--watch N`: a finite number of seconds > 0 (Rule 6: validate argv)."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"invalid seconds value: {value!r}")
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise argparse.ArgumentTypeError(
+            f"--watch seconds must be a positive number, got {value!r}")
+    return seconds
+
+
+def build_parser():
+    """The §2.2 argv surface. Nothing else is accepted (no `--nudge` here)."""
+    parser = _ArgumentParser(
+        prog="crab_status.py",
+        description="Read-only CrabCakes status report (AGENTCTRL1 Phase 1).",
+        epilog=USAGE_EPILOG,
+    )
+    parser.add_argument("--project", default=".", metavar="PATH",
+                        help="project directory to report on (default: .)")
+    parser.add_argument("--json", action="store_true",
+                        help="emit the machine-readable report (cron/alerting)")
+    parser.add_argument("--full", action="store_true",
+                        help="raise the message-body cap to 2000 chars "
+                             "(bodies only; tool arguments and command output "
+                             "are never rendered)")
+    parser.add_argument("--no-feed", action="store_true",
+                        help="skip the feed-summary section")
+    parser.add_argument("--watch", type=_positive_seconds, metavar="N",
+                        default=None,
+                        help="re-render every N seconds until interrupted "
+                             "(Ctrl-C exits 0)")
+    parser.add_argument("--auto-resume", action="store_true",
+                        help="Phase 3 (not implemented) — reserved flag")
+    return parser
+
+
+def _run_once(args, include_feed, body_cap):
+    """Collect, render, print. Returns the §2.2 exit code (or EXIT_FAILURE)."""
+    try:
+        report = status_report.collect(args.project, include_feed=include_feed,
+                                       body_cap=body_cap)
+        if args.json:
+            output = status_report.render_json(report) + "\n"
+        else:
+            output = status_report.render_text(report, show_content=args.full)
+        code = status_report.assess(report)[1]
+    except Exception as exc:  # KeyboardInterrupt is BaseException: not caught
+        print(f"crab_status: report failed: {type(exc).__name__}: {exc}",
+              file=sys.stderr)
+        traceback.print_exc()
+        return EXIT_FAILURE
+    sys.stdout.write(output)
+    sys.stdout.flush()
+    return code
+
+
+def main(argv=None) -> int:
+    """Run the CLI. Returns the process exit code; never raises SystemExit."""
+    parser = build_parser()
+    try:
+        args = parser.parse_args(argv)
+    except _UsageExit as exc:
+        return exc.status
+
+    # Reserved Phase-3 flag: refuse before collecting anything. §2.2/§2.3.6 —
+    # a reserved flag must never be a silent no-op, and must never act.
+    if args.auto_resume:
+        print(NOT_IMPLEMENTED_MSG, file=sys.stderr)
+        return EXIT_NOT_IMPLEMENTED
+
+    include_feed = not args.no_feed
+    body_cap = (status_report.BODY_CAP_FULL if args.full
+                else status_report.BODY_CAP_DEFAULT)
+
+    if args.watch is None:
+        return _run_once(args, include_feed, body_cap)
+
+    # --watch N: re-collect and re-render every N seconds until interrupted.
+    try:
+        while True:
+            code = _run_once(args, include_feed, body_cap)
+            if code == EXIT_FAILURE:
+                return code
+            time.sleep(args.watch)
+    except KeyboardInterrupt:
+        return EXIT_HEALTHY
+
+
+if __name__ == "__main__":
+    sys.exit(main())
