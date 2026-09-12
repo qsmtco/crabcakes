@@ -1159,6 +1159,15 @@ class FeedHandler:
                     raise RuntimeError(
                         "update_feed_card returned False (append+legacy failed)"
                     )
+                if ok is None:
+                    # Legacy path: card gone (pruned between enqueue and
+                    # drain). Retrying is futile — log INFO and let the
+                    # removal below drop it (symmetric with the queue phase).
+                    _logger.info(
+                        "persist: card %s no longer exists in %s; "
+                        "deferred update dropped (pruned?)",
+                        card_id, project_path,
+                    )
                 # success — remove OUR entry only (a newer entry may exist)
                 with self._persist_queue_lock:
                     cur = self._persist_deferred.get(key)

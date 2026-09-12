@@ -5,37 +5,81 @@
 #
 # Thread safety: fcntl.flock() advisory lock on feed.json prevents concurrent
 # load→modify→save cycles from corrupting the file. Lock is held for the
-# entire read-modify-write window. Non-blocking acquire with retry.
+# entire read-modify-write window. Bounded, non-blocking acquire (2 s
+# deadline, returns None on timeout — never blocks unbounded).
+#
+# SPEC-UI-RESPONSIVENESS-2 §2.2 — update journal. Card updates no longer
+# rewrite the whole feed: `append_card_update` appends ONE JSONL line to
+# `.crabcakes/feed-updates.jsonl` (O(1)), and `load_feed` merges that journal
+# over the snapshot. `compact_feed` folds the journal into the snapshot and
+# truncates it (triggered from `update_feed_card` at the threshold and,
+# rate-limited, from `append_feed_card`). Updates are therefore recorded
+# without the card having to exist yet — the journal is the source of truth
+# for pending changes, replay is idempotent, and a torn final line is
+# tolerated.
+#
+# DOCUMENTED DEVIATION from the "pure functions — no state" contract above:
+# `_compact_last` / `_compact_rl_lock` keep per-project compaction
+# timestamps so the append-triggered compaction is rate-limited. This is
+# file-I/O orchestration state only (no GTK, no handler state), guarded by
+# its own lock, and never evicted (≈100 B per project).
 
 import fcntl
 import json
 import logging
 import os
 import stat
+import threading
 import time
 
 from models.feed_card import FeedCardData
 
 FEED_FILENAME = "feed.json"
 FEED_PREFS_FILENAME = "feed-prefs.json"
+JOURNAL_FILENAME = "feed-updates.jsonl"
 PREFS_VERSION = 2
-_LOCK_RETRIES = 5          # max attempts to acquire lock
-_LOCK_RETRY_DELAY = 0.05  # 50ms between retries
+_LOCK_RETRY_DELAY = 0.05  # 50ms between non-blocking acquire attempts
+JOURNAL_COMPACT_THRESHOLD = 500   # lines; compact when exceeded
+_LOCK_TIMEOUT_SEC = 2.0           # bounded lock deadline (was unbounded)
+_COMPACT_MIN_INTERVAL = 60.0      # seconds between append-triggered compacts
+FEED_WINDOW_DEFAULT = 2000        # newest N cards retained at compaction
 _logger = logging.getLogger(__name__)
+
+# Documented deviation from this module's "pure functions" docstring: the
+# compact rate-limit needs per-project last-compact timestamps. Guarded by
+# _compact_rl_lock; no GTK, no handler state — file-I/O orchestration only.
+_compact_last: dict[str, float] = {}
+_compact_rl_lock = threading.Lock()
+
+# The fields a journal record (or a legacy update payload) may set on a card.
+# D3 (SPEC-UI-RESPONSIVENESS-2): "body" added — update_card persists
+# {"body", "metadata"}, and the old 3-field allowed set silently dropped the
+# body, leaving stale bodies on disk after tool results.
+_UPDATABLE_FIELDS = frozenset({"accepted", "reviewed", "metadata", "body"})
 
 
 # ── LOW-12 / LOW-13 helpers ──────────────────────────────────────────────────
 
 
-def _atomic_write_json(path: str, data) -> None:
+def _atomic_write_json(path: str, data, compact: bool = False) -> None:
     """LOW-13: write JSON atomically — write to .tmp, then os.replace.
 
     Sets permissions to 0o600 (matches the security pattern in
     agent/runtime.py:1069-1072). Caller is responsible for the lock.
+
+    `compact=True` (SPEC-UI-RESPONSIVENESS-2 §2.2.9) drops the `indent=2`
+    pretty-printing for feed snapshots — a 9,500-card feed is far smaller and
+    cheaper to serialize. Deliberately NO `default=`: a non-serializable value
+    must raise (surfacing in the caller's log and taking the legacy/False
+    path) rather than be silently stringified into the feed. Prefs callers
+    keep the default `indent=2` (small, human-editable files).
     """
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+        if compact:
+            json.dump(data, f)
+        else:
+            json.dump(data, f, indent=2)
     os.replace(tmp, path)
     try:
         os.chmod(path, 0o600)
@@ -61,6 +105,11 @@ def _ensure_gitignore_entry(project_path: str, entry: str) -> None:
     Creates the file if it doesn't exist. If the file exists, checks for
     the entry (whole-line match, ignoring trailing comments) and appends
     if missing. The write is atomic via _atomic_write_text.
+
+    Known pre-existing limitation (audit-accepted, not fixed here): this
+    read-modify-write is not protected by the feed flock, so two processes
+    can race it. Every existing caller has the same exposure; per-project
+    gitignore locking would be scope creep.
     """
     gitignore = os.path.join(project_path, ".gitignore")
     lines: list[str] = []
@@ -86,6 +135,12 @@ def _feed_path(project_path: str) -> str:
     return os.path.join(crabcakes, FEED_FILENAME)
 
 
+def _journal_path(project_path: str) -> str:
+    """Return the path to .crabcakes/feed-updates.jsonl for a project."""
+    crabcakes = os.path.join(project_path, ".crabcakes")
+    return os.path.join(crabcakes, JOURNAL_FILENAME)
+
+
 def _ensure_crabcakes_dir(project_path: str) -> None:
     """Create .crabcakes directory if it doesn't exist."""
     crabcakes = os.path.join(project_path, ".crabcakes")
@@ -93,24 +148,28 @@ def _ensure_crabcakes_dir(project_path: str) -> None:
         os.makedirs(crabcakes, exist_ok=True)
 
 
-def _acquire_lock(path: str) -> tuple:
-    """Acquire an advisory flock on the feed file. Returns (fd, lock_file_path).
+def _acquire_lock(path: str, timeout: float = _LOCK_TIMEOUT_SEC) -> tuple | None:
+    """Acquire the feed lock. Returns (fd, lock_path) or None on timeout.
 
-    Uses a separate .lock file so we don't conflict with readers of feed.json.
-    Non-blocking with retries to avoid deadlocking.
+    Never blocks unbounded: non-blocking attempts inside a deadline loop.
+    Callers MUST handle None — read paths fall back to a lock-free read,
+    write paths skip and log (the journal/queue keeps the data safe for the
+    next attempt). The old implementation's final `fcntl.flock(fd, LOCK_EX)`
+    could park a thread indefinitely; the profiler caught the main thread
+    there 9× (SPEC-UI-RESPONSIVENESS-2 §1.1).
     """
     lock_path = path + ".lock"
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
-    for attempt in range(_LOCK_RETRIES):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return fd, lock_path
         except (OSError, BlockingIOError):
-            if attempt < _LOCK_RETRIES - 1:
-                time.sleep(_LOCK_RETRY_DELAY)
-    # Final attempt — blocking (should rarely reach here)
-    fcntl.flock(fd, fcntl.LOCK_EX)
-    return fd, lock_path
+            time.sleep(_LOCK_RETRY_DELAY)
+    os.close(fd)
+    _logger.warning("feed lock busy >%.1fs: %s", timeout, lock_path)
+    return None
 
 
 def _release_lock(fd: int, lock_path: str) -> None:
@@ -121,16 +180,250 @@ def _release_lock(fd: int, lock_path: str) -> None:
         os.close(fd)
 
 
+# ── Shared parse / merge helpers (§2.2.4) ────────────────────────────────────
+
+
+def _parse_cards(raw) -> list[FeedCardData]:
+    """Parse a raw JSON value into cards (shared by load_feed/compact_feed)."""
+    if not isinstance(raw, list):
+        _logger.warning(
+            "feed_store: expected list, got %s", type(raw).__name__
+        )
+        return []
+    cards: list[FeedCardData] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        try:
+            cards.append(FeedCardData.from_dict(item))
+        except (KeyError, TypeError) as e:
+            _logger.warning("feed_store: skipped malformed card: %s", e)
+            continue
+    return cards
+
+
+def _apply_overlay(cards: list[FeedCardData], overlay: dict) -> None:
+    """Merge a journal overlay onto parsed cards (shared load/compact rules).
+
+    `metadata` merges per-key (`card.metadata.update(val)`) so an update that
+    carries only the changed keys does not wipe the rest; a non-dict metadata
+    value is skipped with a WARNING (type-trust guard, audit r3 #10). Scalars
+    are setattr'd (allowed set `_UPDATABLE_FIELDS`). Records for cards absent
+    from the snapshot are stale (pruned) and dropped at DEBUG.
+    """
+    if not overlay:
+        return
+    by_id = {c.card_id: c for c in cards if c.card_id}
+    for card_id, updates in overlay.items():
+        card = by_id.get(card_id)
+        if card is None:
+            _logger.debug(
+                "journal: dropping stale record for absent card %s", card_id
+            )
+            continue
+        if not isinstance(updates, dict):
+            continue
+        for key, val in updates.items():
+            if key == "metadata":
+                if isinstance(val, dict):
+                    card.metadata.update(val)
+                else:
+                    _logger.warning(
+                        "journal: non-dict metadata for card %s skipped", card_id
+                    )
+                continue
+            if key in _UPDATABLE_FIELDS and hasattr(card, key):
+                setattr(card, key, val)
+
+
+# ── Journal primitives (§2.2.4) ──────────────────────────────────────────────
+
+
+def _tail_is_complete_record(tail: bytes) -> bool:
+    """True when the journal's final (newline-less) chunk is complete JSON.
+
+    Distinguishes "the record's bytes landed but the crash beat the `\\n`"
+    (worth preserving) from "the crash landed mid-write" (garbage that must
+    be removed — see `append_card_update`).
+    """
+    try:
+        record = json.loads(tail.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return isinstance(record, dict)
+
+
+def append_card_update(project_path: str, card_id: str, updates: dict) -> bool:
+    """Append one update record to the journal — O(1), no full-file rewrite.
+
+    Record shape: `{"card_id": str, "updates": dict}`. One `write()` of
+    `json.dumps(record) + "\\n"`, under the feed flock so a concurrent
+    compaction can never truncate between our append and its fold. Returns
+    True when the line was written.
+
+    A payload that cannot be serialized (TypeError/ValueError, e.g. a
+    non-JSON-native object or a circular reference) or an OSError returns
+    False with a WARNING so the caller falls back to the legacy RMW — which
+    serializes via `to_dict()` and therefore may still succeed. A non-dict
+    `metadata` value is dropped from the record with a WARNING (never
+    journaled garbage).
+
+    Torn tail (crash mid-append): `_replay_journal` stops at the first
+    unparseable line, so a damaged final record would otherwise shadow every
+    record appended after it — and those updates would then be silently lost
+    at the next compaction, which folds with the same replay rule. This
+    writer therefore repairs the tail before appending: if the final chunk
+    is a COMPLETE record missing only its newline it is preserved (a `\\n` is
+    written first); if it is garbage it is truncated away. Either way the new
+    record is replayable.
+    """
+    if not project_path or not card_id:
+        _logger.warning(
+            "append_card_update: empty project_path/card_id — update dropped"
+        )
+        return False
+
+    jp = _journal_path(project_path)
+    _ensure_crabcakes_dir(project_path)
+    if not os.path.isfile(jp):
+        _ensure_gitignore_entry(project_path, ".crabcakes/" + JOURNAL_FILENAME)
+
+    record_updates = dict(updates)
+    if "metadata" in record_updates and not isinstance(record_updates["metadata"], dict):
+        _logger.warning(
+            "append_card_update: non-dict metadata for card %s dropped", card_id
+        )
+        record_updates.pop("metadata")
+
+    try:
+        # No `default=`: a non-serializable value must fall back to the
+        # legacy path (which serializes via to_dict), never be stringified.
+        line = json.dumps({"card_id": card_id, "updates": record_updates})
+    except (TypeError, ValueError) as e:
+        _logger.warning(
+            "append_card_update: non-serializable update for card %s (%s) — "
+            "falling back to the legacy write path", card_id, e,
+        )
+        return False
+
+    acquired = _acquire_lock(_feed_path(project_path))
+    if acquired is None:
+        _logger.warning(
+            "append_card_update: feed lock busy for %s — update not recorded",
+            _feed_path(project_path),
+        )
+        return False
+    fd, lock_path = acquired
+    try:
+        # Tail repair is BEST-EFFORT: a failure to inspect the file must never
+        # block the append (a lone record on its own line is still valid).
+        needs_sep = False
+        try:
+            if os.path.isfile(jp):
+                with open(jp, "r+b") as jf:
+                    content = jf.read()
+                    if content:
+                        last_nl = content.rfind(b"\n")
+                        tail = content[last_nl + 1:]
+                        if tail:
+                            if _tail_is_complete_record(tail):
+                                needs_sep = True   # keep it; just add the newline
+                            else:
+                                _logger.warning(
+                                    "journal: repairing torn tail in %s "
+                                    "(%d bytes dropped)", jp, len(tail),
+                                )
+                                jf.truncate(last_nl + 1)
+        except (OSError, ValueError):
+            needs_sep = False
+        with open(jp, "a", encoding="utf-8") as f:
+            if needs_sep:
+                f.write("\n")
+            f.write(line + "\n")
+    except OSError as e:
+        _logger.warning(
+            "append_card_update: failed to write %s: %s", jp, e
+        )
+        return False
+    finally:
+        _release_lock(fd, lock_path)
+    return True
+
+
+def _replay_journal(project_path: str) -> dict[str, dict]:
+    """Fold the journal into `{card_id: merged_updates}`.
+
+    A missing journal is not an error (empty overlay). Reading stops at the
+    first unparseable line — a torn tail from a crash mid-append — with a
+    single WARNING; every earlier record is still applied. Later records for
+    the same card merge over earlier ones per-key.
+    """
+    jp = _journal_path(project_path)
+    if not os.path.isfile(jp):
+        return {}
+
+    overlay: dict[str, dict] = {}
+    try:
+        with open(jp, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    _logger.warning(
+                        "journal: torn tail in %s — prior records applied", jp
+                    )
+                    break
+                if not isinstance(record, dict):
+                    _logger.warning("journal: skipping non-dict record in %s", jp)
+                    continue
+                card_id = record.get("card_id")
+                updates = record.get("updates")
+                if not isinstance(card_id, str) or not card_id:
+                    _logger.warning(
+                        "journal: skipping record without card_id in %s", jp
+                    )
+                    continue
+                if not isinstance(updates, dict):
+                    _logger.warning(
+                        "journal: skipping non-dict updates for %s", card_id
+                    )
+                    continue
+                overlay.setdefault(card_id, {}).update(updates)
+    except OSError as e:
+        _logger.warning("journal: failed to read %s: %s", jp, e)
+        return {}
+    return overlay
+
+
+def _journal_line_count(project_path: str) -> int:
+    """Count non-empty journal lines (bounded by threshold + in-flight)."""
+    jp = _journal_path(project_path)
+    if not os.path.isfile(jp):
+        return 0
+    try:
+        with open(jp, "r", encoding="utf-8") as f:
+            return sum(1 for line in f if line.strip())
+    except OSError:
+        return 0
+
+
 def load_feed(project_path: str) -> list[FeedCardData]:
     """
-    Load feed cards from .crabcakes/feed.json.
+    Load feed cards from .crabcakes/feed.json, replaying the update journal.
 
     Returns cards in chronological order (oldest first).
     Returns empty list if file doesn't exist or is invalid JSON.
     Logs errors instead of raising.
 
-    Thread safety: acquires shared lock during read to avoid reading
-    a partially-written file.
+    Thread safety: the snapshot and the journal are read under ONE lock hold,
+    so a concurrent compaction can never truncate the journal between the two
+    reads (it holds the same lock). The lock timeout scales with the file size
+    (a large feed needs patience against a multi-second compaction); on
+    timeout the read proceeds lock-free with a WARNING — `os.replace` makes a
+    partially-written snapshot impossible, and the next load re-reads
+    consistently.
     """
     path = _feed_path(project_path)
     if not os.path.isfile(path):
@@ -138,10 +431,30 @@ def load_feed(project_path: str) -> list[FeedCardData]:
 
     fd = None
     lock_path = None
+    overlay: dict[str, dict] = {}
     try:
-        fd, lock_path = _acquire_lock(path)
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = 0
+        timeout = min(60.0, 10.0 + size / 1_000_000)
+        acquired = _acquire_lock(path, timeout=timeout)
+        if acquired is None:
+            # Accepted residual (§2.2.3): this lock-free fallback also reads
+            # the journal below without a lock, so it can observe an in-flight
+            # append tail (or miss a just-landed record) while another
+            # process holds the feed lock. Bounded and self-healing — the
+            # next load re-reads consistently once the lock is free. NO code
+            # change: acquiring the journal path separately here would
+            # re-introduce the split-lock bug (two inodes, no exclusion).
+            _logger.warning(
+                "load_feed: lock busy >%.1fs, lock-free read of %s", timeout, path
+            )
+        else:
+            fd, lock_path = acquired
         with open(path, "r", encoding="utf-8") as f:
             raw = json.load(f)
+        overlay = _replay_journal(project_path)   # same lock window
     except (OSError, json.JSONDecodeError) as e:
         _logger.warning("load_feed: failed to read %s: %s", path, e)
         return []
@@ -149,20 +462,8 @@ def load_feed(project_path: str) -> list[FeedCardData]:
         if fd is not None:
             _release_lock(fd, lock_path)
 
-    if not isinstance(raw, list):
-        _logger.warning("load_feed: expected list at %s, got %s", path, type(raw).__name__)
-        return []
-
-    cards = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        try:
-            cards.append(FeedCardData.from_dict(item))
-        except (KeyError, TypeError) as e:
-            _logger.warning("load_feed: skipped malformed card: %s", e)
-            continue
-
+    cards = _parse_cards(raw)
+    _apply_overlay(cards, overlay)
     return cards
 
 
@@ -174,28 +475,50 @@ def save_feed(project_path: str, cards: list[FeedCardData]) -> None:
     Creates .crabcakes/ directory if it doesn't exist.
     Logs errors instead of raising.
 
-    Note: Callers doing load→modify→save should use _with_lock() helpers
-    (append_feed_card, update_feed_card) to prevent races.
-    Standalone saves are safe only when no concurrent writers exist.
+    Thread safety (§2.2.3): gains the feed flock — an unlocked whole-file
+    write would race every other mutation. On lock timeout the write is
+    skipped with a WARNING (never unbounded, never corrupting). Callers doing
+    load→modify→save should still prefer append_feed_card /
+    update_feed_card. `path` is bound before the try so the error log can
+    never raise NameError when directory creation itself fails.
     """
+    path = _feed_path(project_path)
+    fd = None
+    lock_path = None
     try:
         _ensure_crabcakes_dir(project_path)
-        path = _feed_path(project_path)
         _ensure_gitignore_entry(project_path, ".crabcakes/feed.json")
-        _atomic_write_json(path, [c.to_dict() for c in cards])
+        acquired = _acquire_lock(path)
+        if acquired is None:
+            _logger.warning("save_feed: lock busy for %s — write skipped", path)
+            return
+        fd, lock_path = acquired
+        _atomic_write_json(path, [c.to_dict() for c in cards], compact=True)
     except OSError as e:
         _logger.error("save_feed: failed to write %s: %s", path, e)
+    finally:
+        if fd is not None:
+            _release_lock(fd, lock_path)
 
 
 def append_feed_card(project_path: str, card: FeedCardData) -> None:
     """
     Append a single card to the existing feed file.
     Locks -> loads -> appends -> saves -> unlocks. Atomic under flock.
+
+    The lock is released BEFORE the post-append compaction check so the two
+    never nest (`compact_feed` takes the same lock) — invariant 8.
     """
     path = _feed_path(project_path)
     _ensure_crabcakes_dir(project_path)
     _ensure_gitignore_entry(project_path, ".crabcakes/feed.json")
-    fd, lock_path = _acquire_lock(path)
+    acquired = _acquire_lock(path)
+    if acquired is None:
+        _logger.warning(
+            "append_feed_card: lock busy for %s — card not appended", path
+        )
+        return
+    fd, lock_path = acquired
     try:
         # Read
         raw_cards = []
@@ -207,66 +530,207 @@ def append_feed_card(project_path: str, card: FeedCardData) -> None:
                 _logger.warning("append_feed_card: failed to read %s: %s", path, e)
                 raw_cards = []
         # Parse
-        cards = []
-        for item in (raw_cards if isinstance(raw_cards, list) else []):
-            if isinstance(item, dict):
-                try:
-                    cards.append(FeedCardData.from_dict(item))
-                except (KeyError, TypeError):
-                    continue
+        cards = _parse_cards(raw_cards)
         # Append + Write
         cards.append(card)
         try:
-            _atomic_write_json(path, [c.to_dict() for c in cards])
+            _atomic_write_json(path, [c.to_dict() for c in cards], compact=True)
         except OSError as e:
             _logger.error("append_feed_card: failed to write %s: %s", path, e)
     finally:
         _release_lock(fd, lock_path)
+    # Post-append size check, lock released (D6): an append-only feed would
+    # otherwise never trigger a compaction.
+    _maybe_compact(project_path)
 
 
-def update_feed_card(project_path: str, card_id: str, updates: dict) -> bool:
-    """
-    Update a specific card by card_id (e.g., set accepted=True).
-    Locks -> loads -> finds card -> applies updates -> saves -> unlocks.
-    Returns True if card was found and updated, False otherwise.
-    Logs errors instead of raising.
+def _maybe_compact(project_path: str) -> None:
+    """Rate-limited post-append compaction trigger.
+
+    At most one append-triggered compact per project per
+    `_COMPACT_MIN_INTERVAL` (60 s): under a sustained high append rate a
+    compact that takes seconds would otherwise re-trigger on nearly every
+    append (the count re-crosses the soft bound while the compact runs —
+    audit r3 #5). Called with NO lock held; `compact_feed` takes its own.
+    Concurrent callers serialize on the flock and a loser's fold is a
+    harmless no-op.
+
+    The rate-limit timestamp is recorded BEFORE the size check — a compact
+    that finds the feed under the bound still spends the interval, which
+    prevents re-check thrash.
     """
     path = _feed_path(project_path)
     if not os.path.isfile(path):
-        return False
+        return
+    now = time.monotonic()
+    with _compact_rl_lock:
+        if now - _compact_last.get(project_path, 0.0) < _COMPACT_MIN_INTERVAL:
+            return
+        _compact_last[project_path] = now
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            n = len(json.load(f))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return
+    if n > FEED_WINDOW_DEFAULT * 1.25:
+        compact_feed(project_path, window=None)
+
+
+def compact_feed(project_path: str, window: int | None = None) -> int:
+    """Fold the journal into feed.json. Returns the number of cards pruned.
+
+    Runs under ONE feed-flock hold: read the snapshot inline via the shared
+    `_parse_cards` (deliberately NOT via `load_feed` — that would re-enter
+    the lock), apply the overlay with the same merge rules as `load_feed`,
+    write the merged snapshot atomically (compact JSON), then truncate the
+    journal. Crash-safety ordering: the snapshot replace happens FIRST and
+    the journal truncate SECOND, so a crash between them leaves an unfolded
+    journal whose replay is idempotent. On success the rate-limit timestamp
+    is recorded so every trigger path shares one budget.
+
+    `window` is accepted for signature stability (it is the Phase-3 sliding
+    window) and is currently ignored — Phase 2 never prunes, so the return
+    value is always 0. Every Phase-2 call site passes `window=None`.
+    """
+    path = _feed_path(project_path)
+    jp = _journal_path(project_path)
+    if not os.path.isfile(path):
+        return 0
+
+    acquired = _acquire_lock(path)
+    if acquired is None:
+        _logger.warning(
+            "compact_feed: lock busy for %s — compaction skipped", path
+        )
+        return 0
+    fd, lock_path = acquired
+    try:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            _logger.warning("compact_feed: failed to read %s: %s", path, e)
+            return 0
+
+        cards = _parse_cards(raw)
+        overlay = _replay_journal(project_path)
+        _apply_overlay(cards, overlay)
+
+        pruned = 0
+        if window is not None:
+            # Phase 3 adds the sliding window + pins here.
+            _logger.debug(
+                "compact_feed: window pruning not implemented yet (%s, window=%s)",
+                project_path, window,
+            )
+
+        try:
+            _atomic_write_json(path, [c.to_dict() for c in cards], compact=True)
+        except OSError as e:
+            _logger.error("compact_feed: failed to write %s: %s", path, e)
+            return 0
+
+        # Truncate SECOND: the snapshot is durable and replay is idempotent,
+        # so a crash here is safe (the folded journal simply replays again).
+        try:
+            with open(jp, "w", encoding="utf-8"):
+                pass
+        except OSError as e:
+            _logger.warning("compact_feed: failed to truncate %s: %s", jp, e)
+    finally:
+        _release_lock(fd, lock_path)
+
+    with _compact_rl_lock:
+        _compact_last[project_path] = time.monotonic()
+    return pruned
+
+
+def update_feed_card(project_path: str, card_id: str, updates: dict) -> bool | None:
+    """Record a card update. True = safely recorded (journaled or written).
+
+    Hot path is O(1): append one journal line, and compact when the journal
+    exceeds `JOURNAL_COMPACT_THRESHOLD`. Card existence is NOT checked on the
+    hot path — it cannot be known in O(1), and the update does not need it
+    (replay applies the record whenever the card appears). Stale records for
+    cards that never exist are dropped at replay/compaction.
+
+    Returns:
+      True  — recorded (journal line written, or the legacy write succeeded).
+              A compaction failure does NOT affect this: the journal line is
+              already durable, so the fold is retried naturally by the next
+              threshold crossing (audit r3 #1).
+      False — write failure (journal append failed AND the legacy write
+              failed: lock timeout or OSError). The Phase-1 writer defers and
+              retries.
+      None  — the legacy path ran and the card was not found (pruned between
+              enqueue and drain). The writer logs INFO and drops it; retrying
+              a gone card is futile.
+    """
+    ok = append_card_update(project_path, card_id, updates)
+    if ok:
+        try:
+            if _journal_line_count(project_path) >= JOURNAL_COMPACT_THRESHOLD:
+                # Phase 2: window=None until Phase 3 supplies the retention
+                # rules (§2.3 wire-up).
+                compact_feed(project_path, window=None)
+        except Exception:  # noqa: BLE001 — compaction is orthogonal to durability
+            _logger.warning(
+                "update_feed_card: post-append compaction failed for %s "
+                "(will retry at next threshold)", project_path,
+            )
+        return True
+    return _update_feed_card_legacy(project_path, card_id, updates)
+
+
+def _update_feed_card_legacy(
+    project_path: str, card_id: str, updates: dict
+) -> bool | None:
+    """Legacy read-modify-write fallback for a failed journal append.
+
+    Preserves the pre-journal semantics (lock → load → find → setattr over
+    `_UPDATABLE_FIELDS` → atomic write), with a tri-state return (audit r4
+    #14/#18): True = found + written; False = write failure (lock timeout /
+    OSError / non-serializable payload); None = card not found. `TypeError`
+    is caught alongside `OSError` so a non-serializable payload can never
+    crash the caller or leave a corrupt file — the `.tmp` write fails before
+    `os.replace`, so the snapshot is untouched.
+    """
+    path = _feed_path(project_path)
+    if not os.path.isfile(path):
+        return None  # no snapshot → the card cannot exist
     _ensure_crabcakes_dir(project_path)
     _ensure_gitignore_entry(project_path, ".crabcakes/feed.json")
-    fd, lock_path = _acquire_lock(path)
+    acquired = _acquire_lock(path)
+    if acquired is None:
+        _logger.warning(
+            "_update_feed_card_legacy: lock busy for %s — write skipped", path
+        )
+        return False
+    fd, lock_path = acquired
     try:
-        # Read
         try:
             with open(path, "r", encoding="utf-8") as f:
                 raw_cards = json.load(f)
         except (OSError, json.JSONDecodeError) as e:
             _logger.warning("update_feed_card: failed to read %s: %s", path, e)
             return False
-        # Parse
-        cards = []
-        for item in (raw_cards if isinstance(raw_cards, list) else []):
-            if isinstance(item, dict):
-                try:
-                    cards.append(FeedCardData.from_dict(item))
-                except (KeyError, TypeError):
-                    continue
-        # Update
+        cards = _parse_cards(raw_cards)
         for c in cards:
             if c.card_id == card_id:
-                allowed = {"accepted", "reviewed", "metadata"}
                 for key, val in updates.items():
-                    if key in allowed and hasattr(c, key):
+                    if key in _UPDATABLE_FIELDS and hasattr(c, key):
                         setattr(c, key, val)
                 try:
-                    _atomic_write_json(path, [cd.to_dict() for cd in cards])
-                except OSError as e:
-                    _logger.error("update_feed_card: failed to write %s: %s", path, e)
+                    _atomic_write_json(
+                        path, [cd.to_dict() for cd in cards], compact=True
+                    )
+                except (OSError, TypeError) as e:
+                    _logger.error(
+                        "update_feed_card: failed to write %s: %s", path, e
+                    )
                     return False
                 return True
-        return False
+        return None
     finally:
         _release_lock(fd, lock_path)
 

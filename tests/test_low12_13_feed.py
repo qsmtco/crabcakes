@@ -187,6 +187,15 @@ class TestLow13AtomicWrite:
         def boom(*args, **kwargs):
             raise OSError("mid-write crash")
         monkeypatch.setattr(_json, "dump", boom)
+        # SPEC-UI-RESPONSIVENESS-2 §2.2: `update_feed_card` now writes the
+        # journal line first (via json.dumps) and only falls back to the
+        # json.dump RMW if that fails. A crash that must actually stop the
+        # update from being recorded has to hit BOTH writes, otherwise the
+        # journal simply records it — which is the intended new behavior, not
+        # a crash. Assertions below are unchanged.
+        def boom_dumps(*args, **kwargs):
+            raise TypeError("non-serializable payload")
+        monkeypatch.setattr(_json, "dumps", boom_dumps)
 
         update_feed_card(project_path, "upd-1", {"accepted": True})
 
