@@ -4258,8 +4258,10 @@ class TestLocalAgentDrawerEmissions:
             f"BUG #17: card status should be 'error' for denied tool, got "
             f"{persisted.metadata.get('status')!r}"
         )
-        assert card.metadata.get("status") != "complete", (
-            "the store's original object must not be mutated before the persist"
+        assert card.metadata.get("status") is None, (
+            "the store's original object must not be mutated before the persist "
+            f"(got status={card.metadata.get('status')!r}) — pre-fix this was "
+            "stamped 'error' in place, which is the mutate-before-persist bug"
         )
 
     # ── BUG #21: tool-only turn tool_starts not suppressed ──────────────
