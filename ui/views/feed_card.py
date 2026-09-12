@@ -105,26 +105,141 @@ def _format_timestamp(ts) -> str:
 def _render_body(card_data: FeedCardData) -> Gtk.Widget:
     """Render the body of a feed card based on card type."""
     ct = card_data.card_type
+    # The render cap + reveal control apply to EVERY body-bearing card type
+    # (UIRESP2-T2 §1) — including approval cards, whose command is the worst
+    # offender in practice (22,714-char heredoc measured live).
+    needs_approval = bool((card_data.metadata or {}).get("needs_approval"))
 
     if ct in ("diff", "git_commit"):
         # For Phase 1, render body as plain monospace text.
         # Actual diff rendering (hunks, syntax highlight) comes in Phase 4.
-        return _render_text_body(card_data.body, mono=True)
+        # git_commit bodies carry raw `git` stdout (feed_handler._add_git_card),
+        # so they are one of the genuinely unbounded producers.
+        return _render_text_body(card_data.body, mono=True,
+                                 needs_approval=needs_approval)
 
     elif ct in ("file_created", "file_modified", "file_deleted", "dir_created", "dir_deleted"):
         return _render_file_event_body(card_data)
 
     elif ct == "agent_action":
-        return _render_text_body(card_data.body, mono=False)
+        return _render_text_body(card_data.body, mono=False,
+                                 needs_approval=needs_approval)
 
     elif ct == "task":
         return _render_task_body(card_data)
 
     elif ct == "system":
-        return _render_text_body(card_data.body, mono=True)
+        return _render_text_body(card_data.body, mono=True,
+                                 needs_approval=needs_approval)
 
     else:
-        return _render_text_body(card_data.body, mono=False)
+        return _render_text_body(card_data.body, mono=False,
+                                 needs_approval=needs_approval)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rendered body cap + reveal control (SPEC-UI-RESPONSIVENESS-2-T2 §1)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Render-side cap. STORAGE keeps the full body (models.feed_card.MAX_STORED_BODY,
+# 200_000) — this limit is what Pango ever measures, because text measurement was
+# 60.1% of main-thread burn with 16–39 KB approval bodies on screen.
+RENDERED_BODY_LIMIT = 2000
+
+# Tooltip on the reveal control for a card awaiting approval: the approver must
+# be able to read the whole command BEFORE deciding, so the cap is never a
+# reachability barrier — one click shows the full text.
+REVEAL_TOOLTIP_PENDING_APPROVAL = "Full command text — view before approving"
+REVEAL_TOOLTIP_DEFAULT = "Show the full text"
+
+
+def _reveal_label(hidden: int) -> str:
+    """Label for the reveal control — the EXACT number of hidden characters."""
+    return f"… {hidden} more characters"
+
+
+def _apply_reveal_tooltip(button: Gtk.Button, needs_approval: bool) -> None:
+    button.set_tooltip_text(
+        REVEAL_TOOLTIP_PENDING_APPROVAL if needs_approval else REVEAL_TOOLTIP_DEFAULT
+    )
+
+
+def _install_reveal_control(
+    box: Gtk.Box, label: Gtk.Label, *, needs_approval: bool = False
+) -> Gtk.Button:
+    """Append the `… N more characters` control to `box` (additive sibling).
+
+    The control is deliberately a SIBLING of the body label, inside the body
+    box: `_text_label`/`_body_label` must stay the text label itself (Phase 4
+    Part A's in-place update seam depends on it), and the action row must not be
+    covered by a control the approver has to reach past.
+
+    The click handler reads the box's CURRENT state (full text + label), so a
+    later in-place update that swaps the body cannot leave the button revealing
+    stale text.
+    """
+    button = Gtk.Button()
+    button.add_css_class("feed-body-reveal")
+    button.set_halign(Gtk.Align.START)
+    button.set_valign(Gtk.Align.START)
+    _apply_reveal_tooltip(button, needs_approval)
+
+    def _on_clicked(_button: Gtk.Button) -> None:
+        _apply_text_markup(label, getattr(box, "_body_full_text", "") or "")
+        box._body_revealed = True
+        _button.set_visible(False)
+
+    button.connect("clicked", _on_clicked)
+    box.append(button)
+    box._reveal_button = button
+    return button
+
+
+def _set_body_text(
+    box: Gtk.Box, label: Gtk.Label, text: str, *, needs_approval: bool = False
+) -> bool:
+    """Apply the render cap to `label` (+ reveal control) inside `box`.
+
+    Returns True when the text was truncated for rendering. `box._body_full_text`
+    always holds the STORED text (never the rendered slice) so the reveal action
+    and the in-place update path both work from the real body.
+    """
+    text = text or ""
+    box._body_full_text = text
+    box._body_revealed = False
+    button = getattr(box, "_reveal_button", None)
+
+    if len(text) <= RENDERED_BODY_LIMIT:
+        _apply_text_markup(label, text)
+        if button is not None:
+            button.set_visible(False)
+        return False
+
+    _apply_text_markup(label, text[:RENDERED_BODY_LIMIT])
+    hidden = len(text) - RENDERED_BODY_LIMIT
+    if button is None:
+        button = _install_reveal_control(box, label, needs_approval=needs_approval)
+    else:
+        button.set_visible(True)
+    button.set_label(_reveal_label(hidden))
+    _apply_reveal_tooltip(button, needs_approval)
+    return True
+
+
+def _refresh_body_text(
+    box: Gtk.Box, label: Gtk.Label, text: str, *, needs_approval: bool = False
+) -> bool:
+    """Re-evaluate the render cap on an in-place update (Edit B).
+
+    Sticky-reveal applies to the SAME text only: an already-revealed card that
+    receives the identical body stays expanded, while a NEW oversized body
+    resets to truncated with a fresh hidden count. Returns True when truncated.
+    """
+    text = text or ""
+    if (getattr(box, "_body_revealed", False)
+            and getattr(box, "_body_full_text", None) == text):
+        return len(text) > RENDERED_BODY_LIMIT
+    return _set_body_text(box, label, text, needs_approval=needs_approval)
 
 
 def _apply_text_markup(label: Gtk.Label, text: str) -> None:
@@ -151,8 +266,13 @@ def _apply_text_markup(label: Gtk.Label, text: str) -> None:
         label.set_text(text)
 
 
-def _render_text_body(text: str, mono: bool) -> Gtk.Widget:
-    """Render body text as a label (monospace or normal)."""
+def _render_text_body(text: str, mono: bool, *,
+                      needs_approval: bool = False) -> Gtk.Widget:
+    """Render body text as a label (monospace or normal).
+
+    Rendered through `_set_body_text`, so the body is capped at
+    `RENDERED_BODY_LIMIT` with a reveal control when longer (UIRESP2-T2 §1).
+    """
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
     box.add_css_class("feed-card-body")
 
@@ -163,10 +283,13 @@ def _render_text_body(text: str, mono: bool) -> Gtk.Widget:
         box.append(spacer)
         # Phase 4 Part A: expose the body label for in-place updates.
         box._text_label = spacer
+        # A placeholder label carries no wrap config, so it cannot host a real
+        # body in place — update_card_in_place rebuilds instead (Edit B).
+        box._body_is_placeholder = True
+        box._body_full_text = ""
         return box
 
     label = Gtk.Label()
-    _apply_text_markup(label, text)
     label.set_xalign(0)
     label.set_wrap(True)
     label.set_wrap_mode(1)  # Pango.WrapMode.WORD_CHAR
@@ -175,6 +298,7 @@ def _render_text_body(text: str, mono: bool) -> Gtk.Widget:
     if mono:
         label.add_css_class("feed-body-mono")
     box.append(label)
+    _set_body_text(box, label, text, needs_approval=needs_approval)
     # Phase 4 Part A: expose the body label for in-place updates.
     box._text_label = label
     return box
@@ -202,7 +326,6 @@ def _render_file_event_body(card_data: FeedCardData) -> Gtk.Widget:
     # Body description if present
     if card_data.body and card_data.body.strip():
         desc_label = Gtk.Label()
-        desc_label.set_markup(xml_template("{body}", body=card_data.body))
         desc_label.set_xalign(0)
         desc_label.set_wrap(True)
         desc_label.set_wrap_mode(1)
@@ -211,6 +334,13 @@ def _render_file_event_body(card_data: FeedCardData) -> Gtk.Widget:
         desc_label.set_margin_top(4)
         desc_label.add_css_class("feed-body-desc")
         box.append(desc_label)
+        # Same render cap as text bodies (UIRESP2-T2 §1). The box deliberately
+        # does NOT expose `_text_label`: file-event cards have no single body
+        # seam, so update_card() keeps rebuilding them (Phase 4 Part A).
+        _set_body_text(
+            box, desc_label, card_data.body,
+            needs_approval=bool((card_data.metadata or {}).get("needs_approval")),
+        )
 
     return box
 
@@ -233,7 +363,6 @@ def _render_task_body(card_data: FeedCardData) -> Gtk.Widget:
     # Body (task description or status)
     if card_data.body and card_data.body.strip():
         body_label = Gtk.Label()
-        body_label.set_markup(xml_template("{body}", body=card_data.body))
         body_label.set_xalign(0)
         body_label.set_wrap(True)
         body_label.set_wrap_mode(1)
@@ -241,6 +370,9 @@ def _render_task_body(card_data: FeedCardData) -> Gtk.Widget:
         body_label.set_can_focus(False)
         body_label.set_margin_top(4)
         box.append(body_label)
+        # `body=` sweep: the work-unit status line is generated (bounded today)
+        # but funnels through the same cap so a future long body cannot slip past.
+        _set_body_text(box, body_label, card_data.body)
 
     # Task ID if present
     if card_data.task_id:
@@ -431,6 +563,9 @@ def build_feed_card(
     # text label (file events, task cards) — update_card() falls back to
     # the rebuild path for those.
     card._body_label = getattr(body_widget, "_text_label", None)
+    # UIRESP2-T2 Edit B: the body CONTAINER is the seam that hosts the reveal
+    # control, so the in-place path can re-evaluate truncation.
+    card._body_box = body_widget
 
     # ── Footer: author • timestamp ─────────────────────────────────────
     footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -722,6 +857,10 @@ def update_card_in_place(card_widget: Gtk.Widget, card_data: FeedCardData) -> bo
     instead of rebuilding the whole card (build_feed_card + FeedTab
     remove/insert on the main thread).
 
+    UIRESP2-T2 Edit B: the body is written through the render cap, so the
+    refreshed card is truncated + revealable exactly like a freshly built one,
+    and a card that was revealed resets to truncated when a NEW body arrives.
+
     Must be called on the GTK main thread.
 
     Args:
@@ -737,7 +876,24 @@ def update_card_in_place(card_widget: Gtk.Widget, card_data: FeedCardData) -> bo
     if body_label is None:
         return False
 
-    _apply_text_markup(body_label, card_data.body or "")
+    body_box = getattr(card_widget, "_body_box", None)
+    new_text = card_data.body or ""
+    needs_approval = bool((card_data.metadata or {}).get("needs_approval"))
+
+    if body_box is None or not hasattr(body_box, "_text_label"):
+        # No container seam to host a reveal control: only safe for text short
+        # enough that no control is needed (otherwise rebuild — Edit B).
+        if len(new_text) > RENDERED_BODY_LIMIT:
+            return False
+        _apply_text_markup(body_label, new_text)
+    elif getattr(body_box, "_body_is_placeholder", False) and new_text.strip():
+        # An empty body rendered a spacer label with no wrap/select config;
+        # hosting a real body there would render it as one unwrapped line.
+        return False
+    else:
+        _refresh_body_text(body_box, body_label, new_text,
+                           needs_approval=needs_approval)
+
     _refresh_card_state_classes(card_widget, card_data)
     update_card_badge(card_widget, card_data.accepted)
     return True

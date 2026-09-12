@@ -13,12 +13,26 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from models.conversation_snapshot import ConversationSnapshot
+
+_logger = logging.getLogger(__name__)
+
+# Storage cap for a card body (SPEC-UI-RESPONSIVENESS-2-T2 §1).
+#
+# STORAGE vs RENDER are separate concerns: this bound keeps feed.json finite
+# (a 200k-char body per card, worst case), while the UI renders at most
+# `ui.views.feed_card.RENDERED_BODY_LIMIT` (2,000) characters per card with a
+# reveal control. Before T2 the only cap was 2,000 chars applied *before
+# storage* on tool results, so the stored text — copy, crabcard export, audits —
+# was silently lossy. Measured live (Qrusher 2026-09-12): 4 approval cards at
+# 16–39 KB bodies dominated the main thread's pango measurement (60.1% of burn).
+MAX_STORED_BODY = 200_000
 
 # Supported card types — exhaustive list for Phase 1
 CardType = Literal[
@@ -37,6 +51,29 @@ CardType = Literal[
 
 # Supported sources
 CardSource = Literal["agent", "system", "git", "crabwatch"]
+
+
+def cap_stored_body(text: str, site: str = "") -> str:
+    """Bound a card body for storage at `MAX_STORED_BODY` (SPEC-UIRESP2-T2 §1).
+
+    The single storage-side cap: every `body=` producer funnels through
+    `FeedCardData.__post_init__` (or calls this directly when mutating an
+    existing card), so a new producer cannot silently store an unbounded body.
+    Logs a WARNING when it fires — a capped body means the stored copy of that
+    card is incomplete, which the operator should know about.
+
+    Non-str input is returned unchanged: the model does not coerce types, and
+    `body` is typed `str` (Rule 6 — validation belongs at the edge, and every
+    call site passes a string).
+    """
+    if not isinstance(text, str) or len(text) <= MAX_STORED_BODY:
+        return text
+    _logger.warning(
+        "feed card body truncated for storage at MAX_STORED_BODY=%d "
+        "(%d chars%s); feed.json is bounded, the full text is not retained",
+        MAX_STORED_BODY, len(text), f", site={site}" if site else "",
+    )
+    return text[:MAX_STORED_BODY]
 
 
 @dataclass
@@ -69,6 +106,17 @@ class FeedCardData:
     reviewed: bool = False
     accepted: bool | None = None  # True=accepted, False=rejected, None=pending
     seq_num: int | None = None  # Sequential display number (per project)
+
+    def __post_init__(self) -> None:
+        """Apply the storage-side body cap at construction (UIRESP2-T2 §1).
+
+        Every `FeedCardData` producer (agent runtime tool results, approval
+        prompts, git-commit stdout, audit reports, crabcard parsing, crabwatch
+        events, work units — plus `from_dict` on load) passes through here, so
+        the cap cannot be bypassed by a new `body=` site. The RENDER cap is a
+        separate, much smaller limit in `ui.views.feed_card`.
+        """
+        self.body = cap_stored_body(self.body, site=self.card_type)
 
     @staticmethod
     def css_class_for_type(card_type: CardType) -> str:

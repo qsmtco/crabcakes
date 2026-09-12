@@ -21,7 +21,7 @@ import shutil
 import threading
 import time
 from datetime import datetime, timezone
-from models.feed_card import FeedCardData
+from models.feed_card import FeedCardData, cap_stored_body
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
@@ -1579,10 +1579,15 @@ class AgentRuntimeHandler:
                     card_success = success
                     duration = 0
 
-                # Truncate display
-                display = output_text[:2000] if output_text else ""
+                # UIRESP2-T2 Edit C: store the FULL tool output. The 2,000-char
+                # limit is a RENDER concern (ui/views/feed_card.py); truncating
+                # here made the stored text lossy, so copy/crabcard/audit saw a
+                # silent 2,000-char prefix. Only the large storage cap applies,
+                # and it warns when it fires.
+                display = output_text or ""
                 if error_text:
                     display = f"❌ {error_text}\n{display}"
+                display = cap_stored_body(display, site=f"tool_result:{name}")
 
                 card.body = display
                 card.metadata["status"] = "complete" if card_success else "error"
