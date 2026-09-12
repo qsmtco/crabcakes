@@ -322,6 +322,8 @@ def save_alert_state(state_path, state):
     """
     if not isinstance(state, dict):
         raise ValueError(f"alert state must be a dict, got {type(state).__name__}")
+    if isinstance(state_path, str) and not state_path.strip():
+        raise ValueError("state_path must be a non-empty path")
     if not isinstance(state_path, (str, os.PathLike)):
         raise ValueError(
             f"state_path must be a path, got {type(state_path).__name__}")
