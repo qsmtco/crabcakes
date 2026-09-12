@@ -115,7 +115,7 @@ class TestFallbackOnOutOfScope:
 
         call_count = {"n": 0}
 
-        def mock_call_llm(session_key, messages, tools):
+        def mock_call_llm(session_key, messages, tools, **_kwargs):
             call_count["n"] += 1
             if call_count["n"] == 1:
                 return _make_oob_response()
@@ -140,7 +140,7 @@ class TestNoFallbackWithoutConfig:
 
         call_count = {"n": 0}
 
-        def mock_call_llm(session_key, messages, tools):
+        def mock_call_llm(session_key, messages, tools, **_kwargs):
             call_count["n"] += 1
             return _make_oob_response()
 
@@ -162,7 +162,7 @@ class TestFallbackOneShot:
 
         call_count = {"n": 0}
 
-        def mock_call_llm(session_key, messages, tools):
+        def mock_call_llm(session_key, messages, tools, **_kwargs):
             call_count["n"] += 1
             # Always return out-of-scope
             return _make_oob_response()
@@ -214,7 +214,7 @@ class TestFallbackModelDerivation:
 
         captured_models = []
 
-        def mock_call_llm(session_key, messages, tools):
+        def mock_call_llm(session_key, messages, tools, **_kwargs):
             # Capture conv.model at the moment of the call
             captured_models.append(conv.model)
             if len(captured_models) == 1:

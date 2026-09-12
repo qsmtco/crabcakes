@@ -232,7 +232,7 @@ class TestIntegrationRuntimeFallback:
         # Mock _call_llm: first call returns OOB, second returns fallback answer
         call_count = {"n": 0}
 
-        def mock_call_llm(session_key, messages, tools):
+        def mock_call_llm(session_key, messages, tools, **_kwargs):
             call_count["n"] += 1
             if call_count["n"] == 1:
                 return {

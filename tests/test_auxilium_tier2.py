@@ -147,7 +147,7 @@ class TestKBLookupFiresForAuxilium:
                 return [KBChunk(id="c1", source="test.md", section="S", text="hello", score=0.9)]
             return []
 
-        def fake_call(sk, messages, tools):
+        def fake_call(sk, messages, tools, **_kwargs):
             llm_call_count[0] += 1
             if llm_call_count[0] == 1:
                 # First call: trigger the tool loop with a tool_calls response
@@ -195,7 +195,7 @@ class TestKBLookupFiresForAuxilium:
             call_count[0] += 1
             return []
 
-        def fake_call(sk, messages, tools):
+        def fake_call(sk, messages, tools, **_kwargs):
             llm_call_count[0] += 1
             if llm_call_count[0] == 1:
                 # First call: trigger the tool loop with a tool_calls response
@@ -243,7 +243,7 @@ class TestKBLookupFiresForAuxilium:
             call_count[0] += 1
             raise RuntimeError("simulated KB backend down")
 
-        def fake_call(sk, messages, tools):
+        def fake_call(sk, messages, tools, **_kwargs):
             llm_call_count[0] += 1
             if llm_call_count[0] == 1:
                 return {
@@ -359,7 +359,7 @@ class TestKBContextInjection:
         ]
         captured_messages = []
 
-        def fake_call(sk_arg, messages, tools):
+        def fake_call(sk_arg, messages, tools, **_kwargs):
             captured_messages.extend(messages)
             return _fake_llm_response("Here is the answer.")
 
@@ -377,7 +377,7 @@ class TestKBContextInjection:
         rt, sk = _make_runtime(agent_role="helper")
         captured_messages = []
 
-        def fake_call(sk_arg, messages, tools):
+        def fake_call(sk_arg, messages, tools, **_kwargs):
             captured_messages.extend(messages)
             return _fake_llm_response("I don't have specific docs on this.")
 
@@ -395,7 +395,7 @@ class TestKBContextInjection:
         rt, sk = _make_runtime(agent_role="helper")
         captured_messages = []
 
-        def fake_call(sk_arg, messages, tools):
+        def fake_call(sk_arg, messages, tools, **_kwargs):
             captured_messages.extend(messages)
             return _fake_llm_response("answer")
 
