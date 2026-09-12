@@ -247,9 +247,12 @@ def friendly_error_message(exc: Exception) -> str:
         "The AI provider took too long to respond (connection timed out
         after retries). The provider may be slow or overloaded. Please try
         sending your message again."
-      - Anything else → `str(exc)` unchanged. Non-network errors are not
-        rewritten because the user (or the agent itself) often needs the
-        original message (e.g. validation errors).
+      - `socket.gaierror` →
+        "Could not reach the AI provider (DNS lookup failed). Check your
+        network connection and try again."
+      - Anything else not listed above → `str(exc)` unchanged. Non-network
+        errors are not rewritten because the user (or the agent itself)
+        often needs the original message (e.g. validation errors).
 
     See docs/specs/SPEC-SSL-RETRY-FIX.md Layer 3 for the design.
     """
@@ -287,32 +290,32 @@ def friendly_error_message(exc: Exception) -> str:
 def urlopen_with_ssl_retry(req, timeout, *, max_retries=MAX_SSL_RETRIES):
     """Like urllib.request.urlopen but retries on transient SSL/DNS errors.
 
-    Four exception types trigger a retry attempt (all decided by
+    Three except clauses trigger a retry attempt (membership decided by
     `is_retryable_ssl_error` which walks the exception chain):
 
-      1. `ssl.SSLError` — raw SSL failure caught directly.
+      1. `ssl.SSLError` — raw SSL failure caught directly (reason-text
+         token match against RETRYABLE_SSL_ERRORS).
       2. `urllib.error.URLError` — `urllib.request.do_open` wraps the
          underlying `OSError`/`ssl.SSLError`/`socket.gaierror` in `URLError`
          during the request-send phase. The old `except ssl.SSLError` never
-         fires here; the new `except URLError` unwraps via
-         `is_retryable_ssl_error`.
-      3. `RETRYABLE_OSERROR_TYPES` — TCP-level `ConnectionResetError` /
-         `BrokenPipeError` that arrive WITHOUT being wrapped in URLError
-         (e.g. on the read side of a half-closed connection).
-      4. `socket.gaierror` — DNS resolution failure (EAI_AGAIN "Temporary
-         failure in name resolution" / EAI_FAIL). Caught either raw or
-         URLError-wrapped. On 2026-09-12 a transient gaierror killed a live
-         agent turn because this path did not exist; see SPEC-DNS-RETRY-1.
+         fires here; this clause unwraps via `is_retryable_ssl_error`.
+      3. `RETRYABLE_OSERROR_TYPES` — bare (NOT URLError-wrapped)
+         `ConnectionResetError` / `BrokenPipeError` / `TimeoutError` /
+         `socket.gaierror`, e.g. TCP-level resets on the read side of a
+         half-closed connection, or a DNS failure raised before any
+         URLError wrapping.
 
-    DNS trade-off: ALL `gaierror`s are treated as retryable within the
-    existing budget, including permanent failures such as NXDOMAIN
-    (errno -2). A permanent failure therefore costs at most
-    `max_retries` extra attempts (~3 × 1.5s worst case with the default
-    budget) before the original exception propagates unchanged. That cost
-    is accepted deliberately: it is far cheaper than losing an entire agent
-    turn to a ~2-second resolver hiccup, and it keeps the classifier free
-    of errno-specific special cases that would rot as resolver behaviour
-    varies across platforms.
+    DNS coverage: ALL `socket.gaierror`s are treated as retryable within
+    the existing budget, including permanent failures such as NXDOMAIN
+    (errno -2). A permanent failure therefore costs at most `max_retries`
+    extra attempts (~5–8s worst case with the default budget: 4 calls
+    plus 0.5 + 1.0 + 2.0s of backoff sleeps) before the original
+    exception propagates unchanged. That cost is accepted deliberately:
+    it is far cheaper than losing an entire agent turn to a ~2-second
+    resolver hiccup, and it keeps the classifier free of errno-specific
+    special cases that would rot as resolver behaviour varies across
+    platforms. (On 2026-09-12 a transient gaierror killed a live agent
+    turn because this coverage did not exist; see SPEC-DNS-RETRY-1.)
 
     Each branch: if not retryable or max attempts reached, re-raise the
     original exception unchanged. Otherwise log a warning and sleep with
