@@ -54,6 +54,12 @@ def mc():
     instance._unread_tabs = set()
     instance.scroll_chat_to_bottom = MagicMock()
     instance.clear_unread = MagicMock()
+    # Session mapping + listener — _on_notebook_switch_page reads both
+    # (page_num -> session_key at main_content.py:64, listener at :646).
+    # Without _tab_sessions the handler raised AttributeError and all six
+    # tests below failed before reaching their assertions.
+    instance._tab_sessions = {}
+    instance._on_session_changed = None
     return instance
 
 
