@@ -145,10 +145,6 @@ class AgentRuntimeHandler:
         # Unlike a counter, the token does NOT change at completion time,
         # so same-turn deltas are never wrongly dropped.
         self._turn_tokens: dict[str, object] = {}
-        # BUG #14: track sessions that have started a tool-only turn (no text delta)
-        # so _ended_sessions can be cleared on the first tool_start of a new turn
-        # while preserving stale-call suppression for previous-turn dispatches.
-        self._started_turn_sessions: set[str] = set()
         # V2 exec auto-accept callback (Phase 6): returns current exec mode
         # ("off" | "show" | "silent") or None. Set by window.py wiring via
         # set_check_exec_auto_accept_callback(). When the callback returns
@@ -854,6 +850,7 @@ class AgentRuntimeHandler:
             config=config,
             GLib=self._GLib,
             on_text_delta=self._on_text_delta,
+            on_turn_start=self._on_turn_start,
             on_tool_call_start=self._on_tool_call_start,
             on_tool_call_result=self._on_tool_call_result,
             on_tool_call_approval_needed=self._on_tool_call_approval_needed,
@@ -1198,6 +1195,73 @@ class AgentRuntimeHandler:
 
     # ── AgentRuntime callbacks (dispatched to render pipeline) ───────────────
 
+    def _on_turn_start(self, session_key: str, _turn_token: object = None) -> None:
+        """AgentRuntime turn-start callback (BUG #21 redesign).
+
+        Dispatched once by the runtime at the top of _run_loop, BEFORE any
+        LLM call or tool processing — for every turn, including tool-only
+        turns. Runs in the runtime's dispatch context (GLib.idle_add wraps
+        it onto the main thread in production). Delegates to _do_turn_start.
+        """
+        if self._GLib is not None:
+            self._GLib.idle_add(self._do_turn_start, session_key, _turn_token)
+        else:
+            self._do_turn_start(session_key, _turn_token)
+
+    def _do_turn_start(self, session_key: str, turn_start_token: object = None) -> None:
+        """Main-thread portion of _on_turn_start (BUG #21 redesign).
+
+        Starts the streaming bubble + fires the agent-start lifecycle for
+        EVERY turn — including tool-only turns (which stream zero text
+        deltas). The old mechanism (an empty text delta) never reached this
+        logic: _do_text_delta_inner's empty-return fired first.
+
+        Flag lifecycle (RACE-FIX v4, unchanged): _ended_sessions is cleared
+        ONLY by send_to_special_agent at new-turn send time. This method
+        does NOT clear it — clearing here would re-open the stale-delta
+        race (a stale dispatch arriving after completion would clear the
+        flag and start an orphan bubble). The guards below handle the two
+        out-of-order cases:
+
+        1. Stale cross-turn signal: turn_start_token doesn't match the
+           current token (a newer turn's send already reassigned it) → drop.
+        2. Terminal-first race: a terminal event for THIS turn (error /
+           complete / cancel, same token) already landed on the main thread
+           before this dispatch ran → session is in _ended_sessions → drop
+           (starting a bubble now would orphan it after the error bubble).
+        """
+        if turn_start_token is not None:
+            current_token = self._turn_tokens.get(session_key)
+            if turn_start_token is not current_token:
+                logger.debug(
+                    "_do_turn_start: dropping stale turn-start (token mismatch) for %s",
+                    session_key,
+                )
+                return
+        if session_key in self._ended_sessions:
+            logger.debug(
+                "_do_turn_start: dropping turn-start for ended session %s "
+                "(terminal event landed first)",
+                session_key,
+            )
+            return
+        if self._crh is None:
+            return
+        if not self._crh.is_streaming(session_key):
+            chat_box = self._resolve_chat_box(session_key)
+            if chat_box is not None:
+                self._crh.start_streaming(session_key, chat_box, "Agent")
+                # Fire lifecycle: agent started → ActivityHandler progress bar
+                if self._on_agent_start_cb:
+                    self._on_agent_start_cb(session_key)
+                # Do NOT clear _ended_sessions here — send_to_special_agent
+                # owns the clear (RACE-FIX v4; see docstring).
+                # drawer-lifecycle start → drawer separator
+                if self._on_drawer_lifecycle is not None:
+                    agent_def_dl = self._agents.get(session_key)
+                    agent_name_dl = agent_def_dl.display_name if agent_def_dl else "Agent"
+                    self._on_drawer_lifecycle(session_key, agent_name_dl, "start")
+
     def _on_text_delta(self, session_key: str, text: str, _turn_token: object = None) -> None:
         """
         AgentRuntime text delta callback.
@@ -1213,11 +1277,12 @@ class AgentRuntimeHandler:
         idle_add-queue flood reduction: N deltas no longer enqueue N
         render dispatches.
         """
-        # Empty deltas bypass coalescing entirely: the runtime fires a
-        # turn-start signal via _on_text_delta(sk, "") (agent/runtime.py
-        # BUG #21) whose ONLY job is to reach _do_text_delta on the main
-        # thread (the start-bubble path clears _ended_sessions for tool-only
-        # turns). Coalescing an empty delta would drop that signal.
+        # Empty deltas bypass coalescing: providers may send empty content
+        # deltas (delta: {content: ""}); routing them uncoalesced is cheap
+        # and _do_text_delta_inner's empty-return makes them a no-op when
+        # no text has accumulated. (The turn-start signal used to ride this
+        # path as an empty delta — it moved to the dedicated on_turn_start
+        # callback; see _do_turn_start.)
         if not text:
             if self._GLib is not None:
                 self._GLib.idle_add(self._do_text_delta, session_key, "", _turn_token)
@@ -1276,8 +1341,8 @@ class AgentRuntimeHandler:
         GLib.idle_add wrapper; the accumulation happens once per delta
         instead of once per render dispatch); this dispatch renders the
         accumulated text. The `text` parameter is retained for legacy
-        direct callers and the empty-delta turn-start signal (empty `text`
-        returns before any rendering, exactly as before).
+        direct callers and provider-sent empty deltas (empty `text` with no
+        accumulated text returns before any rendering).
 
         _delta_dispatch_pending is cleared on EVERY return path (finally). If
         deltas arrived while this dispatch was in flight (dirty flag), exactly
@@ -1340,18 +1405,18 @@ class AgentRuntimeHandler:
                 )
                 return
         if not self._crh.is_streaming(session_key):
+            # Degradation path: starts the bubble if turn-start didn't (legacy
+            # callers with on_turn_start=None, or a missed turn-start signal).
             chat_box = self._resolve_chat_box(session_key)
             if chat_box is not None:
                 self._crh.start_streaming(session_key, chat_box, "Agent")
                 # Fire lifecycle: agent started → ActivityHandler progress bar
                 if self._on_agent_start_cb:
                     self._on_agent_start_cb(session_key)
-                # BUG #2: Clear ended flag on new turn — this session is active again.
                 # RACE-FIX: Do NOT clear _ended_sessions here. The flag is cleared
                 # by send_to_special_agent when a NEW turn starts. Clearing it here
                 # (inside _do_text_delta) was the original race bug: a stale delta
                 # arriving after completion would clear the flag and start a new bubble.
-                self._started_turn_sessions.discard(session_key)
                 # NEW: drawer-lifecycle start → drawer separator
                 if self._on_drawer_lifecycle is not None:
                     agent_def_dl = self._agents.get(session_key)
@@ -1380,20 +1445,14 @@ class AgentRuntimeHandler:
 
         Phase D: Create an agent_action feed card with running state.
         """
-        # BUG #2: Suppress tool_start for sessions that have already ended
-        # (cancel/error/complete). Prevents orphan tool_start bubbles from
-        # stale idle_add dispatches that arrive after the session ended.
         # BUG #2 / BUG #18: Suppress ALL tool_start dispatches that arrive while
         # the session is in the ended state. We do NOT clear the flag here —
         # clearing on the first stale call let a second stale call proceed
-        # (BUG #18). The flag is cleared only by _do_text_delta when a genuine
-        # new turn begins streaming.
-        # Known limitation (BUG #14): a tool-only turn (no streaming text) whose
-        # first tool_start arrives before any text delta will be suppressed.
-        # This is the correct tradeoff: we cannot distinguish "stale call from
-        # the previous turn" from "first call of a new tool-only turn" at the
-        # call site, and suppressing a legitimate first bubble is less harmful
-        # than emitting an orphan after the session ended.
+        # (BUG #18). The flag is cleared ONLY by send_to_special_agent when a
+        # NEW turn starts (RACE-FIX v4), so a genuine new turn's tool_starts
+        # are never suppressed. Tool-only turns are covered by the runtime's
+        # on_turn_start dispatch (BUG #21 redesign) — the old "Known limitation
+        # (BUG #14)" no longer applies.
         if session_key in self._ended_sessions:
             logger.debug("_do_tool_call_start: suppressed for ended session %s", session_key)
             return
@@ -1897,8 +1956,6 @@ class AgentRuntimeHandler:
         # _ended_sessions is now set at the TOP of _do_response_complete (line 1454)
         # for race-safety. This duplicate add is harmless (idempotent) but kept
         # for documentation of the lifecycle endpoint.
-        # BUG #14: clear started-turn tracking so next turn's tool_start can proceed.
-        self._started_turn_sessions.discard(session_key)
 
     def _on_token_usage(self, session_key: str, total_tokens: int, cost: float) -> None:
         """AgentRuntime token usage callback. Store and log."""
@@ -2008,7 +2065,11 @@ class AgentRuntimeHandler:
         """
         logger.debug("[handler] _do_compaction_bubble: sk=%s ev=%s", session_key, ev)
         if self._crh is not None:
-            self._crh.end_streaming(session_key, agent_name=None)
+            # BUG #22 guard: tool-only turn — no empty bubble on cleanup.
+            streaming_text = self._crh.get_streaming_text(session_key) or ""
+            self._crh.end_streaming(
+                session_key, agent_name=None, render=bool(streaming_text.strip()),
+            )
 
         chat_box = self._resolve_chat_box(session_key)
         if chat_box is None:
@@ -2056,7 +2117,11 @@ class AgentRuntimeHandler:
         if chat_box is None:
             return
         if self._crh is not None:
-            self._crh.end_streaming(session_key, agent_name=None)
+            # BUG #22 guard: tool-only turn — no empty bubble on cleanup.
+            streaming_text = self._crh.get_streaming_text(session_key) or ""
+            self._crh.end_streaming(
+                session_key, agent_name=None, render=bool(streaming_text.strip()),
+            )
             bubble = self._crh.render_sync(
                 "Agent", text, session_key, agent_name=None
             )
@@ -2154,7 +2219,15 @@ class AgentRuntimeHandler:
         agent_def = self._agents.get(session_key)
         resolved_name = agent_def.display_name if agent_def else None
         if self._crh is not None:
-            self._crh.end_streaming(session_key, agent_name=resolved_name)
+            # BUG #22 guard (same pattern as _do_response_complete): on a
+            # tool-only turn the streaming bubble exists but holds no text —
+            # end_streaming must clean up WITHOUT rendering an empty bubble.
+            streaming_text = self._crh.get_streaming_text(session_key) or ""
+            self._crh.end_streaming(
+                session_key,
+                agent_name=resolved_name,
+                render=bool(streaming_text.strip()),
+            )
             chat_box = self._resolve_chat_box(session_key)
             if chat_box is not None:
                 rendered = f"[Error] {display_msg}"
@@ -2185,5 +2258,3 @@ class AgentRuntimeHandler:
             agent_name_dl = agent_def_dl.display_name if agent_def_dl else "Agent"
             self._on_drawer_lifecycle(session_key, agent_name_dl, "end")
         # _ended_sessions is set at the TOP of _do_error (line 1778) for race-safety.
-        # BUG #14: clear started-turn tracking so next turn's tool_start can proceed.
-        self._started_turn_sessions.discard(session_key)

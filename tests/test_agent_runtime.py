@@ -1441,6 +1441,8 @@ class TestStreaming:
 
         deltas = []
         rt._on_text_delta = lambda sk, d: deltas.append(d)
+        turn_starts = []
+        rt._on_turn_start = lambda sk: turn_starts.append(sk)
 
         # Patch get_provider to return a mock provider whose stream()
         # yields 3 text chunks (dispatch now goes through the registry).
@@ -1457,13 +1459,15 @@ class TestStreaming:
             with unittest.mock.patch.object(rt, "_call_llm", _make_streaming_lambda(rt)):
                 rt._run_loop(sk, "say hello")
 
-        # on_text_delta fires for each chunk (plus the BUG #21 turn-start
-        # empty delta, so expect 4: "", "Hello", " world", "!")
-        assert len(deltas) == 4, f"Expected 4 deltas, got {len(deltas)}: {deltas}"
-        assert deltas[0] == ""  # BUG #21 turn-start signal
-        assert deltas[1] == "Hello"
-        assert deltas[2] == " world"
-        assert deltas[3] == "!"
+        # The turn-start signal moved to on_turn_start (BUG #21 redesign):
+        # exactly one turn-start, one delta per chunk — no leading "".
+        assert turn_starts == [sk], (
+            f"Expected exactly 1 turn-start for {sk}, got {turn_starts}"
+        )
+        assert len(deltas) == 3, f"Expected 3 deltas, got {len(deltas)}: {deltas}"
+        assert deltas[0] == "Hello"
+        assert deltas[1] == " world"
+        assert deltas[2] == "!"
         rt.stop()
 
     def test_response_complete_fires_after_stream(self):
@@ -3875,7 +3879,7 @@ class TestLocalAgentDrawerEmissions:
     - tool_end from _do_tool_call_result (non-write_file)
     - tool_error from _do_tool_call_result (failed tool)
     - patch from _do_tool_call_result (write_file success)
-    - drawer-lifecycle start from _do_text_delta agent-start site
+    - drawer-lifecycle start from _do_turn_start (BUG #21 redesign)
     - drawer-lifecycle end from _do_response_complete AND _do_error
 
     BUG #1 regression tests: verify is_error detection via the success param.
@@ -4254,32 +4258,32 @@ class TestLocalAgentDrawerEmissions:
         """Regression for BUG #21: a tool-only turn (no streaming text) must
         still fire tool_start bubbles.
 
-        The runtime now dispatches _on_text_delta(sk, '') at the top of _run_loop
-        before any tool calls, so _do_text_delta clears _ended_sessions for the
-        new turn. This test simulates that sequence at the handler level.
+        The runtime dispatches the dedicated _on_turn_start callback at the top
+        of _run_loop (BUG #21 redesign) — no longer an empty text delta, whose
+        empty-return in _do_text_delta_inner prevented the start-bubble path
+        from running. This test simulates that sequence at the handler level.
         """
         handler, crh, mc = self._make_handler_with_agent()
-        # Mirror the mock setup from test_agent_start_emits_drawer_lifecycle_start
         crh.is_streaming.return_value = False
         chat_box = MagicMock()
         handler._resolve_chat_box = MagicMock(return_value=chat_box)
         handler._crh = crh
 
-        # Simulate previous turn ended
-        handler._ended_sessions.add("special:coder")
+        # Simulate the real sequence: prior turn ended → new send cleared the
+        # flag (send_to_special_agent is the ONLY clear site — see
+        # test_send_to_special_agent_clears_ended_sessions). So at turn-start
+        # time the flag is already absent; this test starts from that state.
 
-        # Simulate the runtime's turn-start signal (empty delta) — this is the fix.
-        handler._do_text_delta("special:coder", "")
+        # Simulate the runtime's turn-start signal — this is the fix.
+        handler._do_turn_start("special:coder")
 
         # Now a tool_start arrives (tool-only turn, no real text)
         handler._do_tool_call_start("special:coder", "read_file", {"path": "test.txt"})
 
-        # The tool_start must NOT be suppressed — the flag was cleared.
         types = [b.type for b in self._bubbles]
         assert "tool_start" in types, (
             f"BUG #21: tool_start suppressed for tool-only turn; got {types}"
         )
-        # The lifecycle-start separator must also have fired.
         start_events = [e for e in self._lifecycle_events if e[2] == "start"]
         assert len(start_events) == 1, (
             f"BUG #21: expected 1 lifecycle-start event, got {len(start_events)}: {self._lifecycle_events}"
@@ -4291,9 +4295,9 @@ class TestLocalAgentDrawerEmissions:
         """Regression for BUG #22: a tool-only turn (empty streaming text) must
         not render an empty header bubble in the chat.
 
-        The BUG #21 fix dispatches an empty _on_text_delta to clear _ended_sessions,
-        which starts a streaming bubble. At turn end, end_streaming must suppress
-        the final bubble render when the streaming text is empty.
+        The turn-start signal starts a streaming bubble (no text yet). At turn
+        end, end_streaming must suppress the final bubble render when the
+        streaming text is empty.
         """
         handler, crh, mc = self._make_handler_with_agent()
         crh.is_streaming.return_value = False
@@ -4303,8 +4307,8 @@ class TestLocalAgentDrawerEmissions:
         # Stub get_streaming_text to return empty string (tool-only turn, no content)
         crh.get_streaming_text.return_value = ""
 
-        # Simulate the BUG #21 empty-delta turn-start (starts a streaming bubble)
-        handler._do_text_delta("special:coder", "")
+        # Turn-start starts a streaming bubble
+        handler._do_turn_start("special:coder")
         # Simulate turn end with no text content (tool-only turn)
         handler._do_response_complete("special:coder", "")
 
@@ -4316,43 +4320,158 @@ class TestLocalAgentDrawerEmissions:
             f"got kwargs={call_kwargs}"
         )
 
-    # ── BUG #14: _started_turn_sessions clears _ended_sessions for new tool-only turn ──
+    # ── RACE-FIX v4: send-side _ended_sessions clear ─────────────────────
 
-    def test_started_turn_sessions_clears_ended_flag_on_fresh_tool_start(self):
-        """BUG #14: first _do_tool_call_start of a new turn must clear _ended_sessions
-        via _started_turn_sessions, while preserving stale-call suppression.
+    def test_send_to_special_agent_clears_ended_sessions(self):
+        """RACE-FIX v4 send-side clear: send_to_special_agent is the ONLY
+        site that clears _ended_sessions — the previous turn's ended flag
+        must not suppress the new turn's tool_starts.
+
+        Replaces the dead BUG #14 tracking-set test: that mechanism was
+        never implemented (the set was dead code) and is superseded by
+        the on_turn_start redesign.
         """
-        handler, _, _ = self._make_handler_with_agent()
-        # Simulate prior turn ended
+        handler, crh, mc = self._make_handler_with_agent()
         handler._ended_sessions.add("special:coder")
+        handler._session_completed.add("special:coder")
 
-        # A stale dispatch should still be suppressed
-        handler._do_tool_call_start("special:coder", "read_file", {"path": "stale.txt"})
-        types1 = [b.type for b in self._bubbles]
-        # _started_turn_sessions is empty, so the BUG #14 block clears _ended_sessions
-        # AND proceeds. But the stale-suppression comment says we track with
-        # _started_turn_sessions — the first call adds to it and clears _ended_sessions.
-        # Since this is the FIRST call after an end, it's treated as legitimate
-        # (we can't distinguish stale from fresh at this point, same as BUG #21 approach).
-        # Verify _ended_sessions was cleared.
+        # Stub the runtime so no real AgentRuntime/LLM is constructed.
+        rt = MagicMock()
+        rt.get_conversation.return_value = None
+        rt.load_conversation.return_value = None
+        handler._get_runtime = MagicMock(return_value=rt)
+
+        handler.send_to_special_agent("special:coder", "hello")
+
         assert "special:coder" not in handler._ended_sessions, (
-            "BUG #14: _ended_sessions should be cleared on first tool_start after end"
+            "send_to_special_agent must clear _ended_sessions for the new turn"
         )
-        # Verify _started_turn_sessions tracks it
-        assert "special:coder" in handler._started_turn_sessions, (
-            "BUG #14: _started_turn_sessions should track started turns"
+        assert "special:coder" not in handler._session_completed
+        # Phase 4 Part B: the conversation prep moved off the main thread into
+        # a `prepare` closure passed to send_message. `handler._prepare_turn`
+        # does not exist — the closure is a LOCAL function in
+        # send_to_special_agent, so assert the call shape and then exercise
+        # the closure itself (Rule 4: real code path, not just the mock).
+        rt.send_message.assert_called_once()
+        call_args, call_kwargs = rt.send_message.call_args
+        assert call_args == ("special:coder", "hello")
+        prepare = call_kwargs.get("prepare")
+        assert callable(prepare), (
+            "Part B: send_message must receive the off-thread prepare callback"
+        )
+        assert prepare.__name__ == "_prepare_turn", (
+            f"expected the _prepare_turn closure, got {prepare!r}"
+        )
+        handler._prepare_turn_conversation = MagicMock()
+        prepare()
+        prep_kwargs = handler._prepare_turn_conversation.call_args.kwargs
+        assert prep_kwargs["session_key"] == "special:coder"
+        assert prep_kwargs["project_path"] == "/tmp/test"
+        assert prep_kwargs["turn_token"] is handler._turn_tokens["special:coder"]
+        assert handler._turn_tokens["special:coder"] is not None
+
+    # ── BUG #21 redesign: dedicated on_turn_start signal ─────────────────
+
+    def test_on_turn_start_dispatches_via_glib(self):
+        """The _on_turn_start wrapper queues _do_turn_start onto the main
+        thread via GLib.idle_add (same pattern as the other _on_* methods)."""
+        handler, crh, mc = self._make_handler_with_agent()
+        glib = _QueueGLib()
+        handler._GLib = glib
+        crh.is_streaming.return_value = False
+        chat_box = MagicMock()
+        handler._resolve_chat_box = MagicMock(return_value=chat_box)
+
+        handler._on_turn_start("special:coder")
+
+        assert len(glib.queue) == 1, "turn-start must be dispatched via idle_add"
+        glib.drain()
+        start_events = [e for e in self._lifecycle_events if e[2] == "start"]
+        assert len(start_events) == 1
+
+    def test_turn_start_stale_token_rejected(self):
+        """_do_turn_start drops a signal whose token doesn't match the
+        current turn (stale cross-turn dispatch after a newer send)."""
+        handler, crh, mc = self._make_handler_with_agent()
+        crh.is_streaming.return_value = False
+        chat_box = MagicMock()
+        handler._resolve_chat_box = MagicMock(return_value=chat_box)
+        handler._crh = crh
+        handler._turn_tokens["special:coder"] = object()
+        stale = object()
+
+        handler._do_turn_start("special:coder", stale)
+
+        crh.start_streaming.assert_not_called()
+        assert not [e for e in self._lifecycle_events if e[2] == "start"]
+
+    def test_turn_start_after_terminal_event_dropped(self):
+        """Cancel-race guard: a terminal event (error/complete/cancel) that
+        lands BEFORE the turn-start dispatch must win — no orphan bubble,
+        no flag clear. (cancel() dispatches _do_error with the SAME token
+        as the in-flight turn, so the token check alone can't order them.)"""
+        handler, crh, mc = self._make_handler_with_agent()
+        crh.is_streaming.return_value = False
+        chat_box = MagicMock()
+        handler._resolve_chat_box = MagicMock(return_value=chat_box)
+        handler._crh = crh
+        token = object()
+        handler._turn_tokens["special:coder"] = token
+        handler._ended_sessions.add("special:coder")  # terminal landed first
+
+        handler._do_turn_start("special:coder", token)  # same-token race
+
+        crh.start_streaming.assert_not_called()
+        assert "special:coder" in handler._ended_sessions
+        assert not [e for e in self._lifecycle_events if e[2] == "start"]
+
+    def test_do_error_renders_no_empty_bubble_on_tool_only_turn(self):
+        """BUG #22 guard on _do_error: tool-only turn (bubble from
+        turn-start, no text) — error path must end_streaming(render=False)."""
+        handler, crh, mc = self._make_handler_with_agent()
+        crh.is_streaming.return_value = True  # bubble exists from turn-start
+        chat_box = MagicMock()
+        handler._resolve_chat_box = MagicMock(return_value=chat_box)
+        handler._crh = crh
+        crh.get_streaming_text.return_value = ""  # tool-only: no content
+
+        handler._do_error("special:coder", "boom")
+
+        crh.end_streaming.assert_called_once()
+        kwargs = crh.end_streaming.call_args.kwargs
+        assert kwargs.get("render") is False, (
+            f"BUG #22: _do_error must pass render=False for empty streaming "
+            f"text; got {kwargs}"
         )
 
-        # A second stale dispatch (same session, same turn) should NOT be suppressed
-        # because _started_turn_sessions now has the key and _ended_sessions is clear.
-        # This matches the existing BUG #18 logic — only _ended_sessions suppresses.
-        handler._ended_sessions.add("special:coder")
-        handler._do_tool_call_start("special:coder", "read_file", {"path": "stale2.txt"})
-        # Second call: _started_turn_sessions already has the key, so the BUG #14
-        # block does NOT re-clear _ended_sessions. Stale suppression applies.
-        assert len(self._bubbles) == 0, (
-            f"BUG #14: second stale dispatch should be suppressed; got {[b.type for b in self._bubbles]}"
-        )
+    def test_do_compaction_bubble_renders_no_empty_bubble_on_tool_only_turn(self):
+        """BUG #22 guard on _do_compaction_bubble (same pattern)."""
+        handler, crh, mc = self._make_handler_with_agent()
+        chat_box = MagicMock()
+        handler._resolve_chat_box = MagicMock(return_value=chat_box)
+        handler._crh = crh
+        crh.get_streaming_text.return_value = ""
+
+        handler._do_compaction_bubble("special:coder", {
+            "messages_removed": 3, "tokens_freed": 1200,
+            "layer": 2, "trigger": "auto",
+        })
+
+        crh.end_streaming.assert_called_once()
+        assert crh.end_streaming.call_args.kwargs.get("render") is False
+
+    def test_do_usage_warning_renders_no_empty_bubble_on_tool_only_turn(self):
+        """BUG #22 guard on _do_usage_warning (same pattern)."""
+        handler, crh, mc = self._make_handler_with_agent()
+        chat_box = MagicMock()
+        handler._resolve_chat_box = MagicMock(return_value=chat_box)
+        handler._crh = crh
+        crh.get_streaming_text.return_value = ""
+
+        handler._do_usage_warning("special:coder", "approaching-limit", 82.0)
+
+        crh.end_streaming.assert_called_once()
+        assert crh.end_streaming.call_args.kwargs.get("render") is False
 
     # ── BUG #15: _pending_exec_commands capture works without active project ───
 
@@ -5491,19 +5610,19 @@ class TestTurnStateMachine:
     # ── Group 5: callback protocol exports (1 test) ─────────────────
 
     def test_callbacks_module_exports_protocols(self):
-        """agent.callbacks exports all 9 callback Protocols + AgentRuntimeCallbacks alias.
+        """agent.callbacks exports all 10 callback Protocols + AgentRuntimeCallbacks alias.
 
         Smoke test: each Protocol class has a __call__ (they're callable
         structural-typing contracts).
         """
         from agent.callbacks import (
-            OnTextDelta, OnToolCallStart, OnToolCallResult,
+            OnTextDelta, OnTurnStart, OnToolCallStart, OnToolCallResult,
             OnToolCallApprovalNeeded, OnResponseComplete, OnTokenUsage,
             OnTokenBreakdown, OnError, OnEnforcementStatus,
             AgentRuntimeCallbacks,
         )
         for cls in (
-            OnTextDelta, OnToolCallStart, OnToolCallResult,
+            OnTextDelta, OnTurnStart, OnToolCallStart, OnToolCallResult,
             OnToolCallApprovalNeeded, OnResponseComplete, OnTokenUsage,
             OnTokenBreakdown, OnError, OnEnforcementStatus,
         ):
@@ -5697,9 +5816,10 @@ class TestDeltaCoalescing:
         assert "special:coder" not in handler._streaming_text
 
     def test_empty_delta_still_reaches_main_thread(self):
-        """(4) empty-delta skip preserved: the runtime's BUG #21 turn-start
-        signal (_on_text_delta(sk, "")) still dispatches to the main thread,
-        and the empty delta still returns before accumulation."""
+        """(4) empty-delta bypass preserved: provider-sent empty deltas still
+        dispatch to the main thread uncoalesced, and the empty delta still
+        returns before accumulation. (The runtime's turn-start signal moved
+        to on_turn_start.)"""
         handler, crh, glib = self._make()
         handler._on_text_delta("special:coder", "")
         assert len(glib.queue) == 1, "empty delta must still be dispatched"

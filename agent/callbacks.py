@@ -1,6 +1,6 @@
 """Typed callback protocols for AgentRuntime → UI handler.
 
-The runtime accepts 9 callbacks in its constructor and dispatches them via
+The runtime accepts 10 callbacks in its constructor and dispatches them via
 its private ``_dispatch()`` helper (see ``agent/runtime.py``). This module
 formalizes the contract: the protocol signatures here are the source of
 truth, and the handler's ``_on_*`` methods (in
@@ -40,7 +40,8 @@ class OnTextDelta(Protocol):
     """Streaming text chunk callback.
 
     Fires once per SSE chunk (throttled to ~20 calls/sec in the handler).
-    Empty strings are valid — the runtime uses them as turn-start signals.
+    Empty strings are valid (providers may send empty content deltas); the
+    turn-start signal is the separate ``OnTurnStart`` callback.
 
     Args:
         session_key: Conversation session key (e.g. "special:coder").
@@ -58,6 +59,29 @@ class OnTextDelta(Protocol):
         self,
         session_key: str,
         text: str,
+        *,
+        _turn_token: object | None = None,
+    ) -> None: ...
+
+
+class OnTurnStart(Protocol):
+    """Turn-start callback.
+
+    Fires once at the top of ``_run_loop`` BEFORE any LLM call or tool
+    processing — for every turn, including tool-only turns (which stream
+    zero text deltas). Replaces the BUG #21 empty-delta signal (an
+    ``on_text_delta`` dispatch with ``""``) that never reached the
+    handler's start-bubble logic (``_do_text_delta_inner``'s empty-return
+    fired first, so the regression tests shipped failing).
+
+    Args:
+        session_key: Conversation session key (e.g. "special:coder").
+        _turn_token: See ``OnTextDelta``.
+    """
+
+    def __call__(
+        self,
+        session_key: str,
         *,
         _turn_token: object | None = None,
     ) -> None: ...

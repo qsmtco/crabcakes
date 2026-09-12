@@ -1794,7 +1794,7 @@ took ~6s per call for a 100K-char system prompt before the cache).
 **Public API:**
 ```python
 class AgentRuntime:
-    def __init__(config, GLib, on_text_delta, on_tool_call_start, on_tool_call_result,
+    def __init__(config, GLib, on_text_delta, on_turn_start, on_tool_call_start, on_tool_call_result,
                  on_tool_call_approval_needed, on_response_complete, on_error, on_token_usage,
                  on_enforcement_status=None)
     def start() / def stop()
@@ -1889,18 +1889,21 @@ LLMResponse — normalized response dataclass
 
 ### 3.21m.3 `agent/callbacks.py` — Agent Runtime Callback Protocols (SPEC-RUNTIME-TERMINAL-PATH-CONSOLIDATION)
 
-**Responsibility:** Typed `Protocol` classes formalizing the callback contract between `agent/runtime.py` and `ui/handlers/agent_runtime_handler.py`. The 9 protocols are the source of truth for callback signatures; the handler's `_on_*` methods satisfy them structurally. No `@runtime_checkable` (protocols are documentation, not runtime enforcement).
+**Responsibility:** Typed `Protocol` classes formalizing the callback contract between `agent/runtime.py` and `ui/handlers/agent_runtime_handler.py`. The 10 protocols are the source of truth for callback signatures; the handler's `_on_*` methods satisfy them structurally. No `@runtime_checkable` (protocols are documentation, not runtime enforcement).
 
-**Owns:** 9 Protocol classes (`OnTextDelta`, `OnToolCallStart`, `OnToolCallResult`, `OnToolCallApprovalNeeded`, `OnResponseComplete`, `OnTokenUsage`, `OnTokenBreakdown`, `OnError`, `OnEnforcementStatus`) + `AgentRuntimeCallbacks` type alias.
+**Owns:** 10 Protocol classes (`OnTextDelta`, `OnTurnStart`, `OnToolCallStart`, `OnToolCallResult`, `OnToolCallApprovalNeeded`, `OnResponseComplete`, `OnTokenUsage`, `OnTokenBreakdown`, `OnError`, `OnEnforcementStatus`) + `AgentRuntimeCallbacks` type alias.
 
 **Architecture:** `agent/` layer — imports only `typing`. No imports from `agent.runtime`, `ui/`, `gateway/`, or `models/`. Same pattern as `agent/llm/protocol.py` (the `LLMProvider` Protocol). The keyword `_turn_token: object | None = None` (leading underscore) appears on every protocol, matching production dispatch in `_dispatch()`.
 
 **Public API:**
 ```python
-# All 9 protocols have a single __call__ method with session_key as the
+# All 10 protocols have a single __call__ method with session_key as the
 # first positional arg and _turn_token as a keyword-only arg:
 class OnTextDelta(Protocol):
     def __call__(self, session_key: str, text: str, *, _turn_token: object | None = None) -> None: ...
+
+class OnTurnStart(Protocol):
+    def __call__(self, session_key: str, *, _turn_token: object | None = None) -> None: ...
 
 AgentRuntimeCallbacks = dict[str, Callable | None]  # loose helper type for test fixtures
 ```

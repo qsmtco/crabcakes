@@ -41,6 +41,7 @@ from agent.callbacks import (
     OnToolCallApprovalNeeded,
     OnToolCallResult,
     OnToolCallStart,
+    OnTurnStart,
 )
 from agent.enforcement import check as _enforcement_check
 from agent.tool_middleware import (
@@ -435,6 +436,7 @@ class AgentRuntime:
         config: AgentConfig with provider credentials and limits.
         GLib: Optional GLib module for thread-safe GTK dispatch.
         on_text_delta: (session_key, delta_text) — streaming text delta (Phase 1.3b).
+        on_turn_start: (session_key) — fired once at the top of _run_loop, before any LLM call (BUG #21 redesign).
         on_tool_call_start: (session_key, tool_name, args) — tool call started.
         on_tool_call_result: (session_key, tool_name, result) — tool completed.
         on_tool_call_approval_needed: (session_key, tool_name, args) → bool | None — approval needed.
@@ -459,6 +461,7 @@ class AgentRuntime:
         *,
         GLib=None,
         on_text_delta: OnTextDelta | None = None,
+        on_turn_start: OnTurnStart | None = None,
         on_tool_call_start: OnToolCallStart | None = None,
         on_tool_call_result: OnToolCallResult | None = None,
         on_tool_call_approval_needed: OnToolCallApprovalNeeded | None = None,
@@ -471,6 +474,7 @@ class AgentRuntime:
         self._config = config
         self._GLib = GLib
         self._on_text_delta = on_text_delta
+        self._on_turn_start = on_turn_start
         self._on_tool_call_start = on_tool_call_start
         self._on_tool_call_result = on_tool_call_result
         self._on_tool_call_approval_needed = on_tool_call_approval_needed
@@ -1323,15 +1327,17 @@ class AgentRuntime:
                 ))
                 return
 
-            # BUG #21: Fire a turn-start signal BEFORE any LLM call or tool processing.
-            # This guarantees the handler clears _ended_sessions and emits the drawer
-            # lifecycle-start separator for EVERY turn — including tool-only turns
-            # (LLM streams zero text_delta events). Reuses _on_text_delta with an
-            # empty string: the handler's _do_text_delta clears the flag on the first
-            # delta of a turn (is_streaming is False), and the empty content is a
-            # harmless no-op for text accumulation.
-            if self._on_text_delta:
-                self._dispatch(self._on_text_delta, session_key, "", _turn_token=turn_token)
+            # BUG #21 (redesigned): Fire a dedicated turn-start signal BEFORE
+            # any LLM call or tool processing. This guarantees the handler
+            # starts the streaming bubble + emits the drawer lifecycle-start
+            # separator for EVERY turn — including tool-only turns (LLM
+            # streams zero text_delta events). The old mechanism (an empty
+            # on_text_delta dispatch) never reached the handler's start-bubble
+            # logic: _do_text_delta_inner's empty-return fired first, so the
+            # BUG #21 regression tests shipped failing (see
+            # docs/specs/SPEC-TEST-DEBT-1.md).
+            if self._on_turn_start:
+                self._dispatch(self._on_turn_start, session_key, _turn_token=turn_token)
 
             try:
                 # Step 1: add user message
