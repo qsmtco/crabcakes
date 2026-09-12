@@ -16,6 +16,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -153,11 +154,15 @@ def _stat_line(pid, state, utime, stime, starttime=0, num_threads=1):
 
 def _fake_app(tmp, project, pid=4242, state="S", wchan="poll", utime=100,
               cmdline=b"python3\x00main.py\x00", cwd=None, starttime=1000,
-              rss_pages=45000):
+              rss_pages=45000, exe="/usr/bin/python3.12"):
     """Fabricate a /proc tree containing a running main.py for `project`.
 
     `tmp` is pytest's tmp_path; the tree lands at <tmp>/home/proc — the path the
     autouse fixture pinned PROC_ROOT to.
+
+    `exe` is the `/proc/<pid>/exe` symlink target; the reporter requires a
+    python interpreter there (audit fix round BUG #2), so a decoy process is
+    built by pointing it at a non-python binary.
     """
     root = Path(tmp) / "home" / "proc"
     (root).mkdir(parents=True, exist_ok=True)
@@ -166,6 +171,8 @@ def _fake_app(tmp, project, pid=4242, state="S", wchan="poll", utime=100,
     (base / "task" / str(pid)).mkdir(parents=True, exist_ok=True)
     (base / "cmdline").write_bytes(cmdline)
     os.symlink(str(cwd if cwd is not None else project), base / "cwd")
+    if exe is not None:
+        os.symlink(exe, base / "exe")
     (base / "stat").write_text(_stat_line(pid, state, utime, 0, starttime))
     (base / "statm").write_text(f"{rss_pages} {rss_pages} 0 0 0 0 0\n")
     (base / "wchan").write_text(wchan + "\n")
@@ -887,3 +894,318 @@ def test_module_imports_headless_without_gtk(tmp_path):
     # GTK is installed on this box, so the no-GTK assertion above is not vacuous
     assert "GI_AVAILABLE True" in proc.stdout
     assert "OK 10" in proc.stdout
+
+
+# ── app identity: name the app, don't guess it (audit BUG #1/#2/#7) ──────────
+
+def test_app_detected_for_declared_console_script(tmp_path):
+    """pyproject declares `crabcakes = "main:main"`, so the launcher is named
+    `crabcakes` — the detector must accept the declared entry point, not only a
+    file literally called main.py (BUG #1)."""
+    project = _project(tmp_path)
+    config = _config_dir(tmp_path)
+    _fake_app(tmp_path, project,
+              cmdline=b"/usr/bin/python3\x00/home/q/.local/bin/crabcakes\x00")
+    report = _collect(project, config)
+
+    assert report["app"]["running"] is True
+    assert report["app"]["pid"] == 4242
+    assert report["app"]["main_thread"] == "idle"
+    summary, code = status_report.assess(report)
+    assert code == 0, summary
+
+
+def test_proc_scan_ignores_non_app_main_py_token(tmp_path):
+    """`less main.py`, `cat main.py`, a script named main.py — argv alone is not
+    identity: the process must be a python one (BUG #2)."""
+    project = _project(tmp_path)
+    config = _config_dir(tmp_path)
+    _fake_app(tmp_path, project, exe="/usr/bin/sleep")   # argv claims main.py
+    report = _collect(project, config)
+
+    assert report["app"]["running"] is False
+    assert report["app"]["pid"] is None
+    summary, code = status_report.assess(report)
+    assert code == 3, summary
+    assert summary.startswith("app_not_running")
+
+
+def test_proc_scan_requires_python_exe_for_console_script_name(tmp_path):
+    """The same guard on the console-script path (BUG #1 x BUG #2)."""
+    project = _project(tmp_path)
+    config = _config_dir(tmp_path)
+    _fake_app(tmp_path, project, exe="/usr/bin/gnome-text-editor",
+              cmdline=b"/usr/bin/gnome-text-editor\x00crabcakes\x00")
+    report = _collect(project, config)
+
+    assert report["app"]["running"] is False
+    assert status_report.assess(report)[1] == 3
+
+
+def test_zombie_app_reports_not_running(tmp_path):
+    """A zombie is a dead app, not a running one (BUG #7)."""
+    project = _project(tmp_path)
+    config = _config_dir(tmp_path)
+    _fake_app(tmp_path, project, state="Z", wchan="")
+    report = _collect(project, config)
+
+    assert report["app"]["running"] is False
+    assert report["app"]["pid"] is None
+    assert report["app"]["main_thread"] == "unknown"
+    assert status_report.assess(report)[1] == 3
+
+
+def test_stopped_app_reported_as_frozen(tmp_path):
+    """`kill -STOP` / Ctrl-Z is the canonical wedged-app signature: state T must
+    raise a stall class instead of hiding behind main_thread='unknown' (BUG #7)."""
+    project = _project(tmp_path)
+    config = _config_dir(tmp_path)
+    _fake_app(tmp_path, project, state="T", wchan="do_signal_stop")
+    report = _collect(project, config)
+
+    assert report["app"]["running"] is True
+    assert report["app"]["main_thread"] == "frozen"
+    assert "app_frozen" in _stall_classes(report)
+    summary, code = status_report.assess(report)
+    assert code == 2
+    assert summary.startswith("app_frozen")
+    assert "4242" in summary and "T" in summary
+
+
+def test_traced_app_reported_as_frozen(tmp_path):
+    """Lowercase `t` (traced/stopped under a debugger) counts as frozen too."""
+    project = _project(tmp_path)
+    config = _config_dir(tmp_path)
+    _fake_app(tmp_path, project, state="t", wchan="do_signal_stop")
+    report = _collect(project, config)
+
+    assert report["app"]["main_thread"] == "frozen"
+    assert status_report.assess(report)[1] == 2
+
+
+# ── write-scan honesty (audit BUG #4) ────────────────────────────────────────
+
+def test_turn_stalled_not_suppressed_by_truncated_scan(tmp_path, monkeypatch):
+    """Truncated evidence must not be treated as evidence of activity (BUG #4)."""
+    monkeypatch.setattr(status_report, "WALK_FILE_CAP", 3)
+    project = _project(tmp_path)
+    config = _config_dir(tmp_path)
+    _fake_app(tmp_path, project)
+    for i in range(6):          # decoy writes, newer than the agent's message
+        decoy = project / f"decoy{i}.py"
+        decoy.write_text("x = 1\n")
+        os.utime(decoy, (NOW - 300, NOW - 300))
+    _write_conversation(config, "special:coder", project,
+                        [_msg("assistant", "I am stuck", NOW - 3600)],
+                        mtime=NOW - 3600)
+    report = _collect(project, config)
+
+    assert report["work"]["write_scan"]["truncated"] is True
+    assert "turn_stalled" in _stall_classes(report)
+    detail = next(s for s in report["stalls"] if s["class"] == "turn_stalled")["detail"]
+    assert "truncated" in detail          # says why it could not verify writes
+    assert status_report.assess(report)[1] == 2
+
+
+def test_write_scan_excludes_vendor_dirs(tmp_path):
+    """`.venv`/`venv`/`node_modules`/`.tox` are not agent output (BUG #4)."""
+    project = _project(tmp_path)
+    config = _config_dir(tmp_path)
+    for dirname in (".venv", "venv", "node_modules", ".tox"):
+        sub = project / dirname
+        sub.mkdir()
+        for i in range(4):
+            (sub / f"f{i}.py").write_text("x = 1\n")
+    report = _collect(project, config)
+
+    scan = report["work"]["write_scan"]
+    assert scan["files"] == 1              # only docs/specs/SPEC-DEMO.md
+    assert scan["truncated"] is False
+
+
+# ── oversize conversation (audit BUG #5) ────────────────────────────────────
+
+def test_oversize_conversation_reports_read_cap_not_writer(tmp_path, monkeypatch):
+    """A file larger than the reporter's own read cap is a READER-side limit —
+    it must not be blamed on the non-atomic writer, and the session must stay
+    visible to stall detection (BUG #5)."""
+    monkeypatch.setattr(status_report, "CONVERSATION_MAX_BYTES", 256, raising=False)
+    project = _project(tmp_path)
+    config = _config_dir(tmp_path)
+    _fake_app(tmp_path, project)
+    _write_conversation(config, "special:coder", project,
+                        [_msg("assistant", "y" * 4000, NOW - 3600)],
+                        mtime=NOW - 3600)
+    report = _collect(project, config)
+
+    session = _sessions(report)["special:coder"]
+    assert session["oversize"] is True
+    assert "read cap" in session["error"]
+    assert "writer active" not in session["error"]
+    assert report["agents"]["degraded"] is True
+    # still visible to stall detection despite being unparsed
+    assert "turn_stalled" in _stall_classes(report)
+    detail = next(s for s in report["stalls"] if s["class"] == "turn_stalled")["detail"]
+    assert "read cap" in detail
+    assert status_report.assess(report)[1] == 2
+
+
+def test_oversize_conversation_within_threshold_is_not_stalled(tmp_path, monkeypatch):
+    """The oversize path still honours the idle threshold (no false alarm)."""
+    monkeypatch.setattr(status_report, "CONVERSATION_MAX_BYTES", 256, raising=False)
+    project = _project(tmp_path)
+    config = _config_dir(tmp_path)
+    _fake_app(tmp_path, project)
+    _write_conversation(config, "special:coder", project,
+                        [_msg("assistant", "y" * 4000, NOW - 30)], mtime=NOW - 30)
+    report = _collect(project, config)
+
+    assert _sessions(report)["special:coder"]["oversize"] is True
+    assert report["stalls"] == []
+    assert status_report.assess(report)[1] == 0
+
+
+# ── atomic writes: unique tmp + retry (audit BUG #3) ─────────────────────────
+
+def test_atomic_write_survives_concurrent_writers(tmp_path):
+    """Two §2.4/§4.5 schedulers + a --watch run all write the same state file:
+    a fixed `<path>.tmp` makes them collide (BUG #3)."""
+    path = tmp_path / "state.json"
+    errors = []
+
+    def worker(idx):
+        try:
+            for round_no in range(20):
+                status_report.save_alert_state(
+                    str(path),
+                    {"episodes": {f"e{idx}-{round_no}": {
+                        "first_seen": 1.0, "last_alert": 2.0, "attempts": 1}},
+                     "last_exit": idx})
+        except Exception as exc:                      # noqa: BLE001 — report it
+            errors.append(f"{type(exc).__name__}: {exc}")
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == [], f"concurrent save_alert_state raised: {errors[:3]}"
+    json.loads(path.read_text())                      # last writer left valid JSON
+    leftovers = [p.name for p in tmp_path.iterdir()
+                 if p.name != "state.json" and p.name.startswith("state.json")]
+    assert leftovers == [], f"tmp debris: {leftovers}"
+
+
+def test_atomic_write_retries_once_when_tmp_vanishes(tmp_path, monkeypatch):
+    """Deterministic form of the same race: a writer whose tmp was consumed by a
+    peer retries once instead of propagating FileNotFoundError."""
+    path = tmp_path / "state.json"
+    real = status_report._atomic_write_text
+    calls = []
+
+    def flaky(target, text, mode=0o600):
+        calls.append(target)
+        if len(calls) == 1:
+            raise FileNotFoundError(2, "No such file or directory", f"{target}.tmp")
+        return real(target, text, mode)
+
+    monkeypatch.setattr(status_report, "_atomic_write_text", flaky)
+    status_report.save_alert_state(str(path), {"episodes": {}})
+
+    assert len(calls) == 2, "save_alert_state did not retry the raced write"
+    assert json.loads(path.read_text()) == {"episodes": {}}
+
+
+def test_atomic_write_tmp_name_is_writer_unique(tmp_path, monkeypatch):
+    """The tmp path must be per-writer, not derived from the destination."""
+    seen = []
+    real_replace = os.replace
+
+    def record(src, dst, *args, **kwargs):
+        seen.append(src)
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "replace", record)
+    status_report.save_alert_state(str(tmp_path / "state.json"), {"episodes": {}})
+
+    assert len(seen) == 1
+    assert seen[0] != f"{tmp_path / 'state.json'}.tmp"
+    assert str(os.getpid()) in seen[0]
+
+
+# ── numeric hygiene + report shape (audit BUG #8/#10/#11/#12/#13) ────────────
+
+def test_non_finite_times_are_rejected():
+    """NaN/Infinity silently poison alert state (BUG #8)."""
+    state = {"episodes": {}}
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError):
+            status_report.should_alert(state, "ep", bad)
+        with pytest.raises(ValueError):
+            status_report.mark_alerted(state, "ep", bad)
+    with pytest.raises(ValueError):
+        status_report.should_alert(state, "ep", NOW, realert_hours=float("inf"))
+    with pytest.raises(ValueError):
+        status_report.collect(".", body_cap=120, now=float("nan"))
+
+
+def test_save_alert_state_validates_path_and_rejects_non_finite(tmp_path, monkeypatch):
+    """`save_alert_state(None, …)` used to write a file named `None` (BUG #13),
+    and NaN used to reach disk as invalid JSON (BUG #8)."""
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError):
+        status_report.save_alert_state(None, {"episodes": {}})
+    assert not (tmp_path / "None").exists()
+
+    bad = tmp_path / "bad.json"
+    with pytest.raises(ValueError):
+        status_report.save_alert_state(str(bad), {
+            "episodes": {"e": {"first_seen": 1.0, "last_alert": float("nan"),
+                               "attempts": 1}}})
+    assert not bad.exists(), "a non-finite state must not reach disk"
+
+    good = tmp_path / "ok.json"
+    status_report.save_alert_state(str(good), {"episodes": {"e": {"last_alert": 1.0}},
+                                               "last_exit": 2})
+    text = good.read_text()
+    assert "NaN" not in text and "Infinity" not in text
+    json.loads(text)
+
+
+def test_assess_does_not_mutate_caller_report():
+    """assess() is a reader; it must not stamp 'stalls' into the caller (BUG #12)."""
+    report = {"app": {"running": False}, "project_path": "/x"}
+    summary, code = status_report.assess(report)
+    assert code == 3
+    assert summary.startswith("app_not_running")
+    assert set(report) == {"app", "project_path"}, "assess() mutated its input"
+
+
+def test_negative_approval_delta_renders_as_unknown():
+    """A report without 'now' used to render 'last -1700000000s ago' (BUG #11)."""
+    report = {"project_path": "/x", "generated_at": "t", "stalls": [],
+              "approvals": {"entries": 1, "window_minutes": 30, "grants": 1,
+                            "denials": 0, "last_ts": 1_700_000_000.0}}
+    line = [l for l in status_report.render_text(report).splitlines()
+            if "APPROVALS" in l][0]
+    assert "last ? ago" in line
+    assert "-1700000000" not in line
+
+
+def test_collect_exposes_summary_and_exit_code(tmp_path):
+    """§2.4 delivery needs the summary as a field, not a reconstructed string
+    (BUG #10)."""
+    project = _project(tmp_path)
+    config = _config_dir(tmp_path)
+    down = _collect(project, config)
+    assert down["exit_code"] == 3
+    assert down["summary"].startswith("app_not_running")
+    assert json.loads(status_report.render_json(down))["exit_code"] == 3
+
+    _fake_app(tmp_path, project)
+    healthy = _collect(project, config)
+    assert healthy["exit_code"] == 0
+    assert healthy["summary"].startswith("healthy")
+    assert healthy["alert"] is False       # §2.4 dedupe stays unwired in P1
+

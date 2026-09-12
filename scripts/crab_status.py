@@ -12,10 +12,11 @@ Usage:
 
 Exit codes (§2.2): 0 healthy · 2 attention needed · 3 app not running ·
 10 reserved flag (`--auto-resume`, Phase 3 — not implemented yet).
-Two codes outside that set exist on purpose: a usage error exits 2 (argparse
-convention — the usage text on stderr disambiguates it from "attention"), and an
-unexpected reporter failure exits 1 with a traceback on stderr (§1.4: failure is
-loud, never a silent no-op).
+Three codes outside that set exist on purpose: 64 usage/argv error (argparse's
+convention narrowed to a code the §2.4 cron cannot mistake for "attention" —
+audit BUG #6), and 1 for an unexpected reporter failure with a traceback on
+stderr (§1.4: failure is loud, never a silent no-op). `--help` exits 0 for a
+human but 64 when `--json` was requested, since help text is not a report.
 
 Read-only contract (§2.3.6 / §2.3.2): this process never mutates app state. Its
 only writes are inside the reporter's own cache directory
@@ -45,9 +46,10 @@ from utils import status_report  # imported after the sys.path bootstrap
 
 EXIT_HEALTHY = 0           # §2.2
 EXIT_FAILURE = 1           # §1.4 unexpected reporter failure (loud)
-EXIT_ATTENTION = 2         # §2.2 (+ argparse's usage-error code)
+EXIT_ATTENTION = 2         # §2.2
 EXIT_APP_DOWN = 3          # §2.2
 EXIT_NOT_IMPLEMENTED = 10  # reserved flag handled by a later phase
+EXIT_USAGE = 64            # argv/usage error — never the §2.2 attention code
 
 NOT_IMPLEMENTED_MSG = "not implemented (Phase 3)"
 USAGE_EPILOG = (
@@ -136,12 +138,22 @@ def _run_once(args, include_feed, body_cap):
 
 
 def main(argv=None) -> int:
-    """Run the CLI. Returns the process exit code; never raises SystemExit."""
+    """Run the CLI. Returns the process exit code; never raises SystemExit.
+
+    Usage errors return `EXIT_USAGE` (64), not `EXIT_ATTENTION` (2): the §2.4 cron
+    reads 2 as "a stall class fired", so an argv typo must never look like a
+    stall (audit BUG #6). `--help` keeps the conventional 0 for a human, but
+    returns 64 when `--json` was requested — help text on stdout is not a report
+    and must not read as a successful run to a parser.
+    """
+    argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     try:
         args = parser.parse_args(argv)
     except _UsageExit as exc:
-        return exc.status
+        if exc.status == 0 and "--json" not in argv:
+            return EXIT_HEALTHY          # plain --help/-h: normal success
+        return EXIT_USAGE
 
     # Reserved Phase-3 flag: refuse before collecting anything. §2.2/§2.3.6 —
     # a reserved flag must never be a silent no-op, and must never act.
@@ -157,6 +169,11 @@ def main(argv=None) -> int:
         return _run_once(args, include_feed, body_cap)
 
     # --watch N: re-collect and re-render every N seconds until interrupted.
+    #
+    # TODO(AGENTCTRL1 P1 audit BUG #9): each iteration writes a complete
+    # document, so `--json --watch` produces concatenated JSON and stdout is not
+    # a parseable stream (a scheduler must use single-shot `--json`, which is the
+    # §2.4 contract). Deferred: revisit only if a streaming consumer is wired.
     try:
         while True:
             code = _run_once(args, include_feed, body_cap)

@@ -152,15 +152,22 @@ def _stat_line(pid, state, utime, stime, starttime=0, num_threads=1):
     return f"{pid} (python3) {state} " + " ".join(rest) + "\n"
 
 
-def _fake_app(tmp, project, pid=4242, state="S", wchan="poll"):
-    """Fabricate a running main.py for `project` under the pinned PROC_ROOT."""
+def _fake_app(tmp, project, pid=4242, state="S", wchan="poll",
+              cmdline=b"python3\x00main.py\x00", exe="/usr/bin/python3.12"):
+    """Fabricate a running app for `project` under the pinned PROC_ROOT.
+
+    `exe` is the `/proc/<pid>/exe` target — the reporter requires a python
+    interpreter there (audit fix round BUG #2).
+    """
     root = Path(tmp) / "home" / "proc"
     root.mkdir(parents=True, exist_ok=True)
     (root / "stat").write_text("cpu 1 2 3 4\nbtime 1700000000\n")
     base = root / str(pid)
     (base / "task" / str(pid)).mkdir(parents=True, exist_ok=True)
-    (base / "cmdline").write_bytes(b"python3\x00main.py\x00")
+    (base / "cmdline").write_bytes(cmdline)
     os.symlink(os.path.realpath(str(project)), base / "cwd")
+    if exe is not None:
+        os.symlink(exe, base / "exe")
     (base / "stat").write_text(_stat_line(pid, state, 100, 0, starttime=1000))
     (base / "statm").write_text("45000 45000 0 0 0 0 0\n")
     (base / "wchan").write_text(wchan + "\n")
@@ -230,25 +237,39 @@ def test_argv_parse_nudge_forms(tmp_path, monkeypatch, capsys):
     assert "not implemented (Phase 3)" in capsys.readouterr().err
 
     # (c) `--nudge` is not a crab_status.py flag (it lives on main.py, §3.1)
-    assert cli.main(["--nudge", "@Supervisor", "ping"]) == cli.EXIT_ATTENTION
+    assert cli.main(["--nudge", "@Supervisor", "ping"]) == cli.EXIT_USAGE
     assert "usage:" in capsys.readouterr().err
 
 
-def test_usage_errors_exit_2(monkeypatch, capsys):
+def test_usage_error_exit_code_is_not_attention(monkeypatch, capsys):
+    """A cron typo must not masquerade as "attention needed" (§2.2 = 2).
+
+    Audit fix round BUG #6: usage errors exit 64, so the only codes the §2.4
+    cron sees are 0/2/3/10 (plus 1 for an internal failure).
+    """
     monkeypatch.setattr(status_report, "collect", _no_report)
 
-    assert cli.main(["--bogus"]) == cli.EXIT_ATTENTION
-    err = capsys.readouterr().err
-    assert "usage:" in err and "--bogus" in err
+    for argv in (["--bogus"], ["--project"], ["--watch", "abc"], ["--watch", "0"],
+                 ["--json", "--bogus"], ["--watch", "-1"]):
+        code = cli.main(argv)
+        assert code == cli.EXIT_USAGE == 64, f"{argv} -> {code}"
+        assert code not in (cli.EXIT_HEALTHY, cli.EXIT_ATTENTION,
+                            cli.EXIT_APP_DOWN, cli.EXIT_NOT_IMPLEMENTED)
+        assert "usage:" in capsys.readouterr().err
 
-    assert cli.main(["--watch", "0"]) == cli.EXIT_ATTENTION
-    assert "positive" in capsys.readouterr().err
 
-    assert cli.main(["--watch", "abc"]) == cli.EXIT_ATTENTION
-    assert "invalid" in capsys.readouterr().err.lower()
+def test_help_is_not_reported_as_a_healthy_run(monkeypatch, capsys):
+    """`--help` exits 0 (normal) with help text — but a `--json` consumer must
+    not read that as a successful report, so the combination exits 64."""
+    monkeypatch.setattr(status_report, "collect", _no_report)
 
-    assert cli.main(["--project"]) == cli.EXIT_ATTENTION  # missing value
-    assert "usage:" in capsys.readouterr().err
+    assert cli.main(["--help"]) == cli.EXIT_HEALTHY
+    assert "usage:" in capsys.readouterr().out
+
+    assert cli.main(["--json", "--help"]) == cli.EXIT_USAGE
+    out = capsys.readouterr().out
+    assert "usage:" in out                 # help text, not a report
+    assert not out.lstrip().startswith("{")
 
 
 def test_project_defaults_to_cwd(tmp_path, monkeypatch, capsys):
@@ -294,6 +315,41 @@ def test_exit_code_healthy_0(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "STALLS      none" in out
     assert "EXIT        0 (healthy" in out
+
+
+def test_exit_code_frozen_app_2(tmp_path, capsys):
+    """Audit BUG #7: a stopped app is attention-worthy, not healthy."""
+    project = _project(tmp_path)
+    _config_dir(tmp_path)
+    _fake_app(tmp_path, project, state="T", wchan="do_signal_stop")
+
+    assert cli.main(["--project", str(project)]) == cli.EXIT_ATTENTION == 2
+    out = capsys.readouterr().out
+    assert "app_frozen" in out
+    assert "main=frozen" in out
+
+
+def test_exit_code_console_script_launch_is_detected(tmp_path, capsys):
+    """Audit BUG #1: the declared `crabcakes` entry point must be recognised."""
+    project = _project(tmp_path)
+    _config_dir(tmp_path)
+    _fake_app(tmp_path, project,
+              cmdline=b"/usr/bin/python3\x00/home/q/.local/bin/crabcakes\x00")
+
+    assert cli.main(["--project", str(project)]) == cli.EXIT_HEALTHY == 0
+    assert "APP         running pid=4242" in capsys.readouterr().out
+
+
+def test_json_payload_carries_summary_and_exit_code(tmp_path, capsys):
+    """Audit BUG #10: §2.4 delivery needs the summary as a field."""
+    project = _project(tmp_path)
+    _config_dir(tmp_path)
+
+    assert cli.main(["--project", str(project), "--json"]) == cli.EXIT_APP_DOWN
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["exit_code"] == cli.EXIT_APP_DOWN
+    assert payload["summary"].startswith("app_not_running")
+    assert payload["alert"] is False
 
 
 def test_readonly_without_auto_resume_flag(tmp_path, monkeypatch, capsys):

@@ -26,9 +26,12 @@
 
 import hashlib
 import json
+import math
 import os
+import re
 import subprocess
 import time
+import uuid
 from datetime import datetime
 
 from utils import feed_store
@@ -53,14 +56,27 @@ WALK_FILE_CAP = 5000                  # bounded repo write-scan (ruling 4)
 AUDIT_TAIL_BYTES = 512 * 1024         # audit-log.jsonl tail read
 CRASH_HEAD_BYTES = 64 * 1024          # /var/crash/*.crash head read (files are ~14 MB)
 CRASH_MAX_REPORTS = 5
+CONVERSATION_MAX_BYTES = 64 * 1024 * 1024   # per-conversation read cap (BUG #5)
+HEAD_META_BYTES = 8192                # head scan for project_path/agent_name
 CACHE_FILENAME = "status-feed.json"
 STATE_FILENAME = "status-state.json"
 SESSION_FILE_PREFIX = "special:"      # agent session files in <config>/conversations
 PROC_ROOT = "/proc"                   # pinned by tests
 CRASH_DIR = "/var/crash"              # pinned by tests
 
-# Worst-first for `assess()`: a frozen app outranks an idle pipeline.
+# Declared entry points for this app (audit BUG #1). pyproject.toml:
+#   [project.scripts]
+#   crabcakes = "main:main"
+# so the sanctioned launcher is a file named `crabcakes`, NOT `main.py` — the
+# old `main.py`-only match reported a running app as "app not running". Kept as
+# a module constant (rather than parsing pyproject on every scan) so it is
+# pinnable by tests; it must stay in sync with pyproject's [project.scripts].
+APP_SCRIPT_NAMES = frozenset({"main.py", "crabcakes"})
+
+# Worst-first for `assess()`: a stopped app is fully wedged, then a spinning
+# app, then an idle pipeline.
 STALL_CLASS_ORDER = (
+    "app_frozen",
     "app_spinning",
     "turn_stalled",
     "blocked_on_sendback",
@@ -69,19 +85,29 @@ STALL_CLASS_ORDER = (
 )
 
 # Write-scan exclusions. `.git`/`.crabcakes` per the phase instructions;
-# bytecode/cache trees are excluded too because interpreter churn (a test run
-# writes thousands of .pyc files) would otherwise mask a genuinely idle agent.
+# bytecode/cache trees and vendored dependency trees are excluded too, because
+# interpreter/packager churn (a test run writes thousands of .pyc files; an
+# install rewrites .venv) would otherwise mask a genuinely idle agent and push
+# the scan into its file cap (audit BUG #4).
 WRITE_SCAN_EXCLUDED_DIRS = frozenset({
     ".git", ".crabcakes", "__pycache__", ".pytest_cache", ".mypy_cache",
+    ".venv", "venv", "node_modules", ".tox",
 })
 
 
 # ── Small pure helpers ───────────────────────────────────────────────────────
 
 def _require_number(value, name):
-    """Coerce a numeric argument, rejecting bool/None/str (Rule 6)."""
+    """Coerce a numeric argument, rejecting bool/None/str/non-finite (Rule 6).
+
+    NaN/±Infinity are rejected deliberately (audit BUG #8): a single NaN in
+    `now` would persist as `last_alert: NaN` and the `now - last_alert >= floor`
+    comparison would be False forever, permanently muting that episode's alerts.
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be a number, got {type(value).__name__}")
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be finite, got {value!r}")
     return float(value)
 
 
@@ -129,6 +155,33 @@ def _mtime(path):
         return None
 
 
+def _head_metadata(path, max_bytes=None):
+    """Best-effort `(project_path, agent_name)` from the head of a huge file.
+
+    `save_conversation_to_disk` writes both keys *before* `messages` (measured:
+    byte ~64 in every live session file), so the head carries them even when the
+    body is far past `CONVERSATION_MAX_BYTES`. Only the oversize path uses this
+    (audit BUG #5): without it an over-cap session loses its project attribution
+    and silently drops out of stall detection.
+    """
+    if max_bytes is None:
+        max_bytes = HEAD_META_BYTES
+    text = _read_text_head(path, max_bytes)
+    if not text:
+        return None, None
+    values = []
+    for key in ("project_path", "agent_name"):
+        match = re.search(r'"%s"\s*:\s*"((?:[^"\\]|\\.)*)"' % key, text)
+        value = None
+        if match is not None:
+            try:
+                value = json.loads('"%s"' % match.group(1))
+            except (ValueError, json.JSONDecodeError):
+                value = None
+        values.append(value)
+    return values[0], values[1]
+
+
 def _read_text_head(path, max_bytes):
     """Read at most `max_bytes` of a text file. Returns None when unreadable."""
     try:
@@ -154,10 +207,21 @@ def _ensure_dir(path, mode=0o700):
 
 
 def _atomic_write_text(path, text, mode=0o600):
-    """Write `text` to `path` via tmp + os.replace, chmod `mode`. Raises OSError."""
+    """Write `text` to `path` via a per-writer tmp + os.replace, chmod `mode`.
+
+    The tmp name is unique per call (pid + random suffix) — audit BUG #3. A
+    fixed `<path>.tmp` made concurrent writers collide: one writer consumed the
+    tmp, the peer's `os.chmod`/`os.replace` then raised FileNotFoundError. Two
+    schedulers (§2.4 cron at 15 min, §4.5 auto-resume at 5 min) plus a `--watch`
+    run all write this cache directory, so the collision is reachable in normal
+    operation (measured: 88/150 calls failed at 6 writers).
+
+    Raises OSError (or FileNotFoundError) on failure; callers decide whether to
+    retry or degrade.
+    """
     parent = os.path.dirname(os.path.abspath(path))
     _ensure_dir(parent)
-    tmp = f"{path}.tmp"
+    tmp = f"{path}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     try:
         with os.fdopen(fd, "w") as fh:
@@ -248,11 +312,29 @@ def load_alert_state(path):
 
 
 def save_alert_state(state_path, state):
-    """Atomically persist alert state (tmp + os.replace) with mode 0o600."""
+    """Atomically persist alert state (tmp + os.replace) with mode 0o600.
+
+    Validates both arguments (audit BUG #13 aligned this with the loader: the
+    old code accepted `None` and wrote a file literally named `None` in the CWD)
+    and refuses non-finite floats so invalid JSON cannot reach disk (BUG #8).
+    Retries once on FileNotFoundError, the residual shape of a tmp-file race
+    between two concurrent invocations (BUG #3).
+    """
     if not isinstance(state, dict):
         raise ValueError(f"alert state must be a dict, got {type(state).__name__}")
-    payload = json.dumps(state, indent=2, sort_keys=True)
-    _atomic_write_text(str(state_path), payload, mode=0o600)
+    if not isinstance(state_path, (str, os.PathLike)):
+        raise ValueError(
+            f"state_path must be a path, got {type(state_path).__name__}")
+    payload = json.dumps(state, indent=2, sort_keys=True, allow_nan=False)
+    for attempt in (1, 2):
+        try:
+            _atomic_write_text(str(state_path), payload, mode=0o600)
+            return
+        except FileNotFoundError:
+            if attempt == 2:
+                raise
+            _logger.warning("status_report: state write raced for %s, retrying",
+                            state_path)
 
 
 def episode_id(session_key, last_ts, last_sha):
@@ -469,6 +551,7 @@ def _collect_activity(project_path, include_feed):
 # ── /proc sampling (ruling 3: no psutil dependency) ──────────────────────────
 
 _IDLE_PROC_STATES = frozenset({"S", "D", "I"})
+_STOPPED_PROC_STATES = frozenset({"T", "t"})   # SIGSTOP / Ctrl-Z / traced
 _CPU_BUSY_PERCENT = 80.0
 
 
@@ -538,6 +621,33 @@ def _read_proc_cwd(pid, proc_root=None):
         return None
 
 
+def _read_proc_exe(pid, proc_root=None):
+    """`/proc/<pid>/exe` target, or None when unreadable.
+
+    A deleted-but-running binary reports `"… (deleted)"`; the caller only needs
+    the basename prefix, which survives that suffix.
+    """
+    root = _proc_root(proc_root)
+    try:
+        return os.readlink(os.path.join(root, str(pid), "exe"))
+    except OSError:
+        return None
+
+
+def _is_python_exe(exe):
+    """True when `exe` looks like a python interpreter (audit BUG #2).
+
+    This is the cheapest available identity check: a `less main.py` / `cat
+    main.py` / editor argv can be made to look like the app, but its executable
+    is not python. Unreadable `exe` (None) also returns False — an unverifiable
+    process is not the app (same-user `/proc/<pid>/exe` is always readable, so
+    this only rejects genuinely foreign permissions).
+    """
+    if not isinstance(exe, str) or not exe:
+        return False
+    return os.path.basename(exe).startswith("python")
+
+
 def _read_proc_wchan(pid, proc_root=None):
     root = _proc_root(proc_root)
     text = _read_text_head(os.path.join(root, str(pid), "wchan"), 256)
@@ -583,17 +693,32 @@ def _proc_boot_time(proc_root=None):
     return None
 
 
-def _app_matches(cmdline, cwd, project_path):
-    """True when an argv looks like `main.py` belonging to `project_path`.
+def _app_matches(cmdline, cwd, project_path, exe=None):
+    """True when an argv + executable look like THIS app for `project_path`.
 
-    Match is on cwd OR on the script's own directory, so both
-    `cd <project> && python3 main.py` and `python3 <project>/main.py` hit.
+    Identity is name + interpreter + location (audit BUG #1/#2):
+      * the argv must contain a declared entry point (`APP_SCRIPT_NAMES`), so
+        both `python3 main.py` and the console launcher `crabcakes` match;
+      * the executable must be python, so `less main.py`, `cat main.py`,
+        `sed -n … main.py` and an editor opened on main.py do not;
+      * and the process must belong to the project — cwd OR the script's own
+        directory — so both `cd <project> && python3 main.py` and
+        `python3 <project>/main.py` hit.
+
+    TODO(AGENTCTRL1 P1 audit BUG #1/#2): this is still inference from /proc.
+    The durable fix is an app-written pidfile/heartbeat (authoritative, survives
+    launcher renames and `/proc` mounted with hidepid). Deferred — it is an
+    app-side change and needs PM sign-off.
     """
+    if not any(os.path.basename(token) in APP_SCRIPT_NAMES for token in cmdline):
+        return False
+    if exe is not None and not _is_python_exe(exe):
+        return False
+    if cwd and os.path.realpath(cwd) == project_path:
+        return True
     for token in cmdline:
-        if os.path.basename(token) != "main.py":
+        if os.path.basename(token) not in APP_SCRIPT_NAMES:
             continue
-        if cwd and os.path.realpath(cwd) == project_path:
-            return True
         token_dir = os.path.dirname(token)
         if token_dir and os.path.realpath(token_dir) == project_path:
             return True
@@ -624,7 +749,14 @@ def _cpu_sample(pid, proc_root, interval):
 
 
 def _classify_main_thread(state, second_state, cpu_percent):
-    """`idle` (sleeping) vs `busy` (state R and >80 % CPU for both samples)."""
+    """`frozen` (stopped/traced) · `idle` (sleeping) · `busy` (>80 % CPU, R).
+
+    `T`/`t` are SIGSTOP/Ctrl-Z/debugger-stopped states (audit BUG #7): the app
+    cannot make progress in any of them, so they are a stall condition rather
+    than an unclassifiable "unknown".
+    """
+    if state in _STOPPED_PROC_STATES:
+        return "frozen"
     if state in _IDLE_PROC_STATES and second_state in _IDLE_PROC_STATES:
         return "idle"
     if (state == "R" and second_state == "R" and cpu_percent is not None
@@ -652,9 +784,14 @@ def _collect_app(project_path, now, sample_interval):
         cmdline = _read_proc_cmdline(pid)
         if not cmdline:
             continue
-        if not _app_matches(cmdline, _read_proc_cwd(pid), project_path):
-            continue
         stat = _read_proc_stat(pid)
+        # A zombie is a dead app (audit BUG #7): it must not be reported as
+        # running, however much its argv still looks like the launcher.
+        if stat is not None and stat["state"] == "Z":
+            continue
+        if not _app_matches(cmdline, _read_proc_cwd(pid), project_path,
+                            _read_proc_exe(pid)):
+            continue
         start = stat["starttime"] if stat else -1.0
         if best_start is None or start > best_start:
             best_pid, best_start = pid, start
@@ -882,8 +1019,28 @@ def _collect_agents(project_path, config_dir, body_cap, now):
                  "message_count": 0, "last_role": None, "last_message": "",
                  "last_message_sha": "", "last_message_ts": None,
                  "content_chars": 0, "tool_names": [], "pending_tool_calls": False,
-                 "unreadable": False, "error": None}
-        text = _read_text_head(path, 64 * 1024 * 1024)
+                 "unreadable": False, "oversize": False, "error": None}
+        # Reader-side cap, not a writer-side tear (audit BUG #5): anything past
+        # CONVERSATION_MAX_BYTES is truncated by US, so the parse failure would
+        # otherwise be blamed on save_conversation_to_disk's non-atomic write.
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = None
+        if size is not None and size > CONVERSATION_MAX_BYTES:
+            head_project, head_agent = _head_metadata(path)
+            entry["project_path"] = head_project
+            entry["agent_name"] = head_agent
+            if isinstance(head_project, str) and head_project:
+                entry["in_project"] = os.path.realpath(head_project) == project_path
+            entry.update(
+                unreadable=True, oversize=True,
+                error=(f"file exceeds the {CONVERSATION_MAX_BYTES // (1024 * 1024)}MB "
+                       f"read cap (last message not parsed)"))
+            degraded = True
+            section["sessions"].append(entry)
+            continue
+        text = _read_text_head(path, CONVERSATION_MAX_BYTES)
         if text is None:
             entry.update(unreadable=True, error="unreadable file")
             degraded = True
@@ -1113,6 +1270,14 @@ def _detect_stalls(report, now=None):
     threshold = STALL_THRESHOLD_MINUTES * 60.0
     stalls = []
 
+    if app.get("running") and app.get("main_thread") == "frozen":
+        stalls.append({
+            "class": "app_frozen", "session": None,
+            "detail": (f"pid {app.get('pid')} is stopped (state "
+                       f"{app.get('state')}, wchan {app.get('wchan')}) — the app "
+                       f"cannot make progress"),
+        })
+
     if app.get("running") and app.get("main_thread") == "busy":
         percent = app.get("cpu_percent")
         detail = (f"pid {app.get('pid')} main thread busy"
@@ -1120,22 +1285,41 @@ def _detect_stalls(report, now=None):
         stalls.append({"class": "app_spinning", "session": None, "detail": detail})
 
     newest_write = work.get("newest_write_ts")
+    scan = work.get("write_scan") or {}
+    scan_truncated = bool(scan.get("truncated"))
     for session in agents.get("sessions") or []:
-        if session.get("unreadable") or not session.get("in_project"):
+        if not session.get("in_project"):
             continue
-        if session.get("last_role") != "assistant":
+        # Oversize conversations (BUG #5) are unparsed but still assessable from
+        # their mtime; only genuinely torn/unreadable files are skipped.
+        oversize = bool(session.get("oversize"))
+        if session.get("unreadable") and not oversize:
+            continue
+        if not oversize and session.get("last_role") != "assistant":
             continue
         idle = session.get("idle_seconds")
         if idle is None or idle < threshold:
             continue
         mtime = session.get("mtime")
-        if (newest_write is not None and mtime is not None
+        # A truncated write scan is not evidence of activity (BUG #4): its
+        # maximum is computed over an arbitrary subset that may exclude the
+        # agent's own writes, so it must not suppress the stall.
+        if (not scan_truncated and newest_write is not None and mtime is not None
                 and newest_write >= mtime):
             continue  # something in the repo moved after the message: not idle
         agent = session.get("agent_name") or session.get("session_key")
+        if oversize:
+            reason = (f"last message unparsed (file exceeds the "
+                      f"{CONVERSATION_MAX_BYTES // (1024 * 1024)}MB read cap)")
+        else:
+            reason = "assistant-final message, no tool call"
+        if scan_truncated:
+            reason += (f"; repo writes not verifiable (scan truncated at "
+                       f"{scan.get('files')} files)")
+        else:
+            reason += ", no repo writes since"
         detail = (f"{session.get('session_key')} (agent {agent}) idle "
-                  f"{int(idle // 60)}m: assistant-final message, no tool call, "
-                  f"no repo writes since")
+                  f"{int(idle // 60)}m: {reason}")
         stalls.append({"class": "turn_stalled",
                        "session": session.get("session_key"), "detail": detail})
 
@@ -1178,8 +1362,9 @@ def assess(report, now=None):
         raise ValueError(f"report must be a dict, got {type(report).__name__}")
     stalls = report.get("stalls")
     if stalls is None:
+        # Derived locally: assess() is a reader, it must not stamp state into the
+        # caller's report (audit BUG #12).
         stalls = _detect_stalls(report, now)
-        report["stalls"] = stalls
     app = report.get("app") or {}
     if not app.get("running"):
         reason = app.get("degraded_reason") or "no main.py found for this project"
@@ -1197,6 +1382,10 @@ def _fmt_duration(seconds):
     if seconds is None:
         return "?"
     seconds = int(seconds)
+    if seconds < 0:
+        # A negative delta means the report has no usable clock (audit BUG #11);
+        # rendering "-1700000000s ago" is noise, not information.
+        return "?"
     if seconds < 60:
         return f"{seconds}s"
     if seconds < 3600:
@@ -1392,4 +1581,7 @@ def collect(project_path=".", config_dir=None, *, include_feed=True,
         name for name in _SECTION_NAMES if (report.get(name) or {}).get("degraded")
     ]
     report["degraded"] = bool(report["degraded_sections"])
+    # §2.4 delivery needs the summary line and exit code as fields, not as a
+    # string the caller has to reconstruct from the rendered text (BUG #10).
+    report["summary"], report["exit_code"] = assess(report)
     return report

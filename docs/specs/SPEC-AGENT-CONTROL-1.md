@@ -406,6 +406,7 @@ Sequencing: Phase 1 (+1b) ships first and delivers standalone value — the PM c
 | 2 | **Stall alerting** — wire `--json` into cron? | **Yes.** §2.4. State-change-only with per-episode dedupe |
 | 3 | **`--full` content** — full message bodies, or permanent 120-char truncation? | **Scoped `--full`.** 120-char default; `--full` raises **message bodies only** (2,000 chars). Tool arguments and command outputs are **never** rendered at any level (§2.1). PM may override |
 | 4 | **Auto-resume** — confirm it stays out of scope? | **REVERSED — auto-resume is IN SCOPE.** Specified as Phase 3 (§4) with the guardrails in §4.3, disabled by default. `blocked_on_sendback` remains out (§9) |
+| 5 | **Card `title` vs command cap** (AGENTCTRL1 Phase-1 audit finding) — a *non-tool* feed card's `title` renders up to `COMMAND_CAP` (120) chars at every verbosity, and `COMMAND_CAP == BODY_CAP_DEFAULT`, so a ≤120-char command can appear in the report through a title (tool cards never render a title at all: it is dropped whenever `metadata.tool_name` is present, and `--full` cannot widen any title). | **PM question:** is a ≤120-char command in a non-tool card title acceptable (same class as a message body at the default cap), or should titles be capped tighter than `COMMAND_CAP`, or suppressed in the activity section entirely? No code change made pending this ruling |
 
 ---
 
