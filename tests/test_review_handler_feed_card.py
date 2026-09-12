@@ -356,9 +356,13 @@ class TestReviewBarResolutionPersist:
         assert updates["metadata"].get("status") == "approved", (
             f"resolution status not mirrored from approve_exec: {updates!r}"
         )
-        # In-memory agreement (approve_exec parity)
-        assert card.accepted is True
-        assert card.metadata.get("needs_review") is None
+        # In-memory agreement (approve_exec parity). Read the STORE's card:
+        # update_card replaces self._cards[card_id] with the resolved copy, and
+        # the fix deliberately does not mutate the caller's original object
+        # (audit BUG #1 — mutate-before-persist).
+        stored = fh.get_card(card_id)
+        assert stored.accepted is True
+        assert stored.metadata.get("needs_review") is None
 
     @patch("ui.handlers.review_handler.git_ops")
     def test_review_bar_reject_clears_needs_review(self, mock_git_ops):
@@ -384,10 +388,11 @@ class TestReviewBarResolutionPersist:
         )
         assert "needs_review" not in updates["metadata"]
         assert updates["metadata"].get("status") == "denied"
-        assert card.metadata.get("needs_review") is None, (
+        stored = fh.get_card(card_id)
+        assert stored.metadata.get("needs_review") is None, (
             "needs_review must be cleared from metadata after resolution"
         )
-        assert card.accepted is False
+        assert stored.accepted is False
 
     @patch("ui.handlers.review_handler.git_ops")
     def test_accept_omits_accepted_when_undecided(self, mock_git_ops):
@@ -439,6 +444,51 @@ class TestReviewBarResolutionPersist:
         )
         assert self._enqueue_for(fh, project_path, undecided_id) is None, (
             "undecided card must not be enqueued by the resolution sweep"
+        )
+
+    @patch("ui.handlers.review_handler.git_ops")
+    def test_review_bar_resolution_silent_no_op_leaves_needs_review(self, mock_git_ops):
+        """Silent-no-op safety: if update_card cannot persist, the in-memory
+        card must NOT look resolved.
+
+        update_card returns early (warning only) when the card is no longer in
+        _cards. Before the audit fix, _persist_review_resolution cleared
+        metadata["needs_review"] in place first, so a no-op persist left the
+        card looking resolved in memory while disk still had needs_review=True
+        — the UI would claim success and the flag would reappear on reload.
+        (Audit BUG #1, pattern: mutate-before-persist.)
+        """
+        handler = _make_handler()
+        fh, card_id, card = self._make_fh_with_needs_review_card()
+        handler.set_feed_handler(fh)
+        _setup_active_session(handler)
+
+        # Simulate the card vanishing between the sweep's read and the persist
+        # (compaction prune / user dismissal): update_card then silently no-ops.
+        fh._cards.pop(card_id, None)
+
+        mock_git_ops.stage_all.return_value = MockGitResult(success=True)
+        mock_git_ops.commit.return_value = MockGitResult(
+            success=True, stdout="[main abc123d] accepted", sha="abc123def456"
+        )
+        import sys
+        mock_git_module = MagicMock()
+        mock_diff = MagicMock()
+        mock_diff.a_path = "src/main.py"
+        mock_diff.b_path = None
+        mock_repo = MagicMock()
+        mock_repo.index.diff.return_value = [mock_diff]
+        mock_git_module.Repo.return_value = mock_repo
+        with patch.dict(sys.modules, {"git": mock_git_module}):
+            handler.accept_changes("testproject", "approved")
+
+        # The original object must be untouched — no in-memory-only resolution.
+        assert card.metadata.get("needs_review") is True, (
+            "no-op persist must not clear needs_review in memory "
+            "(that would make the UI claim a resolution disk never recorded)"
+        )
+        assert card.accepted is None, (
+            "no-op persist must not stamp a decision in memory only"
         )
 
 

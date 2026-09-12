@@ -2408,11 +2408,16 @@ class FeedHandler:
                 pass
 
         # 3. Update visual to show approved state, and persist the decision.
-        # REVIEW-PERSIST-1: the approve_exec path above only persists when the
-        # approval callback is registered AND the card passes its needs_approval
-        # gate — and even then it runs BEFORE step 3 sets card.accepted, so its
-        # payload omits accepted (F1). This site is the durable record for
-        # auto-approved cards; update_card is the approve_exec mechanism.
+        # REVIEW-PERSIST-1: step 1's handle_approve_exec reaches
+        # agent_runtime_handler.approve_exec, which sets card.accepted = True
+        # BEFORE calling update_card — so that first enqueue already carries
+        # accepted=True (F1 satisfied) whenever the approval callback is
+        # registered and the card passes its needs_approval gate. This site is
+        # therefore a defensive SECOND enqueue (same payload, coalesced) that
+        # additionally refreshes the widget, and the ONLY durable record when
+        # the callback is absent (test/headless paths) or the gate does not
+        # match. (Audit BUG #2: earlier comment claimed step 1's payload
+        # omitted accepted, which is false in production.)
         card = self._cards.get(card_id)
         if card is not None:
             project_path = card.metadata.get("project_path", "") or self._project_paths.get(card.project_name, "")

@@ -6,6 +6,7 @@
 import logging
 import re
 import threading
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Callable
 
@@ -119,11 +120,21 @@ class ReviewHandler:
         for card in fh.get_cards_for_project(project_name):
             if not (card.metadata or {}).get("needs_review"):
                 continue
-            card.metadata.pop("needs_review", None)
-            card.metadata["status"] = "approved" if accepted else "denied"
-            card.accepted = accepted
+            # Build the RESOLVED copy and let update_card perform the in-memory
+            # replacement (it assigns self._cards[card_id] = card_data itself).
+            # We deliberately do NOT mutate the live card here: update_card
+            # returns early (warning only) when the card is no longer in
+            # _cards, and skips the enqueue when no project path is registered.
+            # Mutating first would leave the in-memory card looking resolved
+            # while disk kept needs_review=True — worse than the original
+            # lost-decision bug, because the UI would claim success.
+            # (Audit BUG #1: mutate-before-persist.)
+            new_metadata = dict(card.metadata or {})
+            new_metadata.pop("needs_review", None)
+            new_metadata["status"] = "approved" if accepted else "denied"
+            resolved = replace(card, metadata=new_metadata, accepted=accepted)
             try:
-                fh.update_card(card.card_id, card)
+                fh.update_card(card.card_id, resolved)
             except Exception:
                 _logger.exception(
                     "_persist_review_resolution: failed to persist resolution "
