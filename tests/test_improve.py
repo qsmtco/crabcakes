@@ -5,7 +5,9 @@
 # Mock urllib at the network layer to simulate API errors and malformed responses.
 
 import json
+import time
 import urllib.error
+import urllib.request
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -34,15 +36,54 @@ class FakeResponse:
         pass
 
 
-def call_improve(raw_text: str, callback_store: list):
+@pytest.fixture(autouse=True)
+def _route_http_through_urlopen(monkeypatch):
+    """Make the per-test `urlopen` patches actually intercept the HTTP call.
+
+    improve_prompt performs its request via `urllib.request.build_opener(...)
+    .open(...)` (the MED-5 redirect handler), NOT via the module-level
+    `urlopen`. Patching only `urlopen` therefore left the real opener live and
+    these tests talked to the REAL MiniMax API using the apiKey from
+    ~/.config/crabcakes/config.json.
+
+    This fixture swaps the opener for one that delegates to
+    `urllib.request.urlopen` at call time — the boundary each test fakes — so
+    the suite is hermetic and the existing per-test patches take effect.
     """
-    Call improve_prompt with GLib=None so callback fires synchronously.
+    class _UrlopenOpener:
+        def open(self, req, timeout=None):
+            return urllib.request.urlopen(req, timeout=timeout)
+
+    monkeypatch.setattr(
+        "utils.improve.urllib.request.build_opener",
+        lambda *args, **kwargs: _UrlopenOpener(),
+    )
+
+
+def call_improve(raw_text: str, callback_store: list, timeout: float = 5.0):
+    """
+    Call improve_prompt and wait (bounded) for the background thread's callback.
     Stores (text, error) in callback_store for assertion.
+
+    improve_prompt ALWAYS runs its work on a daemon thread (utils/improve.py);
+    the GLib argument only controls where the callback is *scheduled*. With
+    GLib=None the callback is invoked inline on that worker thread, so the test
+    must poll until it lands. A bounded wait (not a sleep) keeps the suite fast
+    and turns a genuine "callback never fires" regression into a clear failure
+    instead of an IndexError.
     """
     def capture(text, error):
         callback_store.append((text, error))
 
     improve_prompt(raw_text, capture, GLib=None)
+
+    deadline = time.monotonic() + timeout
+    while not callback_store and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert len(callback_store) == 1, (
+        f"callback not invoked within {timeout}s "
+        f"(got {len(callback_store)} calls)"
+    )
 
 
 # ── API Key Tests ───────────────────────────────────────────────────────────────
