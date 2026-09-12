@@ -25,11 +25,11 @@
 # (lost update despite a True return). ONE inode, every mutation.
 #
 # §2.3 — sliding-window pruning. `compact_feed(window=N)` keeps the newest N
-# cards and prunes the rest, except PINNED cards (a recorded accept/reject,
-# needs_review/needs_approval, or git_commit) which are never pruned.
-# `window=None` prunes nothing. Triggers: journal threshold, the rate-limited
-# post-append check, and the FeedHandler's one-time open-time request for a
-# legacy oversized feed. `load_feed` never compacts.
+# cards and prunes the rest, except PINNED cards (a recorded accept/reject, a
+# GENUINELY UNDECIDED needs_review/needs_approval card, or git_commit) which
+# are never pruned. `window=None` prunes nothing. Triggers: journal threshold,
+# the rate-limited post-append check, and the FeedHandler's one-time open-time
+# request for a legacy oversized feed. `load_feed` never compacts.
 #
 # DOCUMENTED DEVIATION from the "pure functions — no state" contract above:
 # `_compact_last` / `_compact_rl_lock` keep per-project compaction
@@ -590,21 +590,31 @@ def _maybe_compact(project_path: str) -> None:
 
 
 def _is_pinned_card(card: FeedCardData) -> bool:
-    """§2.3.2 retention pin — a card that must NEVER be pruned.
+    """§2.3.2 retention pin (F1 amendment) — a card that must NEVER be pruned.
 
     Pinned when any of: an accept/reject decision is already recorded
     (`accepted is not None` — pruning it would orphan the decision and the
-    seq narrative); it is still actionable (`metadata.needs_review` /
-    `metadata.needs_approval` — `update_feed_card` would silently return
-    False after pruning); or it is a `git_commit` card (cheap, few, and
-    referenced by review history).
+    seq narrative); it is a `git_commit` card (cheap, few, and referenced by
+    review history); or it is still *genuinely undecided* — it carries
+    `metadata.needs_review` / `metadata.needs_approval` AND no decision is
+    recorded anywhere (`accepted is None` AND `metadata.status` is not
+    `"approved"`/`"denied"`).
+
+    The genuinely-undecided clause is the F1 amendment: `needs_approval` is
+    a creation-time transient that is never cleared on resolution, so
+    pinning on its historical presence pinned every exec-approval card
+    forever (measured live 2026-09-12: 2,658 pinned outside the window →
+    retention 4,658 instead of 2,000). The durable decision record is
+    `metadata.status`, written by `approve_exec`, so the pin rule reads it.
     """
     if card.accepted is not None:
         return True
     if card.card_type == "git_commit":
         return True
     meta = card.metadata or {}
-    return bool(meta.get("needs_review") or meta.get("needs_approval"))
+    if not (meta.get("needs_review") or meta.get("needs_approval")):
+        return False
+    return card.accepted is None and meta.get("status") not in ("approved", "denied")
 
 
 def compact_feed(project_path: str, window: int | None = None) -> int:
@@ -624,10 +634,11 @@ def compact_feed(project_path: str, window: int | None = None) -> int:
 
     `window` = the number of NEWEST cards retained by list order (§2.3.2).
     Cards outside that slice are pruned UNLESS pinned (`_is_pinned_card`):
-    an accepted/rejected decision, a needs_review/needs_approval card, or a
-    git_commit card. Pruning preserves chronological order (pinned older
-    cards keep their original position — they are not re-appended). A
-    WARNING reports the prune count and how many cards the pins rescued.
+    an accepted/rejected decision, a genuinely-undecided
+    needs_review/needs_approval card, or a git_commit card. Pruning
+    preserves chronological order (pinned older cards keep their original
+    position — they are not re-appended). A WARNING reports the prune count
+    and how many cards the pins rescued.
     """
     path = _feed_path(project_path)
     jp = _journal_path(project_path)

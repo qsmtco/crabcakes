@@ -1028,3 +1028,123 @@ class TestWindowPruning:
             f"load_feed took {elapsed_ms:.1f} ms at the window default "
             f"(spec §6 bound: 100 ms)"
         )
+
+    # ── F1 amendment (2026-09-12): genuinely-undecided pin semantics ──────
+    #
+    # `needs_approval` is a creation-time transient that is NEVER cleared.
+    # The original rule pinned on its historical presence, so every
+    # exec-approval card ever created was pinned forever (measured live:
+    # 2,697 pinned-outside-window → retention 4,697 instead of 2,000,
+    # growing ~350/day). The amended rule pins a needs_review/needs_approval
+    # card ONLY while no decision is recorded anywhere: `accepted is None`
+    # AND `metadata.status not in ("approved", "denied")`.
+
+    def test_resolved_approval_cards_not_pinned(self, project_path):
+        """A decided approval card is NOT pinned — it prunes like any other.
+
+        RED against the pre-amendment rule (which pinned on the mere
+        presence of `needs_approval`, decided or not).
+        """
+        cards = [
+            # Oldest — three resolved approvals (each a different decision
+            # record shape) + one undecided + one plain pruneable.
+            make_card("agent_action", card_id="ra-status-approved",
+                      metadata={"needs_approval": True, "status": "approved"}),
+            make_card("agent_action", card_id="ra-status-denied",
+                      metadata={"needs_approval": True, "status": "denied"}),
+            make_card("agent_action", card_id="ra-accepted",
+                      accepted=True, metadata={"needs_approval": True}),
+            make_card("agent_action", card_id="ra-undecided",
+                      metadata={"needs_approval": True}),
+            make_card("diff", card_id="ra-plain"),
+        ] + [
+            make_card("diff", card_id=f"ra-new-{i}") for i in range(_WINDOW)
+        ]
+        save_feed(project_path, cards)
+
+        pruned = fs.compact_feed(project_path, window=_WINDOW)
+
+        ids = [c.card_id for c in load_feed(project_path)]
+        assert pruned == 3, (
+            f"2 status-decided approvals + 1 plain card must prune: {ids}"
+        )
+        for resolved in ("ra-status-approved", "ra-status-denied"):
+            assert resolved not in ids, (
+                f"{resolved} is status-decided — the transient needs_approval "
+                f"flag must not pin it forever"
+            )
+        # Rule 1 is independent of the transient flag: a recorded `accepted`
+        # pins even when needs_approval is still set.
+        assert "ra-accepted" in ids, "accepted is not None pins unconditionally"
+        assert "ra-plain" not in ids
+        assert "ra-undecided" in ids, "the genuinely-undecided card still pins"
+
+    def test_undecided_approval_cards_still_pinned(self, project_path):
+        """Guard against over-pruning: an undecided approval stays pinned.
+
+        `needs_approval=True`, `accepted is None`, no `metadata.status`.
+        """
+        cards = [
+            make_card("agent_action", card_id="ua-no-status",
+                      metadata={"needs_approval": True}),
+            make_card("agent_action", card_id="ua-pending",
+                      metadata={"needs_approval": True,
+                                "status": "pending_approval"}),
+            make_card("diff", card_id="ua-plain"),
+        ] + [
+            make_card("diff", card_id=f"ua-new-{i}") for i in range(_WINDOW)
+        ]
+        save_feed(project_path, cards)
+
+        pruned = fs.compact_feed(project_path, window=_WINDOW)
+
+        ids = [c.card_id for c in load_feed(project_path)]
+        assert pruned == 1, f"only the plain card prunes: {ids}"
+        assert "ua-no-status" in ids, "no status at all ⇒ genuinely undecided"
+        assert "ua-pending" in ids, (
+            "'pending_approval' is not a decision — the card is still waiting"
+        )
+        assert "ua-plain" not in ids
+
+    def test_genuinely_undecided_semantics_live_fidelity(self, project_path):
+        """Live-distribution fidelity: only the undecided approvals (and the
+        git_commit cards) survive outside the window.
+
+        Mirrors the measured live shape — the bulk of `needs_approval` cards
+        carry `status="approved"` (3,105 of 3,113 today) and must prune.
+        """
+        old = (
+            [make_card("agent_action", card_id=f"lf-resolved-{i}",
+                       metadata={"needs_approval": True,
+                                 "status": "approved" if i % 2 else "denied"})
+             for i in range(40)]
+            + [make_card("agent_action", card_id=f"lf-undecided-{i}",
+                         metadata={"needs_approval": True})
+               for i in range(30)]
+            + [make_card("diff", card_id=f"lf-plain-{i}") for i in range(20)]
+            + [make_card("git_commit", card_id=f"lf-git-{i}") for i in range(10)]
+        )
+        window = 10
+        cards = old + [
+            make_card("diff", card_id=f"lf-new-{i}") for i in range(window)
+        ]
+        save_feed(project_path, cards)
+
+        pruned = fs.compact_feed(project_path, window=window)
+
+        ids = [c.card_id for c in load_feed(project_path)]
+        # Exactly the undecided + git_commit among the old survive.
+        assert pruned == 60, f"40 resolved + 20 plain must prune: {len(ids)} kept"
+        assert sorted(i for i in ids if i.startswith("lf-undecided")) == sorted(
+            f"lf-undecided-{i}" for i in range(30)
+        ), "every undecided approval pins"
+        assert sorted(i for i in ids if i.startswith("lf-git")) == sorted(
+            f"lf-git-{i}" for i in range(10)
+        ), "git_commit cards always pin"
+        assert not [i for i in ids if i.startswith("lf-resolved")], (
+            "resolved approvals must NOT be retained outside the window"
+        )
+        assert not [i for i in ids if i.startswith("lf-plain")]
+        assert [f"lf-new-{i}" for i in range(window)] == [
+            i for i in ids if i.startswith("lf-new")
+        ], "the newest window is retained in order"

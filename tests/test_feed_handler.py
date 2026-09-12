@@ -3757,6 +3757,53 @@ class TestBackgroundPersistWriter:
         # ...the work was queued for the writer instead.
         assert (h._project_paths["proj"], card_id) in h._persist_queue
 
+    # ── F1 companion: persist the durable decision (spec §2.3.2) ─────────
+    #  Pre-fix, update_card's enqueue payload carried only {body, metadata},
+    #  so `accepted` was never written to disk. The pin rule could then not
+    #  read the durable decision for resolved exec-approval cards, and the
+    #  transient needs_approval flag pinned them forever. RED pre-fix (the
+    #  payload lacks the key).
+
+    def test_update_card_persists_accepted_when_decided(self, monkeypatch):
+        h = self._make_handler()
+        card_id, card = self._seed_card(h)
+        project_path = h._project_paths["proj"]
+        self._no_writer(h)
+
+        store = MagicMock()
+        store.update_feed_card.return_value = True
+        monkeypatch.setattr("ui.handlers.feed_handler.feed_store", store)
+
+        card.accepted = True  # a recorded decision (e.g. approve_exec)
+        h.update_card(card_id, card)
+        h._drain_persist_queue()
+
+        assert store.update_feed_card.call_count == 1
+        updates = store.update_feed_card.call_args[0][2]
+        assert updates.get("accepted") is True, (
+            f"the durable decision must persist; payload was {updates!r}"
+        )
+
+    def test_update_card_payload_omits_accepted_when_none(self, monkeypatch):
+        h = self._make_handler()
+        card_id, card = self._seed_card(h)
+        project_path = h._project_paths["proj"]
+        self._no_writer(h)
+
+        store = MagicMock()
+        store.update_feed_card.return_value = True
+        monkeypatch.setattr("ui.handlers.feed_handler.feed_store", store)
+
+        assert card.accepted is None, "fixture precondition"
+        h.update_card(card_id, card)
+        h._drain_persist_queue()
+
+        updates = store.update_feed_card.call_args[0][2]
+        assert "accepted" not in updates, (
+            f"accepted=None must NOT be written (no regression to "
+            f"clobbering a recorded decision); payload was {updates!r}"
+        )
+
     # ── Invariant 2: coalescing + last-write-wins ────────────────────────
 
     def test_coalescing_n_enqueues_become_one_writer_call_last_wins(self, monkeypatch):

@@ -1038,12 +1038,23 @@ class FeedHandler:
         # Phase 1: persist off the main thread (was a synchronous 13.9 MB
         # read-modify-write on the GTK main thread — measured 0.62 s per tool
         # result). Coalesced per (project, card); last-write-wins.
+        #
+        # F1 amendment (spec §2.3.2): `accepted` is included ONLY when a
+        # decision exists. It is the durable record the pin rule reads for
+        # resolved approval cards (`approve_exec` sets it in memory), and the
+        # pre-fix payload dropped it, so the decision never reached disk.
+        # `None` is omitted rather than written: a later update_card for the
+        # same card (tool-result body refresh) must never clobber a recorded
+        # decision back to pending.
         project_path = self._project_paths.get(card_data.project_name, "")
         if project_path:
-            self._enqueue_card_update(project_path, card_id, {
+            updates = {
                 "body": card_data.body,
                 "metadata": card_data.metadata,
-            })
+            }
+            if card_data.accepted is not None:
+                updates["accepted"] = card_data.accepted
+            self._enqueue_card_update(project_path, card_id, updates)
 
         # Replace widget in FeedTab on main thread
         _card_id = card_id
