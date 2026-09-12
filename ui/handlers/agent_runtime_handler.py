@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import shutil
+import threading
 import time
 from datetime import datetime, timezone
 from models.feed_card import FeedCardData
@@ -55,6 +56,13 @@ class AgentRuntimeHandler:
         self._fh = None  # FeedHandler — set via set_feed_handler() (Phase D)
         self._GLib = GLib_module
         self._review_handler = review_handler
+
+        # Phase 4 Part B (SPEC-UI-RESPONSIVENESS-2 §2.4): per-session prep
+        # lock. Held by _prepare_turn_conversation (loop thread) and taken
+        # non-blocking by set_active_project()'s eager reconcile (main
+        # thread) so no reader ever observes a half-prepared conversation.
+        self._prep_locks: dict[str, "threading.Lock"] = {}
+        self._prep_locks_guard = threading.Lock()
 
         # Shared routing table — set via set_agent_routing() (maps session_key → project_name)
         # Used to route special agent responses to project chat boxes when no direct tab exists.
@@ -104,7 +112,19 @@ class AgentRuntimeHandler:
         self._on_command_output: Callable[[str, str, str, int, int], None] | None = None
         # NEW: activity-bubble callback for the drawer (tool lifecycle).
         # cb(ActivityBubble) — fired on tool_start/tool_end/patch.
+        # Phase 4 Part C: deliveries are BATCHED per session behind a 250 ms
+        # flush (see _emit_activity_bubble) instead of one dispatch per tool
+        # event. With no GLib main loop (tests / direct callers) the bubbles
+        # are delivered inline, matching this handler's GLib dispatch idiom.
         self._on_activity_bubble: Callable | None = None
+        # Phase 4 Part C (spec §2.4): per-session pending-bubble queue +
+        # one-shot flush timer, mirroring the 250 ms cadence of
+        # ActivityHandler._status_tick. Order is FIFO per session; bubbles are
+        # never dropped and never reordered.
+        self._bubble_queue: dict[str, list] = {}
+        self._bubble_timers: dict[str, int] = {}
+        self._bubble_lock = threading.Lock()
+        self.ACTIVITY_BUBBLE_FLUSH_MS = 250
         # NEW: drawer-lifecycle callback for agent start/end separators.
         # cb(session_key, agent_name, phase) where phase ∈ {"start", "end"}.
         self._on_drawer_lifecycle: Callable | None = None
@@ -213,8 +233,83 @@ class AgentRuntimeHandler:
         """Set callback for local tool lifecycle → activity drawer.
 
         cb(ActivityBubble) — fired on tool_start/tool_end/patch.
+
+        Phase 4 Part C: the callback is invoked from the per-session BATCHED
+        flush (`_flush_activity_bubbles`, driven by a 250 ms GLib timeout
+        armed by `_emit_activity_bubble`) — or inline when no GLib main loop
+        is available. Bubbles arrive in emission order, at most one batch per
+        250 ms per session.
         """
         self._on_activity_bubble = cb
+
+    def _emit_activity_bubble(self, bubble) -> None:
+        """Queue a local tool-lifecycle bubble for the batched flush.
+
+        Phase 4 Part C (SPEC-UI-RESPONSIVENESS-2 §2.4): instead of one
+        dispatch per tool start/result event, bubbles are appended to a
+        per-session FIFO queue and delivered by a single 250 ms flush — the
+        same cadence ActivityHandler._status_tick uses. Bubbles are never
+        dropped or reordered.
+
+        Falls back to an immediate delivery when no GLib main loop is present
+        (tests, direct callers) — the same dual-mode dispatch this file uses
+        everywhere else.
+        """
+        if self._on_activity_bubble is None:
+            return
+        session_key = bubble.session_key
+        if self._GLib is None:
+            self._on_activity_bubble(bubble)
+            return
+        with self._bubble_lock:
+            self._bubble_queue.setdefault(session_key, []).append(bubble)
+            if session_key not in self._bubble_timers:
+                self._bubble_timers[session_key] = self._GLib.timeout_add(
+                    self.ACTIVITY_BUBBLE_FLUSH_MS,
+                    self._flush_activity_bubbles,
+                    session_key,
+                )
+
+    def _flush_activity_bubbles(self, session_key: str) -> bool:
+        """Deliver every queued bubble for one session, in order.
+
+        GLib timeout callback: returns False so the one-shot timer does not
+        repeat. A new enqueue after this returns arms a fresh timer.
+        """
+        with self._bubble_lock:
+            self._bubble_timers.pop(session_key, None)
+            pending = self._bubble_queue.pop(session_key, [])
+        cb = self._on_activity_bubble
+        if cb is None:
+            return False
+        for bubble in pending:
+            cb(bubble)
+        return False
+
+    def flush_pending_activity_bubbles(self, session_key: str) -> None:
+        """Deliver a session's queued bubbles NOW, cancelling its timer.
+
+        Used at turn end (before the drawer's lifecycle "end" separator) so
+        the separator can never be rendered above a tool row that logically
+        precedes it.
+        """
+        with self._bubble_lock:
+            timer_id = self._bubble_timers.pop(session_key, None)
+            pending = self._bubble_queue.pop(session_key, [])
+        if timer_id is not None and self._GLib is not None:
+            try:
+                self._GLib.source_remove(timer_id)
+            except Exception:
+                # A timer that already fired is fine — the queue is what
+                # matters; report nothing worse than a stale-source warning.
+                logger.debug(
+                    "flush_pending_activity_bubbles: source %r already gone", timer_id
+                )
+        cb = self._on_activity_bubble
+        if cb is None or not pending:
+            return
+        for bubble in pending:
+            cb(bubble)
 
     def set_on_drawer_lifecycle(self, cb) -> None:
         """Set callback for agent turn → drawer separators.
@@ -317,11 +412,29 @@ class AgentRuntimeHandler:
             if conv is None:
                 continue  # Cold agent — lazy path handles it on next send.
             if conv.project_path != project_path:
-                rt._rebuild_conversation_context(
-                    sk,
-                    project_path,
-                    agent_role=agent_def.role,
-                )
+                # Phase 4 Part B: a send for this session may have its
+                # preparation in flight on the loop thread. Take the prep
+                # lock NON-BLOCKING — the UI must never wait on disk I/O —
+                # and skip the eager rebuild when it is held: the prep runs
+                # to completion against the project that was active when the
+                # user hit send, and the lazy reconciliation on the next
+                # send applies the newly-active project.
+                lock = self._prep_lock(sk)
+                if not lock.acquire(blocking=False):
+                    logger.info(
+                        "set_active_project: prep in flight for %s — skipping eager "
+                        "reconcile; next send's lazy path applies %s",
+                        sk, project_path,
+                    )
+                    continue
+                try:
+                    rt._rebuild_conversation_context(
+                        sk,
+                        project_path,
+                        agent_role=agent_def.role,
+                    )
+                finally:
+                    lock.release()
         logger.info("AgentRuntimeHandler: active project set to %s (%s)", project_name, project_path)
 
     def _maybe_prompt_project_trust(self, project_name: str, project_path: str) -> None:
@@ -805,76 +918,20 @@ class AgentRuntimeHandler:
         # First try to load the persisted conversation from disk (preserves message history,
         # token/cost data, and other state across app restarts). Only create fresh if no
         # persisted conversation exists.
-        if rt.get_conversation(session_key) is None:
-            loaded = rt.load_conversation(session_key)
-            if loaded:
-                logger.info("send_to_special_agent: loaded persisted conversation for %s", session_key)
-                # Re-apply the active project to the loaded conversation. The
-                # persisted project_path and system_prompt may be stale (from a
-                # previous project the user had open). This is a no-op when
-                # the persisted values already match the active project.
-                rt._rebuild_conversation_context(
-                    session_key,
-                    project_path,
-                    agent_role=agent_def.role,
-                )
-
-        if rt.get_conversation(session_key) is None:
-            rt.create_conversation(
-                agent_name=agent_def.display_name,
-                session_key=session_key,
-                project_path=project_path,
-                model=agent_model,               # Per-agent provider/model override
-                allowed_tools=agent_def.tools,   # Phase A: filtered tool set per agent
-                mcp_servers=agent_def.mcp_servers, # Phase B: MCP servers
-                agent_role=agent_def.role,        # §7: explicit role from definition
-                si_enforcement=si_enforcement,     # Per-agent enforcement gating
-                api_key=agent_def.api_key,        # Per-agent API key override
-                app_title=agent_def.app_title,  # OpenRouter X-Title header
-                fallback_provider=agent_def.fallback_provider,
-                # fallback_model removed in 2026-06-15 — runtime derives from provider card.
-                # See SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md.
-                defer_prompt_build=True,        # NEW — prompt built in background thread
-            )
-        else:
-            # Bug fix: sync existing conversation with latest agent definition.
-            # When agent is edited (e.g. api_key added), the in-memory Conversation
-            # retains stale values. Update api_key/model/app_title so edits take effect
-            # immediately without requiring an app restart.
-            conv = rt.get_conversation(session_key)
-            if conv is not None:
-                if agent_def.api_key:
-                    conv.api_key = agent_def.api_key
-                if agent_model:
-                    conv.model = agent_model
-                if agent_def.app_title:
-                    conv.app_title = agent_def.app_title
-                # Sync fallback config (in case agent was edited)
-                conv.fallback_provider = agent_def.fallback_provider
-                # Sync role (in case agent's role was edited)
-                if agent_def.role:
-                    conv.agent_role = agent_def.role
-                # Sync MCP servers (in case agent's mcp_server list was edited)
-                if agent_def.mcp_servers is not None:
-                    conv.mcp_servers = list(agent_def.mcp_servers)
-                # Sync SI enforcement (in case agent's self_improvement was edited)
-                if si_enforcement is not None:
-                    conv.si_enforcement = si_enforcement
-                # conv.fallback_model assignment removed in 2026-06-15 — runtime derives from provider card.
-
-        # Reset step_count on each new user message so the agent gets a
-        # fresh step_limit budget per task. step_count counts assistant turns
-        # (conversation.py:190), and without this reset it accumulates across
-        # all tasks until hitting step_limit=100 and killing the agent.
-        conv = rt.get_conversation(session_key)
-        if conv is not None:
-            conv.step_count = 0
-
+        #
+        # Phase 4 Part B (SPEC-UI-RESPONSIVENESS-2 §2.4): this whole block —
+        # plus the per-agent state sync and step-count reset below — now runs
+        # on the RUNTIME LOOP thread via the `prepare` callback handed to
+        # send_message(), not on the GTK main thread (see
+        # _prepare_turn_conversation).
+        #
         # RACE-FIX v4: Clear the ended/completed flags and assign a NEW turn
-        # token for this session. This is the ONLY place these should be cleared.
-        # The new token ensures stale deltas from the previous turn (which
-        # captured the OLD token) are rejected by the token mismatch check
-        # in _do_text_delta.
+        # token for this session. This is the ONLY place these should be
+        # cleared. The new token ensures stale deltas from the previous turn
+        # (which captured the OLD token) are rejected by the token mismatch
+        # check in _do_text_delta. It is assigned HERE, on the main thread,
+        # BEFORE the loop thread starts — the loop captures it via
+        # send_message() and _prepare_turn_conversation checks it.
         self._ended_sessions.discard(session_key)
         self._session_completed.discard(session_key)
         # RACE-FIX v4b: Assign a new turn token ON THE RUNTIME object.
@@ -885,7 +942,146 @@ class AgentRuntimeHandler:
         self._turn_tokens[session_key] = new_token
         rt._turn_token = new_token
 
-        rt.send_message(session_key, text)
+        # Phase 4 Part B: the main thread keeps only the turn-token setup and
+        # the thread start. Everything that used to block here (conversation
+        # disk load + deserialize, project reconciliation, per-agent state
+        # sync, step-count reset) runs on the loop thread.
+        def _prepare_turn() -> None:
+            self._prepare_turn_conversation(
+                rt=rt,
+                session_key=session_key,
+                agent_def=agent_def,
+                project_path=project_path,
+                agent_model=agent_model,
+                si_enforcement=si_enforcement,
+                turn_token=new_token,
+            )
+
+        rt.send_message(session_key, text, prepare=_prepare_turn)
+
+    def _prep_lock(self, session_key: str) -> "threading.Lock":
+        """Return the per-session prep lock, creating it on first use.
+
+        Phase 4 Part B (SPEC-UI-RESPONSIVENESS-2 §2.4). See
+        _prepare_turn_conversation for the locking rationale.
+        """
+        with self._prep_locks_guard:
+            lock = self._prep_locks.get(session_key)
+            if lock is None:
+                lock = self._prep_locks[session_key] = threading.Lock()
+            return lock
+
+    def _prepare_turn_conversation(
+        self,
+        *,
+        rt,
+        session_key: str,
+        agent_def: Any,
+        project_path: str | None,
+        agent_model: str | None,
+        si_enforcement: bool | None,
+        turn_token: object,
+    ) -> None:
+        """Prepare a conversation for a turn — runs on the RUNTIME LOOP thread.
+
+        Phase 4 Part B (SPEC-UI-RESPONSIVENESS-2 §2.4). Moved verbatim out of
+        send_to_special_agent, which used to run it inline on the GTK main
+        thread (~300–500 ms per send):
+          * load the persisted conversation from disk (I/O + deserialize),
+          * reconcile the project context (`_rebuild_conversation_context`),
+          * create the conversation when none exists,
+          * sync per-agent state (api_key / model / app_title / fallback
+            provider / role / MCP list / SI enforcement),
+          * reset step_count for the new task.
+
+        Concurrency contract (the spec flags this MEDIUM-HIGH):
+          * The per-session prep lock serializes two concurrent sends for the
+            same session, so neither can observe a half-prepared conversation.
+            set_active_project()'s eager reconcile takes the same lock
+            non-blocking and skips when a prep is in flight.
+          * The RACE-FIX v4 turn token guards against a SUPERSEDED send
+            clobbering a live conversation: if a newer send already rotated the
+            token, this prep performs no mutation. Its own loop then fails the
+            conversation lookup and terminates with the stale token, whose
+            callbacks the handler drops.
+          * /clear is already safe: the runtime registers the session in
+            _active_loops before this runs, and clear_conversation() refuses
+            to wipe an active loop (FIX-CLEAR-ASK-RACE).
+        """
+        with self._prep_lock(session_key):
+            # RACE-FIX v4 discipline: a newer send rotated the token.
+            if self._turn_tokens.get(session_key) is not turn_token:
+                logger.info(
+                    "_prepare_turn_conversation: turn superseded for %s; "
+                    "skipping preparation",
+                    session_key,
+                )
+                return
+
+            if rt.get_conversation(session_key) is None:
+                loaded = rt.load_conversation(session_key)
+                if loaded:
+                    logger.info("send_to_special_agent: loaded persisted conversation for %s", session_key)
+                    # Re-apply the active project to the loaded conversation. The
+                    # persisted project_path and system_prompt may be stale (from a
+                    # previous project the user had open). This is a no-op when
+                    # the persisted values already match the active project.
+                    rt._rebuild_conversation_context(
+                        session_key,
+                        project_path,
+                        agent_role=agent_def.role,
+                    )
+
+            if rt.get_conversation(session_key) is None:
+                rt.create_conversation(
+                    agent_name=agent_def.display_name,
+                    session_key=session_key,
+                    project_path=project_path,
+                    model=agent_model,               # Per-agent provider/model override
+                    allowed_tools=agent_def.tools,   # Phase A: filtered tool set per agent
+                    mcp_servers=agent_def.mcp_servers, # Phase B: MCP servers
+                    agent_role=agent_def.role,        # §7: explicit role from definition
+                    si_enforcement=si_enforcement,     # Per-agent enforcement gating
+                    api_key=agent_def.api_key,        # Per-agent API key override
+                    app_title=agent_def.app_title,  # OpenRouter X-Title header
+                    fallback_provider=agent_def.fallback_provider,
+                    # fallback_model removed in 2026-06-15 — runtime derives from provider card.
+                    # See SPEC-AGENT-FALLBACK-MODEL-DROPDOWN-REMOVAL.md.
+                    defer_prompt_build=True,        # NEW — prompt built in background thread
+                )
+            else:
+                # Bug fix: sync existing conversation with latest agent definition.
+                # When agent is edited (e.g. api_key added), the in-memory Conversation
+                # retains stale values. Update api_key/model/app_title so edits take effect
+                # immediately without requiring an app restart.
+                conv = rt.get_conversation(session_key)
+                if conv is not None:
+                    if agent_def.api_key:
+                        conv.api_key = agent_def.api_key
+                    if agent_model:
+                        conv.model = agent_model
+                    if agent_def.app_title:
+                        conv.app_title = agent_def.app_title
+                    # Sync fallback config (in case agent was edited)
+                    conv.fallback_provider = agent_def.fallback_provider
+                    # Sync role (in case agent's role was edited)
+                    if agent_def.role:
+                        conv.agent_role = agent_def.role
+                    # Sync MCP servers (in case agent's mcp_server list was edited)
+                    if agent_def.mcp_servers is not None:
+                        conv.mcp_servers = list(agent_def.mcp_servers)
+                    # Sync SI enforcement (in case agent's self_improvement was edited)
+                    if si_enforcement is not None:
+                        conv.si_enforcement = si_enforcement
+                    # conv.fallback_model assignment removed in 2026-06-15 — runtime derives from provider card.
+
+            # Reset step_count on each new user message so the agent gets a
+            # fresh step_limit budget per task. step_count counts assistant turns
+            # (conversation.py:190), and without this reset it accumulates across
+            # all tasks until hitting step_limit=100 and killing the agent.
+            conv = rt.get_conversation(session_key)
+            if conv is not None:
+                conv.step_count = 0
 
     def stop_all(self) -> None:
         """Stop all agent runtimes and the KB server. Called on window shutdown."""
@@ -1263,7 +1459,7 @@ class AgentRuntimeHandler:
         # NEW: activity-drawer tool_start bubble
         if self._on_activity_bubble is not None:
             from models.activity import ActivityBubble, ToolStatus
-            self._on_activity_bubble(ActivityBubble(
+            self._emit_activity_bubble(ActivityBubble(
                 type="tool_start",
                 session_key=session_key,
                 tool_name=name,
@@ -1378,7 +1574,7 @@ class AgentRuntimeHandler:
             # but DO emit tool_error for failed write_file.
             skip_tool_end = (name == "write_file" and not is_error)
             if not skip_tool_end:
-                self._on_activity_bubble(ActivityBubble(
+                self._emit_activity_bubble(ActivityBubble(
                     type="tool_error" if is_error else "tool_end",
                     session_key=session_key,
                     tool_name=name,
@@ -1409,7 +1605,7 @@ class AgentRuntimeHandler:
             agent_def_bubble = self._agents.get(session_key)
             agent_name_bubble = agent_def_bubble.display_name if agent_def_bubble else "Agent"
             file_path = args_write.get("path", "") if isinstance(args_write, dict) else ""
-            self._on_activity_bubble(ActivityBubble(
+            self._emit_activity_bubble(ActivityBubble(
                 type="patch",
                 session_key=session_key,
                 tool_name="write_file",
@@ -1689,6 +1885,10 @@ class AgentRuntimeHandler:
         # Fire lifecycle: agent finished → ActivityHandler progress bar
         if self._on_agent_end_cb:
             self._on_agent_end_cb(session_key)
+        # Phase 4 Part C: drain this session's batched bubbles BEFORE the
+        # drawer's end separator, so a queued tool row can never render
+        # underneath the separator that follows it.
+        self.flush_pending_activity_bubbles(session_key)
         # NEW: drawer-lifecycle end → drawer separator
         if self._on_drawer_lifecycle is not None:
             agent_def_dl = self._agents.get(session_key)
@@ -1976,6 +2176,9 @@ class AgentRuntimeHandler:
         # Fire lifecycle: agent finished (error) → ActivityHandler returns to idle
         if self._on_agent_end_cb:
             self._on_agent_end_cb(session_key)
+        # Phase 4 Part C: drain batched bubbles before the end separator
+        # (same ordering guarantee as in _do_response_complete).
+        self.flush_pending_activity_bubbles(session_key)
         # NEW: drawer-lifecycle end → drawer separator (error path)
         if self._on_drawer_lifecycle is not None:
             agent_def_dl = self._agents.get(session_key)

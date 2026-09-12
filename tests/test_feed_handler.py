@@ -4720,3 +4720,153 @@ class TestWindowCompaction:
             "undrained entries" in r.getMessage() and r.levelno == logging.ERROR
             for r in caplog.records
         ), [r.getMessage() for r in caplog.records]
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  TestUpdateCardInPlace — SPEC-UI-RESPONSIVENESS-2 §2.4 Phase 4 Part A
+#
+#  update_card() must refresh a LIVE card widget by reference when the
+#  widget exposes the child seams added in build_feed_card
+#  (`_body_label`), and fall back to rebuild + FeedTab.replace_card when
+#  it does not. The seams are what make the in-place path possible; the
+#  RED assertions below fail on the pre-Phase-4 code (which always
+#  rebuilt), because no widget ever carried `_body_label`.
+# ═══════════════════════════════════════════════════════════════════
+
+class TestUpdateCardInPlace:
+    """Phase 4 Part A — in-place feed card updates."""
+
+    def _make(self):
+        """Handler + MockFeedTab, with replace_card recorded."""
+        from ui.handlers.feed_handler import FeedHandler
+        h = FeedHandler(GLib=MockGLib(), on_send_to_agent=MagicMock())
+        tab = MockFeedTab()
+        replaced = []
+        original_replace = tab.replace_card
+
+        def _record(card_id, new_widget):
+            replaced.append((card_id, new_widget))
+            original_replace(card_id, new_widget)
+
+        tab.replace_card = _record
+        h.set_feed_tab(tab)
+        return h, tab, replaced
+
+    @staticmethod
+    def _agent_card(**overrides):
+        fields = dict(
+            card_type="agent_action",
+            source="agent",
+            title="Coder is calling read_file",
+            body="⏳ Running...",
+            author="Coder",
+            timestamp=datetime.now(timezone.utc),
+            project_name="proj",
+            metadata={"status": "running"},
+        )
+        fields.update(overrides)
+        return FeedCardData(**fields)
+
+    # ── In-place path (widget exposes the body seam) ──────────────────────
+
+    def test_in_place_update_keeps_same_widget_instance(self):
+        """A seam-bearing widget is mutated, not rebuilt or swapped."""
+        h, tab, replaced = self._make()
+        card = self._agent_card()
+        card_id = h.add_card(card)
+        widget = h._card_widgets[card_id]
+        assert widget._body_label is not None, "fixture precondition: body seam exposed"
+
+        card.body = "read_file → 12 lines"
+        card.metadata["status"] = "complete"
+        h.update_card(card_id, card)
+
+        assert h._card_widgets[card_id] is widget, "in-place update must keep the widget"
+        assert replaced == [], "in-place update must not call FeedTab.replace_card"
+        assert tab.cards[0][0] is widget, "the live widget must stay in the feed"
+
+    def test_in_place_update_refreshes_body_and_state_classes(self):
+        """Body text + agent_action sub-state classes follow the new card data."""
+        h, tab, replaced = self._make()
+        card = self._agent_card()
+        card_id = h.add_card(card)
+        widget = h._card_widgets[card_id]
+        assert "feed-card-running" in widget.get_css_classes(), "fixture precondition"
+
+        card.body = "read_file → 12 lines"
+        card.metadata["status"] = "error"
+        h.update_card(card_id, card)
+
+        assert widget._body_label.get_text() == "read_file → 12 lines"
+        assert "feed-card-error" in widget.get_css_classes()
+        assert "feed-card-running" not in widget.get_css_classes(), (
+            "the stale running class must be removed"
+        )
+
+    def test_in_place_update_adds_accepted_badge(self):
+        """approve_exec's accepted=True decision lands on the live widget."""
+        h, tab, replaced = self._make()
+        card = self._agent_card(metadata={"needs_approval": True, "status": "running"})
+        card_id = h.add_card(card)
+        widget = h._card_widgets[card_id]
+        assert widget._status_label is None, "fixture precondition: no badge yet"
+
+        card.accepted = True
+        card.metadata["status"] = "approved"
+        h.update_card(card_id, card)
+
+        assert h._card_widgets[card_id] is widget
+        assert widget._status_label is not None
+        assert widget._status_label.get_text() == "ACCEPTED"
+        assert "feed-card-accepted" in widget.get_css_classes()
+
+    # ── Fallback path (widget lacks the seam) ─────────────────────────────
+
+    def test_fallback_rebuilds_widget_without_body_seam(self):
+        """No text-body seam (file-event body) → rebuild + replace_card."""
+        h, tab, replaced = self._make()
+        card = FeedCardData(
+            card_type="file_modified", source="system",
+            title="Modified src/foo.py", body="✏️ src/foo.py",
+            author="system", file_path="src/foo.py",
+            timestamp=datetime.now(timezone.utc), project_name="proj",
+        )
+        card_id = h.add_card(card)
+        widget = h._card_widgets[card_id]
+        assert getattr(widget, "_body_label", None) is None, "fixture precondition: no seam"
+
+        h.update_card(card_id, card)
+
+        new_widget = h._card_widgets[card_id]
+        assert new_widget is not widget, "fallback must rebuild the widget"
+        assert [cid for cid, _w in replaced] == [card_id]
+
+    def test_update_card_in_place_returns_false_without_seam(self):
+        """The view helper reports 'not handled' instead of raising."""
+        from ui.views.feed_card import update_card_in_place
+        h, tab, replaced = self._make()
+        card = FeedCardData(
+            card_type="file_modified", source="system",
+            title="Modified src/foo.py", body="✏️ src/foo.py",
+            author="system", file_path="src/foo.py",
+            timestamp=datetime.now(timezone.utc), project_name="proj",
+        )
+        card_id = h.add_card(card)
+
+        assert update_card_in_place(h._card_widgets[card_id], card) is False
+
+    def test_in_place_failure_falls_back_to_rebuild(self):
+        """A refresh that raises mid-flight must still leave a valid card."""
+        h, tab, replaced = self._make()
+        card = self._agent_card()
+        card_id = h.add_card(card)
+        widget = h._card_widgets[card_id]
+
+        with patch("ui.handlers.feed_handler.update_card_in_place",
+                   side_effect=RuntimeError("boom")):
+            h.update_card(card_id, card)
+
+        assert h._card_widgets[card_id] is not widget, (
+            "the failed in-place refresh must fall back to a rebuild"
+        )
+        assert [cid for cid, _w in replaced] == [card_id]

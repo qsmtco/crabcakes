@@ -941,11 +941,14 @@ class AgentRuntime:
         """Get a conversation by session key."""
         return self._conversations.get(session_key)
 
-    def send_message(self, session_key: str, text: str) -> None:
+    def send_message(self, session_key: str, text: str, prepare: Callable[[], None] | None = None) -> None:
         """
         Send a user message. Runs the tool loop in a background thread.
 
         Loop:
+        0. Run the optional `prepare` callback (handler-supplied turn
+           preparation) — Phase 4 Part B: this runs on the loop thread so
+           the GTK main thread never blocks on conversation disk I/O.
         1. Append user message
         2. Build API messages (system + history)
         3. Call LLM API
@@ -953,21 +956,32 @@ class AgentRuntime:
         5. If text: fire on_response_complete
         6. Check cost_limit / step_limit
 
+        Args:
+            prepare: Optional zero-argument callable run on the loop thread
+                BEFORE the conversation lookup. It is expected to load or
+                create the conversation when one does not exist yet. An
+                exception it raises terminates the turn as FAILED with
+                metadata reason "prepare_failed".
+
         Option C+ lazy reconciliation: the runtime does not know the active
         project. The handler (AgentRuntimeHandler.send_to_special_agent)
-        calls _rebuild_conversation_context BEFORE this method, so by the
-        time we get here the in-memory conversation is already in sync.
-        If the handler is bypassed (tests, future callers), the conversation
-        may have a stale project_path. In that case the FIRST call from a
-        cold context fires _rebuild_conversation_context here — the
-        short-circuit in that method makes this O(1) when already in sync.
+        supplies `prepare`, which calls _rebuild_conversation_context BEFORE
+        the loop body reads the conversation. If the handler is bypassed
+        (tests, future callers), the conversation may have a stale
+        project_path. In that case the FIRST call from a cold context fires
+        _rebuild_conversation_context here — the short-circuit in that
+        method makes this O(1) when already in sync.
         """
         # Reset fallback flag for this new user message
         conv = self._conversations.get(session_key)
         if conv is not None:
             conv._fallback_attempted = False
 
-        t = threading.Thread(target=self._run_loop, args=(session_key, text, self._turn_token), daemon=True)
+        t = threading.Thread(
+            target=self._run_loop,
+            args=(session_key, text, self._turn_token, prepare),
+            daemon=True,
+        )
         t.start()
 
     def cancel(self, session_key: str) -> None:
@@ -1215,8 +1229,15 @@ class AgentRuntime:
             messages_for_call = self._inject_kb_context(messages, kb_context, text)
         return messages_for_call, kb_context, new_cache
 
-    def _run_loop(self, session_key: str, text: str, turn_token: object = None) -> None:
-        """Background thread: run the full tool loop for one user message."""
+    def _run_loop(self, session_key: str, text: str, turn_token: object = None,
+                  prepare: Callable[[], None] | None = None) -> None:
+        """Background thread: run the full tool loop for one user message.
+
+        Args:
+            prepare: Optional handler-supplied preparation callback, run on
+                THIS thread before the conversation lookup (Phase 4 Part B).
+            turn_token: RACE-FIX v4 turn token for this turn.
+        """
         # FIX-CLEAR-ASK-RACE: mark this session as having an active loop so
         # clear_conversation() can refuse to wipe it mid-turn. Cleared in the
         # finally block at the end of this function.
@@ -1249,6 +1270,32 @@ class AgentRuntime:
                         metadata={"reason": "runtime_shutdown"},
                     ))
                     return
+
+            # Phase 4 Part B (SPEC-UI-RESPONSIVENESS-2 §2.4): the handler's
+            # turn preparation runs HERE, on the loop thread, so the GTK main
+            # thread never blocks on the conversation disk load / prompt
+            # reconciliation / per-agent state sync (~300–500 ms per send).
+            # It runs AFTER `_active_loops.add` above, so an in-flight prep
+            # inherits the FIX-CLEAR-ASK-RACE guard that makes
+            # clear_conversation() refuse to wipe an active loop.
+            if prepare is not None:
+                try:
+                    prepare()
+                except Exception as e:
+                    logger.exception(
+                        "_run_loop: prepare callback failed for %s", session_key
+                    )
+                    self._terminate_turn(TurnResult(
+                        status=TurnStatus.FAILED,
+                        session_key=session_key,
+                        turn_token=turn_token,
+                        error=e,
+                        metadata={"reason": "prepare_failed",
+                                  "exception_type": type(e).__name__},
+                    ))
+                    return
+
+            with self._lock:
                 conv = self._conversations.get(session_key)
                 if conv is None:
                     self._terminate_turn(TurnResult(

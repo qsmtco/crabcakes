@@ -127,20 +127,15 @@ def _render_body(card_data: FeedCardData) -> Gtk.Widget:
         return _render_text_body(card_data.body, mono=False)
 
 
-def _render_text_body(text: str, mono: bool) -> Gtk.Widget:
-    """Render body text as a label (monospace or normal)."""
-    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-    box.add_css_class("feed-card-body")
+def _apply_text_markup(label: Gtk.Label, text: str) -> None:
+    """Set body text on a Gtk.Label through the Pango markup guard.
 
-    if not text or not text.strip():
-        spacer = Gtk.Label()
-        spacer.set_text(" ")
-        spacer.set_size_request(-1, 8)
-        box.append(spacer)
-        return box
-
+    Shared by the initial render (`_render_text_body`) and the Phase 4
+    in-place update path (`update_card_in_place`) so a refreshed card body
+    goes through exactly the same validation/fallback behaviour as a
+    freshly built one.
+    """
     escaped = escape_for_pango(text)
-    label = Gtk.Label()
     # Pre-validate markup before set_markup to avoid Gtk-WARNING terminal spam
     # and empty-label content loss. If Pango rejects the markup (unknown attrs
     # from JSX/TSX that escape_for_pango intentionally escaped), fall back to
@@ -154,6 +149,24 @@ def _render_text_body(text: str, mono: bool) -> Gtk.Widget:
         # back to set_text is acceptable — we lose Pango formatting but the
         # content is still readable and not silently destroyed.
         label.set_text(text)
+
+
+def _render_text_body(text: str, mono: bool) -> Gtk.Widget:
+    """Render body text as a label (monospace or normal)."""
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    box.add_css_class("feed-card-body")
+
+    if not text or not text.strip():
+        spacer = Gtk.Label()
+        spacer.set_text(" ")
+        spacer.set_size_request(-1, 8)
+        box.append(spacer)
+        # Phase 4 Part A: expose the body label for in-place updates.
+        box._text_label = spacer
+        return box
+
+    label = Gtk.Label()
+    _apply_text_markup(label, text)
     label.set_xalign(0)
     label.set_wrap(True)
     label.set_wrap_mode(1)  # Pango.WrapMode.WORD_CHAR
@@ -162,6 +175,8 @@ def _render_text_body(text: str, mono: bool) -> Gtk.Widget:
     if mono:
         label.add_css_class("feed-body-mono")
     box.append(label)
+    # Phase 4 Part A: expose the body label for in-place updates.
+    box._text_label = label
     return box
 
 
@@ -410,6 +425,12 @@ def build_feed_card(
     # ── Body ───────────────────────────────────────────────────────────
     body_widget = _render_body(card_data)
     card.append(body_widget)
+    # Phase 4 Part A (spec §2.4): expose the body label so
+    # update_card_in_place() can mutate the live widget instead of
+    # rebuilding the whole card. None for body renderers without a single
+    # text label (file events, task cards) — update_card() falls back to
+    # the rebuild path for those.
+    card._body_label = getattr(body_widget, "_text_label", None)
 
     # ── Footer: author • timestamp ─────────────────────────────────────
     footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -424,6 +445,7 @@ def build_feed_card(
     footer.append(meta_label)
 
     # Accepted/rejected badge
+    badge = None
     if card_data.accepted is True:
         badge = Gtk.Label(label="ACCEPTED")
         badge.add_css_class("feed-accepted-badge")
@@ -434,6 +456,9 @@ def build_feed_card(
         footer.append(badge)
 
     card.append(footer)
+    # Phase 4 Part A: expose the status badge (None when undecided) for
+    # in-place updates via update_card_badge()/update_card_in_place().
+    card._status_label = badge
 
     # ── Action buttons (conditional visibility) ────────────────────
     is_resolved = card_data.accepted is not None
@@ -630,6 +655,7 @@ def update_card_badge(card_widget: Gtk.Widget, accepted: bool | None) -> None:
         child = next_child
 
     # Add new badge if applicable
+    badge = None
     if accepted is True:
         badge = Gtk.Label(label="ACCEPTED")
         badge.add_css_class("feed-accepted-badge")
@@ -638,3 +664,80 @@ def update_card_badge(card_widget: Gtk.Widget, accepted: bool | None) -> None:
         badge = Gtk.Label(label="REJECTED")
         badge.add_css_class("feed-rejected-badge")
         footer.append(badge)
+    # Phase 4 Part A: keep the exposed status-badge ref in sync so a later
+    # in-place update sees the badge that is actually in the footer.
+    card_widget._status_label = badge
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 4 Part A — in-place card update
+# ─────────────────────────────────────────────────────────────────────────────
+
+# State CSS classes build_feed_card derives from card_data (accepted +
+# agent_action metadata). Kept as module constants so the in-place refresh
+# and the initial build cannot drift apart silently.
+_ACCEPTED_STATE_CLASSES = ("feed-card-accepted", "feed-card-rejected")
+_AGENT_ACTION_STATE_CLASSES = (
+    "feed-card-approval",
+    "feed-card-running",
+    "feed-card-complete",
+    "feed-card-error",
+)
+
+
+def _refresh_card_state_classes(card_widget: Gtk.Widget, card_data: FeedCardData) -> None:
+    """Re-apply the CSS classes build_feed_card derives from card_data.
+
+    Removes every state class first so a resolved/complete card cannot keep
+    a stale "running"/"accepted" class. Mirrors the class logic in
+    build_feed_card exactly.
+    """
+    for css in _ACCEPTED_STATE_CLASSES + _AGENT_ACTION_STATE_CLASSES:
+        card_widget.remove_css_class(css)
+
+    if card_data.accepted is True:
+        card_widget.add_css_class("feed-card-accepted")
+    elif card_data.accepted is False:
+        card_widget.add_css_class("feed-card-rejected")
+
+    if card_data.card_type != "agent_action":
+        return
+
+    metadata = card_data.metadata or {}
+    if metadata.get("needs_approval"):
+        card_widget.add_css_class("feed-card-approval")
+    elif metadata.get("status") == "running":
+        card_widget.add_css_class("feed-card-running")
+    elif metadata.get("status") == "complete":
+        card_widget.add_css_class("feed-card-complete")
+    elif metadata.get("status") == "error":
+        card_widget.add_css_class("feed-card-error")
+
+
+def update_card_in_place(card_widget: Gtk.Widget, card_data: FeedCardData) -> bool:
+    """Refresh an existing feed card widget in place from updated card data.
+
+    Phase 4 Part A (SPEC-UI-RESPONSIVENESS-2 §2.4): mutate the body label,
+    the accepted/rejected badge, and the state CSS classes by reference
+    instead of rebuilding the whole card (build_feed_card + FeedTab
+    remove/insert on the main thread).
+
+    Must be called on the GTK main thread.
+
+    Args:
+        card_widget: The root Gtk.Box returned by build_feed_card().
+        card_data:   The updated card data.
+
+    Returns:
+        True when the widget exposes the body seam (`_body_label`, set by
+        build_feed_card for text bodies) and was refreshed in place;
+        False when the caller must fall back to a full rebuild.
+    """
+    body_label = getattr(card_widget, "_body_label", None)
+    if body_label is None:
+        return False
+
+    _apply_text_markup(body_label, card_data.body or "")
+    _refresh_card_state_classes(card_widget, card_data)
+    update_card_badge(card_widget, card_data.accepted)
+    return True

@@ -469,6 +469,21 @@ class TestMultiTurnSynthesis:
 class TestAgentRuntimeHandlerPassesRole:
     """AgentRuntimeHandler passes agent_role to create_conversation."""
 
+    @staticmethod
+    def _run_captured_prepare(mock_rt):
+        """Drive the `prepare` closure handed to send_message().
+
+        Phase 4 Part B (SPEC-UI-RESPONSIVENESS-2 §2.4): the handler no longer
+        prepares the conversation inline — it passes a `prepare` callback to
+        rt.send_message(), and the runtime runs it on the loop thread. A
+        MagicMock runtime never runs it, so these handler-level tests invoke
+        the captured closure explicitly.
+        """
+        assert mock_rt.send_message.call_count == 1, "send_message was not called"
+        prepare = mock_rt.send_message.call_args.kwargs.get("prepare")
+        assert prepare is not None, "send_message did not receive a prepare callback"
+        prepare()
+
     def test_create_conversation_receives_agent_role(self):
         """send_to_special_agent passes agent_role=agent_def.role to create_conversation."""
         from ui.handlers.agent_runtime_handler import AgentRuntimeHandler
@@ -512,7 +527,9 @@ class TestAgentRuntimeHandlerPassesRole:
         handler._active_project = None
 
         # Call send_to_special_agent — this triggers create_conversation
+        # (on the loop thread via the prepare callback — Phase 4 Part B).
         handler.send_to_special_agent("auxilium", "hello")
+        self._run_captured_prepare(mock_rt)
 
         call_kwargs = mock_rt.create_conversation.call_args
         assert call_kwargs is not None, "create_conversation was not called"
@@ -558,6 +575,7 @@ class TestAgentRuntimeHandlerPassesRole:
 
         # Trigger the edit-sync path
         handler.send_to_special_agent("X", "hello")
+        self._run_captured_prepare(mock_rt)
 
         # The conversation's agent_role should now be "helper"
         assert existing_conv.agent_role == "helper", \
@@ -603,6 +621,7 @@ class TestAgentRuntimeHandlerPassesRole:
         handler._active_project = None
 
         handler.send_to_special_agent("X", "hello")
+        self._run_captured_prepare(mock_rt)
 
         # mcp_servers should be updated to the new list
         assert existing_conv.mcp_servers == ["new-server-1", "new-server-2"], \
