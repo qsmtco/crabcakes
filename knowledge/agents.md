@@ -29,7 +29,7 @@ The Coder requires an active project to work — it operates sandboxed to the pr
 
 ### Debugger (🐛)
 
-The Debugger is a read-only analysis agent. It can read files, run commands, search, and fetch web content, but **cannot write or edit files**. Use it for investigating bugs, tracing code paths, and running diagnostics.
+The Debugger is a diagnostics and adversarial-audit agent. It can read files, run commands, search, fetch web content, and **write/edit files via write_file and edit_file** (never via exec_command heredocs — those create oversized approval cards). Use it for investigating bugs, tracing code paths, running diagnostics, and writing audit artifacts.
 
 - **Role:** `debugger`
 - **Session key:** `special:debugger`

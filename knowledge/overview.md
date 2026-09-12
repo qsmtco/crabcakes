@@ -56,9 +56,10 @@ The Coder is a full-stack code writing agent. It can:
 
 ### 🐛 Debugger
 
-The Debugger is a read-only analysis agent. It can:
+The Debugger is a diagnostics and adversarial-audit agent. It can:
 
-- Read files and execute commands (but cannot write)
+- Read files and execute commands
+- Write and edit files via write_file/edit_file (never exec_command heredocs)
 - Search files and the web
 - Analyze stack traces, run diagnostics, suggest fixes
 - Track bugs in a bug journal
