@@ -4247,9 +4247,19 @@ class TestLocalAgentDrawerEmissions:
             success=False,
         )
 
-        assert card.metadata["status"] == "error", (
+        # The handler now hands a RESOLVED COPY to update_card (audit:
+        # mutate-before-persist), so assert on the card the store receives
+        # rather than on this local object, which is deliberately untouched.
+        assert handler._fh.update_card.call_count == 1, (
+            "the tool result must be persisted exactly once"
+        )
+        persisted = handler._fh.update_card.call_args[0][1]
+        assert persisted.metadata["status"] == "error", (
             f"BUG #17: card status should be 'error' for denied tool, got "
-            f"{card.metadata.get('status')!r}"
+            f"{persisted.metadata.get('status')!r}"
+        )
+        assert card.metadata.get("status") != "complete", (
+            "the store's original object must not be mutated before the persist"
         )
 
     # ── BUG #21: tool-only turn tool_starts not suppressed ──────────────

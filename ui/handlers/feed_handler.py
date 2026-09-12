@@ -1051,6 +1051,18 @@ class FeedHandler:
             if card_data.accepted is not None:
                 updates["accepted"] = card_data.accepted
             self._enqueue_card_update(project_path, card_id, updates)
+        else:
+            # Loud, not silent (audit: mutate-before-persist / silent-no-op).
+            # update_card has already replaced the in-memory card, so without
+            # this warning a caller would believe the decision/flag reached
+            # disk when it never will. The card knowingly stays ahead of disk
+            # only where the project has no registered path (never opened).
+            _logger.warning(
+                "update_card: no registered project path for %r — card %s "
+                "changed in memory but NOT persisted (decision/flag will be "
+                "lost on reload)",
+                card_data.project_name, card_id,
+            )
 
         # ── Phase 4 Part A: in-place fast path ──────────────────────────
         # build_feed_card exposes the body label (`_body_label`) — when the

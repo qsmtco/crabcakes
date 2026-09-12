@@ -5058,3 +5058,73 @@ class TestNonGitDecisionPersist:
             "no project path → no enqueue possible"
         )
 
+    # ── Audit follow-up: the two HIGH mutate-before-persist sites ───────────
+    #  approve_exec and _do_tool_call_result mutated the STORE's card before
+    #  calling update_card. A persist that cannot land then left the card
+    #  looking resolved/flagged in memory while disk disagreed — the UI claims
+    #  success and the state silently reappears on reload. Both now build a
+    #  resolved copy, so the store's pre-existing object is never mutated
+    #  before the persist is issued (and update_card warns loudly when no
+    #  project path is registered).
+
+    def test_approve_exec_does_not_mutate_stored_card_before_persist(self):
+        """approve_exec must not pre-mutate the store's card object."""
+        import logging as _logging
+        from ui.handlers.agent_runtime_handler import AgentRuntimeHandler
+
+        h = self._make_handler()
+        card_id, card = self._seed_non_git_card(
+            h, metadata={"needs_approval": True, "status": "pending_approval"})
+        # Keep the project path so the persist DOES land — the assertion is
+        # about the object identity/seam, not about a failure path.
+        art = AgentRuntimeHandler(MagicMock(), MagicMock(), GLib_module=MagicMock())
+        art._fh = h
+        # approve_exec resolves via its own pending-approval map (normally
+        # populated by _do_approval_needed); register the entry it needs.
+        art._pending_approvals[card_id] = {
+            "session_key": "special:coder", "tool_name": "exec_command",
+            "args": {"command": "ls"},
+        }
+
+        art.approve_exec(card_id, True)
+
+        # The store now holds the RESOLVED copy...
+        stored = h.get_card(card_id)
+        assert stored.accepted is True
+        assert stored.metadata.get("status") == "approved"
+        # ...and the object the caller held was never mutated in place.
+        assert card.accepted is None, (
+            "approve_exec must not mutate the store's card before persisting; "
+            "build a resolved copy and let update_card own the replacement"
+        )
+        assert card.metadata.get("status") == "pending_approval"
+        # The durable decision reached the writer queue.
+        assert h._persist_queue, "approval decision must be enqueued"
+
+    def test_approve_exec_without_project_path_warns_loudly(self, caplog):
+        """Unpersistable approval must warn (audit: silent-no-op class)."""
+        import logging as _logging
+        from ui.handlers.agent_runtime_handler import AgentRuntimeHandler
+
+        h = self._make_handler()
+        card_id, _card = self._seed_non_git_card(
+            h, metadata={"needs_approval": True, "status": "pending_approval"})
+        h._project_paths.pop("proj")  # persist cannot land
+
+        art = AgentRuntimeHandler(MagicMock(), MagicMock(), GLib_module=MagicMock())
+        art._fh = h
+        art._pending_approvals[card_id] = {
+            "session_key": "special:coder", "tool_name": "exec_command",
+            "args": {"command": "ls"},
+        }
+
+        with caplog.at_level(_logging.WARNING, logger="ui.handlers.feed_handler"):
+            art.approve_exec(card_id, True)
+
+        assert any(
+            "NOT persisted" in r.message for r in caplog.records
+        ), (
+            "a decision that cannot reach disk must warn loudly; "
+            f"got {[r.message for r in caplog.records]!r}"
+        )
+

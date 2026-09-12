@@ -20,6 +20,7 @@ import re
 import shutil
 import threading
 import time
+from dataclasses import is_dataclass, replace
 from datetime import datetime, timezone
 from models.feed_card import FeedCardData, cap_stored_body
 from typing import TYPE_CHECKING, Any, Callable
@@ -775,9 +776,16 @@ class AgentRuntimeHandler:
         if self._fh is not None:
             card = self._fh.get_card(approval_id)
             if card is not None:
-                card.metadata["status"] = "approved" if approved else "denied"
-                card.accepted = approved  # NEW: propagate decision so badge renders (Phase 2)
-                self._fh.update_card(approval_id, card)
+                # Build the RESOLVED copy and let update_card own the in-memory
+                # replacement: mutating the live card first would leave it
+                # looking resolved while a no-op persist left disk pending —
+                # the UI would claim success and the approval would reappear
+                # on reload. (Audit: mutate-before-persist, same class as the
+                # review-bar resolution fix.)
+                new_metadata = dict(card.metadata or {})
+                new_metadata["status"] = "approved" if approved else "denied"
+                resolved = replace(card, metadata=new_metadata, accepted=approved)
+                self._fh.update_card(approval_id, resolved)
 
     # ── AgentRuntime lifecycle ────────────────────────────────────────────────
 
@@ -1562,8 +1570,22 @@ class AgentRuntimeHandler:
         # Phase D: Update the feed card with the result
         card_id = self._tool_card_ids.pop(session_key, None)
         if card_id is not None and self._fh is not None:
-            card = self._fh.get_card(card_id)
-            if card is not None:
+            stored = self._fh.get_card(card_id)
+            if stored is not None:
+                # Work on a COPY (audit: mutate-before-persist). Every mutation
+                # below belongs to the card's NEW state; applying it to the
+                # store's object first would leave memory claiming an update
+                # that a no-op persist never recorded. update_card performs the
+                # in-memory replacement from this copy.
+                # metadata is replaced with a shallow copy too, so the store's
+                # dict is not aliased while the flag/status are set below.
+                # `is_dataclass` guard keeps non-dataclass test doubles working
+                # (stubs return MagicMocks from get_card); production always
+                # gets a real FeedCardData here.
+                if is_dataclass(stored):
+                    card = replace(stored, metadata=dict(stored.metadata or {}))
+                else:  # pragma: no cover - test-double path
+                    card = stored
                 # Extract output from result (ToolResult or string)
                 if hasattr(result, 'output'):
                     output_text = result.output or ""

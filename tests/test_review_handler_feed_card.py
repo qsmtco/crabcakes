@@ -447,49 +447,74 @@ class TestReviewBarResolutionPersist:
         )
 
     @patch("ui.handlers.review_handler.git_ops")
-    def test_review_bar_resolution_silent_no_op_leaves_needs_review(self, mock_git_ops):
-        """Silent-no-op safety: if update_card cannot persist, the in-memory
-        card must NOT look resolved.
+    def test_review_bar_resolution_does_not_mutate_card_when_persist_no_ops(
+        self, mock_git_ops
+    ):
+        """A no-op persist must leave the card's memory state UNRESOLVED.
 
-        update_card returns early (warning only) when the card is no longer in
-        _cards. Before the audit fix, _persist_review_resolution cleared
-        metadata["needs_review"] in place first, so a no-op persist left the
-        card looking resolved in memory while disk still had needs_review=True
-        — the UI would claim success and the flag would reappear on reload.
-        (Audit BUG #1, pattern: mutate-before-persist.)
+        Direct unit probe of _persist_review_resolution with the persist path
+        stubbed to a no-op. Pre-fix, the method mutated the live card FIRST
+        (popping needs_review, stamping accepted), so a persist that never
+        landed left the card claiming a resolution disk had not recorded —
+        the UI would show success and the flag would reappear on reload.
+        Post-fix the resolved copy is handed to update_card, so the store's
+        card is untouched when that call does nothing.
+
+        NOTE (audit correction): the earlier version of this test popped the
+        card from _cards before invoking the sweep, which made
+        get_cards_for_project filter it out and the loop body never run — the
+        assertions then passed on BOTH pre- and post-fix code. Stubbing
+        update_card exercises the real path instead.
         """
         handler = _make_handler()
         fh, card_id, card = self._make_fh_with_needs_review_card()
         handler.set_feed_handler(fh)
         _setup_active_session(handler)
 
-        # Simulate the card vanishing between the sweep's read and the persist
-        # (compaction prune / user dismissal): update_card then silently no-ops.
-        fh._cards.pop(card_id, None)
+        # The persist call does nothing (card left the store mid-sweep, or the
+        # writer dropped it) — simulate via the public seam.
+        fh.update_card = MagicMock()
 
-        mock_git_ops.stage_all.return_value = MockGitResult(success=True)
-        mock_git_ops.commit.return_value = MockGitResult(
-            success=True, stdout="[main abc123d] accepted", sha="abc123def456"
-        )
-        import sys
-        mock_git_module = MagicMock()
-        mock_diff = MagicMock()
-        mock_diff.a_path = "src/main.py"
-        mock_diff.b_path = None
-        mock_repo = MagicMock()
-        mock_repo.index.diff.return_value = [mock_diff]
-        mock_git_module.Repo.return_value = mock_repo
-        with patch.dict(sys.modules, {"git": mock_git_module}):
-            handler.accept_changes("testproject", "approved")
+        handler._persist_review_resolution("testproject", "/tmp/testproject", True)
 
-        # The original object must be untouched — no in-memory-only resolution.
-        assert card.metadata.get("needs_review") is True, (
-            "no-op persist must not clear needs_review in memory "
-            "(that would make the UI claim a resolution disk never recorded)"
+        fh.update_card.assert_called_once()  # the sweep did run
+        stored = fh.get_card(card_id)
+        assert stored.metadata.get("needs_review") is True, (
+            "no-op persist must not clear needs_review in memory — that would "
+            "make the UI claim a resolution disk never recorded"
         )
-        assert card.accepted is None, (
+        assert stored.accepted is None, (
             "no-op persist must not stamp a decision in memory only"
         )
+
+    @patch("ui.handlers.review_handler.git_ops")
+    def test_review_bar_resolution_vanished_card_leaves_flag(self, mock_git_ops):
+        """Card removed between the sweep's read and the persist (Scenario C).
+
+        Wraps the real update_card so the card leaves _cards immediately before
+        the store write, reproducing the production race (compaction prune /
+        user dismissal). Pre-fix the live card had already been mutated, so the
+        flag was gone from the object the sweep held; post-fix it is intact.
+        """
+        handler = _make_handler()
+        fh, card_id, card = self._make_fh_with_needs_review_card()
+        handler.set_feed_handler(fh)
+        _setup_active_session(handler)
+
+        real_update = fh.update_card
+
+        def _vanish(cid, card_data):
+            fh._cards.pop(cid, None)  # card is gone before the store write
+            return real_update(cid, card_data)
+
+        fh.update_card = _vanish
+
+        handler._persist_review_resolution("testproject", "/tmp/testproject", True)
+
+        assert card.metadata.get("needs_review") is True, (
+            "the sweep's card must not be mutated when the persist lost the race"
+        )
+        assert card.accepted is None
 
 
 class TestNoSession:
