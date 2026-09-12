@@ -281,7 +281,7 @@ class OnEnforcementStatus(Protocol):
 
 # Convenience type alias for the full callback bundle.
 # Maps runtime attribute name → callable (or None if not registered).
-# Used as a structural type for code that wants to pass all 9 callbacks
+# Used as a structural type for code that wants to pass all 10 callbacks
 # as a single dict (e.g. test fixtures, dependency-injection setups).
 #
 # This is a LOOSE helper type, NOT the callback contract. It does not
