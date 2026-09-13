@@ -356,6 +356,79 @@ def episode_id(session_key, last_ts, last_sha):
     return _sha16(f"{session_key}|{ts_part}|{last_sha if last_sha is not None else ''}")
 
 
+def stall_episode_id(stall):
+    """Episode identity for ANY of the five §2.1 stall classes.
+
+    Generalizes the §4.4 turn_stalled formula: each class hashes the evidence
+    that CHANGES when the underlying condition changes, so the returned id is
+    stable across invocations while a stall persists and different the moment
+    new activity appears (that stability is the contract — the §2.4 dedupe
+    floor is keyed on it).
+
+      turn_stalled         sha256(session_key|last_message_ts|last_message_sha)
+      blocked_on_sendback  sha256(sendback|<newest SENDBACK file>|<its mtime>)
+      app_spinning/
+      app_frozen           sha256(<class>|<app pid>|<starttime>) — same id while
+                           the SAME process stays in the same posture
+      crash_after_start    sha256(crash|<crash file name>)
+      approvals_pending    sha256(approvals|<project_path>)
+
+    Pure and tolerant: missing/mistyped evidence falls back to a class-only
+    hash (still distinct per class, still stable) — never raises.
+    """
+    if not isinstance(stall, dict):
+        stall = {}
+    stall_class = stall.get("class")
+    if not isinstance(stall_class, str) or not stall_class:
+        stall_class = "unknown"
+
+    if stall_class == "turn_stalled":
+        session_key = stall.get("session") or stall.get("session_key")
+        if not isinstance(session_key, str) or not session_key:
+            session_key = ""
+        ts = stall.get("last_message_ts")
+        if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+            ts_part = f"{float(ts):.3f}"
+        elif ts is None:
+            ts_part = ""
+        else:
+            ts_part = str(ts)
+        sha = stall.get("last_message_sha")
+        sha_part = sha if isinstance(sha, str) else ("" if sha is None else str(sha))
+        return _sha16(f"{session_key}|{ts_part}|{sha_part}")
+
+    if stall_class == "blocked_on_sendback":
+        name = stall.get("sendback_file")
+        mtime = stall.get("sendback_mtime")
+        if isinstance(mtime, (int, float)) and not isinstance(mtime, bool):
+            mtime_part = f"{float(mtime):.6f}"
+        else:
+            mtime_part = "" if mtime is None else str(mtime)
+        return _sha16(f"sendback|{name if isinstance(name, str) else ''}|{mtime_part}")
+
+    if stall_class in ("app_spinning", "app_frozen"):
+        pid = stall.get("app_pid")
+        starttime = stall.get("app_starttime")
+        pid_part = str(pid) if pid is not None else ""
+        start_part = (f"{float(starttime):.3f}"
+                      if isinstance(starttime, (int, float))
+                      and not isinstance(starttime, bool) else "")
+        return _sha16(f"{stall_class}|{pid_part}|{start_part}")
+
+    if stall_class == "crash_after_start":
+        crash_file = stall.get("crash_file")
+        return _sha16(
+            "crash|" + (crash_file if isinstance(crash_file, str) else ""))
+
+    if stall_class == "approvals_pending":
+        project = stall.get("project_path")
+        return _sha16(
+            "approvals|" + (project if isinstance(project, str) else ""))
+
+    # Unknown class → class-only hash (still stable, still distinct).
+    return _sha16(f"{stall_class}")
+
+
 def mark_alerted(state, episode, now):
     """Return an updated state with `episode` stamped as alerted at `now`.
 
@@ -770,6 +843,7 @@ def _classify_main_thread(state, second_state, cpu_percent):
 def _collect_app(project_path, now, sample_interval):
     """§2.1 `app` section: pid, uptime, RSS, threads, main-thread posture."""
     section = {"running": False, "pid": None, "uptime_seconds": None,
+               "starttime": None,
                "rss_kb": None, "thread_count": None, "cpu_percent": None,
                "main_thread": "unknown", "state": None, "wchan": None,
                "degraded": False, "app_running_degraded": False,
@@ -806,6 +880,9 @@ def _collect_app(project_path, now, sample_interval):
     if stat is not None:
         section["state"] = stat["state"]
         section["thread_count"] = stat.get("num_threads")
+        # Raw /proc starttime — episode identity for app_frozen/app_spinning
+        # (§2.4: the same id while the same process stays in the same posture).
+        section["starttime"] = stat.get("starttime")
         boot = _proc_boot_time()
         if boot is not None:
             section["uptime_seconds"] = max(0.0, now - boot - stat["starttime"] / _hz())
@@ -1275,6 +1352,7 @@ def _detect_stalls(report, now=None):
     if app.get("running") and app.get("main_thread") == "frozen":
         stalls.append({
             "class": "app_frozen", "session": None,
+            "app_pid": app.get("pid"), "app_starttime": app.get("starttime"),
             "detail": (f"pid {app.get('pid')} is stopped (state "
                        f"{app.get('state')}, wchan {app.get('wchan')}) — the app "
                        f"cannot make progress"),
@@ -1284,7 +1362,10 @@ def _detect_stalls(report, now=None):
         percent = app.get("cpu_percent")
         detail = (f"pid {app.get('pid')} main thread busy"
                   + (f" at {percent:.0f}% CPU" if isinstance(percent, (int, float)) else ""))
-        stalls.append({"class": "app_spinning", "session": None, "detail": detail})
+        stalls.append({"class": "app_spinning", "session": None,
+                       "app_pid": app.get("pid"),
+                       "app_starttime": app.get("starttime"),
+                       "detail": detail})
 
     newest_write = work.get("newest_write_ts")
     scan = work.get("write_scan") or {}
@@ -1323,11 +1404,15 @@ def _detect_stalls(report, now=None):
         detail = (f"{session.get('session_key')} (agent {agent}) idle "
                   f"{int(idle // 60)}m: {reason}")
         stalls.append({"class": "turn_stalled",
-                       "session": session.get("session_key"), "detail": detail})
+                       "session": session.get("session_key"), "detail": detail,
+                       "last_message_ts": session.get("last_message_ts"),
+                       "last_message_sha": session.get("last_message_sha")})
 
     if work.get("sendback_file"):
         stalls.append({
             "class": "blocked_on_sendback", "session": None,
+            "sendback_file": work.get("sendback_file"),
+            "sendback_mtime": work.get("sendback_mtime"),
             "detail": (f"{work['sendback_file']} is newer than HEAD "
                        f"({work.get('head_sha') or 'unknown'})"),
         })
@@ -1335,6 +1420,7 @@ def _detect_stalls(report, now=None):
     if approvals.get("pending"):
         stalls.append({
             "class": "approvals_pending", "session": None,
+            "project_path": report.get("project_path"),
             "detail": (f"{approvals.get('entries')} approval entries in the last "
                        f"{approvals.get('window_minutes')}m with no repo writes after them"),
         })
@@ -1344,6 +1430,7 @@ def _detect_stalls(report, now=None):
                       if c.get("after_app_start")), {})
         stalls.append({
             "class": "crash_after_start", "session": None,
+            "crash_file": first.get("path"),
             "detail": (f"crash at {first.get('crash_time_iso')} "
                        f"signal {first.get('signal')} ({first.get('executable')})"),
         })

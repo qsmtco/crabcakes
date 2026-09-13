@@ -20,11 +20,18 @@ human but 64 when `--json` was requested, since help text is not a report.
 
 Read-only contract (§2.3.6 / §2.3.2): this process never mutates app state. Its
 only writes are inside the reporter's own cache directory
-(`<XDG_CACHE_HOME or ~/.cache>/crabcakes`) for the feed-summary cache. The §2.4
-alert-dedupe bookkeeping (`should_alert` → `report["alert"]` →
-`status-state.json`) is deliberately NOT wired here — the phase instructions
-scope Phase 1b to argv/exit codes/rendering/watch, and the cron wiring is a
-later step. The report's `alert` field therefore stays False in Phase 1b.
+(`<XDG_CACHE_HOME or ~/.cache>/crabcakes`): the feed-summary cache and the §2.4
+alert-dedupe state file (`status-state.json`, 0600 — written only when an alert
+actually fires; a healthy run writes nothing).
+
+§2.4 alert-dedupe (Phase 1b+): when a stall class fires, the CLI computes the
+episode id (`stall_episode_id`), consults `should_alert` against the persisted
+state, and sets `report["alert"]`. On True it stamps and saves the state
+(`mark_alerted` is applied inside `should_alert`); on False (same episode within
+the re-alert floor) `alert` stays False and the state file is not rewritten.
+Healthy runs are silence by default: `alert=False`, no state write. Usage
+errors exit 64 before any of this runs, so an argv typo can never alert
+(audit BUG #6).
 """
 
 from __future__ import annotations
@@ -117,16 +124,56 @@ def build_parser():
     return parser
 
 
+def _apply_alert_dedupe(report):
+    """§2.4 wiring: set `report["alert"]` from the dedupe helpers.
+
+    Worst-class selection matches assess(): the first stall in the
+    (already-sorted) stall list. Healthy/no-episode → alert stays False and
+    NO state is written (silence is the default). Any helper failure degrades
+    to alert=False — an alert bookkeeping error must never invent an alert.
+
+    Returns nothing; mutates the report in place (the caller owns it).
+    """
+    try:
+        stalls = report.get("stalls") or []
+        worst = stalls[0] if stalls else None
+        if worst is None or not isinstance(worst, dict):
+            report["alert"] = False
+            return
+        episode = status_report.stall_episode_id(worst)
+        state = status_report.load_alert_state(status_report.state_path())
+        now = time.time()
+        should, updated_state = status_report.should_alert(
+            state, episode, now, status_report.ALERT_REALERT_HOURS)
+        if should:
+            # updated_state already carries the mark_alerted stamp (§2.4
+            # contract: should_alert stamps on True).
+            status_report.save_alert_state(status_report.state_path(),
+                                           updated_state)
+        report["alert"] = bool(should)
+    except Exception as exc:  # noqa: BLE001 — bookkeeping must never alert-spam
+        print(f"crab_status: alert dedupe failed ({type(exc).__name__}: {exc}); "
+              "suppressing alert", file=sys.stderr)
+        report["alert"] = False
+
+
 def _run_once(args, include_feed, body_cap):
-    """Collect, render, print. Returns the §2.2 exit code (or EXIT_FAILURE)."""
+    """Collect, dedupe-alert, render, print. Returns the §2.2 exit code (or EXIT_FAILURE)."""
     try:
         report = status_report.collect(args.project, include_feed=include_feed,
                                        body_cap=body_cap)
+        # §2.4: the dedupe decision happens BEFORE rendering so the printed
+        # report (JSON for cron, text for humans) carries the final alert flag.
+        # Exit code comes from assess() at run time — the §2.2 contract the
+        # suite pins (collect() also stamps summary/exit_code; assess is pure,
+        # so recomputing here is the same answer on real reports and stays
+        # correct when a caller substitutes a partial report).
+        _apply_alert_dedupe(report)
+        code = status_report.assess(report)[1]
         if args.json:
             output = status_report.render_json(report) + "\n"
         else:
             output = status_report.render_text(report, show_content=args.full)
-        code = status_report.assess(report)[1]
     except Exception as exc:  # KeyboardInterrupt is BaseException: not caught
         print(f"crab_status: report failed: {type(exc).__name__}: {exc}",
               file=sys.stderr)
