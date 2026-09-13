@@ -495,6 +495,80 @@ class AgentRuntimeHandler:
         self._active_project = None
         logger.info("AgentRuntimeHandler: active project cleared")
 
+    # ── CLI nudge surface (AGENTCTRL1 Phase 2 — SPEC-AGENT-CONTROL-1 §3) ────
+    #
+    # Small public methods so the entry point (main.py) never reads handler
+    # privates and never imports ui.handlers — the window object carries the
+    # handler graph (duck-typed at the entry-point boundary; the composition
+    # root ui/window.py wires the real handler, as it does for chat_handler).
+
+    def special_agent_session_exists(self, session_key: str) -> bool:
+        """
+        True when a CLI nudge to ``session_key`` may be delivered (§3.3).
+
+        A session "exists" only when the special agent is registered AND the
+        handler has an active project: special agents are project-scoped, and
+        send_to_special_agent() refuses without one ("Open a project first").
+        Folding the project check in here keeps the nudge path honest — a
+        nudge without a project would otherwise "deliver" straight into an
+        error path.
+        """
+        if session_key not in self._agents:
+            return False
+        return self._active_project is not None
+
+    def special_agent_turn_state(self, session_key: str) -> Any | None:
+        """
+        Turn state for ``session_key`` (TurnStatus or None) — read-only.
+
+        Reads ONLY an already-constructed runtime (never _get_runtime: a
+        nudge must not spawn agent threads just to inspect state). None when
+        the agent has no runtime yet (nothing in flight).
+        """
+        agent_def = self._agents.get(session_key)
+        if agent_def is None:
+            return None
+        rt = self._runtimes.get(agent_def.display_name)
+        if rt is None:
+            return None
+        return rt.get_turn_state(session_key)
+
+    def publish_cli_nudge_card(self, session_key: str, text: str) -> str | None:
+        """
+        Publish the CLI-nudge feed card (§3.3 artefact — always accompanies a
+        delivered nudge).
+
+        Visibly distinct from PM-typed input: metadata origin='cli-nudge'
+        plus a '[via CLI]' body marker, so the PM can tell at a glance which
+        turns they authored and which arrived through the CLI channel.
+
+        Returns the card_id, or None when no feed handler is wired.
+        """
+        if self._fh is None:
+            logger.warning("publish_cli_nudge_card: no feed handler wired; card skipped")
+            return None
+        agent_def = self._agents.get(session_key)
+        agent_name = agent_def.display_name if agent_def else "Agent"
+        project_name = self._active_project[0] if self._active_project else "(none)"
+        from models.feed_card import FeedCardData
+        card = FeedCardData(
+            card_type="agent_action",
+            source="agent",
+            title=f"CLI nudge to {agent_name}",
+            body=f"[via CLI] {text}",
+            author="CLI",
+            timestamp=datetime.now(timezone.utc),
+            project_name=project_name,
+            metadata={
+                "origin": "cli-nudge",
+                "session_key": session_key,
+                "chars": len(text),
+            },
+        )
+        card_id = self._fh.add_card(card)
+        logger.info("CLI nudge card published for %s (card_id=%s)", session_key, card_id)
+        return card_id
+
     # ── Special agent registration ──────────────────────────────────────────
 
     def add_special_agent(self, agent_def: Any) -> None:
