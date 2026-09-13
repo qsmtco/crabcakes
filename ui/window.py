@@ -39,6 +39,7 @@ from ui.views.left_panel import LeftPanel
 from ui.views.main_content import MainContent
 from ui.views.activity_drawer import ActivityDrawer
 from ui.handlers.chat_handler import ChatHandler
+from ui.handlers.file_tree_handler import FileTreeHandler
 from ui.handlers.gateway_handler import GatewayHandler
 from ui.handlers.media_handler import MediaHandler
 from ui.handlers.project_handler import ProjectHandler
@@ -159,11 +160,16 @@ class MainWindow(Gtk.ApplicationWindow):
         # Wire Send button
         self._main_content.send_button.connect("clicked", self._chat_handler.on_send_clicked)
 
-        # Left panel — created BEFORE GatewayHandler
+        # Left panel — created BEFORE GatewayHandler. FileTreeHandler must be
+        # built first: it is injected into LeftPanel, which wires sort/git-status
+        # callbacks to it during __init__.
+        file_tree_handler = FileTreeHandler()
         left_panel = LeftPanel(
             on_prompt_selected=self._on_prompt_selected,
             on_project_selected=self._on_project_selected,
+            file_tree_handler=file_tree_handler,
         )
+        self._file_tree_handler = file_tree_handler
         self._left_panel = left_panel
         self._left_panel.set_main_content(self._main_content)
 

@@ -231,6 +231,7 @@ crabcakes/
     ├── feedback_processor.py    # Audit report file I/O — write structured audit reports to agent bug journals
     ├── file_security.py         # assert_secure_file() — config file permission validation (MED-6)
     ├── git_ops.py               # GitPython wrapper — git add/commit/diff/checkout/log/status/push via GitResult (Phase 7)
+    ├── gtk_containers.py        # is_in_container() — GTK4 sibling-walk containment checks (GTK carve-out; see §2 table)
     ├── gtk_safe_link.py         # HIGH-6: activate-link guard for non-allowlisted URL schemes (GTK carve-out; see §2 table)
     ├── icons.py                 # Gdk.Texture SVG rendering (agent avatars + folder icons) (GTK carve-out; see §2 table)
     ├── image_utils.py           # convert_logo_to_icons() — JPG to multi-size PNG conversion for app icons
@@ -266,12 +267,13 @@ crabcakes/
 
 **Critical rule:** `gateway/` and `models/` must NEVER import from `ui/`. They are the foundation that the UI depends on — not the other way around.
 
-**`utils/` GTK carve-out (documented exceptions):** Three files in `utils/`
+**`utils/` GTK carve-out (documented exceptions):** Four files in `utils/`
 import `gi.repository` despite the "no GTK" rule above. These are
 narrowly-scoped exceptions that have been reviewed and accepted:
 
 | File | Import | Why it's in `utils/` | Justification |
 |------|--------|---------------------|---------------|
+| `utils/gtk_containers.py` | `gi.repository.Gtk` (module-level) | Pure widget-container queries — no widget construction, no signals, no windows | GTK4 removed `Gtk.Container`; this helper wraps sibling-walk containment checks (`is_in_container`) that only make sense against `Gtk.Widget`. No ui/agent/gateway/models imports |
 | `utils/icons.py` | `gi.repository.Gdk` (module-level) | Pure texture rendering — no widget hierarchy, no layout, no signals | `Gdk.Texture` is the only way to render SVGs to pixel buffers; callers pass textures as plain objects |
 | `utils/gtk_safe_link.py` | `gi.repository.Gtk, Pango` (lazy, inside functions) | Link-safety guard; callers are GTK-bound labels | Function-level import minimizes the GTK surface; the logic is scheme-string validation that happens to need Pango markup parsing |
 | `utils/stt.py` | `gi.repository.GLib` (lazy, inside thread callback) | `GLib.idle_add` marshals STT results from the whisper thread to the main loop | Thread-dispatch mechanism only — no widgets, no windows, no signals. Has `except ImportError` fallback |
@@ -640,7 +642,10 @@ class InputToolbarHandler:
 
 **Public API:**
 ```python
-panel = LeftPanel(on_prompt_selected=cb, on_project_selected=cb)
+# window.py (composition root) builds the handler and injects it —
+# ui/views must not import ui.handlers (arch guard).
+panel = LeftPanel(on_prompt_selected=cb, on_project_selected=cb,
+                  file_tree_handler=FileTreeHandler())
 panel.set_agents(agent_names_dict, on_agent_selected_callback)
 panel.set_agent_list_handler(handler)         # wires AgentListHandler for avatar cards
 panel.set_prompts_handler(handler)             # wires PromptsHandler for prompt library
@@ -4504,6 +4509,7 @@ crabcakes/
     ├── feedback_processor.py     # ~274 lines — audit report file I/O
     ├── file_security.py          # ~36 lines — assert_secure_file() (MED-6)
     ├── git_ops.py                # ~263 lines — GitPython wrapper (Phase 7)
+    ├── gtk_containers.py         # ~47 lines — is_in_container() sibling-walk check (GTK carve-out)
     ├── gtk_safe_link.py          # ~107 lines — HIGH-6 link safety guard (GTK carve-out)
     ├── icons.py                  # ~207 lines — Gdk.Texture SVG rendering (GTK carve-out)
     ├── image_utils.py            # convert_logo_to_icons()

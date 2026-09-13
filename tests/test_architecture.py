@@ -231,8 +231,9 @@ def test_utils_gtk_imports_are_documented():
     If a new file needs GTK, add it there and here.
     """
     documented_carve_outs = {
-        "icons.py",
+        "gtk_containers.py",
         "gtk_safe_link.py",
+        "icons.py",
         "stt.py",
     }
     root_dir = os.path.dirname(os.path.dirname(__file__))

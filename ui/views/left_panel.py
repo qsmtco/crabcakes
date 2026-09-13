@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import gi
 # Require GTK 4.0 — must be called before importing Gtk
 gi.require_version('Gtk', '4.0')
@@ -12,9 +14,10 @@ from typing import TYPE_CHECKING
 
 from utils.projects import load_members
 from utils.icons import render_agent_icon
-from ui.handlers.file_tree_handler import FileTreeHandler
 from ui.views.file_tree import FileTree
 from ui.views.session_menu import show_session_menu
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ui.views.feed_tab import FeedTab
@@ -26,7 +29,8 @@ class LeftPanel(Gtk.Box):
     Contains a Gtk.Notebook with three tabs: Prompts, Agents, Projects.
     """
 
-    def __init__(self, on_prompt_selected=None, on_project_selected=None):
+    def __init__(self, on_prompt_selected=None, on_project_selected=None,
+                 file_tree_handler=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
 
         # Prompt callback
@@ -109,12 +113,22 @@ class LeftPanel(Gtk.Box):
         self._file_tree = FileTree(on_file_selected=self._on_project_selected)
         self._picker_box.append(self._file_tree)
 
-        # FileTreeHandler — manages sort prefs + git status cache (no GTK)
-        self._file_tree_handler = FileTreeHandler()
-        # Wire view callbacks to handler
-        self._file_tree.set_on_sort_changed(self._file_tree_handler.set_sort_mode)
-        self._file_tree.set_on_get_sort_mode(self._file_tree_handler.get_sort_mode)
-        self._file_tree.set_on_get_git_status(self._file_tree_handler.refresh_git_status)
+        # FileTreeHandler — manages sort prefs + git status cache (no GTK).
+        # Injected by the composition root (ui/window.py) — the view layer must
+        # not import ui.handlers (arch guard test_views_do_not_import_handlers).
+        # Optional: a standalone-constructed panel (tests) runs without the
+        # handler; project open/close then skip handler state updates.
+        self._file_tree_handler = file_tree_handler
+        if self._file_tree_handler is not None:
+            # Wire view callbacks to handler
+            self._file_tree.set_on_sort_changed(self._file_tree_handler.set_sort_mode)
+            self._file_tree.set_on_get_sort_mode(self._file_tree_handler.get_sort_mode)
+            self._file_tree.set_on_get_git_status(self._file_tree_handler.refresh_git_status)
+        else:
+            logger.debug(
+                "LeftPanel constructed without file_tree_handler — "
+                "file-tree sort/git-status callbacks not wired"
+            )
 
         PAP_notebook.append_page(
             self._projects_stack,
@@ -219,7 +233,7 @@ class LeftPanel(Gtk.Box):
         self._is_project_view_open = True
 
         # Wire FileTreeHandler to project path when project opens
-        if self._file_tree._project_path:
+        if self._file_tree_handler is not None and self._file_tree._project_path:
             self._file_tree_handler.set_project_path(self._file_tree._project_path)
             self._file_tree_handler.invalidate_git_status()
 
@@ -255,7 +269,8 @@ class LeftPanel(Gtk.Box):
             return
 
         # Reset FileTreeHandler when project closes
-        self._file_tree_handler.set_project_path("")
+        if self._file_tree_handler is not None:
+            self._file_tree_handler.set_project_path("")
 
         # 1. Reset FileTree to project picker view BEFORE detaching.
         #    navigate_back clears file-listing state and calls _show_project_picker()
