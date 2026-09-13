@@ -25,10 +25,26 @@ if TYPE_CHECKING:
     from mcp import StdioServerParameters
 
 
-# MED-12: Only forward these environment variables to MCP servers.
-# All other vars are refused (log + skip) to prevent leaking sensitive config.
-_MCP_FORWARDABLE_ENV_VARS: frozenset[str] = frozenset({
-    "PATH", "HOME", "LANG", "VIRTUAL_ENV", "PYTHONPATH",
+# MED-12: Denylist of environment variables that must never be forwarded to
+# MCP servers. Each entry can hijack code execution or intercept credentials
+# in the child process (dynamic-loader injection, shell startup files, runtime
+# tuning flags, git/ssh credential-prompt hijacks). Everything else IS
+# forwarded — including credential vars (GITHUB_TOKEN etc.) the user
+# deliberately names in their own config, which is the env field's purpose.
+# Residual risk: a user exposing a secret to a third-party server is their
+# call — the same trust boundary as exporting it in their own shell.
+_MCP_DANGEROUS_ENV_VARS: frozenset[str] = frozenset({
+    # Dynamic-loader / code-injection hijack
+    "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT",
+    "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
+    "BASH_ENV", "ENV", "PROMPT_COMMAND",
+    # Interpreter startup hijack / path manipulation
+    "PYTHONSTARTUP", "PYTHONHOME", "PYTHONPATH",
+    "NODE_OPTIONS", "PERL5LIB", "PERL5OPT", "RUBYOPT",
+    "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS",
+    # Git / SSH credential and diff hijack
+    "GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF", "GIT_CONFIG", "GIT_CONFIG_SYSTEM",
+    "GIT_CONFIG_GLOBAL", "GIT_ASKPASS", "SSH_ASKPASS",
 })
 
 
@@ -74,12 +90,13 @@ class MCPServerConfig:
                 match = re.match(r"^\$\{(\w+)}$", value)
                 if match:
                     var_name = match.group(1)
-                    # MED-12: Check allowlist before forwarding
-                    if var_name not in _MCP_FORWARDABLE_ENV_VARS:
+                    # MED-12: Refuse denylisted vars before forwarding
+                    if var_name in _MCP_DANGEROUS_ENV_VARS:
                         logger.warning(
                             "MED-12: Refusing to forward env var '%s' for server '%s' "
-                            "— not in forwardable allowlist. Allowed: %s",
-                            var_name, self.name, sorted(_MCP_FORWARDABLE_ENV_VARS),
+                            "— denylisted as dangerous (code-execution or credential "
+                            "hijack vector). Denylist: %s",
+                            var_name, self.name, sorted(_MCP_DANGEROUS_ENV_VARS),
                         )
                         continue
                     resolved = os.environ.get(var_name, "")

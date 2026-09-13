@@ -155,33 +155,13 @@ class TestToStdioParams:
         assert params.command == "npx"
         assert params.args == ["-y", "@mcp/server-fetch"]
 
-    def test_env_var_substitution_allowlisted_var_is_substituted(self):
-        """MED-12: ${VAR} substitution works for ALLOWLISTED vars.
+    def test_env_var_substitution_forwards_credential_var(self, caplog):
+        """MED-12 (denylist rework): non-denylisted ${VAR} IS forwarded.
 
-        Pins the MED-12 allowlist contract (utils/mcp_config.py):
-        PATH/HOME/LANG/VIRTUAL_ENV/PYTHONPATH are forwarded. PATH is used
-        here because it exists in every environment.
-        """
-        import os
-        original = os.environ.get("PATH", "")
-        config = MCPServerConfig(
-            name="test",
-            command="cmd",
-            env={"PATH": "${PATH}"},
-        )
-        params = config.to_stdio_params()
-        assert params is not None
-        assert params.env["PATH"] == original, (
-            "allowlisted ${PATH} must be substituted from the process environment"
-        )
-
-    def test_env_var_refused_when_not_in_med12_allowlist(self, caplog):
-        """MED-12: non-allowlisted ${VAR} is refused, with the warning logged.
-
-        A credential-style var (TEST_MCP_TOKEN) must NOT be forwarded: the
-        key is omitted from env, the MED-12 warning fires, and when every
-        requested var is refused the result degrades to env=None (the
-        StdioServerParameters still constructs).
+        PM-approved behaviour change: credential-style vars the user
+        deliberately names in their own config (TEST_MCP_TOKEN here) are
+        substituted from the process environment. Only DENYLISTED vars
+        (utils/mcp_config.py::_MCP_DANGEROUS_ENV_VARS) are refused.
         """
         import logging
         import os
@@ -195,23 +175,120 @@ class TestToStdioParams:
             )
             with caplog.at_level(logging.WARNING, logger="utils.mcp_config"):
                 params = config.to_stdio_params()
-            assert "MED-12" in caplog.text and "TEST_MCP_TOKEN" in caplog.text, (
-                f"expected the MED-12 refusal warning; got {caplog.records!r}"
-            )
             assert params is not None
-            # Security invariant: a refused var must never reach the server env.
-            # Deliberately NOT asserting `env is None` (that is only today's
-            # degrade choice — a future `env={}` refactor stays secure).
-            # Audit suggestion from TEST-DEBT-3: decouple the control from the
-            # implementation detail.
-            assert "TOKEN" not in (params.env or {}), (
-                f"refused var leaked into the server env: {params.env!r}"
+            assert params.env is not None and params.env.get("TOKEN") == "secret123", (
+                f"non-denylisted credential var must be forwarded; got {params.env!r}"
+            )
+            assert "MED-12" not in caplog.text, (
+                f"forwarding a non-denylisted var must not warn; got {caplog.records!r}"
             )
         finally:
             if test_env:
                 os.environ["TEST_MCP_TOKEN"] = test_env
             else:
                 del os.environ["TEST_MCP_TOKEN"]
+
+    def test_env_var_refused_when_denylisted(self, caplog):
+        """MED-12: denylisted ${VAR} is refused, with the warning logged.
+
+        LD_PRELOAD (loader-hijack vector) must NOT reach the MCP server env:
+        the key is omitted and the MED-12 denylist warning fires. The
+        security invariant is asserted as `"LD_PRELOAD" not in
+        (params.env or {})` — deliberately decoupled from the env=None
+        degrade choice (a future `env={}` refactor stays secure; audit
+        suggestion from TEST-DEBT-3).
+        """
+        import logging
+        import os
+        test_env = os.environ.get("LD_PRELOAD", "")
+        os.environ["LD_PRELOAD"] = "/tmp/dummy.so"
+        try:
+            config = MCPServerConfig(
+                name="test",
+                command="cmd",
+                env={"LD_PRELOAD": "${LD_PRELOAD}"},
+            )
+            with caplog.at_level(logging.WARNING, logger="utils.mcp_config"):
+                params = config.to_stdio_params()
+            assert "MED-12" in caplog.text and "LD_PRELOAD" in caplog.text, (
+                f"expected the MED-12 refusal warning; got {caplog.records!r}"
+            )
+            assert "denylist" in caplog.text.lower(), (
+                "warning must name the denylist contract (allowlist-era text "
+                f"is stale): {caplog.records!r}"
+            )
+            assert params is not None
+            # Security invariant: a refused var must never reach the server env.
+            assert "LD_PRELOAD" not in (params.env or {}), (
+                f"denylisted var leaked into the server env: {params.env!r}"
+            )
+        finally:
+            if test_env:
+                os.environ["LD_PRELOAD"] = test_env
+            else:
+                del os.environ["LD_PRELOAD"]
+
+    def test_mixed_env_forwards_only_allowed(self, caplog):
+        """MED-12: mixed env (one denylisted + one allowed) forwards only the allowed one."""
+        import logging
+        import os
+        test_ld = os.environ.get("LD_PRELOAD", "")
+        os.environ["LD_PRELOAD"] = "/tmp/dummy.so"
+        try:
+            config = MCPServerConfig(
+                name="test",
+                command="cmd",
+                env={
+                    "LD_PRELOAD": "${LD_PRELOAD}",
+                    "PATH": "${PATH}",
+                },
+            )
+            with caplog.at_level(logging.WARNING, logger="utils.mcp_config"):
+                params = config.to_stdio_params()
+            assert params is not None
+            assert params.env == {"PATH": os.environ["PATH"]}, (
+                f"only the non-denylisted var may be forwarded; got {params.env!r}"
+            )
+            assert "LD_PRELOAD" in caplog.text, "denylist refusal must be logged"
+        finally:
+            if test_ld:
+                os.environ["LD_PRELOAD"] = test_ld
+            else:
+                del os.environ["LD_PRELOAD"]
+
+    def test_denylist_match_is_case_sensitive(self, caplog):
+        """MED-12: the denylist matches exact-case (POSIX env semantics).
+
+        A lowercase ${ld_preload} is a DIFFERENT variable from ${LD_PRELOAD};
+        the dynamic loader ignores lowercase, so forwarding it is safe. This
+        pins the exact-case contract: refusal only for the exact denylisted
+        spelling. (If the PM ever wants case-insensitive refusal, this test
+        inverts alongside a .upper() on the check in utils/mcp_config.py.)
+        """
+        import logging
+        import os
+        test_lower = os.environ.get("ld_preload", "")
+        os.environ["ld_preload"] = "/tmp/dummy-lower.so"
+        try:
+            config = MCPServerConfig(
+                name="test",
+                command="cmd",
+                env={"lower": "${ld_preload}"},
+            )
+            with caplog.at_level(logging.WARNING, logger="utils.mcp_config"):
+                params = config.to_stdio_params()
+            assert params is not None
+            assert params.env is not None and params.env.get("lower") == "/tmp/dummy-lower.so", (
+                f"lowercase non-denylisted var must be forwarded; got {params.env!r}"
+            )
+            assert "MED-12" not in caplog.text, (
+                f"case-sensitive match must not refuse lowercase; got {caplog.records!r}"
+            )
+        finally:
+            if test_lower:
+                os.environ["ld_preload"] = test_lower
+            else:
+                del os.environ["ld_preload"]
 
     def test_none_env_passes_through(self):
         """None env results in None."""
