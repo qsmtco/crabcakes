@@ -784,6 +784,15 @@ class ActivityHandler:
             self._live_update_timer = None
             self._idle_pulse_timer = None
             return False
+        # Fallthrough: state is sending/done — no branch matches, so the source
+        # dies here too. Clear the same bookkeeping as the idle branch: GLib
+        # drops the callback on a False return, so a stale non-None id would
+        # make the next _stop_live_update/_stop_idle_pulse call source_remove()
+        # a dead id (real-GLib warning; confirmed).
+        # (Audit BUG #2: incomplete cleanup at the fallthrough.)
+        self._status_ticker_id = None
+        self._live_update_timer = None
+        self._idle_pulse_timer = None
         return False
 
     def _live_update(self):

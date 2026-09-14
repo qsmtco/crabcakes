@@ -182,15 +182,28 @@ def test_same_state_idle_does_not_double_arm_when_ticker_alive(handler):
     liveness (_status_ticker_id is None).
     """
     h, feedbar, fake_glib = handler
-    _enter_idle(h, fake_glib)  # arms the ticker; budget NOT yet exhausted
+    tick_cb = _enter_idle(h, fake_glib)  # arms the ticker; budget NOT exhausted
+    tick_cb()  # consume one tick so the budget is visibly mid-flight
+    assert h._idle_ticks == 1, "fixture precondition: one tick consumed"
 
-    live_before = len(fake_glib.armed_ids)
+    # Assert on SOURCE CHURN, not the live count. The live count is 1 in both
+    # the correct and the buggy implementation (f3a2cad removed the old id
+    # before adding the new one), so a live-count assertion is vacuous — it
+    # cannot distinguish them. `armed` is append-only in the conftest fake
+    # (source_remove only clears armed_ids), so a growing `armed` is exactly
+    # the wasteful remove+add cycle, and a stale budget reset.
+    # (Audit BUG #1: the first version of this test was vacuous.)
+    armed_before = len(fake_glib.armed)
+
     h._set_state("idle", None)  # same-state, ticker still alive
-    live_after = len(fake_glib.armed_ids)
 
-    assert live_after == live_before, (
-        f"a same-state idle with a LIVE ticker must not arm another source "
-        f"(before={live_before}, after={live_after})"
+    assert len(fake_glib.armed) == armed_before, (
+        "a same-state idle with a LIVE ticker must not arm another source "
+        f"(churn: armed grew {armed_before} -> {len(fake_glib.armed)})"
+    )
+    assert h._idle_ticks == 1, (
+        "a live ticker's budget must NOT be reset by a same-state idle "
+        f"(got {h._idle_ticks}; the pulse is mid-budget, resetting restarts it)"
     )
 
 
@@ -238,6 +251,30 @@ def test_dead_tick_clears_its_own_source_ids(handler):
     assert h._status_ticker_id is None, "dead tick must clear _status_ticker_id"
     assert h._live_update_timer is None
     assert h._idle_pulse_timer is None
+
+
+def test_sending_and_done_ticks_clear_their_own_source_ids(handler):
+    """Audit BUG #2: the fallthrough (state=sending/done) must clear the
+    source-id bookkeeping too.
+
+    Neither the active branch nor the idle branch matches for sending/done, so
+    the tick falls through and the source dies. Leaving the ids non-None makes
+    the next _stop_live_update/_stop_idle_pulse call source_remove() a dead id
+    — a real-GLib warning (confirmed: 'Source ID N was not found when
+    attempting to remove it').
+    """
+    for state in ("sending", "done"):
+        h, feedbar, fake_glib = handler
+        h._set_state(state, None)
+        assert fake_glib.armed, f"{state} must arm the ticker"
+        tick_cb = fake_glib.armed[-1][2]
+
+        assert tick_cb() is False, f"a {state} tick must stop the source"
+        assert h._status_ticker_id is None, (
+            f"the {state} fallthrough must clear _status_ticker_id"
+        )
+        assert h._live_update_timer is None
+        assert h._idle_pulse_timer is None
 
 
 def test_set_progress_opacity_zero_hides_bar():
