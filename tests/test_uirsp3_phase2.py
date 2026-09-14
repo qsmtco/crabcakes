@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 import gi
 gi.require_version('Gtk', '4.0')  # noqa: F401 — must precede any gi.repository import
+from gi.repository import Gtk
 
 import pytest
 
@@ -167,8 +168,78 @@ def test_hidden_progress_bar_not_visible():
     )
 
 
-# ── Row 5: the §7 main-thread budget (slow/manual — live app + real minute) ──
+# ── Audit follow-ups: same-state idle, and opacity=0 symmetry ───────────────
 
+
+def test_same_state_idle_restarts_pulse_budget(handler):
+    """Audit BUG #1: a same-state idle re-entry must restart the budget.
+
+    Reachable in production via a delayed on_agent_error for a session that
+    already finished its round: _set_state('idle') while state is already
+    'idle' hits the same-state early return. Pre-fix that left _idle_ticks at
+    its exhausted value with a dead ticker, so the pulse never returned.
+    """
+    h, feedbar, fake_glib = handler
+    tick_cb = _enter_idle(h, fake_glib)
+
+    # Exhaust the budget — the source dies.
+    for _ in range(20):
+        last = tick_cb()
+    assert last is False, "budget must terminate the ticker"
+    assert h._idle_ticks == 20, "fixture precondition: budget exhausted"
+
+    # Same-state idle re-entry (delayed error after the pulse window).
+    h._set_state("idle", None)
+
+    assert h._idle_ticks == 0, (
+        "a same-state idle re-entry must reset the pulse budget"
+    )
+    assert fake_glib.armed, "a fresh ticker must be armed"
+    _sid, delay, _cb = fake_glib.armed[-1]
+    assert delay == 250, "the re-armed source must be the 250ms status ticker"
+
+
+def test_dead_tick_clears_its_own_source_ids(handler):
+    """Audit BUG #1 companion: a dying tick must clear its bookkeeping.
+
+    GLib drops the callback on a False return, so the ids are stale from that
+    moment. Leaving them set would make a later same-state re-entry call
+    source_remove() on a dead id (GLib critical warning).
+    """
+    h, feedbar, fake_glib = handler
+    tick_cb = _enter_idle(h, fake_glib)
+
+    for _ in range(20):
+        tick_cb()
+
+    assert h._status_ticker_id is None, "dead tick must clear _status_ticker_id"
+    assert h._live_update_timer is None
+    assert h._idle_pulse_timer is None
+
+
+def test_set_progress_opacity_zero_hides_bar():
+    """Audit BUG #2: opacity=0 must ALSO leave the widget tree.
+
+    The spec (Edit B) required auditing opacity-without-visibility. The first
+    fix covered opacity>0 (show) only; opacity=0 on a previously-visible bar
+    would restore the exact defect this phase removes — visible-but-
+    transparent is still traversed on every layout/render pass.
+    """
+    checkout = FeedBar.__new__(FeedBar)
+    checkout._progress_bar = Gtk.ProgressBar()
+
+    checkout.set_progress_hidden(True)      # hidden
+    checkout.set_progress_pulse(True)       # shown again
+    assert checkout._progress_bar.get_visible() is True, "fixture precondition"
+
+    checkout.set_progress_opacity(0)        # fade out
+    assert checkout._progress_bar.get_opacity() == 0, "opacity must be 0"
+    assert checkout._progress_bar.get_visible() is False, (
+        "opacity=0 must remove the bar from traversal (set_visible(False))"
+    )
+
+
+# ── Row 5: the §7 main-thread budget (slow/manual — live app + real minute) ──
 
 @pytest.mark.slow
 @pytest.mark.manual

@@ -622,6 +622,19 @@ class ActivityHandler:
             if state in ("reasoning", "streaming", "tool_use"):
                 self._last_tick_signature = None  # manual render invalidates the tick cache
                 self._update_feedbar()
+            elif state == "idle":
+                # Audit BUG #1: a same-state idle re-entry (e.g. a delayed
+                # on_agent_error for a session that already finished) must
+                # restart the pulse budget. Without this the ticker is already
+                # dead from the previous budget, _idle_ticks is still at its
+                # exhausted value, and the pulse never comes back until some
+                # unrelated real transition happens.
+                self._idle_ticks = 0
+                self._stop_idle_pulse()  # cancels any live source via the alias
+                self._status_ticker_id = self._GLib.timeout_add(
+                    250, self._status_tick)
+                self._live_update_timer = self._status_ticker_id
+                self._idle_pulse_timer = self._status_ticker_id
             return
 
         self._state = state
@@ -753,6 +766,14 @@ class ActivityHandler:
                 return True
             self._feedbar.set_progress_pulse(False)
             self._feedbar.set_progress_hidden(True)
+            # Clear our own bookkeeping before the source dies — GLib drops the
+            # callback on a False return, so these ids are stale from here on.
+            # Without this a later same-state-idle re-entry would call
+            # source_remove() on an already-dead id (GLib critical warning).
+            # (Audit BUG #1 companion.)
+            self._status_ticker_id = None
+            self._live_update_timer = None
+            self._idle_pulse_timer = None
             return False
         return False
 

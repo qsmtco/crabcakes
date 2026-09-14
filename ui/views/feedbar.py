@@ -88,13 +88,16 @@ class FeedBar(Gtk.Box):
     def set_progress_opacity(self, opacity):
         """Set the progress bar opacity (0.0..1.0). Used for subtle idle pulse.
 
-        UIRESP3: a nonzero opacity implies the bar should be seen — restore
-        visibility too (a previous set_progress_hidden(True) would otherwise
-        leave it permanently invisible).
+        UIRESP3: visibility follows opacity symmetrically — nonzero implies the
+        bar should be seen (a previous set_progress_hidden(True) would otherwise
+        leave it permanently invisible), and ZERO implies it must leave the
+        widget tree. The zero case matters: opacity alone is not a traversal
+        fix, so `opacity=0` on a previously-visible bar would restore the exact
+        defect this phase removes (visible-but-transparent = still laid out).
+        (Audit BUG #2: the first fix only covered the opacity>0 direction.)
         """
         self._progress_bar.set_opacity(opacity)
-        if opacity > 0:
-            self._progress_bar.set_visible(True)
+        self._progress_bar.set_visible(opacity > 0)
 
     def set_progress_pulse(self, enable):
         """Start or stop the pulse animation on the progress bar."""
