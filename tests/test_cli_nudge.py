@@ -76,6 +76,11 @@ class FakeWindow:
         self._agent_runtime_handler = handler
 
 
+def _raise_dispatch_error(session_key, text):
+    """Stand-in for a dispatch that fails AFTER the guardrails passed."""
+    raise RuntimeError("simulated handler failure mid-dispatch")
+
+
 class FakeApp:
     """Stand-in for CrabcakesApp: what handle_cli_args may touch.
 
@@ -316,3 +321,31 @@ def test_on_command_line_sets_exit_status():
     app2.on_command_line(app2, stub)
     assert stub.exit_status == 0
     assert app2.activate_calls == 1, "empty argv (normal launch) must activate the GUI"
+
+
+def test_on_command_line_internal_failure_returns_defined_code():
+    """Audit BUG #2: a raise inside the dispatch path must not escape.
+
+    The guardrails can all pass and dispatch can still raise (handler error,
+    audit-log write failure) — and by then side effects may already exist.
+    Without a guard the exception escapes on_command_line, set_exit_status
+    never runs, and GTK picks an arbitrary status, breaking the §3.3
+    exit-code contract exactly when something went wrong.
+    """
+    import main as main_mod
+
+    app = CrabcakesApp()
+    handler = FakeHandler()
+    app._main_window = FakeWindow(handler)
+    handler.send_to_special_agent = _raise_dispatch_error
+
+    stub = StubCommandLine(["--nudge", "@Supervisor", "boom"])
+    rc = app.on_command_line(app, stub)
+
+    assert rc == main_mod._EXIT_INTERNAL, (
+        f"a dispatch-path failure must return the internal code, got {rc}"
+    )
+    assert stub.exit_status == main_mod._EXIT_INTERNAL, (
+        f"exit status must be set to the internal code, got {stub.exit_status}"
+    )
+    assert app._main_window is not None, "the failure must not dismantle the app"

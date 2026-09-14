@@ -228,6 +228,68 @@ class TestToStdioParams:
             else:
                 del os.environ["LD_PRELOAD"]
 
+    def test_env_var_refused_when_denylisted_gconv_path(self, caplog):
+        """MED-12: GCONV_PATH (glibc iconv module hijack) is denylisted.
+
+        Audit finding (BUG #1): the loader-hijack taxonomy includes glibc's
+        iconv module path — a directory containing a malicious gconv-modules
+        file is read by the iconv loader at runtime (CVE-2014-5119 lineage,
+        enumerated in ATR-2026-02300).
+        """
+        import logging
+        import os
+        test_env = os.environ.get("GCONV_PATH", "")
+        os.environ["GCONV_PATH"] = "/tmp/evil-gconv"
+        try:
+            config = MCPServerConfig(
+                name="test",
+                command="cmd",
+                env={"GCONV_PATH": "${GCONV_PATH}"},
+            )
+            with caplog.at_level(logging.WARNING, logger="utils.mcp_config"):
+                params = config.to_stdio_params()
+            assert "MED-12" in caplog.text and "GCONV_PATH" in caplog.text, (
+                f"expected the MED-12 refusal warning; got {caplog.records!r}"
+            )
+            assert "GCONV_PATH" not in (params.env or {}), (
+                f"denylisted var leaked into the server env: {params.env!r}"
+            )
+        finally:
+            if test_env:
+                os.environ["GCONV_PATH"] = test_env
+            else:
+                del os.environ["GCONV_PATH"]
+
+    def test_env_var_refused_when_denylisted_rubylib(self, caplog):
+        """MED-12: RUBYLIB (Ruby load-path prepend) is denylisted.
+
+        Audit finding (BUG #1): RUBYOPT was already covered; RUBYLIB is the
+        direct path-injection counterpart (the Ruby analogue of PYTHONPATH).
+        """
+        import logging
+        import os
+        test_env = os.environ.get("RUBYLIB", "")
+        os.environ["RUBYLIB"] = "/tmp/evil-ruby"
+        try:
+            config = MCPServerConfig(
+                name="test",
+                command="cmd",
+                env={"RUBYLIB": "${RUBYLIB}"},
+            )
+            with caplog.at_level(logging.WARNING, logger="utils.mcp_config"):
+                params = config.to_stdio_params()
+            assert "MED-12" in caplog.text and "RUBYLIB" in caplog.text, (
+                f"expected the MED-12 refusal warning; got {caplog.records!r}"
+            )
+            assert "RUBYLIB" not in (params.env or {}), (
+                f"denylisted var leaked into the server env: {params.env!r}"
+            )
+        finally:
+            if test_env:
+                os.environ["RUBYLIB"] = test_env
+            else:
+                del os.environ["RUBYLIB"]
+
     def test_mixed_env_forwards_only_allowed(self, caplog):
         """MED-12: mixed env (one denylisted + one allowed) forwards only the allowed one."""
         import logging

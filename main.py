@@ -44,6 +44,12 @@ _EXIT_BAD_TARGET = 3
 _EXIT_NOT_RUNNING = 4
 _EXIT_PAYLOAD_TOO_LONG = 5
 _EXIT_NO_SESSION = 6
+# Audit BUG #2: a failure INSIDE the dispatch path (handler raised after the
+# guardrails passed, audit-log write failed, …). NOT in the spec's §3.3 table
+# — added so the exit-code contract holds on the failure path too instead of
+# letting the exception escape and GTK pick an arbitrary status. Spec needs a
+# row for this code.
+_EXIT_INTERNAL = 7
 
 # States a turn may be in that make a nudge refuse to interleave (§3.4.3).
 _TURN_BUSY_STATES = ("running", "streaming")
@@ -105,7 +111,20 @@ class CrabcakesApp(Gtk.Application):
             self.activate()
             code = _EXIT_OK
         else:
-            code, _msg = handle_cli_args(self, args)
+            # Audit BUG #2: the dispatch path can raise (handler error, audit
+            # write failure) AFTER guardrails pass and after side effects
+            # (feed card / appends). Without this guard the exception escapes
+            # on_command_line, set_exit_status never runs, and GTK picks an
+            # arbitrary status — so the §3.3 exit-code contract silently
+            # breaks exactly when something went wrong. Report it as internal.
+            try:
+                code, _msg = handle_cli_args(self, args)
+            except Exception:
+                logger.exception(
+                    "on_command_line: handle_cli_args raised — reporting "
+                    "internal failure (exit %d)", _EXIT_INTERNAL,
+                )
+                code = _EXIT_INTERNAL
         command_line.set_exit_status(code)
         return code
 

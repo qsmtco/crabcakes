@@ -38,9 +38,14 @@ _MCP_DANGEROUS_ENV_VARS: frozenset[str] = frozenset({
     "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT",
     "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
     "BASH_ENV", "ENV", "PROMPT_COMMAND",
+    # glibc iconv module path — a directory containing a malicious
+    # gconv-modules file is read by the iconv loader at runtime
+    # (CVE-2014-5119 lineage; enumerated in ATR-2026-02300).
+    "GCONV_PATH",
     # Interpreter startup hijack / path manipulation
     "PYTHONSTARTUP", "PYTHONHOME", "PYTHONPATH",
     "NODE_OPTIONS", "PERL5LIB", "PERL5OPT", "RUBYOPT",
+    "RUBYLIB",  # Ruby's load-path prepend — the RUBYOPT counterpart
     "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS",
     # Git / SSH credential and diff hijack
     "GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF", "GIT_CONFIG", "GIT_CONFIG_SYSTEM",
