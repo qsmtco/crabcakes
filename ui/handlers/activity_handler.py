@@ -57,6 +57,10 @@ class ActivityHandler:
         self._live_update_timer = None   # alias for _status_ticker_id
         self._idle_pulse_timer = None    # alias for _status_ticker_id
         self._last_tick_signature: tuple | None = None  # skip-when-unchanged cache
+        # UIRESP3 Phase 2: idle-pulse budget — the idle branch of the 250ms
+        # ticker may pulse at most _IDLE_TICK_BUDGET times per idle entry,
+        # then the source dies (bounded animation instead of an unbounded one).
+        self._idle_ticks = 0
         self._done_flash_timers: dict[str, int] = {}  # session_key → GLib source ID
         self._send_initiated_timers: dict[str, int] = {}  # session_key → pre-flight timeout
 
@@ -622,6 +626,9 @@ class ActivityHandler:
 
         self._state = state
 
+        # UIRESP3 Phase 2: every transition grants a fresh idle-pulse budget.
+        self._idle_ticks = 0
+
         # Clean up all timers from previous state
         self._stop_live_update()
         self._stop_idle_pulse()
@@ -738,7 +745,15 @@ class ActivityHandler:
             return True
         if self._state == "idle":
             self._idle_pulse()
-            return True
+            # UIRESP3 Phase 2: bounded keep-alive — ~5 s of pulse at 250 ms,
+            # then the source dies. On the final tick the bar is left in a
+            # clean hidden/idle state, never stranded mid-pulse.
+            self._idle_ticks += 1
+            if self._idle_ticks < 20:
+                return True
+            self._feedbar.set_progress_pulse(False)
+            self._feedbar.set_progress_hidden(True)
+            return False
         return False
 
     def _live_update(self):

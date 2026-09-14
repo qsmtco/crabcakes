@@ -71,19 +71,35 @@ class FeedBar(Gtk.Box):
     def set_progress_fraction(self, fraction):
         """Set progress bar fraction (0.0..1.0). Removes pulse, shows bar."""
         self._progress_bar.set_fraction(fraction)
+        self._progress_bar.set_visible(True)   # UIRESP3: show = back in traversal
         self._progress_bar.set_opacity(1)
 
     def set_progress_hidden(self, hidden):
-        """Show or hide the progress bar (opacity 0 or 1)."""
+        """Show or hide the progress bar.
+
+        UIRESP3 Phase 2: visibility, not just opacity. A bar that is only
+        opacity-0 stays in the widget tree and is still traversed on every
+        layout/render pass; set_visible(False) is what removes it. The
+        opacity call is kept for the fade.
+        """
         self._progress_bar.set_opacity(0 if hidden else 1)
+        self._progress_bar.set_visible(not hidden)
 
     def set_progress_opacity(self, opacity):
-        """Set the progress bar opacity (0.0..1.0). Used for subtle idle pulse."""
+        """Set the progress bar opacity (0.0..1.0). Used for subtle idle pulse.
+
+        UIRESP3: a nonzero opacity implies the bar should be seen — restore
+        visibility too (a previous set_progress_hidden(True) would otherwise
+        leave it permanently invisible).
+        """
         self._progress_bar.set_opacity(opacity)
+        if opacity > 0:
+            self._progress_bar.set_visible(True)
 
     def set_progress_pulse(self, enable):
         """Start or stop the pulse animation on the progress bar."""
         if enable:
+            self._progress_bar.set_visible(True)  # UIRESP3: pulse implies visible
             self._progress_bar.set_opacity(1)
             self._progress_bar.pulse()
         else:
