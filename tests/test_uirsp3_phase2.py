@@ -171,6 +171,29 @@ def test_hidden_progress_bar_not_visible():
 # ── Audit follow-ups: same-state idle, and opacity=0 symmetry ───────────────
 
 
+def test_same_state_idle_does_not_double_arm_when_ticker_alive(handler):
+    """Audit follow-up: repeated same-state idle must NOT install a second
+    concurrent 250ms source.
+
+    Found by the supervisor's own post-fix probe: the first version of the
+    BUG #1 fix re-armed unconditionally, so a same-state idle arriving while
+    the ticker was still live would add a SECOND live source — double-rate
+    cost, the exact class this phase exists to bound. The fix guards on
+    liveness (_status_ticker_id is None).
+    """
+    h, feedbar, fake_glib = handler
+    _enter_idle(h, fake_glib)  # arms the ticker; budget NOT yet exhausted
+
+    live_before = len(fake_glib.armed_ids)
+    h._set_state("idle", None)  # same-state, ticker still alive
+    live_after = len(fake_glib.armed_ids)
+
+    assert live_after == live_before, (
+        f"a same-state idle with a LIVE ticker must not arm another source "
+        f"(before={live_before}, after={live_after})"
+    )
+
+
 def test_same_state_idle_restarts_pulse_budget(handler):
     """Audit BUG #1: a same-state idle re-entry must restart the budget.
 

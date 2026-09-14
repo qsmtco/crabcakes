@@ -629,12 +629,21 @@ class ActivityHandler:
                 # dead from the previous budget, _idle_ticks is still at its
                 # exhausted value, and the pulse never comes back until some
                 # unrelated real transition happens.
-                self._idle_ticks = 0
-                self._stop_idle_pulse()  # cancels any live source via the alias
-                self._status_ticker_id = self._GLib.timeout_add(
-                    250, self._status_tick)
-                self._live_update_timer = self._status_ticker_id
-                self._idle_pulse_timer = self._status_ticker_id
+                #
+                # GUARD ON LIVENESS: only re-arm when no ticker is live. A
+                # live ticker means the budget is still running — arming again
+                # would install a SECOND concurrent 250ms source (double-rate
+                # cost, the very thing this phase bounds). The dying tick sets
+                # _status_ticker_id = None, so that is the liveness indicator.
+                # We deliberately do NOT call _stop_idle_pulse() here: on the
+                # dead path the id is already None, and on the live path GLib
+                # would only be asked to remove a source we still want.
+                if self._status_ticker_id is None:
+                    self._idle_ticks = 0
+                    self._status_ticker_id = self._GLib.timeout_add(
+                        250, self._status_tick)
+                    self._live_update_timer = self._status_ticker_id
+                    self._idle_pulse_timer = self._status_ticker_id
             return
 
         self._state = state
