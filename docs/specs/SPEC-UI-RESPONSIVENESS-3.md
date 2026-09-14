@@ -340,6 +340,12 @@ Red-first. Phase 1 tests must not require GTK unless they genuinely exercise ren
 
 **Gate:**
 
+> **Reading of "sustained" (pinned 2026-09-14):** the gate is the **60 s mean**. A
+> brief spike that does not move the mean is informational, not a failure. `max`
+> and `p90` are reported alongside so a burst pattern that passes the mean gate is
+> still visible to the operator. (`scripts/crab_perf_probe.py` implements this; its
+> `test_summarize_budget_decision` pins the interpretation.)
+
 - [ ] Idle, ≥3,500 cards: main-thread CPU **< 10 %** sustained over 60 s
 - [ ] Under an agent storm: main-thread CPU **< 25 %** sustained over 60 s
 - [ ] `pango_layout_get_size` share materially below the 60.1 % baseline in the native profile

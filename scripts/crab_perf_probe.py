@@ -2,14 +2,23 @@
 """crab_perf_probe.py — main-thread CPU sampler for the UIRESP3 §7 gate.
 
 ⚠️  MAIN-THREAD ATTRIBUTION — READ BEFORE "SIMPLIFYING" ⚠️
-This probe samples ``/proc/<pid>/task/<tid>/stat`` with ``tid == pid`` (the
-main thread always has the process's own TID). Do NOT swap this for
-``/proc/<pid>/stat``: that file is **process-wide** (sums every thread), and
-using it produced a real mis-measurement during the UIRESP3 investigation —
-the number was labelled "main thread" and read 100–124 % while the actual
-main thread sat at ~3 %. A single thread can occupy at most one core, so any
-sustained reading above ~100 % from this probe means the sampler is
-mis-attributing (check the tid).
+This probe samples ``/proc/<pid>/task/<tid>/stat`` with ``tid == pid``.
+Do NOT swap this for ``/proc/<pid>/stat``: that file is **process-wide**
+(sums every thread), and using it produced a real mis-measurement during the
+UIRESP3 investigation — the number was labelled "main thread" and read
+100–124 % while the actual main thread sat at ~3 %. A single thread can
+occupy at most one core, so any sustained reading above ~100 % from this
+probe means the sampler is mis-attributing (check the tid).
+
+⚠️  PRECONDITION for ``tid == pid`` (true today, NOT a universal invariant):
+the GTK main loop runs on the Python main thread only because ``main.py``
+calls ``Gtk.Application().run()`` from the ``__main__`` block. If ``app.run``
+is ever moved onto a worker thread, ``tid == pid`` will silently sample the
+WRONG thread (which idles near 0 % — the exact reading that would mask a real
+regression). Re-verify before relying on this probe after any change to the
+app's startup path; to find the real main thread, scan ``/proc/<pid>/task/*``
+for the thread running the GLib main loop (``comm`` often ``gmain``) that is
+R-state across the majority of samples.
 
 Method (SPEC-UI-RESPONSIVENESS-3 §7 DISCOVERY notes): repeated 5 s windows;
 per window, ``(utime+stime) delta ÷ (wall seconds × CLK_TCK) × 100``. The
@@ -167,6 +176,10 @@ def _run_probe(pid: int, duration: float, window: float, budget: float,
                feed_path, out=sys.stdout, sleep=time.sleep,
                monotonic=time.monotonic) -> int:
     """The sampling loop. Returns the process exit code."""
+    # MAINTAINER: tid == pid only holds while Gtk.Application().run() executes
+    # on the Python main thread (main.py's __main__ block). Re-verify this
+    # assumption if the app's startup path changes — see the module docstring's
+    # PRECONDITION note; a wrong tid reads ~0% and would mask a real pin.
     stat_path = f"/proc/{pid}/task/{pid}/stat"
     first = _stat_ticks(stat_path)
     if first is None:
