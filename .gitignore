@@ -51,3 +51,6 @@ memory/
 # It is a deterministic build artifact produced by scripts/rebuild_kb_index.py
 # from the KB content. Same KB → same embeddings (byte-identical).
 .crabcakes/feed.json
+
+# Local debug scratch (audit probes, measurement scripts) — kept on disk, out of git
+.debug/
