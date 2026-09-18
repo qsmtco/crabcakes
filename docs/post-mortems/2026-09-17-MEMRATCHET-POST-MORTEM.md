@@ -174,3 +174,32 @@ One paragraph: 13 findings, none CRITICAL/HIGH/MEDIUM; the two functional ones (
 - [x] All post-loop verification commands run and pasted — final sweep 2026-09-17: 505 passed + 1 skipped across `test_feed_handler`(225) + `test_feed_card`(79) + `test_feed_body_cap`(23) + `test_feed_snapshot_off_thread`(8) + `test_review_handler_feed_card`(16) + `test_architecture`(6) + `test_uirsp3_phase2`(15+1skipped) + `test_activity_bubbles`(65) + `test_activity_bubble_batching`(8) + `test_connection_sync_handler`(29) + `test_missing_message_fix`(18) + `test_activity_wiring_handler`(13)
 - [x] Captain notified with summary (this document's delivery message)
 - [ ] Tier 2+ backlog updated — P11 measurement + items in §9 pending PM session
+
+---
+
+## 12. P11 — CLOSED WITHOUT MEASUREMENT (PM direction, 2026-09-18)
+
+The allocator experiment + honest-gate re-measure (§5 steps 6/8, §6 secondary) was
+**not run**. PM directed P11 closed and the loop moved to the DevelCakes fork
+(2026-09-18 ~11:19). Record, honestly:
+
+- **Primary gate (deterministic invariant): MET and verified** — P1-P10 closed, audited,
+  505-pass final sweep. The widget cap, ordering, backlog discipline, and ticker dedup
+  are in production shape.
+- **Secondary gate (measured slope): NOT MEASURED — deferred, not met.** No baseline
+  probe ever ran: three candidate instances died waiting for a 60-min window (PID
+  1369351 pre-loop; PID 1732842 in the 2026-09-18 10:22 OOM session death; the
+  10:32 relaunch was superseded by this closure before eligibility at 11:32:28).
+  Per §6: absent measurement, the honest statement is "invariant fixed, churn
+  unmeasured" — and the standing estimate stands: ratchet fixes ≈0.18 MB/min of a
+  recorded 4.55 MB/min (≈4%); the residual churn was always beyond this spec's scope,
+  with the WebKit proposal as the designated escalation.
+- **Severity record (journal-sourced, Coder's enumeration):** ≥9 kernel OOM kills of
+  12-13 GB python3 instances on this machine Sep 09-14, all in the Terminal vte scope;
+  plus the 2026-09-18 session death (gnome-shell SIGSEGV under memory pressure +
+  oomd sweep). The leak is a recurring operational hazard, not a lab curiosity.
+- **What closed with this decision:** the allocator experiment (env-var relaunch arm)
+  is NOT run in v1. If DevelCakes v2 still shows churn, re-open measurement there
+  (probe is committed; scripts/crab_mem_probe.py).
+- Tier-2 backlog: live-widget-count emitter (declared gap in P11 adjudication) stays
+  logged for v2.
