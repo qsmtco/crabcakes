@@ -187,9 +187,14 @@ The allocator experiment + honest-gate re-measure (§5 steps 6/8, §6 secondary)
   505-pass final sweep. The widget cap, ordering, backlog discipline, and ticker dedup
   are in production shape.
 - **Secondary gate (measured slope): NOT MEASURED — deferred, not met.** No baseline
-  probe ever ran: three candidate instances died waiting for a 60-min window (PID
-  1369351 pre-loop; PID 1732842 in the 2026-09-18 10:22 OOM session death; the
-  10:32 relaunch was superseded by this closure before eligibility at 11:32:28).
+  probe ran *within the closure decision's knowledge*: three candidate instances died
+  waiting for a 60-min window (PID 1369351 pre-loop; PID 1732842 in the 2026-09-18
+  10:22 OOM session death; the 10:32 relaunch was believed superseded before
+  eligibility at 11:32:28). **CORRECTION — see §13: a probe was in fact armed and did
+  run (11:32:33 and 12:34:59, both 3600 s), because the Supervisor's "run the probe"
+  instruction (11:03, `68078ce`) crossed the PM's closure (11:19, `b1993af`). Both
+  windows measured OVER budget (0.82 and 1.32 MB/min vs 0.5). The closure decision is
+  unchanged; the slope gate is now measured, not unmeasured.**
   Per §6: absent measurement, the honest statement is "invariant fixed, churn
   unmeasured" — and the standing estimate stands: ratchet fixes ≈0.18 MB/min of a
   recorded 4.55 MB/min (≈4%); the residual churn was always beyond this spec's scope,
@@ -203,3 +208,98 @@ The allocator experiment + honest-gate re-measure (§5 steps 6/8, §6 secondary)
   (probe is committed; scripts/crab_mem_probe.py).
 - Tier-2 backlog: live-widget-count emitter (declared gap in P11 adjudication) stays
   logged for v2.
+
+---
+
+## 13. P11 measurement addendum — baseline probe DID run (post-closure data)
+
+**Status: factual correction + data. This does NOT reopen the §12 closure decision.**
+The PM closed P11 at 2026-09-18 11:19:22 (commit `b1993af`). The Supervisor's
+"run the probe, report back after the run" instruction was issued at 11:03–11:04
+(commit `68078ce`) — *before* the closure, and the probe was already armed. The two
+messages crossed. The probe ran as instructed. §12's statement "No baseline probe ever
+ran" is therefore factually incorrect and is corrected here. The invariant gate remains
+MET; the slope gate is now MEASURED, and it is OVER budget.
+
+### Baseline run (contaminated) — PID 6931, 2026-09-18
+
+```
+$ /usr/bin/python3 scripts/crab_mem_probe.py --pid 6931 --duration 3600 --budget 0.5
+crab_mem_probe: pid=6931 duration=3600s interval=10s samples=361
+  VmRSS:  mean slope=1.32 MB/min (first=495.6 MB last=653.0 MB)
+  VmData: mean slope=0.78 MB/min (first=748.1 MB last=897.5 MB) [informational — not the gate]
+  card arrivals: 185 over 3600s (3.08 cards/min) [max seq_num delta]
+  secondary signal: len(cards)+journal lines 5870 → 5899 (delta 29)
+  budget: VmRSS slope <= 0.5 MB/min → OVER BUDGET
+```
+Window 11:32:33 → 12:32:33 (eligibility: `etimes=3605s` ≥ 3600). Exit code 1.
+Baseline arm confirmed: `/proc/6931/environ` had **no** `MALLOC_*` vars.
+
+**Caveat (self-reported process error):** during this window I ran read-only AT-SPI
+walks (11:35:57–11:38:47) to attempt the widget-count sourcing in §Phase A.4b. Enumerating
+1956 accessible nodes forces GTK4 to construct accessible objects for the widget tree.
+That instrumentation was **not part of the measurement protocol** and the growth in this
+window is front-loaded:
+```
+11:32:33 → 11:51:34   +121.7 MB / 19.0 min = 6.40 MB/min
+11:51:34 → 12:32:37    +35.7 MB / 41.1 min = 0.88 MB/min  (LS = 0.19 MB/min)
+```
+Card arrivals were also elevated early (11:30 bucket 34, 11:35 bucket 36 vs ~14/5 min
+baseline). So the 1.32 figure is **not** a clean baseline.
+
+### Clean re-measure (no instrumentation) — PID 6931
+
+```
+$ /usr/bin/python3 scripts/crab_mem_probe.py --pid 6931 --duration 3600 --budget 0.5
+crab_mem_probe: pid=6931 duration=3600s interval=10s samples=361
+  VmRSS:  mean slope=0.82 MB/min (first=666.9 MB last=707.0 MB)
+  VmData: mean slope=0.67 MB/min (first=899.6 MB last=951.1 MB) [informational — not the gate]
+  card arrivals: 317 over 3600s (5.28 cards/min) [max seq_num delta]
+  secondary signal: len(cards)+journal lines 5918 → 6007 (delta 89)
+  budget: VmRSS slope <= 0.5 MB/min → OVER BUDGET
+```
+Window 12:34:59 → 13:34:59, 240 independent 15 s trace samples. Exit code 1.
+Endpoint slope over the same trace: 0.42 MB/min; least-squares: 0.83 MB/min.
+Independent trace (`RSS 666.9 → 692.1 MB`; `VmData 899.6 → 951.1 MB`) corroborates the
+probe.
+
+### Honest-gate verdict
+
+- **Invariant fixed, churn unaddressed.** Both clean and contaminated 60-min windows are
+  OVER the 0.5 MB/min budget (0.82 and 1.32 MB/min). The widget ratchet (~0.18 MB/min of
+  the recorded 4.55) is not the residual driver.
+- **Correlation with activity:** per-10-min buckets in the clean run — cards 59/62/50/48/50
+  vs RSS delta +0.8/+18.4/+6.8/+4.7/+5.3 MB; pearson(cards, ΔRSS) = 0.49. Slope broadly
+  tracks feed activity but the 12:44 bucket is an outlier, so this is suggestive, not
+  established. No conclusion about which allocator env var matters — **Phase B was not
+  run** (requires PM consent; P11 closed).
+- **Escalation stands:** per §6, this is the designated path to
+  `docs/proposals/WEBKIT-RENDER-SURFACE_PROPOSAL.md`. Do not re-scope.
+
+### Widget count — NOT INSTRUMENTED (declared gap)
+
+All three adjudicated sourcing paths exhausted, no product code touched:
+1. **stderr location:** app stdout+stderr → `/dev/pts/0` (PM's gnome-terminal pane); no log
+   file, not journald. The premise is also void: the P7b `CRABCAKES_DEBUG` line
+   (`feed_handler.py:1164`) is in `_rebuild_and_replace_card` (card-**update** path,
+   callers 1115/1121), not eviction — `_evict_surplus_card_widgets` (1921–2012) has zero
+   logging. Its presence would not pin the count.
+2. **gdb / py-spy:** both denied — `kernel.yama.ptrace_scope=1`; `sudo` needs a password.
+3. **AT-SPI (bonus path):** bus reachable, app identified as `:1.21` = pid 6931 via
+   `GetConnectionUnixProcessID`, but GTK4 exposes 1956 nodes with empty accessible names —
+   no mapping to `feed_handler._card_widgets`.
+
+Per §Phase A.4c: reported as **"widget count not instrumented"**. A small post-P11 emitter
+unit remains the fix (already logged in §12 Tier-2).
+
+### Commands for every number above
+
+```
+ps -o pid,etimes,rss,vsz,stat -p 6931
+tr '\0' '\n' < /proc/6931/environ | grep -E '^MALLOC_'
+/usr/bin/python3 scripts/crab_mem_probe.py --pid 6931 --duration 3600 --budget 0.5
+awk '/^VmRSS:|^VmData:/' /proc/6931/status        # supplementary 15 s trace
+journalctl -b -1 -k -g "Killed process .*python3"
+```
+Artifacts: `.debug/p11-baseline-probe.txt`, `.debug/p11-clean-probe.txt`,
+`.debug/p11-rss-trace.csv`, `.debug/p11-clean-trace.csv` (all git-ignored scratch).
