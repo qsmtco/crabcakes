@@ -29,6 +29,24 @@ slope (~4%). P11 measures the residual and tests whether glibc allocator tuning 
    or other instrument). §6 requires the count alongside the slope — an unsourced count
    is a non-finding.
 
+   **Adjudication (Supervisor, 2026-09-18):** there is no live-count emitter in the tree
+   (verified: no eviction/count debug line exists; `MAX_LIVE_CARD_WIDGETS = 120` at
+   `feed_handler.py:38`; P7b's CRABCAKES_DEBUG instrument logs the evicted-card-update
+   guard only). Proceed as follows, in order:
+   a. **Do NOT delay the probe for the instrument.** The 60-min window is the scarce
+      resource (two instances have already died). Slope first.
+   b. Source the count WITHOUT product code, best-effort, in this order:
+      (i) locate where the app's stderr/logging actually lands (terminal scrollback vs
+      file vs journal). If P7b evicted-guard debug lines are observable for the
+      measurement window, their presence pins the live count at the cap (120) — that
+      IS a sourced count; their absence brackets it below-cap-or-no-updates.
+      (ii) optional, time-boxed ≤10 min: a read-only gdb/py-spy one-shot to read
+      `len(feed_handler._card_widgets)`. If it doesn't work quickly, drop it.
+   c. If neither yields a number: report "widget count not instrumented" explicitly in
+      the verdict and log the gap as a post-mortem item. A declared gap is acceptable;
+      an unsourced number is not. Do NOT add product code mid-P11 to fix this — if the
+      PM wants a real emitter, it is a small post-P11 unit.
+
 ## Phase B — Allocator arm (REQUIRES PM CONSENT — do not relaunch on your own)
 
 The relaunch closes the PM's current app session. Ask the PM (via the Supervisor) before
