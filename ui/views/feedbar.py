@@ -50,6 +50,11 @@ class FeedBar(Gtk.Box):
             '<span foreground="#6b6b7a" font_desc="Sans 10">'
             'Response Status</span>'
         )
+        # MEMRATCHET §2.4 (F12): last markup written to _status_label, so an
+        # identical repeat can skip set_markup entirely. None until the first
+        # write, so that first write always renders. Dedupe is value-based on
+        # the exact string — deliberately NOT family/state-based.
+        self._last_status_markup: str | None = None
 
         # Progress bar — driven by ActivityHandler
         self._progress_bar = Gtk.ProgressBar()
@@ -65,7 +70,18 @@ class FeedBar(Gtk.Box):
     # ── Public API (called by ActivityHandler) ───────────────────────────
 
     def set_status_text(self, markup):
-        """Update the status label with Pango markup."""
+        """Update the status label with Pango markup.
+
+        MEMRATCHET §2.4 (F12): an identical repeat is a no-op — the label is
+        not re-laid-out, so a ticker that keeps rebuilding the same string
+        costs nothing. The FIRST non-None write always renders (the cache
+        starts at None, which doubles as the empty-cache sentinel — a None
+        markup is therefore treated as a repeat, never rendered; callers must
+        pass a non-empty string). Any different string renders immediately.
+        """
+        if markup == self._last_status_markup:
+            return
+        self._last_status_markup = markup
         self._status_label.set_markup(markup)
 
     def set_progress_fraction(self, fraction):

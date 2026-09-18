@@ -13,6 +13,7 @@
 
 import os
 import sys
+import time
 from unittest.mock import MagicMock
 
 import gi
@@ -296,6 +297,140 @@ def test_set_progress_opacity_zero_hides_bar():
     assert checkout._progress_bar.get_opacity() == 0, "opacity must be 0"
     assert checkout._progress_bar.get_visible() is False, (
         "opacity=0 must remove the bar from traversal (set_visible(False))"
+    )
+
+
+# ── MEMRATCHET P9 (§2.4, F12): ticker markup de-dup + 1.0s elapsed bucket ────
+
+
+def test_set_status_text_identical_markup_renders_once():
+    """F12: the FIRST write renders; an identical REPEAT is skipped.
+
+    Pre-P9 `set_status_text` called `set_markup` unconditionally, so a ticker
+    that keeps rebuilding the same string re-laid-out the label every tick.
+    """
+    bar = FeedBar()
+    calls = []
+    real_set_markup = bar._status_label.set_markup
+
+    def _record(markup):
+        calls.append(markup)
+        return real_set_markup(markup)
+
+    bar._status_label.set_markup = _record
+
+    same = '<span foreground="#f59e0b">◉ Reasoning…</span>'
+    bar.set_status_text(same)          # first write → must render
+    assert calls == [same], (
+        "the first write must reach set_markup (the cache starts at None)"
+    )
+    bar.set_status_text(same)          # identical repeat → skipped
+    bar.set_status_text(same)
+    assert calls == [same], (
+        f"identical markup must render exactly once, got {len(calls)} renders"
+    )
+
+
+def test_set_status_text_changed_markup_renders_again():
+    """A different string always renders — dedupe is value-based on the exact
+    string, so a new status family is not suppressed."""
+    bar = FeedBar()
+    calls = []
+    real_set_markup = bar._status_label.set_markup
+
+    def _record(markup):
+        calls.append(markup)
+        return real_set_markup(markup)
+
+    bar._status_label.set_markup = _record
+
+    first = '<span foreground="#f59e0b">◉ Reasoning…</span>'
+    second = '<span foreground="#3b82f6">⬇ Generating…</span>'
+    bar.set_status_text(first)
+    bar.set_status_text(second)
+    bar.set_status_text(first)         # back to the first: different from last
+    assert calls == [first, second, first], (
+        f"every change must render (value-based dedupe only), got {calls}"
+    )
+
+
+def test_set_status_text_dedupe_is_exact_string_not_prefix():
+    """Near-miss strings must NOT be treated as repeats."""
+    bar = FeedBar()
+    calls = []
+    real_set_markup = bar._status_label.set_markup
+
+    def _record(markup):
+        calls.append(markup)
+        return real_set_markup(markup)
+
+    bar._status_label.set_markup = _record
+
+    bar.set_status_text('<span foreground="#4ade80">✓ Done</span>')
+    bar.set_status_text('<span foreground="#4ade80">✓ Done </span>')   # trailing space
+    assert len(calls) == 2, "a trailing-space difference is a different string"
+
+
+def test_live_update_elapsed_bucket_is_one_second(handler, monkeypatch):
+    """F12: with state/phase/hop constant, two ticks inside the same 1 s bucket
+    rebuild at most one markup; a tick crossing the bucket boundary re-renders.
+
+    Pre-P9 the divisor was 0.5, so the 0.75 s tick below landed in bucket 1 and
+    rebuilt — this test is RED on that code.
+    """
+    h, feedbar, fake_glib = handler
+    h._mc.get_current_session_key.return_value = "sk-1"   # deterministic sk
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(time, "monotonic", lambda: clock["t"])
+
+    h._set_state("streaming", "sk-1")
+    h._agent_start_time["sk-1"] = 1000.0      # elapsed 0.0s
+    tick = fake_glib.armed[0][2]
+    feedbar.set_status_text.reset_mock()
+
+    tick()                                    # elapsed 0.0 → bucket 0 → renders
+    assert feedbar.set_status_text.call_count == 1
+
+    clock["t"] = 1000.75                      # same bucket under 1.0 (was bucket 1 at 0.5)
+    tick()
+    assert feedbar.set_status_text.call_count == 1, (
+        "two ticks inside the same 1.0s bucket must rebuild at most once"
+    )
+
+    clock["t"] = 1001.0                       # crosses into bucket 1 → re-render
+    tick()
+    assert feedbar.set_status_text.call_count == 2, (
+        "crossing the 1.0s bucket boundary must re-render"
+    )
+
+    clock["t"] = 1001.9                       # still bucket 1 → skipped again
+    tick()
+    assert feedbar.set_status_text.call_count == 2, (
+        "the new bucket must itself dedupe until it advances"
+    )
+
+
+def test_live_update_bucket_holds_hop_change_still_renders(handler, monkeypatch):
+    """Control: the bucket widening must not suppress a real progress change —
+    a hop-count change rebuilds inside the same bucket."""
+    h, feedbar, fake_glib = handler
+    h._mc.get_current_session_key.return_value = "sk-1"
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(time, "monotonic", lambda: clock["t"])
+
+    h._set_state("reasoning", "sk-1")
+    h._agent_start_time["sk-1"] = 1000.0
+    tick = fake_glib.armed[0][2]
+    feedbar.set_status_text.reset_mock()
+
+    tick()
+    assert feedbar.set_status_text.call_count == 1
+
+    clock["t"] = 1000.4                       # same bucket
+    h._event_hop_count["sk-1"] = 7            # progress moved
+    tick()
+    assert feedbar.set_status_text.call_count == 2, (
+        "a hop change must rebuild the markup even inside the same bucket"
     )
 
 

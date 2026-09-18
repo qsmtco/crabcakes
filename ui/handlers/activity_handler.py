@@ -809,9 +809,9 @@ class ActivityHandler:
             self._state,
             self._phase.get(self._get_progress_session(None), 1),
             self._event_hop_count.get(self._get_progress_session(None), 0),
-            # Elapsed bucket: 0.5s granularity — labels update at most twice
+            # Elapsed bucket: 1.0s granularity — labels update at most once
             # per second for pure time drift; hop/state changes rebuild sooner.
-            int((time.monotonic() - self._agent_start_time.get(sk, time.monotonic())) / 0.5),
+            int((time.monotonic() - self._agent_start_time.get(sk, time.monotonic())) / 1.0),
         )
         if signature == self._last_tick_signature:
             return True  # nothing changed since the last rendered tick

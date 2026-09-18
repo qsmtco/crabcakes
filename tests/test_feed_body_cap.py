@@ -55,6 +55,29 @@ class MockFeedTab:
     def __init__(self):
         self.cards = []
         self.replaced = []
+        # MEMRATCHET P3 hygiene (audit follow-up): eviction-pass surface.
+        # Mirrors tests/test_feed_handler.py MockFeedTab's contract so this
+        # duplicated double cannot AttributeError when eviction wires in.
+        self._near_bottom = True
+        self._above_viewport = True
+        self._card_spacing = 8
+
+    def is_near_bottom(self, slack: int = 80) -> bool:
+        return self._near_bottom
+
+    def is_above_viewport(self, widget) -> bool:
+        return self._above_viewport
+
+    def get_vadjustment(self):
+        return None
+
+    def get_card_container(self):
+        # Eviction only reads get_spacing() via the handler's
+        # _card_container_spacing() helper (which guards AttributeError).
+        return self
+
+    def get_spacing(self) -> int:
+        return self._card_spacing
 
     def append_card(self, widget, card_id=None):
         self.cards.append((widget, card_id))

@@ -73,6 +73,27 @@ class _StubFeedTab:
     def __init__(self):
         self.cards = []
         self._vadjustment = None
+        # MEMRATCHET P3 hygiene (audit follow-up): explicit eviction-pass
+        # surface instead of relying on __getattr__ no-ops, so eviction is
+        # testable here rather than silently skipped.
+        self._near_bottom = True
+        self._above_viewport = True
+        self._card_spacing = 8
+
+    def is_near_bottom(self, slack: int = 80) -> bool:
+        return self._near_bottom
+
+    def is_above_viewport(self, widget) -> bool:
+        return self._above_viewport
+
+    def get_vadjustment(self):
+        return self._vadjustment
+
+    def get_card_container(self):
+        return self
+
+    def get_spacing(self) -> int:
+        return self._card_spacing
 
     def append_card(self, widget, card_id=None):
         self.cards.append((widget, card_id))

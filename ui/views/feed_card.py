@@ -334,13 +334,16 @@ def _render_file_event_body(card_data: FeedCardData) -> Gtk.Widget:
         desc_label.set_margin_top(4)
         desc_label.add_css_class("feed-body-desc")
         box.append(desc_label)
-        # Same render cap as text bodies (UIRESP2-T2 §1). The box deliberately
-        # does NOT expose `_text_label`: file-event cards have no single body
-        # seam, so update_card() keeps rebuilding them (Phase 4 Part A).
+        # Same render cap as text bodies (UIRESP2-T2 §1). The box DOES expose
+        # `_text_label` (set below) when a non-empty body exists at build time,
+        # so update_card() can refresh the description in place; an empty-body
+        # file-event card leaves no seam and still falls back to rebuild
+        # (MEMRATCHET §2.3).
         _set_body_text(
             box, desc_label, card_data.body,
             needs_approval=bool((card_data.metadata or {}).get("needs_approval")),
         )
+        box._text_label = desc_label
 
     return box
 
@@ -373,6 +376,10 @@ def _render_task_body(card_data: FeedCardData) -> Gtk.Widget:
         # `body=` sweep: the work-unit status line is generated (bounded today)
         # but funnels through the same cap so a future long body cannot slip past.
         _set_body_text(box, body_label, card_data.body)
+        # MEMRATCHET §2.3: expose the seam when a non-empty body exists at build
+        # time, so update_card() refreshes the task body in place; an empty-body
+        # task card leaves no seam and falls back to rebuild.
+        box._text_label = body_label
 
     # Task ID if present
     if card_data.task_id:
@@ -559,9 +566,12 @@ def build_feed_card(
     card.append(body_widget)
     # Phase 4 Part A (spec §2.4): expose the body label so
     # update_card_in_place() can mutate the live widget instead of
-    # rebuilding the whole card. None for body renderers without a single
-    # text label (file events, task cards) — update_card() falls back to
-    # the rebuild path for those.
+    # rebuilding the whole card. Set by every body renderer that has a single
+    # text label AND a non-empty body at build time (status/text, chat,
+    # file-event, task); an empty-body file-event/task card yields no seam,
+    # and an empty TEXT body yields a placeholder seam
+    # (`_body_is_placeholder`) that update_card_in_place refuses — both
+    # fall back to rebuild (MEMRATCHET §2.3).
     card._body_label = getattr(body_widget, "_text_label", None)
     # UIRESP2-T2 Edit B: the body CONTAINER is the seam that hosts the reveal
     # control, so the in-place path can re-evaluate truncation.
@@ -868,9 +878,13 @@ def update_card_in_place(card_widget: Gtk.Widget, card_data: FeedCardData) -> bo
         card_data:   The updated card data.
 
     Returns:
-        True when the widget exposes the body seam (`_body_label`, set by
-        build_feed_card for text bodies) and was refreshed in place;
-        False when the caller must fall back to a full rebuild.
+        True when the widget exposes the body seam (`_body_label`) and was
+        refreshed in place. The body renderers set `_text_label` whenever a
+        non-empty body exists at build time (status/text, chat, file-event,
+        task), so `_body_label` is non-None for those. Empty-body
+        file-event/task cards yield no seam; an empty TEXT body yields a
+        placeholder seam (`_body_is_placeholder`) which this function
+        refuses — both fall back to a full rebuild (MEMRATCHET §2.3).
     """
     body_label = getattr(card_widget, "_body_label", None)
     if body_label is None:

@@ -33,6 +33,11 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
+# MEMRATCHET §2.1 — read at call time (inside the eviction pass) so tests can
+# monkeypatch them. Both bound the LIVE widget window, not the card data.
+MAX_LIVE_CARD_WIDGETS = 120   # bound on retained card widgets
+KEEP_NEWEST_CARDS = 40        # newest K by seq_num are never evicted
+
 
 class FeedHandler:
     """
@@ -119,9 +124,16 @@ class FeedHandler:
         # crabwatch 200 ms debounce that feeds this path.
         self.SNAPSHOT_REUSE_SECONDS = 0.2
 
-        # Lazy-load backlog: older cards not yet rendered.
-        # Populated by on_project_opened() when total cards > PAGE_SIZE.
-        # Loaded in pages by _load_more().
+        # Lazy-load backlog: cards not currently rendered as live widgets.
+        # NEWEST-FIRST: every reader pops from the front.
+        #   • populated by on_project_opened() — the loader MERGES (survivors
+        #     first, then the snapshot's older slice) when total > PAGE_SIZE;
+        #   • drained by _load_more() — one PAGE_SIZE page per click;
+        #   • re-populated by _evict_surplus_card_widgets() — evicted cards are
+        #     pushed back newest-first (insert(0, …)) so nothing becomes
+        #     unreachable; Load More re-renders them.
+        # Written from the loader thread, the main thread and _load_more, so
+        # every access is under self._lock.
         self._backlog: list[FeedCardData] = []
         self._load_more_widget: Gtk.Widget | None = None
         self.PAGE_SIZE = 15
@@ -757,12 +769,16 @@ class FeedHandler:
         card_id = str(uuid.uuid4())
         card_data.card_id = card_id
 
-        # Assign sequence number (Phase 3)
+        # Assign sequence number (Phase 3). Under _lock: the loader also
+        # read-modify-writes this counter (P5 audit BUG #1) — an unlocked
+        # increment racing that rebuild could be lost, handing two cards the
+        # same seq_num (duplicate badge + a non-unique eviction key).
         proj = card_data.project_name
-        if proj not in self._project_seq:
-            self._project_seq[proj] = 0
-        self._project_seq[proj] += 1
-        card_data.seq_num = self._project_seq[proj]
+        with self._lock:
+            if proj not in self._project_seq:
+                self._project_seq[proj] = 0
+            self._project_seq[proj] += 1
+            card_data.seq_num = self._project_seq[proj]
 
         # ── Create conversation snapshot (deferred) ───────────────────────
         # Must run AFTER the bubble is appended to the chat box, because
@@ -815,6 +831,9 @@ class FeedHandler:
             if self._feed_tab is not None:
                 self._feed_tab.append_card(widget, card_id)
                 self._schedule_smart_scroll()  # one funnel for all append paths
+                # MEMRATCHET §2.1: bound the live widget window. Only releases
+                # widgets for cards already scrolled above the viewport.
+                self._evict_surplus_card_widgets()
                 # Phase 5 + v2: auto-accept check (runs on main thread via idle_add)
                 # Must run AFTER append_card so the widget exists in the tree
                 # before handle_accept starts git ops. The lazy agent lock-in
@@ -952,6 +971,9 @@ class FeedHandler:
                     self._feed_tab.append_card(widget, card_id)
             # Single scroll decision for the whole batch
             self._schedule_smart_scroll()
+            # MEMRATCHET §2.1: one eviction pass for the whole batch — the
+            # batch path is the other unbounded widget writer.
+            self._evict_surplus_card_widgets()
             if self._on_card_added:
                 for card_id in card_ids:
                     self._on_card_added(card_id)
@@ -1064,6 +1086,12 @@ class FeedHandler:
                 card_data.project_name, card_id,
             )
 
+        if old_widget is None:
+            # Evicted (§2.1). Data was updated and persisted above; the widget is
+            # rebuilt from data if the card is rendered again. Rebuilding here
+            # would re-append an old card at the bottom of the feed.
+            return
+
         # ── Phase 4 Part A: in-place fast path ──────────────────────────
         # build_feed_card exposes the body label (`_body_label`) — when the
         # live widget has it, refreshing by reference avoids constructing a
@@ -1101,6 +1129,13 @@ class FeedHandler:
         no-seam path and the in-place-refresh-failed path share one
         implementation. The widget is constructed here (pure Python, no
         shared state) and the FeedTab swap is dispatched via idle_add.
+
+        `old_widget` is always a live widget: both callers pass a non-None
+        value, because update_card returns early for an evicted card whose
+        widget is gone (§2.1 evicted-card guard). The previous
+        `old_widget is None` → `append_card` branch was therefore unreachable
+        and has been deleted (MEMRATCHET P7b) — re-appending an old card at the
+        bottom of the feed is exactly the behaviour the guard exists to stop.
         """
         # Rebuild widget (same construction as add_card)
         # Phase E: approval cards use approve/deny callbacks instead of accept/reject
@@ -1126,6 +1161,9 @@ class FeedHandler:
         with self._lock:
             self._card_widgets[card_id] = new_widget
 
+        if os.environ.get("CRABCAKES_DEBUG"):
+            _logger.info("feed card rebuilt (no seam): %s", card_id)
+
         # Replace widget in FeedTab on main thread
         _card_id = card_id
         _new_widget = new_widget
@@ -1133,15 +1171,9 @@ class FeedHandler:
         def _replace():
             if self._feed_tab is None:
                 return
-            if old_widget is not None:
-                self._feed_tab.replace_card(_card_id, _new_widget)
-            else:
-                # No old widget to replace — just append (edge case).
-                # Scroll here: a brand-new card appeared at the bottom and
-                # the user wasn't looking at it, so smart-scroll handles
-                # the "they had scrolled up" case automatically.
-                self._feed_tab.append_card(_new_widget, _card_id)
-                self._schedule_smart_scroll()
+            # old_widget is always live (see docstring) — the previous
+            # `is None` → append_card branch was unreachable and is deleted.
+            self._feed_tab.replace_card(_card_id, _new_widget)
 
         self._GLib.idle_add(_replace)
 
@@ -1553,8 +1585,11 @@ class FeedHandler:
         self._active_project_name = project_name
         # Store project_path for persistence on new card adds
         self._project_paths[project_name] = project_path
-        # Clear backlog from previous project before starting load thread
-        self._backlog = []
+        # Clear backlog from previous project before starting load thread.
+        # Under _lock: the load thread and the main thread's eviction pass both
+        # write _backlog (round-2 BUG #3).
+        with self._lock:
+            self._backlog = []
         self._load_more_widget = None
 
         def _load_and_render():
@@ -1609,9 +1644,19 @@ class FeedHandler:
                     card.seq_num = next_seq
                 next_seq = max(next_seq, card.seq_num + 1)
 
-            # Rebuild sequence counter from loaded cards (now all have seq_num)
+            # Rebuild sequence counter from loaded cards (now all have seq_num).
+            # max() against the LIVE counter, not a bare assignment: a card that
+            # arrived during this load's parse window has already advanced
+            # _project_seq past the snapshot's high-water mark, and clobbering
+            # that back down would let the next arrival reuse its seq_num
+            # (duplicate badge + a non-unique ordering key for eviction).
             max_seq = max((card.seq_num for card in cards if card.seq_num), default=0)
-            self._project_seq[project_name] = max_seq
+            # Under _lock: add_card increments the same counter (P5 audit
+            # BUG #1), so the read-modify-write must not interleave with it.
+            with self._lock:
+                self._project_seq[project_name] = max(
+                    max_seq, self._project_seq.get(project_name, 0)
+                )
 
             # Split into recent (render now) and backlog (lazy load)
             # cards is chronological: oldest first, newest last
@@ -1622,40 +1667,76 @@ class FeedHandler:
                 backlog = []
                 recent = cards
 
-            # Store backlog for "Load More" (thread-safe under lock)
+            # Store backlog for "Load More" (thread-safe under lock).
+            # MERGE, not rebind (round-4 BUG #3 / round-5 BUG #2): the loader
+            # runs on a background thread and can be pre-empted for hundreds of
+            # ms on a big feed, so a card that eviction pushed in the meantime
+            # has ALREADY had its widget unparented — replacing the list would
+            # leave it neither rendered nor drainable until the project is
+            # reopened. A plain rebind inside the lock serializes the two
+            # operations without merging them.
+            new_backlog = list(reversed(backlog))          # newest-first; every entry older than PAGE_SIZE
+            seen = {c.card_id for c in new_backlog}
             with self._lock:
-                self._backlog = list(reversed(backlog))  # newest-first for pop(0)
+                pushed = [c for c in self._backlog if c.card_id not in seen]   # eviction's inserts
+                self._backlog = pushed + new_backlog
+                # The label must count the MERGED list, not the snapshot slice:
+                # `pushed` holds survivors eviction released during this load, so
+                # `len(backlog)` would under-report exactly the cards the merge
+                # just rescued (and the count is a shared-list read → same lock).
+                merged_backlog_count = len(self._backlog)
 
-            # Build widgets for recent cards only
+            # Build widgets for recent cards only, OUTSIDE the lock (round-3
+            # BUG #8). The loader's lock region is the dict writes ONLY: up to
+            # PAGE_SIZE GTK widget constructions inside it would block the main
+            # thread's eviction pass behind them (its locked gate reads
+            # len(_card_widgets) under the same lock).
             widgets = {}
+            for card in recent:
+                widget = build_feed_card(
+                    card,
+                    on_review=self._make_review_cb(card.card_id),
+                    on_accept=self._make_accept_cb(card.card_id),
+                    on_reject=self._make_reject_cb(card.card_id),
+                    on_copy=self._make_copy_cb(card),
+                )
+                widgets[card.card_id] = widget
+
             with self._lock:
-                # Index by project
-                if project_name not in self._project_cards:
-                    self._project_cards[project_name] = []
-
-                # Index ALL cards (including backlog) so _project_cards is complete
+                # Index ALL cards (including backlog) so _project_cards is complete.
+                # Order by seq_num, newest-first — do NOT infer provenance from set
+                # membership. `prev` can hold ids from two different sources:
+                #   (1) live arrivals during the parse window  → NEWER than the snapshot
+                #   (2) ids the feed pruned at compaction      → OLDER than the snapshot
+                # (feed_store.py:55 `FEED_WINDOW_DEFAULT`, pruned oldest-first at
+                # :673-678; `_project_cards` is never pruned, so those ids persist here).
+                # Concatenating leftovers in front promotes (2) to "newest" and makes
+                # Accept All act on a card no longer on disk — the same hazard as
+                # acting on a stale card. seq_num is the only correct key, and it is
+                # the same key eviction uses (round-6 BUG #2, round-7 BUG #1).
+                # Dedupe is implicit via dict.fromkeys; ids no longer in `_cards` drop.
+                new_ids = [c.card_id for c in cards if c.card_id]
+                prev = self._project_cards.get(project_name, [])
                 for card in cards:
-                    if card.card_id:
-                        self._project_cards[project_name].append(card.card_id)
                     self._cards[card.card_id] = card
+                candidates = [cid for cid in dict.fromkeys(prev + new_ids)
+                              if cid in self._cards]
+                self._project_cards[project_name] = sorted(
+                    candidates,
+                    key=lambda cid: self._cards[cid].seq_num or 0,
+                    reverse=True,
+                )
 
-                # Build widgets only for recent cards
+                # Store the widgets built above — the MAP WRITE stays inside the
+                # lock (spec "One rule for _card_widgets"); only the expensive
+                # construction left it.
                 for card in recent:
-                    widget = build_feed_card(
-                        card,
-                        on_review=self._make_review_cb(card.card_id),
-                        on_accept=self._make_accept_cb(card.card_id),
-                        on_reject=self._make_reject_cb(card.card_id),
-                        on_copy=self._make_copy_cb(card),
-                    )
-                    self._card_widgets[card.card_id] = widget
-                    widgets[card.card_id] = widget
+                    self._card_widgets[card.card_id] = widgets[card.card_id]
 
-            # Build "Load More" widget if backlog exists
-            backlog_count = len(backlog)
+            # Build "Load More" widget if the MERGED backlog is non-empty
             load_more_widget = None
-            if backlog_count > 0:
-                load_more_widget = self._build_load_more_widget(backlog_count)
+            if merged_backlog_count > 0:
+                load_more_widget = self._build_load_more_widget(merged_backlog_count)
                 self._load_more_widget = load_more_widget
 
             # Add cards + load-more on main thread.
@@ -1669,15 +1750,30 @@ class FeedHandler:
                 if self._feed_tab is None:
                     return False
 
-                # Prepend "Load More" at top if backlog exists
+                # Drop any stale sentinel FIRST and unconditionally (round-6
+                # BUG #3): on_project_opened only nulls the attribute, so the
+                # previous project's bar — or this project's own bar from an
+                # earlier open — stays parented otherwise. Hoisted out of the
+                # `if` because the switch-to-a-project-with-no-backlog case
+                # builds no new sentinel and would leak the old one.
+                self._feed_tab.remove_card("__load_more__")   # drop any stale sentinel
                 if load_more_widget is not None:
                     self._feed_tab.prepend_card(load_more_widget, card_id="__load_more__")
+                else:
+                    self._load_more_widget = None             # no sentinel for this project
 
                 # Append recent cards (chronological: oldest first, newest last)
                 for card in recent:
                     widget = widgets.get(card.card_id)
                     if widget:
+                        # Same-project reopen: append_card only overwrites the
+                        # map entry, leaving the previous widget parented and
+                        # unreachable by every map/removal path (round-7 BUG #2).
+                        self._feed_tab.remove_card(card.card_id)
                         self._feed_tab.append_card(widget, card.card_id)
+
+                # Bound the live widget window once this batch is parented.
+                self._evict_surplus_card_widgets()
 
                 # Smart scroll: respects reading position if user scrolled up.
                 # On project open the user has no prior position in this
@@ -1705,7 +1801,10 @@ class FeedHandler:
         if self._active_project_name == project_name:
             self._active_project_name = None
         self.clear_project(project_name)
-        self._backlog = []
+        # Under _lock: the load thread and the main thread's eviction pass both
+        # write _backlog (round-2 BUG #3).
+        with self._lock:
+            self._backlog = []
         self._load_more_widget = None
 
         def _clear():
@@ -1748,27 +1847,48 @@ class FeedHandler:
 
     def _load_more(self) -> None:
         """Load the next PAGE_SIZE cards from backlog and prepend them."""
-        if not self._backlog:
-            return
+        # Empty-check, page slice and remaining count are ONE critical section
+        # (round-2 BUG #3): eviction inserts into _backlog and the loader merges
+        # into it from other threads, so an unlocked read-then-reassign can
+        # drop a concurrently pushed card or mis-count the label.
+        with self._lock:
+            if not self._backlog:
+                return
 
-        # Take next page from backlog (newest-first)
-        page = self._backlog[:self.PAGE_SIZE]
-        self._backlog = self._backlog[self.PAGE_SIZE:]
+            # Take next page from backlog (newest-first)
+            page = self._backlog[:self.PAGE_SIZE]
+            self._backlog = self._backlog[self.PAGE_SIZE:]
+            remaining = len(self._backlog)
 
-        # Build widgets for this page
+        # Build widgets for this page (construction OUTSIDE the lock)
         widgets = []
         for card in page:
+            # Render from the authoritative map, not the backlog entry: a card
+            # evicted then updated exists as a fresh instance in _cards while
+            # the backlog copy is stale (round-4 BUG #1). The map is written by
+            # update_card before its guards, so resolving through it is enough
+            # — the spec explicitly does NOT require rewriting _backlog.
+            data = self._cards.get(card.card_id, card)
             widget = build_feed_card(
-                card,
-                on_review=self._make_review_cb(card.card_id),
-                on_accept=self._make_accept_cb(card.card_id),
-                on_reject=self._make_reject_cb(card.card_id),
-                on_copy=self._make_copy_cb(card),
+                data,
+                on_review=self._make_review_cb(data.card_id),
+                on_accept=self._make_accept_cb(data.card_id),
+                on_reject=self._make_reject_cb(data.card_id),
+                on_copy=self._make_copy_cb(data),
             )
-            self._card_widgets[card.card_id] = widget
-            widgets.append((card.card_id, widget))
+            widgets.append((data.card_id, widget))
 
-        remaining = len(self._backlog)
+        # Map write under the lock (F8 — this was the one existing writer that
+        # violated the class contract at :83); only the construction left it.
+        with self._lock:
+            for card_id, widget in widgets:
+                self._card_widgets[card_id] = widget
+
+        # Ids just built — the eviction exclusion set. Mandatory: this page is
+        # the OLDEST content in the feed, i.e. exactly the victim set, so
+        # without it every click would build PAGE_SIZE widgets, evict them and
+        # push them straight back — a permanent no-op (round-3 BUG #1).
+        ids_just_loaded = {card_id for card_id, _w in widgets}
 
         def _render():
             if self._feed_tab is None:
@@ -1789,7 +1909,113 @@ class FeedHandler:
             else:
                 self._load_more_widget = None
 
+            # FINAL statement — NOT after the page loop above. The sentinel
+            # rebuild above bakes the PRE-push `remaining`; eviction running
+            # mid-_render would rebuild the sentinel from the post-push backlog
+            # and this tail would then build a SECOND bar from the stale
+            # `remaining`, repointing _cards_by_id at it (round-6 BUG #4).
+            self._evict_surplus_card_widgets(exclude=frozenset(ids_just_loaded))
+
         self._GLib.idle_add(_render)
+
+    def _evict_surplus_card_widgets(self, exclude: frozenset[str] = frozenset()) -> None:
+        """Release card widgets for the oldest cards beyond the live window.
+
+        Card DATA is never dropped: the evicted FeedCardData is pushed back onto
+        _backlog (newest-first), so Load More re-renders it (F4). If the backlog
+        was fully drained, the Load More widget is rebuilt so the pushed cards
+        are reachable without reopening the project (round-3 BUG #2).
+
+        Victims are chosen by seq_num — NOT list position — and across ALL
+        projects, because _card_widgets is one flat dict (feed_handler.py:73)
+        while widget creation is keyed on the CARD's project, which need not be
+        the active one (round-3 BUG #5).
+
+        `exclude` are the ids the caller just rendered (Load More passes its
+        page): without it, a Load More click re-evicts the page it just built
+        and the button becomes a permanent no-op (round-3 BUG #1).
+
+        Threading: dict mutation under self._lock (class contract at :83);
+        FeedTab calls are main-thread only and are never made while holding it.
+        """
+        if self._feed_tab is None:
+            return
+        with self._lock:
+            if len(self._card_widgets) <= MAX_LIVE_CARD_WIDGETS:
+                return
+            candidates = {
+                cid for ids in self._project_cards.values() for cid in ids
+            } | set(self._card_widgets)
+            live = [c for c in candidates
+                    if c in self._card_widgets and c in self._cards and c not in exclude]
+            if len(live) <= KEEP_NEWEST_CARDS:
+                return
+            live.sort(key=lambda cid: self._cards[cid].seq_num or 0)  # oldest first
+            victims = live[: len(live) - KEEP_NEWEST_CARDS]
+            target = len(self._card_widgets) - MAX_LIVE_CARD_WIDGETS
+
+        was_near_bottom = self._feed_tab.is_near_bottom()
+        vadj = self._feed_tab.get_vadjustment()
+        spacing = self._card_container_spacing()
+        removed_height = 0
+        released = 0
+        backlog_count = 0
+        for card_id in victims:
+            if released >= target:
+                break
+            with self._lock:
+                widget = self._card_widgets.get(card_id)
+                data = self._cards.get(card_id)
+            if widget is None:
+                continue
+            # Never destroy a widget that is on screen or below the viewport (F10).
+            if not self._feed_tab.is_above_viewport(widget):
+                break
+            height = widget.get_height() or 0
+            with self._lock:
+                if self._card_widgets.pop(card_id, None) is None:
+                    continue
+                if data is not None:
+                    # Newest-first backlog (pop(0)) → Load More re-renders it. Under
+                    # the lock: _load_and_render MERGES _backlog on a background
+                    # thread (survivors first; :1661-1665) (round-2 BUG #3).
+                    self._backlog.insert(0, data)
+                backlog_count = len(self._backlog)   # P7a: label read, same lock
+            self._feed_tab.remove_card(card_id)     # clears state, unparents, drops map entry
+            # Gtk.Box spacing (feed_tab.py:86) applies BETWEEN children, so each
+            # removed child shortens the content by height + spacing (round-2 BUG #2).
+            removed_height += height + spacing
+            released += 1
+
+        if released:
+            # Load More must reflect the cards eviction just pushed back: the label
+            # bakes `remaining` in at build time (:1736) and is otherwise only
+            # recomputed inside _load_more (:1771, :1786-1788). Before this change
+            # _backlog only ever shrank, so eviction is the first thing that can
+            # make the widget under-report (round-4 BUG #4).
+            # The remove_card call (early-returns on an unknown id) is for the
+            # rebuild, NOT for duplicate prevention — the duplicate is created on
+            # the load path, which eviction never runs on (round-5 BUG #1; see the
+            # load-path bullet below).
+            self._feed_tab.remove_card("__load_more__")
+            self._load_more_widget = None
+            # backlog_count was read inside the locked insert region above —
+            # reading len(self._backlog) here would be an unlocked read against
+            # a list the loader can merge into on another thread (P5 audit).
+            if backlog_count:
+                self._load_more_widget = self._build_load_more_widget(backlog_count)
+                self._feed_tab.prepend_card(self._load_more_widget, card_id="__load_more__")
+            if was_near_bottom:
+                self._feed_tab.schedule_scroll_to_bottom()      # keep the bottom pinned
+            elif vadj is not None and removed_height:
+                vadj.set_value(max(0.0, vadj.get_value() - removed_height))
+
+    def _card_container_spacing(self) -> int:
+        """Gtk.Box spacing between cards, for scroll compensation. 0 if unknown."""
+        try:
+            return self._feed_tab.get_card_container().get_spacing()
+        except (AttributeError, TypeError):
+            return 0
 
     # ─────────────────────────────────────────────────────────────────
     # Button action handlers

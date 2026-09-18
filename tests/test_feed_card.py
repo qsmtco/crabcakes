@@ -392,3 +392,171 @@ class TestSeqNumSerialization:
         }
         card = FeedCardData.from_dict(old_dict)
         assert card.seq_num is None
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  MEMRATCHET P8 (spec §2.3) — the body seam is TOTAL for non-empty bodies.
+#
+#  `update_card_in_place` refreshes a live card by reference when the widget
+#  exposes `_body_label` (read from the body box's `_text_label`). Before P8
+#  only `_render_text_body` set that attribute, so file-event and task cards
+#  always took the rebuild path. These tests pin the True path (same widget
+#  object, label text updated) and the remaining False path (empty body).
+#
+#  GTK-backed: `build_feed_card` constructs real widgets, so these run headless
+#  under Xvfb like the rest of the suite.
+# ═══════════════════════════════════════════════════════════════════
+
+def _build(card):
+    """Build a real feed card widget for `card` (no-op callbacks)."""
+    from ui.views.feed_card import build_feed_card
+
+    return build_feed_card(
+        card,
+        on_review=lambda *a: None,
+        on_accept=lambda *a: None,
+        on_reject=lambda *a: None,
+        on_copy=lambda *a: None,
+    )
+
+
+def _ts():
+    return datetime.now(timezone.utc)
+
+
+class TestBodySeamIsTotal:
+    """§2.3 — every body renderer with a non-empty body exposes the seam."""
+
+    def test_file_event_non_empty_body_exposes_seam(self):
+        """Pre-P8 this was RED: `_render_file_event_body` deliberately left
+        `_text_label` unset, so `_body_label` was None and the card rebuilt."""
+        card = FeedCardData(
+            card_type="file_modified", source="system",
+            title="Modified src/foo.py", body="✏️ 3 insertions, 1 deletion",
+            author="system", file_path="src/foo.py",
+            timestamp=_ts(), project_name="proj",
+        )
+        widget = _build(card)
+        assert widget._body_label is not None, (
+            "a file-event card with a non-empty body must expose the body seam"
+        )
+
+    def test_task_non_empty_body_exposes_seam(self):
+        """Pre-P8 this was RED: `_render_task_body` left `_text_label` unset."""
+        card = FeedCardData(
+            card_type="task", source="agent", title="SPEC-1 Phase 2",
+            body="Status: in progress", author="Coder",
+            timestamp=_ts(), project_name="proj",
+        )
+        widget = _build(card)
+        assert widget._body_label is not None, (
+            "a task card with a non-empty body must expose the body seam"
+        )
+
+    def test_file_event_empty_body_has_no_seam(self):
+        """The empty-body branch appends no description label at all, so there
+        is nothing to refresh in place — the rebuild fallback still applies."""
+        card = FeedCardData(
+            card_type="file_modified", source="system",
+            title="Modified src/foo.py", body="",
+            author="system", file_path="src/foo.py",
+            timestamp=_ts(), project_name="proj",
+        )
+        widget = _build(card)
+        assert widget._body_label is None
+
+    def test_task_empty_body_has_no_seam(self):
+        card = FeedCardData(
+            card_type="task", source="agent", title="SPEC-1 Phase 2", body="",
+            author="Coder", timestamp=_ts(), project_name="proj",
+        )
+        widget = _build(card)
+        assert widget._body_label is None
+
+    def test_file_event_whitespace_only_body_has_no_seam(self):
+        """`card_data.body.strip()` guards the branch, so whitespace-only is
+        the same as empty (no label, no seam)."""
+        card = FeedCardData(
+            card_type="file_modified", source="system",
+            title="Modified src/foo.py", body="   \n\t ",
+            author="system", file_path="src/foo.py",
+            timestamp=_ts(), project_name="proj",
+        )
+        widget = _build(card)
+        assert widget._body_label is None
+
+
+class TestInPlaceUpdateFileEventAndTask:
+    """§2.6 — the True path for file-event and task bodies."""
+
+    def test_file_event_in_place_update_keeps_widget_and_updates_label(self):
+        from ui.views.feed_card import update_card_in_place
+
+        card = FeedCardData(
+            card_type="file_modified", source="system",
+            title="Modified src/foo.py", body="✏️ first revision",
+            author="system", file_path="src/foo.py",
+            timestamp=_ts(), project_name="proj",
+        )
+        widget = _build(card)
+        label_before = widget._body_label
+        assert label_before is not None, "fixture precondition: seam exposed"
+
+        updated = FeedCardData(
+            card_type="file_modified", source="system",
+            title="Modified src/foo.py", body="✏️ SECOND revision",
+            author="system", file_path="src/foo.py",
+            timestamp=card.timestamp, project_name="proj",
+        )
+        result = update_card_in_place(widget, updated)
+
+        assert result is True, "a seam-bearing file-event card must refresh in place"
+        assert widget._body_label is label_before, (
+            "the same label object must be mutated — not swapped"
+        )
+        assert widget._body_label.get_text() == "✏️ SECOND revision"
+
+    def test_task_in_place_update_keeps_widget_and_updates_label(self):
+        from ui.views.feed_card import update_card_in_place
+
+        card = FeedCardData(
+            card_type="task", source="agent", title="SPEC-1 Phase 2",
+            body="Status: in progress", author="Coder",
+            timestamp=_ts(), project_name="proj",
+        )
+        widget = _build(card)
+        label_before = widget._body_label
+        assert label_before is not None, "fixture precondition: seam exposed"
+
+        updated = FeedCardData(
+            card_type="task", source="agent", title="SPEC-1 Phase 2",
+            body="Status: complete", author="Coder",
+            timestamp=card.timestamp, project_name="proj",
+        )
+        result = update_card_in_place(widget, updated)
+
+        assert result is True, "a seam-bearing task card must refresh in place"
+        assert widget._body_label is label_before
+        assert widget._body_label.get_text() == "Status: complete"
+
+    def test_empty_body_file_event_still_returns_false(self):
+        from ui.views.feed_card import update_card_in_place
+
+        card = FeedCardData(
+            card_type="file_modified", source="system",
+            title="Modified src/foo.py", body="",
+            author="system", file_path="src/foo.py",
+            timestamp=_ts(), project_name="proj",
+        )
+        widget = _build(card)
+        assert update_card_in_place(widget, card) is False
+
+    def test_empty_body_task_still_returns_false(self):
+        from ui.views.feed_card import update_card_in_place
+
+        card = FeedCardData(
+            card_type="task", source="agent", title="SPEC-1 Phase 2", body="",
+            author="Coder", timestamp=_ts(), project_name="proj",
+        )
+        widget = _build(card)
+        assert update_card_in_place(widget, card) is False

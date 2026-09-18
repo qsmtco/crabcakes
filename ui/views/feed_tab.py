@@ -9,6 +9,9 @@
 #       remove_card(card_id: str) -> None
 #       schedule_smart_scroll_to_bottom() -> None
 #       show_empty_state() -> None
+#       get_vadjustment() -> Gtk.Adjustment | None
+#       is_near_bottom(slack: int = 80) -> bool
+#       is_above_viewport(widget) -> bool
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -426,6 +429,46 @@ class FeedTab(Gtk.Box):
         """
         self.schedule_scroll_to_bottom()
         return False
+
+    def get_vadjustment(self):
+        """The feed ScrolledWindow's vadjustment, or None when _feed_scroll is absent.
+
+        A constructed tab owns a real ScrolledWindow, so this normally returns
+        a real (zeroed, pre-layout) Adjustment; None requires an explicitly
+        absent/nulled _feed_scroll. (P2 audit; SPEC-MEMORY-WIDGET-RATCHET
+        §2.2 — the earlier "None before first map" wording was wrong.)
+        """
+        return self._feed_scroll.get_vadjustment() if self._feed_scroll else None
+
+    def is_near_bottom(self, slack: int = 80) -> bool:
+        """True when the viewport is within `slack` px of the feed bottom."""
+        vadj = self.get_vadjustment()
+        if vadj is None:
+            return True                       # nothing rendered: eviction is safe
+        return (vadj.get_upper() - vadj.get_page_size() - vadj.get_value()) < slack
+
+    def is_above_viewport(self, widget) -> bool:
+        """True when `widget` lies entirely above the visible region.
+
+        FAIL-SAFE. A widget that has never been allocated reports
+        `compute_bounds -> (True, rect)` with a ZERO rect (verified on GTK 4.14
+        under Xvfb: an unrealized/unmapped Gtk.Label in a Gtk.Box inside a
+        Gtk.ScrolledWindow gives ok=True, origin.y=0.0, size.height=0.0). A naive
+        `origin.y + height <= value` test therefore returns True — "above the
+        viewport" — for every unmeasurable widget and would DESTROY cards that
+        are merely not laid out yet (e.g. while the Feed sub-tab is unmapped).
+        So a non-positive extent means "unknown", never "above".
+        """
+        vadj = self.get_vadjustment()
+        if vadj is None or self._card_container is None:
+            return False
+        try:
+            ok, rect = widget.compute_bounds(self._card_container)
+        except (AttributeError, TypeError):
+            return False                  # mock widgets have no compute_bounds
+        if not ok or rect.size.height <= 0:
+            return False                  # geometry unavailable → never evict
+        return (rect.origin.y + rect.size.height) <= vadj.get_value()
 
     def update_batch_bar(self, pending_count: int) -> None:
         """
